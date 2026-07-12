@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-12
+
 ### Added
 - Initial release: a local, fully offline window showing every running Claude Code session, grouped by project, with each session's live status refreshed every few seconds and updated in place - no flicker, no scroll jump, and open menus stay open.
 - Each session's status is a colored dot (label on hover), forming a traffic-light gradient: "Needs you" (red), "Working", "Background", "Idle" (green), "Interrupted" (yellow), and "Quiet".
@@ -34,4 +36,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 13 languages, auto-detected from the system locale.
 - Optional settings file to tune the poll interval and window size.
 
-[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude
+[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/jens-duttke/agent-monitor-for-claude/releases/tag/v0.1.0
