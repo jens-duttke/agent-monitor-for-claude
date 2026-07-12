@@ -1,0 +1,502 @@
+'use strict';
+
+/* Node-based tests for the pure UI logic (no browser, no framework beyond the
+   built-in node:test runner). Run: node --test tests/js  */
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const logic = require('../../agent_monitor_for_claude/ui/logic.js');
+
+function raw(overrides) {
+    return Object.assign({
+        alive: true,
+        has_transcript: true,
+        last_stop_reason: null,
+        pending_tool: false,
+        pending_blocking: false,
+        has_activity: true,
+        last_entry_kind: null,
+    }, overrides);
+}
+
+// A resolved price table (one schedule's worth), $/MTok, as resolvePrices returns.
+const PRICES = {
+    'opus-4-8':  { input: 5,  output: 25, cache_read: 0.50, cache_write_5m: 6.25,  cache_write_1h: 10 },
+    'haiku-4-5': { input: 1,  output: 5,  cache_read: 0.10, cache_write_5m: 1.25,  cache_write_1h: 2 },
+    'fable-5':   { input: 10, output: 50, cache_read: 1,    cache_write_5m: 12.50, cache_write_1h: 20 },
+};
+
+test('classify: dead process is completed', () => {
+    assert.equal(logic.classify(raw({ alive: false, last_stop_reason: 'end_turn' })), 'completed');
+});
+
+test('classify: no transcript is new', () => {
+    assert.equal(logic.classify(raw({ has_transcript: false, has_activity: false })), 'new');
+});
+
+test('classify: pending blocking awaits permission', () => {
+    assert.equal(logic.classify(raw({ pending_tool: true, pending_blocking: true })), 'awaiting_permission');
+});
+
+test('classify: pending not blocking is working', () => {
+    assert.equal(logic.classify(raw({ pending_tool: true, pending_blocking: false })), 'working');
+});
+
+test('classify: finished assistant turn awaits input', () => {
+    assert.equal(logic.classify(raw({ last_entry_kind: 'assistant', last_stop_reason: 'end_turn' })), 'awaiting_input');
+});
+
+test('classify: a tool_result is working', () => {
+    assert.equal(logic.classify(raw({ last_entry_kind: 'tool_result', last_stop_reason: 'tool_use' })), 'working');
+});
+
+test('classify: long silent thinking stays working', () => {
+    // The user sent a prompt; the model thinks and writes nothing for minutes.
+    // A stale user_text entry must NOT flip to "your turn".
+    assert.equal(logic.classify(raw({ last_entry_kind: 'user_text', last_stop_reason: 'end_turn' })), 'working');
+});
+
+test('classify: a trailing local command is idle, not working', () => {
+    // A slash/`!` command runs outside the model (Claude Code even tells the
+    // model not to respond), so the newest turn being a local command owes no
+    // reply - idle, not the stuck "working" a plain trailing user turn gives.
+    assert.equal(logic.classify(raw({ last_entry_kind: 'local_command' })), 'awaiting_input');
+});
+
+test('classify: an interrupt marker is its own status, not working', () => {
+    // The interrupt marker is a user turn on disk (like a fresh prompt) but
+    // means control is back with you - a distinct "interrupted" state, never working.
+    assert.equal(logic.classify(raw({ last_entry_kind: 'user_interrupt' })), 'interrupted');
+});
+
+test('classify: an interrupt overrides an unresolved pending tool', () => {
+    // Interrupting mid-tool can leave a tool_use with no result; the trailing
+    // interrupt marker still means the turn was stopped, so it wins over pending.
+    assert.equal(logic.classify(raw({ last_entry_kind: 'user_interrupt', pending_tool: true, pending_blocking: true })), 'interrupted');
+});
+
+test('classify: mid-flight assistant turn is working', () => {
+    assert.equal(logic.classify(raw({ last_entry_kind: 'assistant', last_stop_reason: 'tool_use' })), 'working');
+});
+
+test('classify: unrecognized entry with activity awaits input', () => {
+    assert.equal(logic.classify(raw({ last_entry_kind: null, last_stop_reason: null })), 'awaiting_input');
+});
+
+test('classify: empty transcript is unknown', () => {
+    assert.equal(logic.classify(raw({ has_activity: false })), 'unknown');
+});
+
+test('refineWithNative', () => {
+    assert.equal(logic.refineWithNative('awaiting_input', 'busy'), 'working');
+    assert.equal(logic.refineWithNative('working', 'idle'), 'awaiting_input');
+    assert.equal(logic.refineWithNative('new', 'idle'), 'new');
+    // A native status - busy included - never demotes a fresh "new" session; New
+    // has its own visibility toggle and must not be flipped out from under it.
+    assert.equal(logic.refineWithNative('new', 'busy'), 'new');
+    assert.equal(logic.refineWithNative('awaiting_permission', 'busy'), 'awaiting_permission');
+    assert.equal(logic.refineWithNative('working', null), 'working');
+    // "waiting" with a reason is a blocking prompt the transcript has not caught up to.
+    assert.equal(logic.refineWithNative('working', 'waiting', 'permission prompt'), 'awaiting_permission');
+    assert.equal(logic.refineWithNative('new', 'waiting', 'permission prompt'), 'new');
+    // A bare "waiting" with no reason is ambiguous - leave the structural classification alone.
+    assert.equal(logic.refineWithNative('working', 'waiting', null), 'working');
+});
+
+test('filterBucket maps each status to its toolbar chip', () => {
+    assert.equal(logic.filterBucket('awaiting_permission'), 'needs');
+    assert.equal(logic.filterBucket('interrupted'), 'interrupted');
+    assert.equal(logic.filterBucket('awaiting_input'), 'idle');
+    assert.equal(logic.filterBucket('working'), 'working');
+    assert.equal(logic.filterBucket('processing'), 'background');
+    assert.equal(logic.filterBucket('completed'), 'quiet');
+    assert.equal(logic.filterBucket('unknown'), 'quiet');
+    // "new" has its own visibility toggle, not an exclusive chip.
+    assert.equal(logic.filterBucket('new'), null);
+});
+
+test('refineWithBackgroundWork', () => {
+    assert.equal(logic.refineWithBackgroundWork('awaiting_input', true), 'processing');
+    assert.equal(logic.refineWithBackgroundWork('unknown', true), 'processing');
+    assert.equal(logic.refineWithBackgroundWork('awaiting_input', false), 'awaiting_input');
+    assert.equal(logic.refineWithBackgroundWork('working', true), 'working');
+    assert.equal(logic.refineWithBackgroundWork('awaiting_permission', true), 'awaiting_permission');
+});
+
+test('deriveStatus: thinking VS Code session (no native, no children) is working', () => {
+    const status = logic.deriveStatus(raw({
+        last_entry_kind: 'user_text', last_stop_reason: 'end_turn', native_status: null, child_count: 0,
+    }));
+    assert.equal(status, 'working');
+});
+
+test('deriveStatus: finished turn with a running subagent is processing', () => {
+    const status = logic.deriveStatus(raw({
+        last_entry_kind: 'assistant', last_stop_reason: 'end_turn', subagents_running: 1, child_count: 0,
+    }));
+    assert.equal(status, 'processing');
+});
+
+test('deriveStatus: an interrupted session with a phantom subagent stays interrupted, not processing', () => {
+    // The interrupt killed the in-process subagent; its still-"running" count is
+    // a phantom the recent window has not cleared. It must not promote to processing.
+    const status = logic.deriveStatus(raw({
+        last_entry_kind: 'user_interrupt', native_status: null, subagents_running: 1, child_count: 0,
+    }));
+    assert.equal(status, 'interrupted');
+});
+
+test('deriveStatus: an interrupted session survives a lagging native busy/idle', () => {
+    // The interrupt marker is definitive - the registry catching up must neither
+    // flip it to working (busy) nor flatten it to plain idle.
+    assert.equal(logic.deriveStatus(raw({ last_entry_kind: 'user_interrupt', native_status: 'busy', child_count: 0 })), 'interrupted');
+    assert.equal(logic.deriveStatus(raw({ last_entry_kind: 'user_interrupt', native_status: 'idle', child_count: 0 })), 'interrupted');
+});
+
+test('deriveStatus: an interrupted session with a surviving OS process still processes', () => {
+    // A detached child process (a build or server) can outlive the interrupt, so
+    // real background work still counts.
+    const status = logic.deriveStatus(raw({
+        last_entry_kind: 'user_interrupt', native_status: null, subagents_running: 0, child_count: 1,
+    }));
+    assert.equal(status, 'processing');
+});
+
+test('deriveStatus: registry waiting-for-permission overrides a stale fresh prompt', () => {
+    // The user answered a prompt; the tool_use for the pending permission has
+    // not yet landed in the transcript, so the structural rule still sees the
+    // fresh user prompt and would read "working". The registry knows it is blocked.
+    const status = logic.deriveStatus(raw({
+        last_entry_kind: 'user_text', last_stop_reason: 'end_turn',
+        native_status: 'waiting', waiting_for: 'permission prompt', child_count: 0,
+    }));
+    assert.equal(status, 'awaiting_permission');
+});
+
+test('deriveStatus: default-mode pending tool with idle process blocks on permission', () => {
+    const status = logic.deriveStatus(raw({
+        pending_tool: true, last_tool_name: 'Edit', permission_mode: 'default', child_count: 0,
+    }));
+    assert.equal(status, 'awaiting_permission');
+});
+
+test('deriveStatus: auto-mode pending tool is just working', () => {
+    const status = logic.deriveStatus(raw({
+        pending_tool: true, last_tool_name: 'Edit', permission_mode: 'auto', child_count: 0,
+    }));
+    assert.equal(status, 'working');
+});
+
+test('pendingIsBlocking', () => {
+    assert.equal(logic.pendingIsBlocking('AskUserQuestion', 'auto'), true);
+    assert.equal(logic.pendingIsBlocking('ExitPlanMode', 'acceptEdits'), true);
+    assert.equal(logic.pendingIsBlocking('Edit', 'default'), true);
+    assert.equal(logic.pendingIsBlocking('Edit', 'auto'), false);
+});
+
+test('attentionLabel', () => {
+    const labels = {
+        status_awaiting_permission: 'Permission needed',
+        status_needs_you: 'Waiting for you',
+        status_question: 'Question for you',
+        status_plan_review: 'Plan review',
+        status_working: 'Working',
+    };
+    // A known dialog tool keeps its precise label.
+    assert.equal(logic.attentionLabel('awaiting_permission', 'AskUserQuestion', labels), 'Question for you');
+    assert.equal(logic.attentionLabel('awaiting_permission', 'ExitPlanMode', labels), 'Plan review');
+    // A real tool-permission prompt (tool known from the transcript) stays specific.
+    assert.equal(logic.attentionLabel('awaiting_permission', 'Edit', labels), 'Permission needed');
+    // The registry-derived block has no pending tool: stay neutral, do not claim permission.
+    assert.equal(logic.attentionLabel('awaiting_permission', null, labels), 'Waiting for you');
+    // Other statuses fall through to their plain label.
+    assert.equal(logic.attentionLabel('working', null, labels), 'Working');
+});
+
+test('modeLabel', () => {
+    assert.equal(logic.modeLabel('default'), 'Manual');
+    assert.equal(logic.modeLabel('acceptEdits'), 'Auto-edit');
+    assert.equal(logic.modeLabel(null), null);
+});
+
+test('formatModel', () => {
+    assert.equal(logic.formatModel('claude-opus-4-8[1m]'), 'Opus 4.8 1M');
+    assert.equal(logic.formatModel('claude-haiku-4-5-20251001'), 'Haiku 4.5');
+    assert.equal(logic.formatModel('claude-fable-5'), 'Fable 5');
+    assert.equal(logic.formatModel(null), null);
+});
+
+test('formatTokens', () => {
+    assert.equal(logic.formatTokens(950), '950');
+    assert.equal(logic.formatTokens(12400), '12.4k');
+    assert.equal(logic.formatTokens(120000), '120k');
+    assert.equal(logic.formatTokens(3100000), '3.1M');
+});
+
+test('tokenLabels: empty usage yields no label', () => {
+    assert.equal(logic.tokenLabels(null, {}), '');
+    assert.equal(logic.tokenLabels({ input_tokens: 0, output_tokens: 0 }, {}), '');
+});
+
+test('tokenLabels splits cache writes by TTL and shows only the non-zero parts', () => {
+    const labels = {
+        token_summary: '{input} in · {output} out',
+        token_cache_read: '{cache_read} cache read',
+        token_cache_5m: '{cache_5m} 5m write',
+        token_cache_1h: '{cache_1h} 1h write',
+        token_cache_write: '{cache_write} cache write',
+    };
+    // No cache: just fresh input/output.
+    assert.equal(logic.tokenLabels({ input_tokens: 2, output_tokens: 123 }, labels), '2 in · 123 out');
+    // Only the cache parts that occur are shown (here: 1h write only).
+    assert.equal(
+        logic.tokenLabels({ input_tokens: 2, output_tokens: 123, cache_creation_input_tokens: 32976, cache_creation_1h_input_tokens: 32976 }, labels),
+        '2 in · 123 out · 33.0k 1h write',
+    );
+    // Hits plus both write TTLs, each its own pricing-aligned figure.
+    assert.equal(
+        logic.tokenLabels({
+            input_tokens: 599, output_tokens: 473000, cache_read_input_tokens: 55000000,
+            cache_creation_input_tokens: 3300000, cache_creation_5m_input_tokens: 1200000, cache_creation_1h_input_tokens: 2100000,
+        }, labels),
+        '599 in · 473k out · 55.0M cache read · 1.2M 5m write · 2.1M 1h write',
+    );
+    // Legacy turn without the TTL split: the unattributed writes fall back to a combined figure.
+    assert.equal(
+        logic.tokenLabels({ input_tokens: 10, output_tokens: 20, cache_creation_input_tokens: 5000 }, labels),
+        '10 in · 20 out · 5.0k cache write',
+    );
+});
+
+test('modelPriceKey normalizes an id to its pricing key', () => {
+    assert.equal(logic.modelPriceKey('claude-opus-4-8[1m]'), 'opus-4-8');
+    assert.equal(logic.modelPriceKey('claude-haiku-4-5-20251001'), 'haiku-4-5');
+    assert.equal(logic.modelPriceKey('claude-sonnet-4-6'), 'sonnet-4-6');
+    assert.equal(logic.modelPriceKey('claude-fable-5'), 'fable-5');
+    assert.equal(logic.modelPriceKey(null), null);
+});
+
+test('resolvePrices picks the schedule effective on the date', () => {
+    const schedules = {
+        '1970-01-01': { 'sonnet-5': { input: 2 } },
+        '2026-09-01': { 'sonnet-5': { input: 3 } },
+    };
+    assert.equal(logic.resolvePrices(schedules, '2026-07-12')['sonnet-5'].input, 2);
+    assert.equal(logic.resolvePrices(schedules, '2026-09-01')['sonnet-5'].input, 3);   // boundary is inclusive
+    assert.equal(logic.resolvePrices(schedules, '2027-01-01')['sonnet-5'].input, 3);
+    // Before any schedule, or no schedules at all -> empty (everything falls back to tokens).
+    assert.deepEqual(logic.resolvePrices(schedules, '1969-01-01'), {});
+    assert.deepEqual(logic.resolvePrices({}, '2026-07-12'), {});
+});
+
+test('usageCostUsd prices each token class with the model rate', () => {
+    const rate = { input: 5, output: 25, cache_read: 0.5, cache_write_5m: 6.25, cache_write_1h: 10 };
+    const perMillion = (u) => logic.usageCostUsd(u, rate);
+    assert.equal(perMillion({ input_tokens: 1000000 }), 5);
+    assert.equal(perMillion({ output_tokens: 1000000 }), 25);
+    assert.equal(perMillion({ cache_read_input_tokens: 1000000 }), 0.5);
+    assert.equal(perMillion({ cache_creation_5m_input_tokens: 1000000, cache_creation_input_tokens: 1000000 }), 6.25);
+    assert.equal(perMillion({ cache_creation_1h_input_tokens: 1000000, cache_creation_input_tokens: 1000000 }), 10);
+    // Un-split writes (a total without a TTL breakdown) are priced at the 5m rate.
+    assert.equal(perMillion({ cache_creation_input_tokens: 1000000 }), 6.25);
+});
+
+test('sessionCostUsd sums per model, and bails to null on an unpriced model', () => {
+    // A 1h cache write on Opus 4.8 ($10/MTok) dominates even a tiny in/out turn (~$0.33).
+    const real = { 'claude-opus-4-8': {
+        input_tokens: 2, output_tokens: 123, cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 32976, cache_creation_5m_input_tokens: 0, cache_creation_1h_input_tokens: 32976,
+    } };
+    assert.equal(logic.formatCost(logic.sessionCostUsd(real, PRICES)), '<$1');
+    // Opus main + Haiku subagent are each priced at their own rate.
+    const mixed = {
+        'claude-opus-4-8': { output_tokens: 1000000 },
+        'claude-haiku-4-5': { output_tokens: 1000000 },
+    };
+    assert.equal(logic.sessionCostUsd(mixed, PRICES), 30);   // 25 + 5
+    // A zero-usage model (e.g. a synthetic placeholder) adds no cost and must not force a fallback.
+    assert.equal(logic.sessionCostUsd({
+        'claude-opus-4-8': { output_tokens: 1000000 },
+        '<synthetic>': { input_tokens: 0, output_tokens: 0 },
+    }, PRICES), 25);
+    // A model absent from the price table but with real usage makes the total unavailable.
+    assert.equal(logic.sessionCostUsd({ 'claude-mythos-5': { output_tokens: 1000 } }, PRICES), null);
+    assert.equal(logic.sessionCostUsd({}, PRICES), null);
+});
+
+test('formatCost is whole dollars, <$1 below a dollar, null passes through', () => {
+    assert.equal(logic.formatCost(19.27), '$19');
+    assert.equal(logic.formatCost(19.7), '$20');       // rounded to the nearest dollar
+    assert.equal(logic.formatCost(1), '$1');
+    assert.equal(logic.formatCost(0.998535), '<$1');
+    assert.equal(logic.formatCost(0), '<$1');
+    assert.equal(logic.formatCost(null), null);
+});
+
+test('buildSession: compact is the cost when priced, else a token total', () => {
+    const labels = {
+        token_summary: '{input} in · {output} out',
+        token_cache_1h: '{cache_1h} 1h write',
+    };
+    const usage = { input_tokens: 2, output_tokens: 123, cache_creation_input_tokens: 32976, cache_creation_1h_input_tokens: 32976 };
+    const base = {
+        session_id: 's', pid: 1, cwd: 'd:\\x', short_name: 's', alive: true, has_transcript: true,
+        last_entry_kind: 'assistant', last_stop_reason: 'end_turn', usage,
+    };
+    // Priced (Opus 4.8): compact is the estimated cost; the detail is the breakdown
+    // that slides open before it, so expanded reads "<breakdown> · <compact>".
+    const priced = logic.buildSession({ ...base, model_id: 'claude-opus-4-8',
+        usage_by_model: { 'claude-opus-4-8': usage } }, labels, PRICES);
+    assert.equal(priced.usage_compact, '<$1');   // ~$0.33
+    assert.equal(priced.usage_detail, '2 in · 123 out · 33.0k 1h write · ');
+    // Unpriced model (absent from the table): compact falls back to the token total.
+    const unpriced = logic.buildSession({ ...base, model_id: 'claude-mythos-5',
+        usage_by_model: { 'claude-mythos-5': usage } }, labels, PRICES);
+    assert.equal(unpriced.usage_compact, logic.formatTokens(2 + 123 + 0 + 32976));
+    assert.equal(unpriced.usage_detail, '2 in · 123 out · 33.0k 1h write · ');
+});
+
+test('buildSession: an interrupt reads as interrupted and clears the phantom subagent badge', () => {
+    const session = logic.buildSession({
+        session_id: 's', pid: 1, cwd: 'd:\\x', short_name: 's', alive: true, has_transcript: true,
+        last_entry_kind: 'user_interrupt', native_status: null, usage: {},
+        subagents_running: 1, subagents_labels: ['general-purpose'], child_count: 0,
+    }, { status_interrupted: 'Interrupted' }, {});
+    assert.equal(session.status, 'interrupted');
+    assert.equal(session.status_label, 'Interrupted');
+    assert.equal(session.subagents_running, 0);
+    assert.deepEqual(session.subagents_labels, []);
+});
+
+test('modelHistory preserves the backend order and formats labels', () => {
+    // A switch back to a prior model is a distinct run, so it appears again as
+    // the last entry - the timeline is already ordered, modelHistory must not
+    // reorder or dedupe it.
+    const timeline = [
+        { time: '2026-07-11T09:25:21Z', model: 'claude-opus-4-8' },
+        { time: '2026-07-11T11:08:48Z', model: 'claude-fable-5' },
+        { time: '2026-07-11T14:58:11Z', model: 'claude-sonnet-5' },
+        { time: '2026-07-11T16:30:42Z', model: 'claude-opus-4-8' },
+    ];
+    const history = logic.modelHistory(timeline);
+    assert.deepEqual(history.map((e) => e.label), ['Opus 4.8', 'Fable 5', 'Sonnet 5', 'Opus 4.8']);
+    assert.equal(history[0].time, '2026-07-11T09:25:21Z');
+    assert.equal(history[history.length - 1].time, '2026-07-11T16:30:42Z');
+    assert.deepEqual(logic.modelHistory([]), []);
+    assert.deepEqual(logic.modelHistory(null), []);
+});
+
+test('buildSession flags a model switch and builds the history', () => {
+    const base = {
+        session_id: 's', pid: 1, cwd: 'd:\\x', short_name: 's', alive: true, has_transcript: true,
+        last_entry_kind: 'assistant', last_stop_reason: 'end_turn', usage: {}, model_id: 'claude-opus-4-8',
+    };
+    // Switched to Fable and back to Opus: three runs, last one the current model.
+    const switched = logic.buildSession({ ...base,
+        model_timeline: [
+            { time: '2026-07-11T09:00:00Z', model: 'claude-opus-4-8' },
+            { time: '2026-07-11T12:00:00Z', model: 'claude-fable-5' },
+            { time: '2026-07-11T15:00:00Z', model: 'claude-opus-4-8' },
+        ],
+    }, {}, {});
+    assert.equal(switched.model, 'Opus 4.8');
+    assert.equal(switched.model_switched, true);
+    assert.deepEqual(switched.model_history.map((e) => e.label), ['Opus 4.8', 'Fable 5', 'Opus 4.8']);
+    // One model -> no "(+)".
+    const single = logic.buildSession({ ...base,
+        model_timeline: [{ time: '2026-07-11T09:00:00Z', model: 'claude-opus-4-8' }] }, {}, {});
+    assert.equal(single.model_switched, false);
+});
+
+test('grouping helpers', () => {
+    assert.equal(logic.groupKey('d:\\WebDev\\proj'), logic.groupKey('D:\\WebDev\\proj'));
+    assert.equal(logic.displayCwd('d:\\WebDev\\proj'), 'D:\\WebDev\\proj');
+    assert.equal(logic.projectName('D:\\WebDev\\oku3d-app'), 'oku3d-app');
+});
+
+test('modelRank orders by capability, unknown last', () => {
+    assert.ok(logic.modelRank('Haiku 4.5') < logic.modelRank('Opus 4.8'));
+    assert.equal(logic.modelRank(null), logic.MODEL_RANK.length);
+});
+
+test('STATUS_ORDER: needs -> working -> background -> idle -> interrupted -> quiet', () => {
+    // Priority ranking for sorting within a project: blocked-on-you first, then
+    // the session still doing work (foreground, then background), then the calm
+    // states - finished-idle, interrupted, and the terminal ones last.
+    const order = logic.STATUS_ORDER;
+    assert.ok(order.awaiting_permission < order.working);
+    assert.ok(order.working < order.processing);
+    assert.ok(order.processing < order.awaiting_input);
+    assert.ok(order.awaiting_input < order.interrupted);
+    assert.ok(order.interrupted < order.completed);
+    assert.ok(order.interrupted < order.unknown);
+});
+
+test('groupProjects groups case-insensitively', () => {
+    const labels = { status_awaiting_input: 'Idle' };
+    const projects = logic.groupProjects([
+        raw({ cwd: 'd:\\WebDev\\proj', session_id: 'a', short_name: 'a', last_entry_kind: 'assistant', last_stop_reason: 'end_turn' }),
+        raw({ cwd: 'D:\\WebDev\\proj', session_id: 'b', short_name: 'b', last_entry_kind: 'assistant', last_stop_reason: 'end_turn' }),
+    ], labels);
+    assert.equal(projects.length, 1);
+    assert.equal(projects[0].sessions.length, 2);
+    assert.equal(projects[0].sessions[0].status_label, 'Idle');
+});
+
+function project(name, statuses) {
+    return { name, cwd: 'd:\\repos\\' + name, sessions: statuses.map((status) => ({ status })) };
+}
+
+test('projectBand: most urgent session wins, unknown/empty falls to the quiet band', () => {
+    assert.equal(logic.projectBand([{ status: 'working' }, { status: 'awaiting_permission' }]), 0);
+    assert.equal(logic.projectBand([{ status: 'working' }, { status: 'processing' }]), 1);
+    assert.equal(logic.projectBand([{ status: 'completed' }, { status: 'new' }]), 2);
+    assert.equal(logic.projectBand([]), 2);
+});
+
+test('projectBand: a finished "your turn" (awaiting_input) is quiet, not top', () => {
+    // Only a truly blocked session (awaiting_permission) is top-band; a finished
+    // turn sinks below the projects still doing work.
+    assert.equal(logic.projectBand([{ status: 'awaiting_input' }]), 2);
+    assert.equal(logic.projectBand([{ status: 'awaiting_input' }, { status: 'working' }]), 1);
+});
+
+test('projectBand: an interrupted session is quiet (your turn), not top', () => {
+    // Interrupted is "your turn" like idle - nothing is running or mandatory, so
+    // it stays in the quiet band and does not pull its project up.
+    assert.equal(logic.projectBand([{ status: 'interrupted' }]), 2);
+    assert.equal(logic.projectBand([{ status: 'interrupted' }, { status: 'working' }]), 1);
+});
+
+test('sortProjects: priority order groups by band, then alphabetically within a band', () => {
+    const projects = [
+        project('zeta', ['working']),
+        project('alpha', ['completed']),
+        project('beta', ['awaiting_input']),
+        project('gamma', ['awaiting_permission']),
+    ];
+    const names = logic.sortProjects(projects, true).map((p) => p.name);
+    // band 0 (gamma, blocked), then band 1 (zeta, working), then band 2 (alpha,
+    // beta - finished/idle) alphabetically.
+    assert.deepEqual(names, ['gamma', 'zeta', 'alpha', 'beta']);
+});
+
+test('sortProjects: fine-grained churn inside a band does not reorder panels', () => {
+    const before = logic.sortProjects([project('build', ['working']), project('app', ['processing'])], true);
+    assert.deepEqual(before.map((p) => p.name), ['app', 'build']);
+    // app flips working <-> processing (same busy band): order must be unchanged.
+    const after = logic.sortProjects([project('build', ['working']), project('app', ['working'])], true);
+    assert.deepEqual(after.map((p) => p.name), ['app', 'build']);
+});
+
+test('sortProjects: without priority it is a plain alphabetical list', () => {
+    const projects = [project('zeta', ['awaiting_permission']), project('alpha', ['completed'])];
+    assert.deepEqual(logic.sortProjects(projects, false).map((p) => p.name), ['alpha', 'zeta']);
+});
+
+test('sortProjects: does not mutate its input', () => {
+    const projects = [project('b', ['completed']), project('a', ['completed'])];
+    logic.sortProjects(projects, true);
+    assert.deepEqual(projects.map((p) => p.name), ['b', 'a']);
+});

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Agent Monitor for Claude</title>
+    <script>
+        // Apply the saved / preferred theme before first paint to avoid a flash.
+        (function () {
+            try {
+                var t = localStorage.getItem('amc-theme')
+                    || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+                document.documentElement.setAttribute('data-theme', t);
+            } catch (e) {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }
+        })();
+    </script>
+    <script>
+        // Version every bundled asset with the ?v= token from the page URL
+        // (see app._asset_version). document.write keeps these parser-inserted,
+        // preserving load order and DOMContentLoaded timing exactly, while the
+        // fresh URL stops WebView2's persistent cache serving a stale copy after
+        // an app update.
+        (function () {
+            var v = new URLSearchParams(location.search).get('v');
+            window.__assetQuery = v ? '?v=' + encodeURIComponent(v) : '';
+            document.write('<link rel="stylesheet" href="index.css' + window.__assetQuery + '">');
+        })();
+    </script>
+</head>
+<body>
+    <div class="topbar">
+        <header class="app-header">
+            <div class="brand">
+                <div class="logo" aria-hidden="true"></div>
+                <div class="brand-text">
+                    <h1 id="app-title">Agent Monitor for Claude</h1>
+                    <p id="app-subtitle" class="subtitle"></p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <span id="effort-badge" class="pill calm" hidden></span>
+                <button id="theme-toggle" class="icon-btn" type="button" aria-label="Toggle theme">&#9788;</button>
+            </div>
+        </header>
+        <div class="filters-row">
+            <nav class="filters" id="filters" aria-label="Filters"></nav>
+            <div class="sort-box" id="sort-box">
+                <button id="priority-toggle" class="priority-toggle" type="button" aria-pressed="true"></button>
+                <button id="sort-trigger" class="sort-trigger" type="button" aria-label="Sort"></button>
+                <button id="sort-dir" class="sort-dir" type="button" aria-label="Sort direction">&#9650;</button>
+            </div>
+        </div>
+    </div>
+    <main id="content" class="content"></main>
+    <script>
+        (function () {
+            var q = window.__assetQuery || '';
+            document.write('<script src="logic.js' + q + '"><\/script>');
+            document.write('<script src="index.js' + q + '"><\/script>');
+        })();
+    </script>
+</body>
+</html>

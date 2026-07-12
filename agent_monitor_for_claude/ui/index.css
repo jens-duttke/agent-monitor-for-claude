@@ -1,0 +1,941 @@
+/* Agent Monitor for Claude - dashboard styles.
+   Two themes (dark default, light via [data-theme="light"]); the toggle in the
+   header switches between them. */
+
+/* Palette modeled on Claude.ai: warm charcoal dark theme, ivory light theme,
+   terracotta accent, flat surfaces. */
+:root {
+    color-scheme: dark;
+    --bg: #191918;
+    --panel: #30302e;
+    --panel-hover: #383836;
+    --border: #3f3e3a;
+    --border-strong: #52504a;
+    --fg: #e8e6dd;
+    --fg-dim: #a3a094;
+    --fg-heading: #faf9f5;
+    --accent: #d97757;
+    --active-bg: #3d3c38;
+    --chip-bg: #2d2d2b;
+    --topbar-bg: rgba(25, 25, 24, 0.85);
+    --shadow: 0 8px 24px -18px rgba(0, 0, 0, 0.6);
+
+    --c-working: #6c9edd;
+    --c-processing: #a98fe0;
+    --c-awaiting_input: #2fa26a;
+    --c-awaiting_input-text: #7f9e8d;
+    --c-awaiting_permission: #e0655a;
+    --c-new: #3ecf8e;
+    --c-completed: #6f6d66;
+    --c-unknown: #8a877c;
+    --c-interrupted: #ffcc00;
+
+    /* Solid colors for native popup lists (select options). */
+    --menu-bg: #30302e;
+    --menu-fg: #e8e6dd;
+}
+
+:root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #faf9f5;
+    --panel: #ffffff;
+    --panel-hover: #f3f1ea;
+    --border: #e0ddd2;
+    --border-strong: #c9c5b8;
+    --fg: #3d3d3a;
+    --fg-dim: #75726a;
+    --fg-heading: #1f1e1b;
+    --accent: #c96442;
+    --active-bg: #eae7dd;
+    --chip-bg: #f1efe7;
+    --topbar-bg: rgba(250, 249, 245, 0.85);
+    --shadow: 0 8px 24px -20px rgba(90, 80, 60, 0.25);
+
+    --c-working: #2f6bd8;
+    --c-processing: #7d5bc9;
+    --c-awaiting_input: #1e8a55;
+    --c-awaiting_input-text: #5c7d6b;
+    --c-awaiting_permission: #cf4436;
+    --c-new: #1f9d6b;
+    --c-completed: #a09d92;
+    --c-unknown: #8f8c81;
+    --c-interrupted: #b7860b;
+
+    --menu-bg: #ffffff;
+    --menu-fg: #3d3d3a;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html, body {
+    height: 100%;
+}
+
+body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    line-height: 1.4;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+/* --- Top bar (header + filters), sticky and glassy --- */
+
+.topbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: var(--topbar-bg);
+    backdrop-filter: blur(16px) saturate(1.3);
+    border-bottom: 1px solid var(--border);
+}
+
+.app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 15px 24px;
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    min-width: 0;
+
+    h1 {
+        font-family: Georgia, 'Times New Roman', serif;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--fg-heading);
+        letter-spacing: 0.1px;
+        white-space: nowrap;
+    }
+}
+
+.logo {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: var(--accent);
+    display: grid;
+    place-items: center;
+    flex: none;
+
+    &::after {
+        content: '✳';
+        color: #faf9f5;
+        font-size: 17px;
+        line-height: 1;
+    }
+}
+
+.subtitle {
+    font-size: 12px;
+    color: var(--fg-dim);
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: none;
+}
+
+.icon-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--chip-bg);
+    color: var(--fg);
+    font-size: 16px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+
+    &:hover {
+        background: var(--panel-hover);
+        border-color: var(--border-strong);
+    }
+
+    &:active {
+        transform: scale(0.93);
+    }
+}
+
+/* --- Filters --- */
+
+.filters-row {
+    display: flex;
+    align-items: start;
+    gap: 10px;
+    padding: 0 24px 13px;
+}
+
+.filters {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    flex: 1;
+    min-width: 0;
+}
+
+.sort-box {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: none;
+}
+
+.sort-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--chip-bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--fg-dim);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 6px 14px;
+    cursor: pointer;
+
+    &:hover,
+    &.menu-open {
+        color: var(--fg);
+        border-color: var(--border-strong);
+    }
+}
+
+.sort-trigger-caret {
+    font-size: 9px;
+    opacity: 0.7;
+}
+
+/* Cross-project ordering toggle - a pill that grows a filled "active" look,
+   sitting beside the (session-level) sort control. */
+.priority-toggle {
+    background: var(--chip-bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--fg-dim);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 6px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+
+    &:hover {
+        color: var(--fg);
+        border-color: var(--border-strong);
+    }
+
+    &.active {
+        background: var(--active-bg);
+        color: var(--fg-heading);
+        border-color: var(--border-strong);
+    }
+}
+
+/* Floating menu shared by the sort dropdown and the per-row meatball menu. */
+.menu {
+    position: fixed;
+    z-index: 1000;
+    min-width: 180px;
+    padding: 5px;
+    background: var(--menu-bg);
+    color: var(--menu-fg);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.55);
+}
+
+/* The app's one HTML tooltip (see index.js): never the native `title`. Shown for
+   any [data-tip] element; newlines in the value become line breaks. */
+.tooltip {
+    position: fixed;
+    z-index: 1100;
+    left: 0;
+    top: 0;
+    max-width: 340px;
+    padding: 7px 10px;
+    background: var(--menu-bg);
+    color: var(--menu-fg);
+    border: 1px solid var(--border-strong);
+    border-radius: 9px;
+    box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.55);
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-line;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.12s ease;
+}
+
+.tooltip.show {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+}
+
+.menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 12px 8px 8px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+
+    &:hover {
+        background: var(--active-bg);
+    }
+
+    &.active .menu-check {
+        opacity: 1;
+    }
+}
+
+.menu-check {
+    width: 14px;
+    flex: none;
+    font-size: 12px;
+    opacity: 0;
+    color: var(--accent);
+}
+
+.menu-label {
+    flex: 1;
+    min-width: 0;
+}
+
+.sort-dir {
+    width: 30px;
+    height: 30px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--chip-bg);
+    color: var(--fg-dim);
+    font-size: 12px;
+    cursor: pointer;
+
+    &:hover {
+        color: var(--fg);
+        border-color: var(--border-strong);
+    }
+}
+
+.filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--chip-bg);
+    color: var(--fg-dim);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+
+    &:hover {
+        color: var(--fg);
+        border-color: var(--border-strong);
+    }
+
+    .count {
+        position: relative;
+        margin: -2px 0;
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        padding: 2px 7px;
+        border-radius: 999px;
+        background: var(--chip-bg);
+        color: var(--fg-dim);
+    }
+
+    &.active {
+        background: var(--active-bg);
+        color: var(--fg-heading);
+        border-color: var(--border-strong);
+
+        .count {
+            background: var(--chip-bg);
+            color: var(--fg);
+        }
+    }
+
+    &.dot-needs::before,
+    &.dot-interrupted::before,
+    &.dot-idle::before,
+    &.dot-working::before,
+    &.dot-background::before,
+    &.dot-quiet::before,
+    &.dot-new::before {
+        content: '';
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+    }
+
+    &.dot-needs::before { background: var(--c-awaiting_permission); }
+    &.dot-interrupted::before { background: var(--c-interrupted); }
+    &.dot-idle::before { background: var(--c-awaiting_input); }
+    &.dot-working::before { background: var(--c-working); }
+    &.dot-background::before { background: var(--c-processing); }
+    &.dot-quiet::before { background: var(--c-completed); }
+    &.dot-new::before { background: var(--c-new); }
+
+    /* The "New" visibility toggle sits apart from the exclusive filters. */
+    &:has(+ .toggle) {
+        margin-right: 30px;
+    }
+}
+
+/* --- Content --- */
+
+.content {
+    padding: 22px 24px 44px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    margin: 0 auto;
+}
+
+.empty {
+    margin-top: 14vh;
+    text-align: center;
+    color: var(--fg-dim);
+    font-size: 15px;
+
+    /* A surfaced UI error (see reportUiError): left-aligned, monospace, wrapping
+       so the stack trace stays readable instead of leaving a frozen skeleton. */
+    &.error {
+        margin: 24px;
+        text-align: left;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+        font-size: 12.5px;
+        color: var(--c-awaiting_permission);
+    }
+}
+
+/* --- Loading skeleton --- */
+
+.loading {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.skeleton-panel {
+    height: 128px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: linear-gradient(100deg,
+        var(--panel) 38%,
+        var(--panel-hover) 50%,
+        var(--panel) 62%);
+    background-size: 300% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+
+    &.short {
+        height: 92px;
+    }
+}
+
+@keyframes shimmer {
+    0% { background-position: 100% 0; }
+    100% { background-position: -100% 0; }
+}
+
+.hero {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 13px;
+    padding: 13px 18px;
+    border-radius: 12px;
+    background:
+        linear-gradient(100deg,
+            color-mix(in srgb, var(--c-awaiting_permission) 24%, transparent),
+            color-mix(in srgb, var(--c-awaiting_input) 15%, transparent));
+    border: 1px solid color-mix(in srgb, var(--c-awaiting_permission) 34%, transparent);
+
+    .hero-icon {
+        font-size: 20px;
+        filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.25));
+    }
+
+    .hero-text {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--fg-heading);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+}
+
+.hero-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    min-width: 0;
+}
+
+.hero-link {
+    background: transparent;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-size: 13px;
+    color: var(--fg-heading);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    &:hover {
+        color: var(--accent);
+    }
+}
+
+/* --- Project panels --- */
+
+.panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    margin-top: 18px;
+
+    &:first-child {
+        margin-top: 0;
+    }
+
+    &.needs {
+        border-color: var(--border-strong);
+    }
+
+    &.collapsed {
+        .panel-head {
+            border-bottom: none;
+        }
+
+        .chevron {
+            transform: rotate(0deg);
+        }
+    }
+}
+
+.panel-head {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 13px 18px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+
+    &:hover {
+        background: var(--panel-hover);
+    }
+
+    h2 {
+        font-size: 14.5px;
+        font-weight: 700;
+        color: var(--fg-heading);
+        white-space: nowrap;
+        flex: none;
+    }
+}
+
+.chevron {
+    flex: none;
+    width: 0;
+    height: 0;
+    border-left: 5px solid var(--fg-dim);
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    transform: rotate(90deg);
+    transition: transform 0.15s ease;
+}
+
+.head-status {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    flex: none;
+    color: var(--s);
+    white-space: nowrap;
+
+    &.status-working { --s: var(--c-working); }
+    &.status-interrupted { --s: var(--c-interrupted); }
+    &.status-awaiting_input { --s: var(--c-awaiting_input); }
+    &.status-awaiting_permission { --s: var(--c-awaiting_permission); }
+    &.status-new { --s: var(--c-new); }
+    &.status-completed { --s: var(--c-completed); }
+    &.status-unknown { --s: var(--c-unknown); }
+
+    /* The "Idle" (finished, your turn) state is deliberately quiet: its label in
+       the collapsed-panel summary and the legend is a calmer grey-green so a
+       resting session does not shout as loudly as an active or blocked one. */
+    &.status-awaiting_input {
+        color: var(--c-awaiting_input-text);
+    }
+}
+
+.panel-path {
+    font-size: 11.5px;
+    color: var(--fg-dim);
+    font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+}
+
+.panel-count {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--fg-dim);
+    background: var(--chip-bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 10px;
+    flex: none;
+    font-variant-numeric: tabular-nums;
+}
+
+/* --- Session rows --- */
+
+.rows {
+    display: flex;
+    flex-direction: column;
+
+    .row:first-child {
+        border-top: none;
+    }
+}
+
+/* Columns: dot | title+usage | model | host | age | menu.
+   The status column is gone - the dot carries the status (label on hover) and
+   the top-bar filter chips teach the colors. Title and usage share the single
+   flexible column (title left, usage right); because they flex against each
+   other inside one cell, a long usage figure shrinks only its own row's title,
+   not every row's. The --col-* variables are set by the UI after each render to
+   the widest cell content across ALL panels, so those columns align globally
+   while never being wider than needed. */
+.row {
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr)
+        var(--col-model, max-content)
+        var(--col-host, max-content)
+        58px 26px;
+    /* Align the text columns on the title's baseline, not on each cell's center:
+       a center-aligned smaller-font cell (model/host at 11.5px) lands ~0.7px
+       above the 13.5px title and rounds to a visible 1px lift. The dot and menu
+       button carry no text, so they opt back into centering below. */
+    align-items: baseline;
+    gap: 13px;
+    padding: 12px 18px;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+    --s: var(--c-unknown);
+    transition: background 0.12s ease;
+    cursor: pointer;
+
+    &:hover {
+        background: var(--panel-hover);
+    }
+
+    &:active {
+        filter: brightness(1.12);
+    }
+
+    .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--s);
+        flex: none;
+        align-self: center;
+    }
+
+    /* Title (left, shrinks) and usage (right, keeps its width) share one cell,
+       flexing against each other per row. */
+    .main-cell {
+        min-width: 0;
+        display: flex;
+        align-items: baseline;
+        gap: 14px;
+        overflow: hidden;
+    }
+
+    .name-cell {
+        flex: 1 1 auto;
+        min-width: 0;
+        display: flex;
+        align-items: baseline;
+        gap: 9px;
+        overflow: hidden;
+    }
+
+    .name {
+        font-size: 13.5px;
+        font-weight: 600;
+        color: var(--fg-heading);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+    }
+
+    /* The compact anchor (cost, or a token total when it can't be priced) is
+       always shown at the right. On a deliberate >500ms hover the UI adds
+       .open and the per-category breakdown slides open to its left, widening
+       this cell and shrinking the title - only in this row. The width animates
+       via the grid 0fr->1fr trick (the breakdown grows from zero to its natural
+       width); no interpolate-size needed. */
+    .usage-cell {
+        flex: 0 0 auto;
+        max-width: 100%;
+        display: inline-flex;
+        align-items: baseline;
+        justify-content: flex-end;
+        font-size: 11.5px;
+        color: var(--fg-dim);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        overflow: hidden;
+        cursor: help;
+    }
+
+    .usage-compact {
+        flex: none;
+    }
+
+    .usage-detail-wrap {
+        display: grid;
+        grid-template-columns: 0fr;
+        transition: grid-template-columns 0.28s ease;
+    }
+
+    .usage-cell.open .usage-detail-wrap {
+        grid-template-columns: 1fr;
+    }
+
+    .usage-detail {
+        min-width: 0;
+        overflow: hidden;
+        white-space: nowrap;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+    }
+
+    .usage-cell.open .usage-detail {
+        opacity: 1;
+    }
+
+    .model-cell {
+        justify-self: end;
+        font-size: 11.5px;
+        font-weight: 600;
+        color: var(--accent);
+        white-space: nowrap;
+    }
+
+    /* "+N" chip after the model when the session used more than one - styled
+       like the mode chip. Hovering it (data-tip) lists every model with the
+       time it was first used. */
+    .model-more {
+        flex: none;
+        margin-left: 6px;
+        font-size: 10.5px;
+        font-weight: 600;
+        color: var(--fg-dim);
+        background: var(--chip-bg);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 1px 7px;
+        white-space: nowrap;
+        cursor: help;
+    }
+
+    .host-cell {
+        justify-self: end;
+        font-size: 11.5px;
+        color: var(--fg-dim);
+        white-space: nowrap;
+    }
+
+    .age {
+        font-size: 12px;
+        color: var(--fg-dim);
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+}
+
+.status-working { --s: var(--c-working); }
+.status-processing { --s: var(--c-processing); }
+.status-interrupted { --s: var(--c-interrupted); }
+.status-awaiting_input { --s: var(--c-awaiting_input); }
+.status-awaiting_permission { --s: var(--c-awaiting_permission); }
+.status-new { --s: var(--c-new); }
+.status-completed { --s: var(--c-completed); }
+.status-unknown { --s: var(--c-unknown); }
+
+.status-working .dot,
+.status-processing .dot {
+    animation: pulse 1.8s ease-out infinite;
+}
+
+@keyframes pulse {
+    0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--s) 60%, transparent); }
+    70% { box-shadow: 0 0 0 7px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+.agents-badge {
+    flex: none;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+    border-radius: 999px;
+    padding: 1px 8px;
+    white-space: nowrap;
+    cursor: help;
+}
+
+.mode-chip {
+    flex: none;
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--fg-dim);
+    background: var(--chip-bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 7px;
+    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.proc-badge {
+    flex: none;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--c-working);
+    background: color-mix(in srgb, var(--c-working) 13%, transparent);
+    border: 1px solid color-mix(in srgb, var(--c-working) 30%, transparent);
+    border-radius: 999px;
+    padding: 1px 8px;
+    white-space: nowrap;
+    cursor: help;
+}
+
+/* Meatball button: faint until the row is hovered or its menu is open. */
+.row-menu-btn {
+    width: 24px;
+    height: 24px;
+    align-self: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--fg-dim);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s ease, background 0.12s ease;
+
+    .row:hover &,
+    &.menu-open {
+        opacity: 1;
+    }
+
+    &:hover,
+    &.menu-open {
+        background: var(--active-bg);
+        color: var(--fg);
+    }
+}
+
+.toast {
+    position: fixed;
+    left: 50%;
+    bottom: 26px;
+    transform: translateX(-50%) translateY(8px);
+    padding: 9px 16px;
+    background: var(--menu-bg);
+    color: var(--menu-fg);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    box-shadow: var(--shadow);
+    font-size: 13px;
+    font-weight: 600;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 1100;
+    transition: opacity 0.16s ease, transform 0.16s ease;
+
+    &.show {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}
+
+@media (max-width: 900px) {
+    .row {
+        grid-template-columns: 10px minmax(0, 1fr)
+            var(--col-host, max-content) 58px 26px;
+
+        .model-cell { display: none; }
+    }
+}
+
+@media (max-width: 720px) {
+    .row {
+        grid-template-columns: 10px minmax(0, 1fr) 52px 26px;
+
+        .host-cell { display: none; }
+    }
+    .panel-path { display: none; }
+}

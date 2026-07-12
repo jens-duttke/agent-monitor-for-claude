@@ -1,0 +1,30 @@
+# pyright: reportUndefinedVariable=false
+
+VSVersionInfo(
+    ffi=FixedFileInfo(
+        filevers=(0, 1, 0, 0),
+        prodvers=(0, 1, 0, 0),
+        mask=0x3F,
+        flags=0x0,
+        OS=0x40004,          # VOS_NT_WINDOWS32
+        fileType=0x1,        # VFT_APP
+        subtype=0x0,
+    ),
+    kids=[
+        StringFileInfo([
+            StringTable(
+                '040904B0',  # Lang: US English, Charset: Unicode
+                [
+                    StringStruct('CompanyName', 'Jens Duttke'),
+                    StringStruct('FileDescription', 'Agent Monitor for Claude'),
+                    StringStruct('FileVersion', '0.1.0.0'),
+                    StringStruct('InternalName', 'AgentMonitorForClaude'),
+                    StringStruct('OriginalFilename', 'AgentMonitorForClaude.exe'),
+                    StringStruct('ProductName', 'Agent Monitor for Claude'),
+                    StringStruct('ProductVersion', '0.1.0.0'),
+                ],
+            ),
+        ]),
+        VarFileInfo([VarStruct('Translation', [0x0409, 1200])]),
+    ],
+)
