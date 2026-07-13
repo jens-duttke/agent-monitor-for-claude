@@ -142,8 +142,7 @@ function needsAttention(status) {
 }
 
 // Which toolbar filter chip a status belongs to. One chip per status color, so
-// the chips double as the status legend. `new` is deliberately absent: it has
-// its own visibility toggle, not an exclusive chip.
+// the chips double as the status legend.
 const STATUS_FILTER = {
     awaiting_permission: 'needs',
     errored: 'errored',
@@ -153,6 +152,7 @@ const STATUS_FILTER = {
     processing: 'background',
     completed: 'quiet',
     unknown: 'quiet',
+    new: 'new',
 };
 
 function filterBucket(status) {

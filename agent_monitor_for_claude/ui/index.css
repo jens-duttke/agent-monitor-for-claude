@@ -413,11 +413,6 @@ body {
     &.dot-background::before { background: var(--c-processing); }
     &.dot-quiet::before { background: var(--c-completed); }
     &.dot-new::before { background: var(--c-new); }
-
-    /* The "New" visibility toggle sits apart from the exclusive filters. */
-    &:has(+ .toggle) {
-        margin-right: 30px;
-    }
 }
 
 /* --- Content --- */

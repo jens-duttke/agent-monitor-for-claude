@@ -41,7 +41,6 @@ const state = {
     pricing: {},
     pollInterval: 5,
     filters: new Set(),
-    showNew: false,
     sort: 'activity',
     sortDir: 'asc',
     priorityOrder: true,
@@ -124,10 +123,9 @@ const DEFAULT_LABELS = {
 };
 
 // One chip per status color, in attention order (blocked, your turn, busy,
-// background, quiet). Each chip is a checkbox for its status band: all on by
-// default, and unchecking one hides those sessions. Each dot teaches its color,
-// so the chips also serve as the status legend. "New" is a separate visibility
-// toggle, added in renderFilters.
+// background, quiet, new). Each chip is a checkbox for its status band: all on
+// by default, and unchecking one hides those sessions. Each dot teaches its
+// color, so the chips also serve as the status legend.
 const FILTER_DEFS = [
     { key: 'needs', label: 'filter_needs', dot: 'dot-needs' },
     { key: 'working', label: 'filter_working', dot: 'dot-working' },
@@ -136,10 +134,10 @@ const FILTER_DEFS = [
     { key: 'idle', label: 'filter_idle', dot: 'dot-idle' },
     { key: 'interrupted', label: 'filter_interrupted', dot: 'dot-interrupted' },
     { key: 'quiet', label: 'filter_quiet', dot: 'dot-quiet' },
+    { key: 'new', label: 'status_new', dot: 'dot-new' },
 ];
 
 // The status buckets the chips can select - the valid, persistable filter keys.
-// The "New" visibility toggle is tracked separately (state.showNew).
 const FILTER_KEYS = new Set(FILTER_DEFS.map((def) => def.key));
 
 function apiBridge() {
@@ -693,14 +691,8 @@ function toast(message) {
 
 // Each status chip is a checkbox, all on by default. A session shows only while
 // its status band's chip is still active; unchecking a chip hides those
-// sessions. Never-used windows stay gated behind the separate "New" toggle.
+// sessions.
 function matchesFilter(session) {
-    // Never-used windows have their own visibility toggle, not a status chip
-    // (filterBucket maps 'new' to null), so gate them on it directly.
-    if (session.status === 'new') {
-        return state.showNew;
-    }
-
     const bucket = logic.filterBucket(session.status);
     return bucket != null && state.filters.has(bucket);
 }
@@ -762,12 +754,6 @@ function countByFilter(projects) {
     const counts = { all: 0, needs: 0, idle: 0, working: 0, background: 0, errored: 0, interrupted: 0, quiet: 0, new: 0 };
     for (const project of projects) {
         for (const session of project.sessions) {
-            if (session.status === 'new') {
-                counts.new += 1;
-                if (!state.showNew) {
-                    continue;
-                }
-            }
             counts.all += 1;
             const bucket = logic.filterBucket(session.status);
             if (bucket) {
@@ -781,7 +767,7 @@ function countByFilter(projects) {
 function renderFilters(counts) {
     const container = document.getElementById('filters');
 
-    let html = FILTER_DEFS.map((def) => {
+    container.innerHTML = FILTER_DEFS.map((def) => {
         const active = state.filters.has(def.key);
         const dot = def.dot ? ' ' + def.dot : '';
         const label = state.labels[def.label] || def.key;
@@ -790,26 +776,8 @@ function renderFilters(counts) {
             + esc(label) + '<span class="count">' + counts[def.key] + '</span></button>';
     }).join('');
 
-    // Visibility toggle for never-used windows - off by default, separate
-    // from the status filter chips on the left.
-    html += '<button class="filter-chip toggle dot-new' + (state.showNew ? ' active' : '') + '" data-toggle="new"'
-        + ' aria-pressed="' + (state.showNew ? 'true' : 'false') + '">'
-        + esc(state.labels.status_new) + '<span class="count">' + counts.new + '</span></button>';
-
-    container.innerHTML = html;
-
     container.querySelectorAll('.filter-chip[data-filter]').forEach((button) => {
         button.addEventListener('click', () => toggleFilter(button.dataset.filter));
-    });
-
-    container.querySelector('[data-toggle="new"]').addEventListener('click', () => {
-        state.showNew = !state.showNew;
-        try {
-            localStorage.setItem('amc-show-new', state.showNew ? '1' : '0');
-        } catch (e) { /* storage unavailable */ }
-        if (state.last) {
-            render(state.last);
-        }
     });
 }
 
@@ -1325,14 +1293,12 @@ async function boot() {
 
     try {
         state.filters = loadFilters();
-        state.showNew = localStorage.getItem('amc-show-new') === '1';
         state.sort = localStorage.getItem('amc-sort') || 'activity';
         state.sortDir = localStorage.getItem('amc-sort-dir') === 'desc' ? 'desc' : 'asc';
         state.priorityOrder = localStorage.getItem('amc-priority-order') !== '0';
         state.collapsed = new Set(JSON.parse(localStorage.getItem('amc-collapsed') || '[]'));
     } catch (e) {
         state.filters = new Set(FILTER_KEYS);
-        state.showNew = false;
         state.sort = 'activity';
         state.sortDir = 'asc';
         state.priorityOrder = true;

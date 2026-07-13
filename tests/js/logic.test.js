@@ -130,8 +130,7 @@ test('filterBucket maps each status to its toolbar chip', () => {
     assert.equal(logic.filterBucket('processing'), 'background');
     assert.equal(logic.filterBucket('completed'), 'quiet');
     assert.equal(logic.filterBucket('unknown'), 'quiet');
-    // "new" has its own visibility toggle, not an exclusive chip.
-    assert.equal(logic.filterBucket('new'), null);
+    assert.equal(logic.filterBucket('new'), 'new');
 });
 
 test('refineWithBackgroundWork', () => {
