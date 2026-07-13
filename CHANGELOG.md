@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - An "Error" status for sessions whose turn stopped on an API error and cannot continue - a usage/session limit is named "Usage limit reached", any other API error stays generic - with its own orange status color and filter chip. Previously such a session was shown as "Working" indefinitely.
 
+### Fixed
+- The expanded usage breakdown kept a gap before the cost again, instead of running its last entry straight into it.
+
 ## [0.1.0] - 2026-07-12
 
 ### Added

@@ -569,7 +569,14 @@ function buildSession(raw, labels, prices) {
     let usageDetail = '';
     if (breakdown) {
         usageCompact = costText || formatTokens(usageTotalTokens(usage));
-        usageDetail = breakdown + ' · ';
+        // The separator's trailing space sits at the end of .usage-detail (an
+        // overflow:hidden flex item), where a normal space is stripped as
+        // trailing whitespace and the compact anchor would butt against the dot.
+        // A non-breaking space is not collapsed, so " · " keeps its gap; it is
+        // written as an explicit unicode escape (not a literal nbsp
+        // character) so no whitespace-normalizing tool can silently turn it
+        // back into a plain space.
+        usageDetail = breakdown + ' ·\u00A0';
     }
 
     return {

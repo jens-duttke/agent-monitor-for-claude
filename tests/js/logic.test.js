@@ -389,12 +389,12 @@ test('buildSession: compact is the cost when priced, else a token total', () => 
     const priced = logic.buildSession({ ...base, model_id: 'claude-opus-4-8',
         usage_by_model: { 'claude-opus-4-8': usage } }, labels, PRICES);
     assert.equal(priced.usage_compact, '<$1');   // ~$0.33
-    assert.equal(priced.usage_detail, '2 in · 123 out · 33.0k 1h write · ');
+    assert.equal(priced.usage_detail, '2 in · 123 out · 33.0k 1h write ·\u00A0');
     // Unpriced model (absent from the table): compact falls back to the token total.
     const unpriced = logic.buildSession({ ...base, model_id: 'claude-mythos-5',
         usage_by_model: { 'claude-mythos-5': usage } }, labels, PRICES);
     assert.equal(unpriced.usage_compact, logic.formatTokens(2 + 123 + 0 + 32976));
-    assert.equal(unpriced.usage_detail, '2 in · 123 out · 33.0k 1h write · ');
+    assert.equal(unpriced.usage_detail, '2 in · 123 out · 33.0k 1h write ·\u00A0');
 });
 
 test('buildSession: an interrupt reads as interrupted and clears the phantom subagent badge', () => {
