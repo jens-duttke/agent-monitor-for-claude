@@ -654,9 +654,11 @@ body {
    the top-bar filter chips teach the colors. Title and usage share the single
    flexible column (title left, usage right); because they flex against each
    other inside one cell, a long usage figure shrinks only its own row's title,
-   not every row's. The --col-* variables are set by the UI after each render to
-   the widest cell content across ALL panels, so those columns align globally
-   while never being wider than needed. */
+   not every row's. The model name and its "+N" switch badge share the model
+   column, spread apart by space-between (name left, badge right) so both line
+   up across rows without a wide grid gutter between them. The --col-* variables
+   are set by the UI after each render to the widest cell content across ALL
+   panels, so those columns align globally while never being wider than needed. */
 .row {
     display: grid;
     grid-template-columns: 10px minmax(0, 1fr)
@@ -768,8 +770,15 @@ body {
         opacity: 1;
     }
 
+    /* Name (left) and its "+N" badge (right) share one column: space-between
+       pins the name to the left edge and the badge to the right edge so both
+       line up across rows, while the small gap keeps them close when the name
+       fills the column - instead of the wide grid gutter a second track adds. */
     .model-cell {
-        justify-self: end;
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
         font-size: 11.5px;
         font-weight: 600;
         color: var(--accent);
@@ -781,7 +790,6 @@ body {
        time it was first used. */
     .model-more {
         flex: none;
-        margin-left: 6px;
         font-size: 10.5px;
         font-weight: 600;
         color: var(--fg-dim);

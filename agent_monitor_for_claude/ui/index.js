@@ -821,18 +821,20 @@ function fmtDateTime(iso) {
     });
 }
 
-// The model column: the current model, plus a "+N" badge (like the mode chip)
-// when the session switched models. Hovering the badge lists the switch
-// timeline oldest first - one line per model run with the time it began, so a
-// model returned to appears again and the last line is the current model.
+// The model column: the current model (left), plus a "+N" badge (right, like
+// the mode chip) when the session switched models. They share one cell that
+// spreads them apart with space-between, so the name stays left-aligned and the
+// badge right-aligned across rows. Hovering the badge lists the switch timeline
+// oldest first - one line per model run with the time it began, so a model
+// returned to appears again and the last line is the current model.
 function modelCellHtml(session) {
-    const model = esc(session.model || '');
-    const history = session.model_history || [];
+    const name = '<span class="model-name">' + esc(session.model || '') + '</span>';
     if (!session.model_switched) {
-        return model;
+        return name;
     }
+    const history = session.model_history || [];
     const lines = history.map((entry) => fmtDateTime(entry.time) + '  ' + entry.label);
-    return model + '<span class="model-more" data-tip="' + esc(lines.join('\n')) + '">+' + (history.length - 1) + '</span>';
+    return name + '<span class="model-more" data-tip="' + esc(lines.join('\n')) + '">+' + (history.length - 1) + '</span>';
 }
 
 function nameCellHtml(session) {

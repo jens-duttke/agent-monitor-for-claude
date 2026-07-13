@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An "Error" status for sessions whose turn stopped on an API error and cannot continue - a usage/session limit is named "Usage limit reached", any other API error stays generic - with its own orange status color and filter chip. Previously such a session was shown as "Working" indefinitely.
 
 ### Changed
+- The model name and its "+N" switch badge now sit in separate aligned columns - the name left-aligned, the badge right-aligned - so both line up cleanly across every session row.
 - "New" is now a regular filter chip alongside the others - shown by default and unchecked to hide - instead of a separate visibility toggle that was off by default.
 - The filter chips are now ordered attention-first: the states that want you (Needs you, Error, Interrupted, New, Idle) come before the ones that do not (Working, Background, Quiet).
 - Each filter chip now has a tooltip on hover, briefly explaining what that status means and when it occurs, translated into every language.
