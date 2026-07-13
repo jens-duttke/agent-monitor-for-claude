@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - "New" is now a regular filter chip alongside the others - shown by default and unchecked to hide - instead of a separate visibility toggle that was off by default.
+- The filter chips are now ordered attention-first: the states that want you (Needs you, Error, Interrupted, New, Idle) come before the ones that do not (Working, Background, Quiet).
+- Each filter chip now has a tooltip on hover, briefly explaining what that status means and when it occurs, translated into every language.
 
 ### Fixed
 - The expanded usage breakdown kept a gap before the cost again, instead of running its last entry straight into it.

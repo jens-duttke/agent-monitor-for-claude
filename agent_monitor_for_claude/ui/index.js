@@ -104,6 +104,14 @@ const DEFAULT_LABELS = {
     filter_working: 'Working',
     filter_background: 'Background',
     filter_quiet: 'Quiet',
+    filter_needs_tip: 'The agent stopped and needs you - to grant a permission, answer a question, or approve a plan.',
+    filter_errored_tip: "An API error or usage limit stopped the last run - it can't continue until that's resolved.",
+    filter_interrupted_tip: "You stopped the agent mid-task, so it's your turn again - nothing is running.",
+    filter_new_tip: "A just-started session that hasn't written anything to its transcript yet.",
+    filter_idle_tip: 'The agent finished and is waiting for your next message. Nothing is required.',
+    filter_working_tip: 'The agent is busy - thinking, running a tool, or working on your prompt.',
+    filter_background_tip: 'The agent finished, but a subagent or background process is still running.',
+    filter_quiet_tip: 'Finished or inactive sessions - nothing needs you and nothing is running.',
     age_seconds: '{s}s',
     age_minutes: '{m}m',
     age_hours: '{h}h {m}m',
@@ -122,19 +130,20 @@ const DEFAULT_LABELS = {
     copied: 'Copied to clipboard',
 };
 
-// One chip per status color, in attention order (blocked, your turn, busy,
-// background, quiet, new). Each chip is a checkbox for its status band: all on
-// by default, and unchecking one hides those sessions. Each dot teaches its
+// One chip per status color, attention-first: the states that want you
+// (blocked, errored, interrupted, new, idle) come before the ones that don't
+// (busy, background, quiet). Each chip is a checkbox for its status band: all
+// on by default, and unchecking one hides those sessions. Each dot teaches its
 // color, so the chips also serve as the status legend.
 const FILTER_DEFS = [
-    { key: 'needs', label: 'filter_needs', dot: 'dot-needs' },
-    { key: 'working', label: 'filter_working', dot: 'dot-working' },
-    { key: 'background', label: 'filter_background', dot: 'dot-background' },
-    { key: 'errored', label: 'filter_errored', dot: 'dot-errored' },
-    { key: 'idle', label: 'filter_idle', dot: 'dot-idle' },
-    { key: 'interrupted', label: 'filter_interrupted', dot: 'dot-interrupted' },
-    { key: 'quiet', label: 'filter_quiet', dot: 'dot-quiet' },
-    { key: 'new', label: 'status_new', dot: 'dot-new' },
+    { key: 'needs', label: 'filter_needs', tip: 'filter_needs_tip', dot: 'dot-needs' },
+    { key: 'errored', label: 'filter_errored', tip: 'filter_errored_tip', dot: 'dot-errored' },
+    { key: 'interrupted', label: 'filter_interrupted', tip: 'filter_interrupted_tip', dot: 'dot-interrupted' },
+    { key: 'new', label: 'status_new', tip: 'filter_new_tip', dot: 'dot-new' },
+    { key: 'idle', label: 'filter_idle', tip: 'filter_idle_tip', dot: 'dot-idle' },
+    { key: 'working', label: 'filter_working', tip: 'filter_working_tip', dot: 'dot-working' },
+    { key: 'background', label: 'filter_background', tip: 'filter_background_tip', dot: 'dot-background' },
+    { key: 'quiet', label: 'filter_quiet', tip: 'filter_quiet_tip', dot: 'dot-quiet' },
 ];
 
 // The status buckets the chips can select - the valid, persistable filter keys.
@@ -771,7 +780,9 @@ function renderFilters(counts) {
         const active = state.filters.has(def.key);
         const dot = def.dot ? ' ' + def.dot : '';
         const label = state.labels[def.label] || def.key;
+        const tip = def.tip ? (state.labels[def.tip] || '') : '';
         return '<button class="filter-chip' + dot + (active ? ' active' : '') + '" data-filter="' + def.key + '"'
+            + (tip ? ' data-tip="' + esc(tip) + '"' : '')
             + ' aria-pressed="' + (active ? 'true' : 'false') + '">'
             + esc(label) + '<span class="count">' + counts[def.key] + '</span></button>';
     }).join('');
