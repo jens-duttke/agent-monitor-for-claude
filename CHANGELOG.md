@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-13
+
 ### Added
 - An "Error" status for sessions whose turn stopped on an API error and cannot continue - a usage/session limit is named "Usage limit reached", any other API error stays generic - with its own red status color and filter chip. Previously such a session was shown as "Working" indefinitely.
 - Click a project's path in its panel header to open that folder in Windows Explorer.
@@ -57,5 +59,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 13 languages, auto-detected from the system locale.
 - Optional settings file to tune the poll interval and window size.
 
-[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jens-duttke/agent-monitor-for-claude/releases/tag/v0.1.0
