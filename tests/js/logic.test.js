@@ -80,6 +80,19 @@ test('classify: mid-flight assistant turn is working', () => {
     assert.equal(logic.classify(raw({ last_entry_kind: 'assistant', last_stop_reason: 'tool_use' })), 'working');
 });
 
+test('classify: a trailing API error is its own status, not working', () => {
+    // A usage/session limit (or overload/server error) stops the turn with a
+    // non-end_turn assistant entry; nothing is running, so it is "errored",
+    // never the "working" that entry would otherwise imply.
+    assert.equal(logic.classify(raw({ last_entry_kind: 'api_error', last_stop_reason: 'stop_sequence' })), 'errored');
+});
+
+test('classify: an API error overrides an unresolved pending tool', () => {
+    // Like an interrupt, the error ends the turn even if it left a tool_use
+    // unanswered, so it wins over the pending-tool rule.
+    assert.equal(logic.classify(raw({ last_entry_kind: 'api_error', pending_tool: true, pending_blocking: true })), 'errored');
+});
+
 test('classify: unrecognized entry with activity awaits input', () => {
     assert.equal(logic.classify(raw({ last_entry_kind: null, last_stop_reason: null })), 'awaiting_input');
 });
@@ -96,6 +109,10 @@ test('refineWithNative', () => {
     // has its own visibility toggle and must not be flipped out from under it.
     assert.equal(logic.refineWithNative('new', 'busy'), 'new');
     assert.equal(logic.refineWithNative('awaiting_permission', 'busy'), 'awaiting_permission');
+    // `errored` is definitive (an API-error turn is newest, nothing is running),
+    // so a lagging registry busy/idle must not flip or flatten it.
+    assert.equal(logic.refineWithNative('errored', 'busy'), 'errored');
+    assert.equal(logic.refineWithNative('errored', 'idle'), 'errored');
     assert.equal(logic.refineWithNative('working', null), 'working');
     // "waiting" with a reason is a blocking prompt the transcript has not caught up to.
     assert.equal(logic.refineWithNative('working', 'waiting', 'permission prompt'), 'awaiting_permission');
@@ -106,6 +123,7 @@ test('refineWithNative', () => {
 
 test('filterBucket maps each status to its toolbar chip', () => {
     assert.equal(logic.filterBucket('awaiting_permission'), 'needs');
+    assert.equal(logic.filterBucket('errored'), 'errored');
     assert.equal(logic.filterBucket('interrupted'), 'interrupted');
     assert.equal(logic.filterBucket('awaiting_input'), 'idle');
     assert.equal(logic.filterBucket('working'), 'working');
@@ -163,6 +181,23 @@ test('deriveStatus: an interrupted session with a surviving OS process still pro
     assert.equal(status, 'processing');
 });
 
+test('deriveStatus: an errored session survives a lagging native busy/idle', () => {
+    // The API-error turn is definitive - the registry catching up must neither
+    // flip it to working (busy) nor flatten it to plain idle.
+    assert.equal(logic.deriveStatus(raw({ last_entry_kind: 'api_error', native_status: 'busy', child_count: 0 })), 'errored');
+    assert.equal(logic.deriveStatus(raw({ last_entry_kind: 'api_error', native_status: 'idle', child_count: 0 })), 'errored');
+});
+
+test('deriveStatus: an errored session with a phantom subagent stays errored, not processing', () => {
+    // A usage limit stops the whole CLI, killing in-process subagents; the
+    // still-"running" count is a phantom and must not promote to processing. The
+    // error stays salient rather than being masked as background work.
+    const status = logic.deriveStatus(raw({
+        last_entry_kind: 'api_error', native_status: null, subagents_running: 1, child_count: 0,
+    }));
+    assert.equal(status, 'errored');
+});
+
 test('deriveStatus: registry waiting-for-permission overrides a stale fresh prompt', () => {
     // The user answered a prompt; the tool_use for the pending permission has
     // not yet landed in the transcript, so the structural rule still sees the
@@ -202,6 +237,8 @@ test('attentionLabel', () => {
         status_question: 'Question for you',
         status_plan_review: 'Plan review',
         status_working: 'Working',
+        status_errored: 'Error',
+        status_usage_limit: 'Usage limit reached',
     };
     // A known dialog tool keeps its precise label.
     assert.equal(logic.attentionLabel('awaiting_permission', 'AskUserQuestion', labels), 'Question for you');
@@ -210,6 +247,9 @@ test('attentionLabel', () => {
     assert.equal(logic.attentionLabel('awaiting_permission', 'Edit', labels), 'Permission needed');
     // The registry-derived block has no pending tool: stay neutral, do not claim permission.
     assert.equal(logic.attentionLabel('awaiting_permission', null, labels), 'Waiting for you');
+    // An errored session names the usage limit specifically; any other error is generic.
+    assert.equal(logic.attentionLabel('errored', null, labels, true), 'Usage limit reached');
+    assert.equal(logic.attentionLabel('errored', null, labels, false), 'Error');
     // Other statuses fall through to their plain label.
     assert.equal(logic.attentionLabel('working', null, labels), 'Working');
 });
@@ -369,6 +409,29 @@ test('buildSession: an interrupt reads as interrupted and clears the phantom sub
     assert.deepEqual(session.subagents_labels, []);
 });
 
+test('buildSession: a usage limit reads as errored, is named specifically, and clears the phantom subagent badge', () => {
+    const session = logic.buildSession({
+        session_id: 's', pid: 1, cwd: 'd:\\x', short_name: 's', alive: true, has_transcript: true,
+        last_entry_kind: 'api_error', last_stop_reason: 'stop_sequence', usage_limited: true,
+        native_status: null, usage: {}, subagents_running: 1, subagents_labels: ['general-purpose'], child_count: 0,
+    }, { status_errored: 'Error', status_usage_limit: 'Usage limit reached' }, {});
+    assert.equal(session.status, 'errored');
+    assert.equal(session.status_label, 'Usage limit reached');
+    assert.equal(session.needs_attention, true);
+    assert.equal(session.subagents_running, 0);
+    assert.deepEqual(session.subagents_labels, []);
+});
+
+test('buildSession: a non-limit API error reads as errored with the generic label', () => {
+    const session = logic.buildSession({
+        session_id: 's', pid: 1, cwd: 'd:\\x', short_name: 's', alive: true, has_transcript: true,
+        last_entry_kind: 'api_error', last_stop_reason: 'stop_sequence', usage_limited: false,
+        native_status: null, usage: {}, child_count: 0,
+    }, { status_errored: 'Error', status_usage_limit: 'Usage limit reached' }, {});
+    assert.equal(session.status, 'errored');
+    assert.equal(session.status_label, 'Error');
+});
+
 test('modelHistory preserves the backend order and formats labels', () => {
     // A switch back to a prior model is a distinct run, so it appears again as
     // the last entry - the timeline is already ordered, modelHistory must not
@@ -420,14 +483,16 @@ test('modelRank orders by capability, unknown last', () => {
     assert.equal(logic.modelRank(null), logic.MODEL_RANK.length);
 });
 
-test('STATUS_ORDER: needs -> working -> background -> idle -> interrupted -> quiet', () => {
+test('STATUS_ORDER: needs -> working -> background -> errored -> idle -> interrupted -> quiet', () => {
     // Priority ranking for sorting within a project: blocked-on-you first, then
-    // the session still doing work (foreground, then background), then the calm
-    // states - finished-idle, interrupted, and the terminal ones last.
+    // the session still doing work (foreground, then background), then a stuck
+    // errored turn, then the calm states - finished-idle, interrupted, and the
+    // terminal ones last.
     const order = logic.STATUS_ORDER;
     assert.ok(order.awaiting_permission < order.working);
     assert.ok(order.working < order.processing);
-    assert.ok(order.processing < order.awaiting_input);
+    assert.ok(order.processing < order.errored);
+    assert.ok(order.errored < order.awaiting_input);
     assert.ok(order.awaiting_input < order.interrupted);
     assert.ok(order.interrupted < order.completed);
     assert.ok(order.interrupted < order.unknown);
@@ -467,6 +532,15 @@ test('projectBand: an interrupted session is quiet (your turn), not top', () => 
     // it stays in the quiet band and does not pull its project up.
     assert.equal(logic.projectBand([{ status: 'interrupted' }]), 2);
     assert.equal(logic.projectBand([{ status: 'interrupted' }, { status: 'working' }]), 1);
+});
+
+test('projectBand: an errored session is quiet, not top', () => {
+    // A stuck-on-error session cannot proceed on its own, but there is often
+    // nothing to do but wait for the limit to reset - so it stays quiet-band and
+    // does not pull its project above the ones still doing work. Its own colour
+    // and chip already make it stand out within the panel.
+    assert.equal(logic.projectBand([{ status: 'errored' }]), 2);
+    assert.equal(logic.projectBand([{ status: 'errored' }, { status: 'working' }]), 1);
 });
 
 test('sortProjects: priority order groups by band, then alphabetically within a band', () => {

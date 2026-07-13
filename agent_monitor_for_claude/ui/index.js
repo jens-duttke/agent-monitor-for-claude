@@ -73,6 +73,8 @@ const DEFAULT_LABELS = {
     status_working: 'Working',
     status_processing: 'Background',
     status_interrupted: 'Interrupted',
+    status_errored: 'Error',
+    status_usage_limit: 'Usage limit reached',
     status_awaiting_input: 'Idle',
     status_awaiting_permission: 'Permission needed',
     status_needs_you: 'Waiting for you',
@@ -97,6 +99,7 @@ const DEFAULT_LABELS = {
     kind_interactive: 'Interactive',
     kind_background: 'Background',
     filter_needs: 'Needs you',
+    filter_errored: 'Error',
     filter_interrupted: 'Interrupted',
     filter_idle: 'Idle',
     filter_working: 'Working',
@@ -129,6 +132,7 @@ const FILTER_DEFS = [
     { key: 'needs', label: 'filter_needs', dot: 'dot-needs' },
     { key: 'working', label: 'filter_working', dot: 'dot-working' },
     { key: 'background', label: 'filter_background', dot: 'dot-background' },
+    { key: 'errored', label: 'filter_errored', dot: 'dot-errored' },
     { key: 'idle', label: 'filter_idle', dot: 'dot-idle' },
     { key: 'interrupted', label: 'filter_interrupted', dot: 'dot-interrupted' },
     { key: 'quiet', label: 'filter_quiet', dot: 'dot-quiet' },
@@ -755,7 +759,7 @@ function loadFilters() {
 }
 
 function countByFilter(projects) {
-    const counts = { all: 0, needs: 0, idle: 0, working: 0, background: 0, interrupted: 0, quiet: 0, new: 0 };
+    const counts = { all: 0, needs: 0, idle: 0, working: 0, background: 0, errored: 0, interrupted: 0, quiet: 0, new: 0 };
     for (const project of projects) {
         for (const session of project.sessions) {
             if (session.status === 'new') {

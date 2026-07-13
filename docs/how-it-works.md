@@ -21,6 +21,7 @@ The derivation, in order (the first match wins):
 | the process has exited | **Finished** |
 | no transcript yet (fresh window, no prompt) | **New** |
 | the interrupt marker `[Request interrupted by user]` | **Interrupted** - you stopped the turn, so control is back with you (this wins even when the interrupt left a tool call unfinished) |
+| a trailing turn flagged as an API error | **Error** - the turn stopped on an API error and nothing is running; a usage/session limit (HTTP 429) is named **Usage limit reached**, any other error stays generic (this wins even when the error left a tool call unfinished) |
 | a pending tool that is a question or plan dialog (`AskUserQuestion`, `ExitPlanMode`) | blocked - **Question for you** or **Plan review** (dialogs block in every mode) |
 | a pending generic tool in Manual (`default`) mode | **Permission needed** |
 | a pending generic tool in Auto / Auto-edit / Plan mode, or while a child process runs | **Working** - the tool is executing (these modes never prompt) |
@@ -34,7 +35,7 @@ Entries of embedded subagent conversations (sidechains) are ignored for state de
 
 When a turn has finished or was interrupted but work is still running in the background - a subagent, or a watched child process such as a build - the session reads as **Background** rather than your turn, so a still-busy session is never mistaken for a finished one. An interrupt kills in-process subagents, so only a surviving OS child process keeps an interrupted session in Background.
 
-Some registry records additionally carry a `status` field (`busy`/`idle`, or `waiting` with a reason) maintained by Claude Code itself. When present it refines the derived status: `busy` reads as **Working**, `idle` as **Idle**, and a `waiting` record whose reason names a prompt as **Permission needed** - the last is essential because Claude Code marks a session blocked on you *before* the pending tool request reaches the transcript, and for worktree sessions where two processes share one transcript and the transcript alone cannot tell them apart. A detected permission prompt or an interrupt is never overridden, and a `New` session is never demoted.
+Some registry records additionally carry a `status` field (`busy`/`idle`, or `waiting` with a reason) maintained by Claude Code itself. When present it refines the derived status: `busy` reads as **Working**, `idle` as **Idle**, and a `waiting` record whose reason names a prompt as **Permission needed** - the last is essential because Claude Code marks a session blocked on you *before* the pending tool request reaches the transcript, and for worktree sessions where two processes share one transcript and the transcript alone cannot tell them apart. A detected permission prompt, an interrupt, or an API error is never overridden, and a `New` session is never demoted.
 
 Time since last activity is taken from the newest transcript entry's own timestamp (Claude Code records these in UTC), falling back to the file's modification time only when no entry carries a parseable timestamp. Reading the entry rather than the file mtime is deliberate: an idle process that rewrites session metadata in place bumps the file's mtime without appending a turn, and that must not reset the age. The displayed ages tick forward every second in the UI between refreshes.
 

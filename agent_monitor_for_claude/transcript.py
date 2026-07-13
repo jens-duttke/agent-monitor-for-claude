@@ -5,8 +5,9 @@ Transcript Metadata
 Reads a session transcript and extracts **only** control-flow metadata:
 entry type, the last assistant turn's ``stop_reason``, tool-request/result
 IDs (to detect an unanswered request), the last tool's name, whether the newest
-user turn is Claude Code's interrupt marker, timestamps, the model name,
-aggregated token-usage numbers, and the session title (the ``aiTitle`` Claude
+user turn is Claude Code's interrupt marker, whether a trailing turn is an API
+error (and whether that error is a usage/session limit), timestamps, the model
+name, aggregated token-usage numbers, and the session title (the ``aiTitle`` Claude
 Code generates for its own session list, or the ``customTitle`` the user set by
 renaming the session - display metadata, not conversation content).
 
@@ -131,6 +132,7 @@ class TranscriptState:
     last_tool_name: str | None = None
     last_timestamp: str | None = None
     last_entry_kind: str | None = None
+    usage_limited: bool = False
     age_seconds: float | None = None
     title: str | None = None
     model: str | None = None
@@ -258,6 +260,7 @@ def _parse(lines: list[str]) -> TranscriptState:
     last_stop_reason: str | None = None
     last_timestamp: str | None = None
     last_entry_kind: str | None = None
+    usage_limited: bool = False
     model: str | None = None
 
     for line in lines:
@@ -286,18 +289,29 @@ def _parse(lines: list[str]) -> TranscriptState:
         content = message.get('content') if isinstance(message, dict) else None
 
         if entry_type == 'assistant' and isinstance(message, dict):
-            last_entry_kind = 'assistant'
-            last_stop_reason = message.get('stop_reason')
-            entry_model = message.get('model')
-            # Keep the last *real* model for the column; the synthetic sentinel
-            # (locally-generated turns) is not a model and must not be displayed.
-            if isinstance(entry_model, str) and entry_model and entry_model != _SYNTHETIC_MODEL:
-                model = entry_model
-            if isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get('type') == 'tool_use':
-                        last_tool_id = block.get('id')
-                        last_tool_name = block.get('name')
+            if entry.get('isApiErrorMessage') is True:
+                # A locally-generated error turn (a usage/session limit, an
+                # overload, or a server error). The turn stopped and nothing is
+                # running, so it is its own kind - never the pending assistant
+                # turn that a non-end_turn stop_reason would otherwise imply and
+                # read as "working". Only the structural error fields are read
+                # (status/kind), never the message text.
+                last_entry_kind = 'api_error'
+                last_stop_reason = message.get('stop_reason')
+                usage_limited = _is_usage_limit(entry)
+            else:
+                last_entry_kind = 'assistant'
+                last_stop_reason = message.get('stop_reason')
+                entry_model = message.get('model')
+                # Keep the last *real* model for the column; the synthetic sentinel
+                # (locally-generated turns) is not a model and must not be displayed.
+                if isinstance(entry_model, str) and entry_model and entry_model != _SYNTHETIC_MODEL:
+                    model = entry_model
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get('type') == 'tool_use':
+                            last_tool_id = block.get('id')
+                            last_tool_name = block.get('name')
 
         elif entry_type == 'user':
             # A user entry is a fresh prompt, a tool_result answering a request,
@@ -330,8 +344,23 @@ def _parse(lines: list[str]) -> TranscriptState:
         last_tool_name=last_tool_name,
         last_timestamp=last_timestamp,
         last_entry_kind=last_entry_kind,
+        usage_limited=usage_limited,
         model=model,
     )
+
+
+def _is_usage_limit(entry: dict) -> bool:
+    """Return True if an API-error entry is a usage/session limit (HTTP 429).
+
+    Distinguishes the rate-limit case (the model cannot continue until the
+    limit resets) from other API errors, so the UI can name it precisely.
+    Both the numeric status and the ``error`` token are checked defensively.
+    """
+    status = entry.get('apiErrorStatus')
+    if status == 429 or status == '429':
+        return True
+
+    return entry.get('error') == 'rate_limit'
 
 
 def _scan_appended(path: Path) -> tuple[dict[str, int], dict[str, dict[str, int]], list[dict[str, str]], str | None, str | None]:

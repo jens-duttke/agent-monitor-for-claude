@@ -82,6 +82,7 @@ def _build_session_record(record: dict[str, Any], probe_map: dict[int, Any]) -> 
         'has_activity': transcript_state.last_timestamp is not None,
         'last_entry_kind': transcript_state.last_entry_kind,
         'last_stop_reason': transcript_state.last_stop_reason,
+        'usage_limited': transcript_state.usage_limited,
         'pending_tool': transcript_state.pending_tool,
         'last_tool_name': transcript_state.last_tool_name,
         'permission_mode': transcript_state.permission_mode,

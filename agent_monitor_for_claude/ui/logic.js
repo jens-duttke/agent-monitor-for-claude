@@ -17,22 +17,24 @@ function fmt(template, values) {
 
 /* --- status classification (ported from the former status.py) --- */
 
-const NEEDS_ATTENTION = new Set(['awaiting_input', 'awaiting_permission', 'interrupted']);
+const NEEDS_ATTENTION = new Set(['awaiting_input', 'awaiting_permission', 'interrupted', 'errored']);
 
 // Lower value sorts first: most urgent (blocked on you) down to terminal. The
 // order follows what each state asks of you: blocked-on-you first, then the
-// session still doing work (foreground, then background), then the calm states -
-// a finished-idle turn, an interrupted turn (you stopped it, so it owes nothing),
-// and finally the terminal ones. This mirrors the filter chip order.
+// session still doing work (foreground, then background), then a stuck turn that
+// stopped on an error, then the calm states - a finished-idle turn, an
+// interrupted turn (you stopped it, so it owes nothing), and finally the
+// terminal ones. This mirrors the filter chip order.
 const STATUS_ORDER = {
     awaiting_permission: 0,
     working: 1,
     processing: 2,
-    awaiting_input: 3,
-    interrupted: 4,
-    new: 5,
-    unknown: 6,
-    completed: 7,
+    errored: 3,
+    awaiting_input: 4,
+    interrupted: 5,
+    new: 6,
+    unknown: 7,
+    completed: 8,
 };
 
 // The guiding principle is structural, not time-based: the states that mean
@@ -57,6 +59,15 @@ function classify(raw) {
     // so an abandoned-mid-task session is told apart from a clean finish.
     if (raw.last_entry_kind === 'user_interrupt') {
         return 'interrupted';
+    }
+    // The last turn stopped on an API error - a usage/session limit, an
+    // overload, or a server error. Nothing is running and the model cannot
+    // resume on its own (you wait for the limit to reset, switch, or retry), so
+    // this is its own state, never the "working" a non-end_turn assistant turn
+    // would imply. Checked before the pending-tool rule: the error ended the
+    // turn even if it left a tool_use unresolved (like the interrupt above).
+    if (raw.last_entry_kind === 'api_error') {
+        return 'errored';
     }
     if (raw.pending_tool) {
         return raw.pending_blocking ? 'awaiting_permission' : 'working';
@@ -85,10 +96,11 @@ function classify(raw) {
 }
 
 function refineWithNative(status, nativeStatus, waitingFor) {
-    // `interrupted` comes from the definitive interrupt marker being the newest
-    // entry - no turn is running, so a lagging registry `busy`/`idle` must not
-    // flip or flatten it. Guarded like awaiting_permission.
-    if (status === 'awaiting_permission' || status === 'interrupted' || nativeStatus == null) {
+    // `interrupted` and `errored` come from a definitive trailing entry (the
+    // interrupt marker, or an API-error turn) being the newest - no turn is
+    // running, so a lagging registry `busy`/`idle` must not flip or flatten
+    // them. Guarded like awaiting_permission.
+    if (status === 'awaiting_permission' || status === 'interrupted' || status === 'errored' || nativeStatus == null) {
         return status;
     }
     if (nativeStatus === 'busy' && status !== 'new') {
@@ -134,6 +146,7 @@ function needsAttention(status) {
 // its own visibility toggle, not an exclusive chip.
 const STATUS_FILTER = {
     awaiting_permission: 'needs',
+    errored: 'errored',
     interrupted: 'interrupted',
     awaiting_input: 'idle',
     working: 'working',
@@ -165,12 +178,13 @@ function deriveStatus(raw) {
 
     if (raw.alive) {
         status = refineWithNative(status, raw.native_status, raw.waiting_for);
-        // An interrupt tears down in-process subagents, so a still-"running"
-        // count is a phantom until the recent window clears it - it must not
-        // promote the idle session to "processing". A detached OS child process
-        // (a build or server) can outlive the interrupt, so it still counts.
-        const interrupted = raw.last_entry_kind === 'user_interrupt';
-        const subagentsRunning = interrupted ? 0 : (raw.subagents_running || 0);
+        // A force-stopped turn (an interrupt, or an API error such as a usage
+        // limit) tears down in-process subagents, so a still-"running" count is
+        // a phantom until the recent window clears it - it must not promote the
+        // session to "processing". A detached OS child process (a build or
+        // server) can outlive the stop, so it still counts.
+        const turnStopped = raw.last_entry_kind === 'user_interrupt' || raw.last_entry_kind === 'api_error';
+        const subagentsRunning = turnStopped ? 0 : (raw.subagents_running || 0);
         const backgroundWork = subagentsRunning > 0 || toolRunning;
         status = refineWithBackgroundWork(status, backgroundWork);
     }
@@ -212,7 +226,7 @@ function statusLabel(status, labels) {
     return labels['status_' + status] || status;
 }
 
-function attentionLabel(status, pendingToolName, labels) {
+function attentionLabel(status, pendingToolName, labels, usageLimited) {
     if (status === 'awaiting_permission') {
         if (QUESTION_TOOLS.has(pendingToolName)) {
             return labels.status_question;
@@ -228,6 +242,12 @@ function attentionLabel(status, pendingToolName, labels) {
         if (!pendingToolName) {
             return labels.status_needs_you;
         }
+    }
+    // A stuck-on-error session names the usage/session limit specifically (the
+    // common, actionable case - wait for the reset); any other API error keeps
+    // the generic label.
+    if (status === 'errored') {
+        return usageLimited ? labels.status_usage_limit : statusLabel(status, labels);
     }
     return statusLabel(status, labels);
 }
@@ -531,12 +551,13 @@ function buildSession(raw, labels, prices) {
     const usage = raw.usage || {};
     const models = modelHistory(raw.model_timeline);
 
-    // In-process subagents die with an interrupt, so any still-"running" count
-    // is a phantom the recent window has yet to clear. Hide it here too, so the
-    // row does not show a running subagent next to an idle status.
-    const interrupted = raw.last_entry_kind === 'user_interrupt';
-    const subagentsRunning = interrupted ? 0 : (raw.subagents_running || 0);
-    const subagentsLabels = interrupted ? [] : (raw.subagents_labels || []);
+    // In-process subagents die when the turn is force-stopped - by an interrupt
+    // or an API error (a usage limit stops the whole CLI) - so any still-"running"
+    // count is a phantom the recent window has yet to clear. Hide it here too, so
+    // the row does not show a running subagent next to a stopped status.
+    const turnStopped = raw.last_entry_kind === 'user_interrupt' || raw.last_entry_kind === 'api_error';
+    const subagentsRunning = turnStopped ? 0 : (raw.subagents_running || 0);
+    const subagentsLabels = turnStopped ? [] : (raw.subagents_labels || []);
 
     // Two parts so the row can animate the reveal: a compact anchor shown by
     // default (the cost when it can be priced, else a plain token total so the
@@ -560,7 +581,7 @@ function buildSession(raw, labels, prices) {
         short_name: raw.short_name,
         kind: raw.kind,
         status: status,
-        status_label: attentionLabel(status, raw.last_tool_name, labels),
+        status_label: attentionLabel(status, raw.last_tool_name, labels, raw.usage_limited),
         needs_attention: needsAttention(status),
         model: formatModel(raw.model_id),
         model_switched: models.length > 1,
@@ -604,6 +625,7 @@ const STATUS_BAND = {
     awaiting_permission: 0,
     working: 1,
     processing: 1,
+    errored: QUIET_BAND,
     interrupted: QUIET_BAND,
     awaiting_input: QUIET_BAND,
     new: QUIET_BAND,

@@ -29,6 +29,7 @@
     --c-completed: #6f6d66;
     --c-unknown: #8a877c;
     --c-interrupted: #ffcc00;
+    --c-errored: #e8823a;
 
     /* Solid colors for native popup lists (select options). */
     --menu-bg: #30302e;
@@ -60,6 +61,7 @@
     --c-completed: #a09d92;
     --c-unknown: #8f8c81;
     --c-interrupted: #b7860b;
+    --c-errored: #c25f14;
 
     --menu-bg: #ffffff;
     --menu-fg: #3d3d3a;
@@ -390,6 +392,7 @@ body {
     }
 
     &.dot-needs::before,
+    &.dot-errored::before,
     &.dot-interrupted::before,
     &.dot-idle::before,
     &.dot-working::before,
@@ -403,6 +406,7 @@ body {
     }
 
     &.dot-needs::before { background: var(--c-awaiting_permission); }
+    &.dot-errored::before { background: var(--c-errored); }
     &.dot-interrupted::before { background: var(--c-interrupted); }
     &.dot-idle::before { background: var(--c-awaiting_input); }
     &.dot-working::before { background: var(--c-working); }
@@ -600,6 +604,7 @@ body {
     white-space: nowrap;
 
     &.status-working { --s: var(--c-working); }
+    &.status-errored { --s: var(--c-errored); }
     &.status-interrupted { --s: var(--c-interrupted); }
     &.status-awaiting_input { --s: var(--c-awaiting_input); }
     &.status-awaiting_permission { --s: var(--c-awaiting_permission); }
@@ -810,6 +815,7 @@ body {
 
 .status-working { --s: var(--c-working); }
 .status-processing { --s: var(--c-processing); }
+.status-errored { --s: var(--c-errored); }
 .status-interrupted { --s: var(--c-interrupted); }
 .status-awaiting_input { --s: var(--c-awaiting_input); }
 .status-awaiting_permission { --s: var(--c-awaiting_permission); }

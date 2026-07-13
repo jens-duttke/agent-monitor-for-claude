@@ -342,6 +342,81 @@ class ParseTest(TranscriptEnvTest):
 
         self.assertEqual(state.last_entry_kind, 'user_text')
 
+    def test_trailing_usage_limit_is_its_own_entry_kind(self) -> None:
+        # A usage/session limit is written as a locally-generated (synthetic)
+        # assistant turn with an error flag and a non-end_turn stop_reason. It
+        # must read as its own api_error kind (never a pending assistant turn),
+        # flagged as a usage limit, without leaking the message text.
+        self._write_transcript(_SESSION_ID, _CWD, [
+            json.dumps({
+                'type': 'assistant', 'timestamp': '2026-07-11T13:19:14Z',
+                'message': {'stop_reason': 'stop_sequence', 'model': '<synthetic>',
+                            'usage': {'input_tokens': 0, 'output_tokens': 0},
+                            'content': [{'type': 'text', 'text': "You've hit your session limit"}]},
+                'error': 'rate_limit', 'isApiErrorMessage': True, 'apiErrorStatus': 429,
+            }),
+        ])
+        state = state_for(_SESSION_ID, _CWD)
+
+        self.assertEqual(state.last_entry_kind, 'api_error')
+        self.assertTrue(state.usage_limited)
+
+    def test_usage_limit_detected_from_error_token_without_a_status(self) -> None:
+        # Defensive: a rate-limit turn whose status field is absent is still
+        # recognized from the `error` token alone.
+        self._write_transcript(_SESSION_ID, _CWD, [
+            json.dumps({
+                'type': 'assistant', 'timestamp': '2026-07-11T13:19:14Z',
+                'message': {'stop_reason': 'stop_sequence', 'model': '<synthetic>',
+                            'usage': {'input_tokens': 0, 'output_tokens': 0}, 'content': []},
+                'error': 'rate_limit', 'isApiErrorMessage': True,
+            }),
+        ])
+        state = state_for(_SESSION_ID, _CWD)
+
+        self.assertEqual(state.last_entry_kind, 'api_error')
+        self.assertTrue(state.usage_limited)
+
+    def test_non_limit_api_error_is_not_flagged_usage_limited(self) -> None:
+        # Other trailing API errors (an overload, a server error) are still the
+        # api_error kind, but must not be labelled a usage limit.
+        self._write_transcript(_SESSION_ID, _CWD, [
+            json.dumps({
+                'type': 'assistant', 'timestamp': '2026-07-11T13:19:14Z',
+                'message': {'stop_reason': 'stop_sequence', 'model': '<synthetic>',
+                            'usage': {'input_tokens': 0, 'output_tokens': 0},
+                            'content': [{'type': 'text', 'text': 'API Error: 529 overloaded'}]},
+                'error': 'overloaded_error', 'isApiErrorMessage': True, 'apiErrorStatus': 529,
+            }),
+        ])
+        state = state_for(_SESSION_ID, _CWD)
+
+        self.assertEqual(state.last_entry_kind, 'api_error')
+        self.assertFalse(state.usage_limited)
+
+    def test_api_error_superseded_by_a_later_real_turn(self) -> None:
+        # A mid-conversation error that Claude Code retried and followed with a
+        # real turn must not stick: the newest entry wins, so the kind is the
+        # later assistant turn, not api_error.
+        self._write_transcript(_SESSION_ID, _CWD, [
+            json.dumps({
+                'type': 'assistant', 'timestamp': '2026-07-11T13:19:14Z',
+                'message': {'stop_reason': 'stop_sequence', 'model': '<synthetic>',
+                            'usage': {'input_tokens': 0, 'output_tokens': 0}, 'content': []},
+                'error': 'overloaded_error', 'isApiErrorMessage': True, 'apiErrorStatus': 529,
+            }),
+            json.dumps({
+                'type': 'assistant', 'timestamp': '2026-07-11T13:19:40Z',
+                'message': {'stop_reason': 'end_turn', 'model': 'claude-opus-4-8',
+                            'usage': {'input_tokens': 12, 'output_tokens': 8}, 'content': [{'type': 'text', 'text': 'ok'}]},
+            }),
+        ])
+        state = state_for(_SESSION_ID, _CWD)
+
+        self.assertEqual(state.last_entry_kind, 'assistant')
+        self.assertFalse(state.usage_limited)
+        self.assertEqual(state.model, 'claude-opus-4-8')
+
     def test_extracts_latest_permission_mode(self) -> None:
         lines = [
             json.dumps({'type': 'permission-mode', 'permissionMode': 'default', 'sessionId': _SESSION_ID}),
@@ -475,6 +550,25 @@ class PrivacyTest(TranscriptEnvTest):
         serialized = json.dumps(asdict(state))
         for secret in _SECRETS:
             self.assertNotIn(secret, serialized)
+
+    def test_api_error_message_text_is_never_read(self) -> None:
+        # A usage-limit / API-error turn carries a human-readable message (which
+        # can quote arbitrary context); only the structural error fields may be
+        # read, never that text.
+        self._write_transcript(_SESSION_ID, _CWD, [
+            json.dumps({
+                'type': 'assistant', 'timestamp': '2026-07-11T13:19:14Z',
+                'message': {'stop_reason': 'stop_sequence', 'model': '<synthetic>',
+                            'usage': {'input_tokens': 0, 'output_tokens': 0},
+                            'content': [{'type': 'text', 'text': 'SECRET_TEXT hit your session limit'}]},
+                'error': 'rate_limit', 'isApiErrorMessage': True, 'apiErrorStatus': 429,
+            }),
+        ])
+        state = state_for(_SESSION_ID, _CWD)
+
+        self.assertEqual(state.last_entry_kind, 'api_error')
+        self.assertTrue(state.usage_limited)
+        self.assertNotIn('SECRET_TEXT', json.dumps(asdict(state)))
 
     def test_only_first_prompt_is_read_never_later_messages(self) -> None:
         # The first prompt is the sanctioned display title; every later user

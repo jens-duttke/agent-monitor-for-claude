@@ -42,7 +42,7 @@ function rawSession(overrides) {
         entrypoint: null, native_status: null, waiting_for: null, alive: true,
         child_count: 0, child_names: [], host: null, via_cli: false,
         has_transcript: true, has_activity: true, last_entry_kind: 'assistant', last_stop_reason: 'end_turn',
-        pending_tool: false, last_tool_name: null, permission_mode: null,
+        pending_tool: false, last_tool_name: null, usage_limited: false, permission_mode: null,
         model_id: null, usage: {}, usage_by_model: {}, model_timeline: [], title: null,
         subagents_running: 0, subagents_done: 0, subagents_labels: [], age_seconds: 0,
     }, overrides);
@@ -133,6 +133,21 @@ window.__MOCK_SNAPSHOT__ = {
             ...priced('claude-opus-4-8[1m]', {
                 input_tokens: 28800, output_tokens: 6400, cache_read_input_tokens: 19600000,
                 cache_creation_input_tokens: 720000, cache_creation_5m_input_tokens: 520000, cache_creation_1h_input_tokens: 200000,
+            }),
+        }),
+
+        // A turn that stopped when the account hit its usage/session limit: its
+        // own orange "Usage limit reached" status. Nothing is running and the
+        // model cannot continue until the limit resets, so it is never mistaken
+        // for a still-"Working" session. The last real model is still shown.
+        rawSession({
+            session_id: 'h6f', short_name: 'helios-renderer-d4', pid: 28190, entrypoint: 'claude-vscode', host: 'VS Code',
+            title: 'Vectorize the tone-mapping pass', permission_mode: 'default',
+            last_entry_kind: 'api_error', last_stop_reason: 'stop_sequence', usage_limited: true,
+            age_seconds: 5400,
+            ...priced('claude-opus-4-8[1m]', {
+                input_tokens: 52300, output_tokens: 11800, cache_read_input_tokens: 34700000,
+                cache_creation_input_tokens: 1300000, cache_creation_5m_input_tokens: 900000, cache_creation_1h_input_tokens: 400000,
             }),
         }),
 
