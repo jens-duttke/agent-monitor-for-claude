@@ -50,6 +50,12 @@ const state = {
     fingerprint: null,
     checking: false,
     booted: false,
+    // Past (non-live) sessions, fetched on demand the first time the history
+    // chip is enabled and cached thereafter (dead sessions do not change). null
+    // means "not fetched yet"; historyLoading guards against a double fetch and
+    // drives the loading note.
+    history: null,
+    historyLoading: false,
 };
 
 // Sort options: key -> label key. Values are computed per session below.
@@ -130,6 +136,16 @@ const DEFAULT_LABELS = {
     copy_session_id: 'Copy session ID',
     copied: 'Copied to clipboard',
     open_in_explorer: 'Open in Explorer',
+    filter_history: 'History',
+    filter_history_tip: 'Past sessions that are no longer running (loaded on demand)',
+    history_loading: 'Loading past sessions…',
+    delete_session: 'Delete session',
+    delete_confirm_title: 'Delete this session?',
+    delete_confirm_body: 'This permanently removes the session transcript and its subagent files from disk. This cannot be undone.',
+    delete_confirm_ok: 'Delete',
+    cancel: 'Cancel',
+    deleted: 'Session deleted',
+    delete_failed: 'Could not delete the session',
 };
 
 // One chip per status color, attention-first: the states that want you
@@ -146,10 +162,17 @@ const FILTER_DEFS = [
     { key: 'working', label: 'filter_working', tip: 'filter_working_tip', dot: 'dot-working' },
     { key: 'background', label: 'filter_background', tip: 'filter_background_tip', dot: 'dot-background' },
     { key: 'quiet', label: 'filter_quiet', tip: 'filter_quiet_tip', dot: 'dot-quiet' },
+    // Off by default: enabling it triggers the on-demand scan of past sessions.
+    { key: 'history', label: 'filter_history', tip: 'filter_history_tip', dot: 'dot-history', offByDefault: true },
 ];
 
 // The status buckets the chips can select - the valid, persistable filter keys.
 const FILTER_KEYS = new Set(FILTER_DEFS.map((def) => def.key));
+
+// The chips active on a first launch: every chip except the ones that opt out
+// (history), so the potentially large history scan only runs once the user asks
+// for it.
+const DEFAULT_FILTER_KEYS = FILTER_DEFS.filter((def) => !def.offByDefault).map((def) => def.key);
 
 function apiBridge() {
     return (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
@@ -536,7 +559,7 @@ function openMenu(anchor, items, onSelect, context) {
     items.forEach((item) => {
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = 'menu-item' + (item.active ? ' active' : '');
+        button.className = 'menu-item' + (item.active ? ' active' : '') + (item.danger ? ' danger' : '');
         button.setAttribute('role', 'menuitem');
         button.innerHTML = '<span class="menu-check" aria-hidden="true">&#10003;</span>'
             + '<span class="menu-label"></span>';
@@ -706,23 +729,164 @@ function toast(message) {
     toastTimer = setTimeout(() => el.classList.remove('show'), 1800);
 }
 
+/* --- delete a past session (the sole write action) --- */
+
+// Ask before deleting, then call the bridge. On success the session is dropped
+// from the cached history and the view re-renders; the deletion itself runs on
+// a worker thread, so awaiting it never blocks the window.
+function confirmDeleteSession(sessionId, cwd) {
+    if (!sessionId) {
+        return;
+    }
+    showConfirm(state.labels.delete_confirm_title, state.labels.delete_confirm_body, state.labels.delete_confirm_ok, async () => {
+        const bridge = apiBridge();
+        if (!bridge || typeof bridge.delete_session !== 'function') {
+            return;
+        }
+
+        let ok = false;
+        try {
+            ok = await bridge.delete_session(sessionId, cwd);
+        } catch (e) {
+            ok = false;
+        }
+
+        if (ok) {
+            if (Array.isArray(state.history)) {
+                state.history = state.history.filter((session) => session.session_id !== sessionId);
+            }
+            toast(state.labels.deleted);
+            if (state.last) {
+                render(state.last);
+            }
+        } else {
+            toast(state.labels.delete_failed);
+        }
+    });
+}
+
+// A themed, self-contained confirmation modal (the native confirm dialog is
+// unthemed and blocking, and the app deliberately avoids native chrome). Escape
+// or a backdrop click cancels; only the primary button runs onConfirm.
+function showConfirm(title, body, okLabel, onConfirm) {
+    closeConfirm();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'confirm-overlay';
+    overlay.innerHTML = '<div class="modal" role="dialog" aria-modal="true">'
+        + '<div class="modal-title"></div>'
+        + '<div class="modal-body"></div>'
+        + '<div class="modal-actions">'
+        +     '<button class="modal-btn" type="button" data-act="cancel"></button>'
+        +     '<button class="modal-btn danger" type="button" data-act="ok"></button>'
+        + '</div></div>';
+
+    overlay.querySelector('.modal-title').textContent = title || '';
+    overlay.querySelector('.modal-body').textContent = body || '';
+
+    const cancelBtn = overlay.querySelector('[data-act="cancel"]');
+    const okBtn = overlay.querySelector('[data-act="ok"]');
+    cancelBtn.textContent = state.labels.cancel || 'Cancel';
+    okBtn.textContent = okLabel || state.labels.delete_confirm_ok || 'Delete';
+
+    cancelBtn.addEventListener('click', closeConfirm);
+    okBtn.addEventListener('click', () => {
+        closeConfirm();
+        onConfirm();
+    });
+    overlay.addEventListener('click', (event) => {
+        if (event.target === overlay) {
+            closeConfirm();
+        }
+    });
+
+    document.addEventListener('keydown', onConfirmKey, true);
+    document.body.appendChild(overlay);
+    okBtn.focus();
+}
+
+function onConfirmKey(event) {
+    if (event.key === 'Escape') {
+        closeConfirm();
+    }
+}
+
+function closeConfirm() {
+    const overlay = document.getElementById('confirm-overlay');
+    if (overlay) {
+        overlay.remove();
+    }
+    document.removeEventListener('keydown', onConfirmKey, true);
+}
+
 /* --- filtering --- */
 
 // Each status chip is a checkbox, all on by default. A session shows only while
 // its status band's chip is still active; unchecking a chip hides those
 // sessions.
 function matchesFilter(session) {
-    const bucket = logic.filterBucket(session.status);
+    const bucket = logic.sessionBucket(session);
     return bucket != null && state.filters.has(bucket);
 }
 
 function toggleFilter(key) {
-    if (state.filters.has(key)) {
+    const wasActive = state.filters.has(key);
+    if (wasActive) {
         state.filters.delete(key);
     } else {
         state.filters.add(key);
     }
     persistFilters();
+
+    // Turning the history chip on is what triggers the (potentially second-long)
+    // scan of past sessions - lazily, off the UI thread, so the page never
+    // blocks. ensureHistoryLoaded re-renders when the data arrives.
+    if (key === 'history' && !wasActive) {
+        ensureHistoryLoaded();
+    }
+
+    if (state.last) {
+        render(state.last);
+    }
+}
+
+// Fetch past sessions once, the first time the history chip is enabled, and
+// cache them. The bridge call runs on a pywebview worker thread, so awaiting it
+// does not block the WebView: the live overview stays interactive and a loading
+// note shows until the scan returns.
+async function ensureHistoryLoaded() {
+    if (state.history !== null || state.historyLoading) {
+        return;
+    }
+
+    const bridge = apiBridge();
+    if (!bridge || typeof bridge.get_history !== 'function') {
+        // Browser preview: use the fabricated history if dev-mock provided any.
+        // Without a bridge and not in mock mode the data source is not ready yet;
+        // leave history null so a later call (a re-toggle, or boot) retries.
+        if (mockMode()) {
+            state.history = Array.isArray(window.__MOCK_HISTORY__) ? window.__MOCK_HISTORY__ : [];
+            if (state.last) {
+                render(state.last);
+            }
+        }
+        return;
+    }
+
+    state.historyLoading = true;
+    if (state.last) {
+        render(state.last);
+    }
+
+    try {
+        const history = await bridge.get_history();
+        state.history = Array.isArray(history) ? history : [];
+    } catch (e) {
+        state.history = [];
+    }
+
+    state.historyLoading = false;
     if (state.last) {
         render(state.last);
     }
@@ -744,10 +908,10 @@ function loadFilters() {
     try {
         stored = localStorage.getItem('amc-filter');
     } catch (e) {
-        return new Set(FILTER_KEYS);
+        return new Set(DEFAULT_FILTER_KEYS);
     }
     if (stored == null) {
-        return new Set(FILTER_KEYS);
+        return new Set(DEFAULT_FILTER_KEYS);
     }
 
     let values = null;
@@ -758,23 +922,23 @@ function loadFilters() {
         }
     } catch (e) { /* not the array format - fall through to the legacy value */ }
     if (values == null) {
-        values = stored === 'all' ? [...FILTER_KEYS] : [stored];
+        values = stored === 'all' ? [...DEFAULT_FILTER_KEYS] : [stored];
     }
 
     const active = new Set(values.filter((key) => FILTER_KEYS.has(key)));
 
     // An empty selection would hide every session - never a useful state to
     // restore into (and how a legacy "show everything" was stored), so fall
-    // back to all chips active.
-    return active.size > 0 ? active : new Set(FILTER_KEYS);
+    // back to the default chips active.
+    return active.size > 0 ? active : new Set(DEFAULT_FILTER_KEYS);
 }
 
 function countByFilter(projects) {
-    const counts = { all: 0, needs: 0, idle: 0, working: 0, background: 0, errored: 0, interrupted: 0, quiet: 0, new: 0 };
+    const counts = { all: 0, needs: 0, idle: 0, working: 0, background: 0, errored: 0, interrupted: 0, quiet: 0, new: 0, history: 0 };
     for (const project of projects) {
         for (const session of project.sessions) {
             counts.all += 1;
-            const bucket = logic.filterBucket(session.status);
+            const bucket = logic.sessionBucket(session);
             if (bucket) {
                 counts[bucket] += 1;
             }
@@ -918,11 +1082,17 @@ function bindUsageHover(cell) {
 function updateRow(row, session, projectName) {
     const labels = state.labels;
 
-    row.className = 'row status-' + session.status;
-    row.dataset.pid = Number(session.pid);
+    row.className = 'row status-' + session.status + (session.is_history ? ' is-history' : '');
     row.dataset.project = projectName || '';
     row.dataset.session = session.session_id || '';
     row.dataset.title = session.title || '';
+    // A history session has no live process, so it is not a focus target (no
+    // data-pid); the click-to-focus handler keys on .row[data-pid].
+    if (session.is_history) {
+        delete row.dataset.pid;
+    } else {
+        row.dataset.pid = Number(session.pid);
+    }
     if (session.vscode_deeplink) {
         row.dataset.deeplink = '1';
     } else {
@@ -955,6 +1125,14 @@ function updateRow(row, session, projectName) {
 
     const menuBtn = row.querySelector('.row-menu-btn');
     menuBtn.dataset.session = session.session_id || '';
+    menuBtn.dataset.cwd = session.cwd || '';
+    // Only a history row (a past, non-live session with no registry record) may
+    // be deleted; the menu adds its delete item off this flag.
+    if (session.is_history) {
+        menuBtn.dataset.history = '1';
+    } else {
+        delete menuBtn.dataset.history;
+    }
     menuBtn.setAttribute('aria-label', labels.row_menu || 'More actions');
 }
 
@@ -1127,9 +1305,16 @@ function onContentClick(event) {
     if (menuBtn) {
         event.stopPropagation();
         const sessionId = menuBtn.dataset.session || '';
-        openMenu(menuBtn, [{ key: 'copy-id', label: state.labels.copy_session_id }], (key) => {
+        const cwd = menuBtn.dataset.cwd || '';
+        const items = [{ key: 'copy-id', label: state.labels.copy_session_id }];
+        if (menuBtn.dataset.history === '1') {
+            items.push({ key: 'delete', label: state.labels.delete_session, danger: true });
+        }
+        openMenu(menuBtn, items, (key) => {
             if (key === 'copy-id') {
                 copyToClipboard(sessionId);
+            } else if (key === 'delete') {
+                confirmDeleteSession(sessionId, cwd);
             }
         }, { type: 'row', sessionId });
         return;
@@ -1219,7 +1404,18 @@ function render(snapshot) {
     state.last = snapshot;
 
     const prices = logic.resolvePrices(state.pricing, todayIso());
-    const projects = logic.groupProjects(snapshot.sessions || [], state.labels, prices);
+
+    // Fold past sessions in only while the history chip is active and they have
+    // finished loading; groupProjects then places them under their own project
+    // panels, marked (and, in updateRow, styled) as history rows.
+    const historyActive = state.filters.has('history');
+    let rawSessions = snapshot.sessions || [];
+    if (historyActive && Array.isArray(state.history)) {
+        rawSessions = rawSessions.concat(state.history);
+    }
+    const loadingNote = (historyActive && state.historyLoading) ? state.labels.history_loading : '';
+
+    const projects = logic.groupProjects(rawSessions, state.labels, prices);
     const counts = countByFilter(projects);
     renderFilters(counts);
 
@@ -1228,7 +1424,7 @@ function render(snapshot) {
     if (counts.all === 0) {
         heroSlot.replaceChildren();
         panelsSlot.replaceChildren();
-        stateSlot.innerHTML = emptyBlock(state.labels.empty_state);
+        stateSlot.innerHTML = emptyBlock(loadingNote || state.labels.empty_state);
         syncOpenMenu();
         return;
     }
@@ -1261,7 +1457,11 @@ function render(snapshot) {
     const ordered = logic.sortProjects(visible, state.priorityOrder);
 
     reconcile(panelsSlot, ordered, (project) => project.cwd, createPanel, updatePanel);
-    stateSlot.innerHTML = visible.length === 0 ? emptyBlock(state.labels.empty_filter || state.labels.empty_state) : '';
+    if (loadingNote) {
+        stateSlot.innerHTML = emptyBlock(loadingNote);
+    } else {
+        stateSlot.innerHTML = visible.length === 0 ? emptyBlock(state.labels.empty_filter || state.labels.empty_state) : '';
+    }
 
     alignColumns();
     syncOpenMenu();
@@ -1399,6 +1599,11 @@ async function boot() {
     }
 
     await tick();
+    // If the history chip was left enabled in a previous session, load the past
+    // sessions now (the data source is ready by the time boot runs).
+    if (state.filters.has('history')) {
+        ensureHistoryLoaded();
+    }
     setInterval(tick, state.pollInterval * 1000);
     setInterval(checkForChanges, FINGERPRINT_INTERVAL);
     setInterval(tickAges, 1000);

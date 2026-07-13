@@ -63,5 +63,15 @@
     "priority_order": "按优先级",
     "priority_order_hint": "按关注度排序项目 - 需要你处理的排在最前",
     "sort_direction_hint": "在升序和降序之间切换",
-    "open_in_explorer": "在资源管理器中打开"
+    "open_in_explorer": "在资源管理器中打开",
+    "filter_history": "历史",
+    "filter_history_tip": "不再运行的过往会话（按需加载）",
+    "history_loading": "正在加载过往会话…",
+    "delete_session": "删除会话",
+    "delete_confirm_title": "删除此会话？",
+    "delete_confirm_body": "这将从磁盘中永久删除该会话的转录记录及其子代理文件。此操作无法撤销。",
+    "delete_confirm_ok": "删除",
+    "cancel": "取消",
+    "deleted": "会话已删除",
+    "delete_failed": "无法删除该会话"
 }

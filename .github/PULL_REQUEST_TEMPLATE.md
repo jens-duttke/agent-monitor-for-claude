@@ -15,7 +15,7 @@ a read-only, offline design are non-negotiable. Please confirm the checklist bel
 
 - [ ] The change does exactly what it claims, and nothing more.
 - [ ] No conversation content is read (only control metadata: entry type, `stop_reason`, tool IDs/name, timestamps).
-- [ ] No network access, no credential access, no file/registry writes.
+- [ ] No network access, no credential access, and no file/registry writes beyond the two sanctioned surfaces (the WebView2 UI-preference profile, and `session_delete` deleting a past session's own files under `projects/` on an explicit user action).
 - [ ] Parsing of Claude Code internals degrades safely on missing/renamed fields.
 - [ ] Tests added/updated for the change; `python -m unittest discover -s tests` passes.
 - [ ] `README.md` / `docs/` updated if user-facing behavior or settings changed.

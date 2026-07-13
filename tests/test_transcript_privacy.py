@@ -18,7 +18,7 @@ from pathlib import Path
 
 from agent_monitor_for_claude.paths import transcript_path
 from agent_monitor_for_claude.snapshot import build_snapshot
-from agent_monitor_for_claude.transcript import state_for
+from agent_monitor_for_claude.transcript import history_state_for, state_for
 
 # Markers placed in every content-bearing field of the synthetic transcript.
 # None of them may appear in parsed metadata or the rendered snapshot.
@@ -582,6 +582,28 @@ class PrivacyTest(TranscriptEnvTest):
 
         self.assertEqual(state.title, 'Benign question')
         self.assertNotIn('SECRET_LATER_MESSAGE', json.dumps(asdict(state)))
+
+    def test_history_state_reads_cwd_but_no_content(self) -> None:
+        # The history scan reads a session's cwd (a path, not conversation
+        # content) so a past session can be grouped under its project - but it
+        # must still leave every content field unread, exactly like state_for.
+        lines = [
+            json.dumps({'type': 'ai-title', 'aiTitle': 'History title', 'sessionId': _SESSION_ID}),
+            json.dumps({
+                'type': 'assistant', 'timestamp': '2026-07-11T10:53:07Z', 'cwd': _CWD,
+                'message': {'stop_reason': 'end_turn', 'model': 'claude-opus-4-8',
+                            'usage': {'input_tokens': 1, 'output_tokens': 1},
+                            'content': [{'type': 'text', 'text': 'SECRET_TEXT'}]},
+            }),
+        ]
+        self._write_transcript(_SESSION_ID, _CWD, lines)
+        state = history_state_for(transcript_path(_SESSION_ID, _CWD))
+
+        self.assertEqual(state.title, 'History title')
+        self.assertEqual(state.cwd, _CWD)
+        self.assertEqual(state.model, 'claude-opus-4-8')
+        for secret in _SECRETS:
+            self.assertNotIn(secret, json.dumps(asdict(state)))
 
     def test_snapshot_leaks_no_content(self) -> None:
         # Use this test process's own PID so the session counts as alive and

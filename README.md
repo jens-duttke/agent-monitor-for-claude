@@ -28,6 +28,7 @@ If you run many Claude Code agents across several projects, you cannot tell from
 - **Subagents in flight** - a badge shows how many subagents an agent is running right now (and how many recently finished), with a hover listing what each is doing.
 - **Background processes** - a badge shows the OS processes an agent is running (a watched build, a scan), named on hover.
 - **Jump right to it** - click an agent and its hosting window comes to the foreground; for VS Code extension sessions the exact session tab is focused via the extension's official deep link. Click a project's path in its panel header to open that folder in Windows Explorer.
+- **Revisit and clean up past sessions** - a *History* chip (off by default) lists finished sessions that are no longer running - the ones `claude --resume` would show - grouped under their projects and loaded on demand. From a past session's row menu you can, after a confirmation, permanently delete its transcript and subagent files from disk. This deletion is the one thing the tool ever writes; everything else is strictly read-only, and a running session is never touched.
 
 ### Reach and preferences
 - **Light and dark** - follows your system theme, with a one-click toggle in the header.

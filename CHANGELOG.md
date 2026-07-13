@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - An "Error" status for sessions whose turn stopped on an API error and cannot continue - a usage/session limit is named "Usage limit reached", any other API error stays generic - with its own red status color and filter chip. Previously such a session was shown as "Working" indefinitely.
 - Click a project's path in its panel header to open that folder in Windows Explorer.
+- A "History" filter chip (off by default) that lists past sessions that are no longer running - the ones `claude --resume` would show - grouped under their projects. It loads on demand the first time you enable it, so it never slows down the live overview.
+- Delete a past session from its row menu (with a confirmation): this permanently removes its transcript and subagent files from disk, and thus from `claude --resume`. It is offered only for finished sessions, refuses any session that still has a live process, and is the only action in the tool that writes anything - everything else stays read-only.
 
 ### Changed
 - The "Needs you" status is now orange instead of red, so the strongest red is reserved for the new "Error" status - a session that cannot continue at all now outranks one merely waiting on you.

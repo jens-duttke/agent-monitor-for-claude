@@ -63,5 +63,15 @@
     "priority_order": "우선순위순",
     "priority_order_hint": "주목도로 프로젝트 정렬 - 응답이 필요한 것부터",
     "sort_direction_hint": "오름차순과 내림차순 전환",
-    "open_in_explorer": "탐색기에서 열기"
+    "open_in_explorer": "탐색기에서 열기",
+    "filter_history": "기록",
+    "filter_history_tip": "더 이상 실행 중이 아닌 지난 세션 (필요할 때 로드)",
+    "history_loading": "지난 세션을 불러오는 중…",
+    "delete_session": "세션 삭제",
+    "delete_confirm_title": "이 세션을 삭제할까요?",
+    "delete_confirm_body": "세션 기록과 서브에이전트 파일을 디스크에서 영구적으로 삭제합니다. 이 작업은 취소할 수 없습니다.",
+    "delete_confirm_ok": "삭제",
+    "cancel": "취소",
+    "deleted": "세션이 삭제되었습니다",
+    "delete_failed": "세션을 삭제할 수 없습니다"
 }

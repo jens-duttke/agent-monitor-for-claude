@@ -133,6 +133,14 @@ test('filterBucket maps each status to its toolbar chip', () => {
     assert.equal(logic.filterBucket('new'), 'new');
 });
 
+test('sessionBucket routes a history session to its own chip', () => {
+    // A past session is completed but must land in the dedicated "history"
+    // chip, not fold into "quiet" with the recently-ended ones.
+    assert.equal(logic.sessionBucket({ status: 'completed', is_history: true }), 'history');
+    assert.equal(logic.sessionBucket({ status: 'completed', is_history: false }), 'quiet');
+    assert.equal(logic.sessionBucket({ status: 'working' }), 'working');
+});
+
 test('refineWithBackgroundWork', () => {
     assert.equal(logic.refineWithBackgroundWork('awaiting_input', true), 'processing');
     assert.equal(logic.refineWithBackgroundWork('unknown', true), 'processing');
@@ -419,6 +427,21 @@ test('buildSession: a usage limit reads as errored, is named specifically, and c
     assert.equal(session.needs_attention, true);
     assert.equal(session.subagents_running, 0);
     assert.deepEqual(session.subagents_labels, []);
+});
+
+test('buildSession: a history record is completed, flagged, and content-free', () => {
+    // A past session is dead (alive:false) with no usage; it must derive to
+    // completed, carry the is_history flag through for the row styling/menu,
+    // and show no cost or token figure.
+    const session = logic.buildSession({
+        session_id: 'aaaaaaaa-1111-2222-3333-444444444444', is_history: true, alive: false,
+        has_transcript: true, cwd: 'd:\\x', short_name: 'aaaaaaaa', title: 'Old work',
+        model_id: 'claude-opus-4-8', usage: {}, usage_by_model: {},
+    }, { status_completed: 'Finished' }, PRICES);
+    assert.equal(session.status, 'completed');
+    assert.equal(session.is_history, true);
+    assert.equal(session.name, 'Old work');
+    assert.equal(session.usage_compact, '');
 });
 
 test('buildSession: a non-limit API error reads as errored with the generic label', () => {

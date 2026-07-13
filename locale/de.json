@@ -63,5 +63,15 @@
     "priority_order": "Nach Priorität",
     "priority_order_hint": "Projekte nach Dringlichkeit ordnen - was dich braucht, zuerst",
     "sort_direction_hint": "Zwischen aufsteigender und absteigender Reihenfolge wechseln",
-    "open_in_explorer": "Im Explorer öffnen"
+    "open_in_explorer": "Im Explorer öffnen",
+    "filter_history": "Verlauf",
+    "filter_history_tip": "Frühere Sitzungen, die nicht mehr laufen (bei Bedarf geladen)",
+    "history_loading": "Frühere Sitzungen werden geladen …",
+    "delete_session": "Sitzung löschen",
+    "delete_confirm_title": "Diese Sitzung löschen?",
+    "delete_confirm_body": "Dies entfernt das Transkript der Sitzung und ihre Subagenten-Dateien dauerhaft von der Festplatte. Das kann nicht rückgängig gemacht werden.",
+    "delete_confirm_ok": "Löschen",
+    "cancel": "Abbrechen",
+    "deleted": "Sitzung gelöscht",
+    "delete_failed": "Sitzung konnte nicht gelöscht werden"
 }

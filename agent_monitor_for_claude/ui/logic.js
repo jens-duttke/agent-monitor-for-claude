@@ -159,6 +159,18 @@ function filterBucket(status) {
     return STATUS_FILTER[status] || null;
 }
 
+// Which filter chip a whole session belongs to. A past (history) session is
+// always non-live and would otherwise fall under "quiet" like any completed
+// one; it gets its own "history" bucket instead so the on-demand history
+// listing has a dedicated, off-by-default chip separate from the recently-ended
+// sessions the live snapshot still carries.
+function sessionBucket(session) {
+    if (session && session.is_history) {
+        return 'history';
+    }
+    return filterBucket(session ? session.status : null);
+}
+
 // Full status for one raw record, combining the transcript-derived state with
 // the registry's busy/idle field and any background work.
 function deriveStatus(raw) {
@@ -583,6 +595,7 @@ function buildSession(raw, labels, prices) {
         session_id: raw.session_id,
         pid: raw.pid,
         cwd: raw.cwd,
+        is_history: Boolean(raw.is_history),
         name: raw.title || raw.short_name,
         title: raw.title || '',
         short_name: raw.short_name,
@@ -709,6 +722,7 @@ const AMC_LOGIC = {
     refineWithBackgroundWork,
     needsAttention,
     filterBucket,
+    sessionBucket,
     pendingIsBlocking,
     modeLabel,
     statusLabel,

@@ -21,9 +21,11 @@ import webview  # type: ignore[import-untyped]  # no type stubs available
 
 from . import __version__
 from .clipboard import copy_text as _copy_text
+from .history import list_history
 from .i18n import T
 from .paths import config_dir
 from .pricing import load_pricing
+from .session_delete import delete_session as _delete_session
 from .settings import POLL_INTERVAL, WINDOW_HEIGHT, WINDOW_WIDTH
 from .snapshot import build_snapshot, registry_fingerprint
 from .verbose import print_runtime_diagnostics
@@ -73,6 +75,30 @@ class _MonitorApi:
     def get_fingerprint(self) -> str:
         """Return the cheap registry/transcript change fingerprint."""
         return registry_fingerprint()
+
+    def get_history(self) -> list[dict[str, Any]]:
+        """Return past, non-live sessions for the history listing (on demand).
+
+        The UI calls this only while its history filter is enabled, so the
+        ``projects/`` scan never runs on the per-second poll.  pywebview
+        dispatches it on a worker thread, so the potentially second-long scan
+        does not block the WebView; the JS side awaits the returned promise and
+        shows a loading state meanwhile.
+        """
+        return list_history()
+
+    def delete_session(self, session_id: object, cwd: object) -> bool:
+        """Delete a past session's transcript and subagent folder (user-initiated).
+
+        Only ever invoked from the history listing's per-row action, after an
+        in-UI confirmation.  All safety guards live in ``session_delete``: a UUID
+        check, a refusal for any session with a live process, and path
+        confinement to ``projects/``.
+        """
+        if not isinstance(session_id, str) or not isinstance(cwd, str):
+            return False
+
+        return _delete_session(session_id, cwd)
 
     def copy_text(self, text: object) -> bool:
         """Copy the given text to the clipboard (user-initiated)."""

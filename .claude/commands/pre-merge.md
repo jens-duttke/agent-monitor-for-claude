@@ -103,7 +103,7 @@ Non-exhaustive hints: `eval`, `exec`, `compile`, `__import__`, `importlib.*`, `r
 
 **Capability check:** does any leaf cause a side effect on the filesystem or registry?
 
-The app is **strictly read-only**. Non-exhaustive hints for write capability: `open(..., 'w'/'a'/'x'/'r+'/...)`, `os.remove`/`unlink`/`rename`/`replace`/`mkdir`/`chmod`, `shutil.*` (copy/move/rmtree), `pathlib.Path` write/touch/mkdir/unlink, `tempfile.mkstemp`/`NamedTemporaryFile(delete=False)`, `winreg.SetValue*`/`DeleteValue`/`CreateKey*`, `ctypes` into Win32 file/registry write APIs. Any write target is a finding by default.
+The app is **read-only except for two sanctioned write surfaces**: (1) the WebView2 UI-preference profile under `%LOCALAPPDATA%\AgentMonitorForClaude` (`webview.start(storage_path=...)`), and (2) `session_delete.delete_session` deleting a **past** session's own transcript and subagent folder under `projects/`. Non-exhaustive hints for write capability: `open(..., 'w'/'a'/'x'/'r+'/...)`, `os.remove`/`unlink`/`rename`/`replace`/`mkdir`/`chmod`, `shutil.*` (copy/move/rmtree), `pathlib.Path` write/touch/mkdir/unlink, `tempfile.mkstemp`/`NamedTemporaryFile(delete=False)`, `winreg.SetValue*`/`DeleteValue`/`CreateKey*`, `ctypes` into Win32 file/registry write APIs. **Any write outside those two surfaces is a finding by default.** In `session_delete` specifically, any weakening of its three guards - the UUID validation, the live-process refusal (re-probed immediately before deleting), and the `projects/` path confinement - is a finding, as is any deletion path that is not gated on an explicit user action.
 
 ### Obfuscation
 - Any base64, hex, or otherwise encoded strings? Decode and inspect.

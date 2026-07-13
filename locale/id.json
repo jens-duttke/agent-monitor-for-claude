@@ -63,5 +63,15 @@
     "priority_order": "Urutan prioritas",
     "priority_order_hint": "Urutkan proyek berdasarkan perhatian - yang membutuhkan Anda lebih dulu",
     "sort_direction_hint": "Beralih antara urutan naik dan turun",
-    "open_in_explorer": "Buka di File Explorer"
+    "open_in_explorer": "Buka di File Explorer",
+    "filter_history": "Riwayat",
+    "filter_history_tip": "Sesi lampau yang tidak lagi berjalan (dimuat sesuai permintaan)",
+    "history_loading": "Memuat sesi lampau…",
+    "delete_session": "Hapus sesi",
+    "delete_confirm_title": "Hapus sesi ini?",
+    "delete_confirm_body": "Ini menghapus transkrip sesi dan berkas subagennya secara permanen dari disk. Tindakan ini tidak dapat dibatalkan.",
+    "delete_confirm_ok": "Hapus",
+    "cancel": "Batal",
+    "deleted": "Sesi dihapus",
+    "delete_failed": "Tidak dapat menghapus sesi"
 }

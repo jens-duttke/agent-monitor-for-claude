@@ -231,3 +231,36 @@ window.__MOCK_SNAPSHOT__ = {
         }),
     ],
 };
+
+// Past, non-live sessions - the on-demand history listing (get_history). All are
+// dead (alive:false, is_history:true) with no usage, exactly like the backend's
+// history records. index.js loads these only when the history chip is enabled.
+function historySession(overrides) {
+    return rawSession(Object.assign({
+        alive: false, is_history: true, pid: null, host: null, entrypoint: null,
+        last_entry_kind: null, last_stop_reason: null, permission_mode: null,
+        usage: {}, usage_by_model: {},
+    }, overrides));
+}
+
+window.__MOCK_HISTORY__ = [
+    historySession({
+        session_id: 'aaaaaaaa-1111-2222-3333-444444444444', short_name: 'aaaaaaaa',
+        cwd: 'D:\\Projects\\helios-renderer', title: 'Prototype the wavefront path-tracing loop',
+        model_id: 'claude-opus-4-8[1m]', age_seconds: 172800,
+    }),
+    historySession({
+        session_id: 'bbbbbbbb-1111-2222-3333-444444444444', short_name: 'bbbbbbbb',
+        cwd: 'D:\\Projects\\helios-renderer', title: 'First pass at the material system',
+        model_id: 'claude-sonnet-5', age_seconds: 604800,
+    }),
+    historySession({
+        session_id: 'cccccccc-1111-2222-3333-444444444444', short_name: 'cccccccc',
+        cwd: 'D:\\Projects\\atlas-cli', title: 'Scaffold the argument parser',
+        model_id: 'claude-haiku-4-5', age_seconds: 1209600,
+    }),
+    historySession({
+        session_id: 'dddddddd-1111-2222-3333-444444444444', short_name: 'dddddddd',
+        cwd: 'D:\\Projects\\atlas-cli', title: null, age_seconds: 2592000,
+    }),
+];

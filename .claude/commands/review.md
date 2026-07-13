@@ -26,7 +26,7 @@ Run `git diff --staged` and critically review EVERY changed file:
 - **Privacy boundary:** does any code path read, return, store, log, or render conversation content - message `text`, `thinking` blocks, tool `input`, or tool-result `content`? Only control metadata (entry type, `stop_reason`, tool IDs, tool name, timestamps) may be extracted.
 - **No network:** no sockets, no `requests`, no URL literals, no external destinations of any kind.
 - **No credentials:** nothing reads authentication tokens or other secrets.
-- **Read-only:** no file or registry write operations.
+- **Read-only bar two sanctioned write surfaces:** no file or registry writes except (1) the WebView2 UI-preference profile and (2) `session_delete.delete_session` removing a past session's own files under `projects/` (guarded by a UUID check, a live-process refusal, and `projects/` path confinement, only on an explicit user action). Any other write - or any weakening of those guards - is a finding.
 - No `eval()`, `exec()`, `compile()`, dynamic imports, obfuscation, or base64-encoded strings.
 - **Defensive parsing:** unversioned Claude Code internals (registry, transcript schema, slug scheme) must degrade to `unknown`/skip on a missing or mistyped field, never crash.
 

@@ -41,6 +41,7 @@
     --c-unknown: #8a877c;
     --c-interrupted: #ffcc00;
     --c-errored: #e0483a;
+    --c-history: #8b8fa3;
 
     /* Solid colors for native popup lists (select options). */
     --menu-bg: #30302e;
@@ -74,6 +75,7 @@
     --c-unknown: #8f8c81;
     --c-interrupted: #b7860b;
     --c-errored: #d0392a;
+    --c-history: #6c7086;
 
     --menu-bg: #ffffff;
     --menu-fg: #3d3d3a;
@@ -345,6 +347,12 @@ body {
     &.active .menu-check {
         opacity: 1;
     }
+
+    /* The one destructive action in the app - marked in the alarm colour so it
+       never blends in with the benign items above it. */
+    &.danger {
+        color: var(--c-errored);
+    }
 }
 
 .menu-check {
@@ -435,7 +443,8 @@ body {
     &.dot-working::before,
     &.dot-background::before,
     &.dot-quiet::before,
-    &.dot-new::before {
+    &.dot-new::before,
+    &.dot-history::before {
         content: '';
         width: 7px;
         height: 7px;
@@ -450,6 +459,7 @@ body {
     &.dot-background::before { background: var(--c-processing); }
     &.dot-quiet::before { background: var(--c-completed); }
     &.dot-new::before { background: var(--c-new); }
+    &.dot-history::before { background: var(--c-history); }
 }
 
 /* --- Content --- */
@@ -870,6 +880,29 @@ body {
 .status-completed { --s: var(--c-completed); }
 .status-unknown { --s: var(--c-unknown); }
 
+/* Past sessions (the on-demand history listing) read as archived: the row is
+   dimmed and its dot takes the neutral history colour, so a finished session
+   sitting in the same panel is never mistaken for a live one. */
+.row.is-history {
+    --s: var(--c-history);
+    opacity: 0.72;
+    /* A past session has no window to raise, so its row is not a click target:
+       the pointer cursor, the hover highlight, and the press feedback are all
+       dropped. Only the meatball menu (still revealed on hover, with its own
+       pointer) is interactive - for the delete action. Hover just lifts the
+       dimming so the row is fully legible while you reach that menu. */
+    cursor: default;
+
+    &:hover {
+        opacity: 1;
+        background: var(--bg);
+    }
+
+    &:active {
+        filter: none;
+    }
+}
+
 .status-working .dot,
 .status-processing .dot {
     animation: pulse 1.8s ease-out infinite;
@@ -991,4 +1024,78 @@ body {
         .host-cell { display: none; }
     }
     .panel-path { display: none; }
+}
+
+/* --- confirmation modal (delete a past session) --- */
+
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: color-mix(in srgb, var(--bg) 62%, transparent);
+    backdrop-filter: blur(2px);
+}
+
+.modal {
+    width: 100%;
+    max-width: 420px;
+    padding: 20px 22px 18px;
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+
+    .modal-title {
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--fg-heading);
+        margin-bottom: 8px;
+    }
+
+    .modal-body {
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--fg-dim);
+        margin-bottom: 18px;
+    }
+
+    .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+    }
+}
+
+.modal-btn {
+    padding: 8px 16px;
+    border-radius: var(--radius-control);
+    border: 1px solid var(--border-strong);
+    background: var(--control-bg);
+    color: var(--fg);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+
+    &:hover,
+    &:focus-visible {
+        border-color: var(--fg-dim);
+    }
+
+    /* The primary, destructive action stands out in the alarm colour. */
+    &.danger {
+        border-color: transparent;
+        background: var(--c-errored);
+        color: #fff;
+
+        &:hover,
+        &:focus-visible {
+            background: color-mix(in srgb, var(--c-errored) 86%, #000);
+        }
+    }
 }

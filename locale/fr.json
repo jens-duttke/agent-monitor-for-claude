@@ -63,5 +63,15 @@
     "priority_order": "Par priorité",
     "priority_order_hint": "Trier les projets par attention : ceux qui vous attendent d'abord",
     "sort_direction_hint": "Basculer entre l'ordre croissant et décroissant",
-    "open_in_explorer": "Ouvrir dans l'Explorateur"
+    "open_in_explorer": "Ouvrir dans l'Explorateur",
+    "filter_history": "Historique",
+    "filter_history_tip": "Sessions passées qui ne sont plus en cours (chargées à la demande)",
+    "history_loading": "Chargement des sessions passées…",
+    "delete_session": "Supprimer la session",
+    "delete_confirm_title": "Supprimer cette session ?",
+    "delete_confirm_body": "Cela supprime définitivement du disque la transcription de la session et les fichiers de ses sous-agents. Cette action est irréversible.",
+    "delete_confirm_ok": "Supprimer",
+    "cancel": "Annuler",
+    "deleted": "Session supprimée",
+    "delete_failed": "Impossible de supprimer la session"
 }

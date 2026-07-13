@@ -30,7 +30,7 @@ from pathlib import Path
 
 from .paths import transcript_path
 
-__all__ = ['TranscriptState', 'state_for']
+__all__ = ['TranscriptState', 'HistoryState', 'state_for', 'history_state_for']
 
 # Bytes read from the end of the transcript.  Large enough to contain the last
 # several turns without loading a multi-megabyte file on every poll.  When a
@@ -68,6 +68,8 @@ _USAGE_MARKER = b'"usage"'
 _AI_TITLE_MARKER = b'ai-title'
 _CUSTOM_TITLE_MARKER = b'custom-title'
 _PERMISSION_MODE_MARKER = b'permission-mode'
+_CWD_MARKER = b'"cwd"'
+_USER_MARKER = b'"user"'
 
 # Display length cap for the first-prompt fallback title.
 _TITLE_MAX_CHARS = 80
@@ -142,6 +144,17 @@ class TranscriptState:
     permission_mode: str | None = None
 
 
+@dataclass(frozen=True)
+class HistoryState:
+    """Display metadata for a past (non-live) session transcript."""
+
+    session_id: str
+    cwd: str | None = None
+    title: str | None = None
+    model: str | None = None
+    age_seconds: float | None = None
+
+
 def state_for(session_id: str, cwd: str) -> TranscriptState:
     """Return the transcript state for a session, or an empty state if none exists."""
     if not session_id or not cwd:
@@ -166,6 +179,90 @@ def state_for(session_id: str, cwd: str) -> TranscriptState:
     age_seconds = _activity_age(state.last_timestamp, mtime)
     return replace(state, age_seconds=age_seconds, usage=usage, usage_by_model=usage_by_model,
                    model_timeline=model_timeline, title=title, permission_mode=permission_mode)
+
+
+def history_state_for(path: Path) -> HistoryState:
+    """Return display metadata for a past session transcript, keyed by its file.
+
+    Unlike :func:`state_for` - which begins from a live registry record and
+    needs only the tail plus an incremental usage scan - a history entry is
+    discovered by walking ``projects/`` and has no registry record, so its
+    ``cwd`` (used to group the session under its project) is unknown up front
+    and must be recovered from the transcript itself.
+
+    The correct title can sit anywhere in the file (a late rename writes its
+    entry at that point, not at the head), so the whole file is read once - but
+    only the few title-bearing lines, the first prompt, and the first ``cwd``
+    are parsed; the usage of every turn is skipped, which keeps the scan roughly
+    twice as fast as a full :func:`state_for`.  The current model and the
+    activity age come from a cheap tail read.
+
+    Parameters
+    ----------
+    path : Path
+        The session-level transcript file (``projects/<slug>/<session>.jsonl``).
+    """
+    session_id = path.stem
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return HistoryState(session_id=session_id)
+
+    title, cwd = _scan_title_cwd(path)
+    tail = _parse(_read_tail(path))
+    age_seconds = _activity_age(tail.last_timestamp, mtime)
+
+    return HistoryState(session_id=session_id, cwd=cwd, title=title, model=tail.model, age_seconds=age_seconds)
+
+
+def _scan_title_cwd(path: Path) -> tuple[str | None, str | None]:
+    """Read a transcript once, resolving the correct title and the session cwd.
+
+    Mirrors Claude Code's title precedence (a manual rename, then the
+    auto-generated title, then the first prompt) by scanning the whole file, but
+    parses only title-bearing lines, the first user prompt, and the first entry
+    carrying a ``cwd``.  Usage-bearing turns are skipped, so a history listing
+    never pays the full usage-aggregation cost.  No conversation content is
+    read: only the sanctioned title fields (mirroring Claude Code's own UI) and
+    the working directory.
+    """
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None, None
+
+    state = _ScanState()
+    cwd: str | None = None
+
+    for raw_line in data.split(b'\n'):
+        is_title = _AI_TITLE_MARKER in raw_line or _CUSTOM_TITLE_MARKER in raw_line
+        need_prompt = state.first_prompt is None and _USER_MARKER in raw_line
+        need_cwd = cwd is None and _CWD_MARKER in raw_line
+        if not (is_title or need_prompt or need_cwd):
+            continue
+
+        entry = _load(raw_line.decode('utf-8', errors='ignore'))
+        if entry is None:
+            continue
+
+        if need_cwd:
+            value = entry.get('cwd')
+            if isinstance(value, str) and value:
+                cwd = value
+
+        entry_type = entry.get('type')
+        if entry_type == 'ai-title':
+            value = entry.get('aiTitle')
+            if isinstance(value, str) and value:
+                state.ai_title = value
+        elif entry_type == 'custom-title':
+            value = entry.get('customTitle')
+            if isinstance(value, str) and value:
+                state.custom_title = value
+        elif entry_type == 'user' and state.first_prompt is None and entry.get('isSidechain') is not True:
+            state.first_prompt = _prompt_display_text(entry)
+
+    return state.title(), cwd
 
 
 def _activity_age(last_timestamp: str | None, mtime: float) -> float:
