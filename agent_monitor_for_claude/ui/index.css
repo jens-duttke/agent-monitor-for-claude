@@ -24,12 +24,12 @@
     --c-processing: #a98fe0;
     --c-awaiting_input: #2fa26a;
     --c-awaiting_input-text: #7f9e8d;
-    --c-awaiting_permission: #e0655a;
+    --c-awaiting_permission: #e8823a;
     --c-new: #3ecf8e;
     --c-completed: #6f6d66;
     --c-unknown: #8a877c;
     --c-interrupted: #ffcc00;
-    --c-errored: #e8823a;
+    --c-errored: #e0483a;
 
     /* Solid colors for native popup lists (select options). */
     --menu-bg: #30302e;
@@ -56,12 +56,12 @@
     --c-processing: #7d5bc9;
     --c-awaiting_input: #1e8a55;
     --c-awaiting_input-text: #5c7d6b;
-    --c-awaiting_permission: #cf4436;
+    --c-awaiting_permission: #c25f14;
     --c-new: #1f9d6b;
     --c-completed: #a09d92;
     --c-unknown: #8f8c81;
     --c-interrupted: #b7860b;
-    --c-errored: #c25f14;
+    --c-errored: #d0392a;
 
     --menu-bg: #ffffff;
     --menu-fg: #3d3d3a;
