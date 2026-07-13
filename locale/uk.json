@@ -61,5 +61,6 @@
     "age_days": "{d}d",
     "already_running": "Agent Monitor for Claude v{running_version} вже запущено.\n\nБажаєте замінити запущений екземпляр?",
     "priority_order": "За пріоритетом",
-    "priority_order_hint": "Сортувати проєкти за увагою - спершу ті, що потребують вас"
+    "priority_order_hint": "Сортувати проєкти за увагою - спершу ті, що потребують вас",
+    "open_in_explorer": "Відкрити в Провіднику"
 }

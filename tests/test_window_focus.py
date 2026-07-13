@@ -1,9 +1,13 @@
 """Tests for the window selection logic (pure part of window focusing)."""
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
+from unittest import mock
 
-from agent_monitor_for_claude.window_focus import select_terminal_window, select_window, vscode_session_url
+from agent_monitor_for_claude.app import _MonitorApi
+from agent_monitor_for_claude.window_focus import open_directory, select_terminal_window, select_window, vscode_session_url
 
 # (hwnd, pid, title)
 _WINDOWS = [
@@ -78,6 +82,67 @@ class VscodeSessionUrlTest(unittest.TestCase):
         self.assertIsNone(vscode_session_url('not-a-uuid'))
         self.assertIsNone(vscode_session_url('a7a12d93-e700-4d96-b024-689a35c12bc2&prompt=evil'))
         self.assertIsNone(vscode_session_url('../escape'))
+
+
+class OpenDirectoryTest(unittest.TestCase):
+    """Only an existing directory may ever reach the shell."""
+
+    def test_opens_existing_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch('agent_monitor_for_claude.window_focus.os.startfile') as startfile:
+                self.assertTrue(open_directory(tmp))
+                startfile.assert_called_once_with(tmp)
+
+    def test_rejects_empty_path(self) -> None:
+        with mock.patch('agent_monitor_for_claude.window_focus.os.startfile') as startfile:
+            self.assertFalse(open_directory(''))
+            startfile.assert_not_called()
+
+    def test_rejects_missing_directory(self) -> None:
+        missing = os.path.join(tempfile.gettempdir(), 'amc-no-such-dir-4f2a9c')
+        with mock.patch('agent_monitor_for_claude.window_focus.os.startfile') as startfile:
+            self.assertFalse(open_directory(missing))
+            startfile.assert_not_called()
+
+    def test_rejects_a_file(self) -> None:
+        # A file is not a directory - never hand an arbitrary (possibly
+        # executable) file to the shell.
+        with tempfile.TemporaryDirectory() as tmp:
+            file_path = os.path.join(tmp, 'note.txt')
+            with open(file_path, 'w', encoding='utf-8') as handle:
+                handle.write('x')
+            with mock.patch('agent_monitor_for_claude.window_focus.os.startfile') as startfile:
+                self.assertFalse(open_directory(file_path))
+                startfile.assert_not_called()
+
+    def test_propagates_startfile_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch('agent_monitor_for_claude.window_focus.os.startfile', side_effect=OSError):
+                self.assertFalse(open_directory(tmp))
+
+
+class OpenPathBridgeTest(unittest.TestCase):
+    """The JS bridge must reject junk and only forward real strings on to the shell."""
+
+    def test_rejects_non_string(self) -> None:
+        api = _MonitorApi()
+        with mock.patch('agent_monitor_for_claude.app.open_directory') as opener:
+            self.assertFalse(api.open_path(123))
+            self.assertFalse(api.open_path(None))
+            self.assertFalse(api.open_path(True))
+            opener.assert_not_called()
+
+    def test_rejects_empty_string(self) -> None:
+        api = _MonitorApi()
+        with mock.patch('agent_monitor_for_claude.app.open_directory') as opener:
+            self.assertFalse(api.open_path(''))
+            opener.assert_not_called()
+
+    def test_forwards_valid_string(self) -> None:
+        api = _MonitorApi()
+        with mock.patch('agent_monitor_for_claude.app.open_directory', return_value=True) as opener:
+            self.assertTrue(api.open_path('D:\\Projects\\aurora-realtime'))
+            opener.assert_called_once_with('D:\\Projects\\aurora-realtime')
 
 
 if __name__ == '__main__':

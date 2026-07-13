@@ -624,6 +624,13 @@ body {
     white-space: nowrap;
     flex: 1;
     min-width: 0;
+
+    /* Only the text itself opens the folder; the empty flex space to its right
+       stays part of the header's collapse target. */
+    .path-open:hover {
+        color: var(--fg);
+        text-decoration: underline;
+    }
 }
 
 .panel-count {

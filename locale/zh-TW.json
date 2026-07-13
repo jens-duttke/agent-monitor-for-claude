@@ -61,5 +61,6 @@
     "age_days": "{d}d",
     "already_running": "Agent Monitor for Claude v{running_version} 已在執行。\n\n是否要取代正在執行的實例？",
     "priority_order": "依優先順序",
-    "priority_order_hint": "依關注度排序專案 - 需要你處理的排在最前"
+    "priority_order_hint": "依關注度排序專案 - 需要你處理的排在最前",
+    "open_in_explorer": "在檔案總管中開啟"
 }

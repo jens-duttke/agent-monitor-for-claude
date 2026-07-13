@@ -61,5 +61,6 @@
     "age_days": "{d}d",
     "already_running": "Agent Monitor for Claude v{running_version} è già in esecuzione.\n\nVuoi sostituire l'istanza in esecuzione?",
     "priority_order": "Per priorità",
-    "priority_order_hint": "Ordina i progetti per attenzione: prima quelli che ti servono"
+    "priority_order_hint": "Ordina i progetti per attenzione: prima quelli che ti servono",
+    "open_in_explorer": "Apri in Esplora file"
 }

@@ -27,7 +27,7 @@ If you run many Claude Code agents across several projects, you cannot tell from
 - **Cost at a glance** - each agent shows an estimated dollar cost (computed per model, so cheaper subagent models are priced right), with the full per-tier token breakdown - base input, output, cache read, and 5m/1h cache writes - one half-second hover away. Prices live in an editable `pricing.json` (see [docs/configuration.md](docs/configuration.md)); you can even enter a future price change under its start date and it applies on its own.
 - **Subagents in flight** - a badge shows how many subagents an agent is running right now (and how many recently finished), with a hover listing what each is doing.
 - **Background processes** - a badge shows the OS processes an agent is running (a watched build, a scan), named on hover.
-- **Jump right to it** - click an agent and its hosting window comes to the foreground; for VS Code extension sessions the exact session tab is focused via the extension's official deep link.
+- **Jump right to it** - click an agent and its hosting window comes to the foreground; for VS Code extension sessions the exact session tab is focused via the extension's official deep link. Click a project's path in its panel header to open that folder in Windows Explorer.
 
 ### Reach and preferences
 - **Light and dark** - follows your system theme, with a one-click toggle in the header.

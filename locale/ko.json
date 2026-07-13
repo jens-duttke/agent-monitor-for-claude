@@ -61,5 +61,6 @@
     "age_days": "{d}d",
     "already_running": "Agent Monitor for Claude v{running_version}이(가) 이미 실행 중입니다.\n\n실행 중인 인스턴스를 교체하시겠습니까?",
     "priority_order": "우선순위순",
-    "priority_order_hint": "주목도로 프로젝트 정렬 - 응답이 필요한 것부터"
+    "priority_order_hint": "주목도로 프로젝트 정렬 - 응답이 필요한 것부터",
+    "open_in_explorer": "탐색기에서 열기"
 }

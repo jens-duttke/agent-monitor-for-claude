@@ -29,7 +29,7 @@ import re
 
 from .process_probe import TERMINAL_WINDOW_OWNERS, ancestry, process_names
 
-__all__ = ['focus_session_window', 'open_vscode_session', 'vscode_session_url']
+__all__ = ['focus_session_window', 'open_directory', 'open_vscode_session', 'vscode_session_url']
 
 # Official deep link of the Claude Code VS Code extension (since v2.1.72):
 # focuses the tab of an already-open session in the focused VS Code window.
@@ -105,6 +105,30 @@ def open_vscode_session(session_id: str) -> bool:
 
     try:
         os.startfile(url)
+    except OSError:
+        return False
+
+    return True
+
+
+def open_directory(path: str) -> bool:
+    """Open an existing local directory in Windows Explorer (user-initiated).
+
+    Only a real directory is ever handed to the shell: the path is validated
+    with ``os.path.isdir`` first, so a stale path, a file, or anything carrying
+    a URI scheme is a no-op rather than something the shell might execute.  For
+    a folder, ``os.startfile`` is routed to Explorer by the shell.
+
+    Returns
+    -------
+    bool
+        True if an existing directory was opened.
+    """
+    if not path or not os.path.isdir(path):
+        return False
+
+    try:
+        os.startfile(path)
     except OSError:
         return False
 

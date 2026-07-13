@@ -27,7 +27,7 @@ from .pricing import load_pricing
 from .settings import POLL_INTERVAL, WINDOW_HEIGHT, WINDOW_WIDTH
 from .snapshot import build_snapshot, registry_fingerprint
 from .verbose import print_runtime_diagnostics
-from .window_focus import focus_session_window, open_vscode_session
+from .window_focus import focus_session_window, open_directory, open_vscode_session
 
 __all__ = ['run']
 
@@ -80,6 +80,13 @@ class _MonitorApi:
             return False
 
         return _copy_text(text)
+
+    def open_path(self, path: object) -> bool:
+        """Open a session's project directory in Windows Explorer (user-initiated)."""
+        if not isinstance(path, str) or not path:
+            return False
+
+        return open_directory(path)
 
     def focus_session(self, pid: object, project_name: object = '', session_id: object = '', vscode_deeplink: object = False,
                       session_title: object = '') -> bool:

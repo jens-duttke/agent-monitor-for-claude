@@ -128,6 +128,7 @@ const DEFAULT_LABELS = {
     row_menu: 'More actions',
     copy_session_id: 'Copy session ID',
     copied: 'Copied to clipboard',
+    open_in_explorer: 'Open in Explorer',
 };
 
 // One chip per status color, attention-first: the states that want you
@@ -959,7 +960,7 @@ function createPanel() {
     const section = document.createElement('section');
     section.className = 'panel';
     section.innerHTML = '<div class="panel-head">'
-        + '<h2></h2><span class="panel-path"></span><span class="head-status"></span>'
+        + '<h2></h2><span class="panel-path"><span class="path-open"></span></span><span class="head-status"></span>'
         + '<span class="panel-count"></span><span class="chevron"></span>'
         + '</div><div class="rows"></div>';
     return section;
@@ -975,8 +976,13 @@ function updatePanel(section, project) {
     const head = section.querySelector('.panel-head');
     head.dataset.cwd = project.cwd;
     section.querySelector('h2').textContent = project.name;
-    section.querySelector('.panel-path').textContent = project.cwd;
     section.querySelector('.panel-count').textContent = project.sessions.length;
+
+    // The path text is its own click target (opens the folder in Explorer);
+    // clicking elsewhere in the header still toggles the panel.
+    const pathOpen = section.querySelector('.path-open');
+    pathOpen.textContent = project.cwd;
+    pathOpen.dataset.tip = state.labels.open_in_explorer || 'Open in Explorer';
 
     const headStatus = section.querySelector('.head-status');
     if (collapsed) {
@@ -1079,6 +1085,16 @@ function toggleCollapse(cwd) {
     }
 }
 
+function openPath(cwd) {
+    if (!cwd) {
+        return;
+    }
+    const bridge = apiBridge();
+    if (bridge && typeof bridge.open_path === 'function') {
+        bridge.open_path(cwd);
+    }
+}
+
 function focusSession(el) {
     const bridge = apiBridge();
     if (bridge && typeof bridge.focus_session === 'function') {
@@ -1104,6 +1120,17 @@ function onContentClick(event) {
                 copyToClipboard(sessionId);
             }
         }, { type: 'row', sessionId });
+        return;
+    }
+
+    // Checked before the panel-head handler below: the path sits inside the
+    // head, so it must claim its own click (open the folder) before the head's
+    // collapse toggle can fire.
+    const pathOpen = event.target.closest('.path-open');
+    if (pathOpen) {
+        event.stopPropagation();
+        const pathHead = pathOpen.closest('.panel-head');
+        openPath(pathHead ? pathHead.dataset.cwd : '');
         return;
     }
 
