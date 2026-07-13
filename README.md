@@ -39,6 +39,7 @@ If you run many Claude Code agents across several projects, you cannot tell from
 - Windows 10 / 11
 - [Microsoft Edge WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (pre-installed on current Windows)
 - Claude Code (this tool reads the session data it writes under `~/.claude/`)
+- Python 3.10 or newer - only to run or build from source; the prebuilt executable bundles its own Python
 
 ## Getting started
 
