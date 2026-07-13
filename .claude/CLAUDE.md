@@ -141,6 +141,7 @@ Prioritize readability and auditability - this tool reads local Claude Code data
 ## Releasing
 - Update `__version__` in `agent_monitor_for_claude/__init__.py` and all four version fields in `version_info.py` (`filevers`, `prodvers`, `FileVersion`, `ProductVersion`)
 - In `CHANGELOG.md`: rename `## [Unreleased]` to `## [x.y.z] - YYYY-MM-DD`, add a fresh empty `## [Unreleased]` above it, and update the compare links
+- The GitHub release title is exactly the tag name (`vX.Y.Z`, e.g. `v0.2.0`) - no product-name prefix; the tag itself, the commit, and the push are done by the user, never by the assistant
 
 ## Git
 - **NEVER create commits** - only suggest commit messages when asked; the user commits manually
