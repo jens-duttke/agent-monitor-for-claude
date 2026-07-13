@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - "New" is now a regular filter chip alongside the others - shown by default and unchecked to hide - instead of a separate visibility toggle that was off by default.
 - The filter chips are now ordered attention-first: the states that want you (Needs you, Error, Interrupted, New, Idle) come before the ones that do not (Working, Background, Quiet).
 - Each filter chip now has a tooltip on hover, briefly explaining what that status means and when it occurs, translated into every language.
+- The filter chips and toolbar controls now use a flatter, moderately-rounded shape modeled on Claude.ai, instead of the previous fully-rounded pill shape. Plain buttons and the sort dropdown carry a visible fill and show their border only on hover or keyboard focus; the toggle controls (filter chips, priority order) keep a resting border.
+- Active and inactive filter chips - and the priority-order toggle - are now clearly distinct: an inactive one is a faded, hollow chip and an active one is solid and fully lit, where before they differed only by text color and border.
+- The sort dropdown now reads like a Claude.ai select field - the value on the left, a thin chevron pinned to the right edge, full-strength text - instead of a compact dimmed chip.
+- The sort-direction button now has a tooltip on hover, translated into every language.
+- A filter chip no longer shows a "0" count - the number appears only when at least one session matches, so the chips with sessions stand out at a glance.
 
 ### Fixed
 - The expanded usage breakdown kept a gap before the cost again, instead of running its last entry straight into it.

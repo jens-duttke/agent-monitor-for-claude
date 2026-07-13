@@ -62,5 +62,6 @@
     "already_running": "Agent Monitor for Claude v{running_version} 已在运行。\n\n是否替换正在运行的实例？",
     "priority_order": "按优先级",
     "priority_order_hint": "按关注度排序项目 - 需要你处理的排在最前",
+    "sort_direction_hint": "在升序和降序之间切换",
     "open_in_explorer": "在资源管理器中打开"
 }

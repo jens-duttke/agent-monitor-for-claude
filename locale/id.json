@@ -62,5 +62,6 @@
     "already_running": "Agent Monitor for Claude v{running_version} sudah berjalan.\n\nApakah Anda ingin mengganti instance yang sedang berjalan?",
     "priority_order": "Urutan prioritas",
     "priority_order_hint": "Urutkan proyek berdasarkan perhatian - yang membutuhkan Anda lebih dulu",
+    "sort_direction_hint": "Beralih antara urutan naik dan turun",
     "open_in_explorer": "Buka di File Explorer"
 }

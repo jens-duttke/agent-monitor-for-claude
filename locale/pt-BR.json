@@ -62,5 +62,6 @@
     "already_running": "Agent Monitor for Claude v{running_version} já está em execução.\n\nDeseja substituir a instância em execução?",
     "priority_order": "Por prioridade",
     "priority_order_hint": "Ordenar projetos por atenção - primeiro os que precisam de você",
+    "sort_direction_hint": "Alternar entre ordem crescente e decrescente",
     "open_in_explorer": "Abrir no Explorador de Arquivos"
 }

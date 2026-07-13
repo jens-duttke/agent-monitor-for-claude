@@ -62,5 +62,6 @@
     "already_running": "Agent Monitor for Claude v{running_version} はすでに実行中です。\n\n実行中のインスタンスを置き換えますか？",
     "priority_order": "優先度順",
     "priority_order_hint": "注目度でプロジェクトを並べ替え - 対応が必要なものを先頭に",
+    "sort_direction_hint": "昇順と降順を切り替える",
     "open_in_explorer": "エクスプローラーで開く"
 }

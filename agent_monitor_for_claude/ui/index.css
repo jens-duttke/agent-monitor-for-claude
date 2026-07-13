@@ -17,8 +17,19 @@
     --accent: #d97757;
     --active-bg: #3d3c38;
     --chip-bg: #2d2d2b;
-    --topbar-bg: rgba(25, 25, 24, 0.85);
+    /* Resting fill for interactive toolbar controls. Distinct from --chip-bg
+       (used by static badges) so it stays clearly visible even when the topbar
+       is opaque and close to the chip color - a borderless control relies on
+       this fill alone to read as a control. */
+    --control-bg: #3a3935;
+    --topbar-bg: #2c2c2a;
     --shadow: 0 8px 24px -18px rgba(0, 0, 0, 0.6);
+
+    /* Corner radius for interactive controls (buttons, filter chips, dropdown
+       triggers). Modeled on Claude.ai's flat, moderately-rounded controls -
+       deliberately not a pill. Larger surfaces (panels, popup menus) stay 12px.
+       Theme-independent, so it is declared once here and cascades to both. */
+    --radius-control: 8px;
 
     --c-working: #6c9edd;
     --c-processing: #a98fe0;
@@ -49,7 +60,8 @@
     --accent: #c96442;
     --active-bg: #eae7dd;
     --chip-bg: #f1efe7;
-    --topbar-bg: rgba(250, 249, 245, 0.85);
+    --control-bg: #f0eee6;
+    --topbar-bg: #f6f4ed;
     --shadow: 0 8px 24px -20px rgba(90, 80, 60, 0.25);
 
     --c-working: #2f6bd8;
@@ -87,14 +99,13 @@ body {
     user-select: none;
 }
 
-/* --- Top bar (header + filters), sticky and glassy --- */
+/* --- Top bar (header + filters), sticky --- */
 
 .topbar {
     position: sticky;
     top: 0;
     z-index: 20;
     background: var(--topbar-bg);
-    backdrop-filter: blur(16px) saturate(1.3);
     border-bottom: 1px solid var(--border);
 }
 
@@ -158,9 +169,9 @@ body {
 .icon-btn {
     width: 36px;
     height: 36px;
-    border-radius: 10px;
-    border: 1px solid var(--border);
-    background: var(--chip-bg);
+    border-radius: var(--radius-control);
+    border: 1px solid transparent;
+    background: var(--control-bg);
     color: var(--fg);
     font-size: 16px;
     cursor: pointer;
@@ -168,7 +179,8 @@ body {
     place-items: center;
     transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
 
-    &:hover {
+    &:hover,
+    &:focus-visible {
         background: var(--panel-hover);
         border-color: var(--border-strong);
     }
@@ -202,38 +214,48 @@ body {
     flex: none;
 }
 
+/* A dropdown trigger modeled on Claude.ai's select field: the value sits at the
+   left, a thin drawn chevron pins to the right edge (space-between + a min-width
+   so the box does not collapse onto the text), full-strength foreground text at
+   a medium weight - not a dimmed, content-hugging chip. */
 .sort-trigger {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    background: var(--chip-bg);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    color: var(--fg-dim);
+    justify-content: space-between;
+    gap: 10px;
+    min-width: 150px;
+    background: var(--control-bg);
+    border: 1px solid transparent;
+    border-radius: var(--radius-control);
+    color: var(--fg);
     font: inherit;
     font-size: 12.5px;
-    font-weight: 600;
-    padding: 6px 14px;
+    font-weight: 500;
+    padding: 6px 12px 6px 14px;
     cursor: pointer;
+    transition: border-color 0.15s ease;
 
     &:hover,
+    &:focus-visible,
     &.menu-open {
-        color: var(--fg);
         border-color: var(--border-strong);
     }
 }
 
 .sort-trigger-caret {
-    font-size: 9px;
-    opacity: 0.7;
+    flex: none;
+    width: 15px;
+    height: 15px;
+    opacity: 0.55;
 }
 
-/* Cross-project ordering toggle - a pill that grows a filled "active" look,
-   sitting beside the (session-level) sort control. */
+/* Cross-project ordering toggle. A stateful on/off toggle, styled like the
+   filter chips: "off" is a faded, hollow chip, "on" a solid, fully-lit one, so
+   the two states are told apart at a glance - not just by text color. */
 .priority-toggle {
-    background: var(--chip-bg);
+    background: transparent;
     border: 1px solid var(--border);
-    border-radius: 999px;
+    border-radius: var(--radius-control);
     color: var(--fg-dim);
     font: inherit;
     font-size: 12.5px;
@@ -241,9 +263,12 @@ body {
     padding: 6px 14px;
     cursor: pointer;
     white-space: nowrap;
-    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    opacity: 0.6;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
 
-    &:hover {
+    &:hover,
+    &:focus-visible {
+        opacity: 1;
         color: var(--fg);
         border-color: var(--border-strong);
     }
@@ -252,6 +277,7 @@ body {
         background: var(--active-bg);
         color: var(--fg-heading);
         border-color: var(--border-strong);
+        opacity: 1;
     }
 }
 
@@ -337,40 +363,50 @@ body {
 .sort-dir {
     width: 30px;
     height: 30px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    background: var(--chip-bg);
+    border-radius: var(--radius-control);
+    border: 1px solid transparent;
+    background: var(--control-bg);
     color: var(--fg-dim);
     font-size: 12px;
     cursor: pointer;
+    transition: color 0.15s ease, border-color 0.15s ease;
 
-    &:hover {
+    &:hover,
+    &:focus-visible {
         color: var(--fg);
         border-color: var(--border-strong);
     }
 }
 
+/* A filter chip is a stateful on/off toggle. To tell the two states apart at a
+   glance - not just by text color - "off" (base) is a faded, hollow chip and
+   "on" (.active) a solid, fully-lit one: fill, border, text color and opacity
+   all change together. */
 .filter-chip {
     display: inline-flex;
     align-items: center;
     gap: 8px;
     padding: 7px 14px;
-    border-radius: 999px;
+    border-radius: var(--radius-control);
     border: 1px solid var(--border);
-    background: var(--chip-bg);
+    background: transparent;
     color: var(--fg-dim);
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
-    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    opacity: 0.6;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
 
-    &:hover {
+    &:hover,
+    &:focus-visible {
+        opacity: 1;
         color: var(--fg);
         border-color: var(--border-strong);
     }
 
     .count {
         position: relative;
+        top: 1px;
         margin: -2px 0;
         font-size: 12px;
         font-variant-numeric: tabular-nums;
@@ -384,6 +420,7 @@ body {
         background: var(--active-bg);
         color: var(--fg-heading);
         border-color: var(--border-strong);
+        opacity: 1;
 
         .count {
             background: var(--chip-bg);

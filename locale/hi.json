@@ -62,5 +62,6 @@
     "already_running": "Agent Monitor for Claude v{running_version} पहले से चल रहा है।\n\nक्या आप चल रहे इंस्टेंस को बदलना चाहते हैं?",
     "priority_order": "प्राथमिकता क्रम",
     "priority_order_hint": "परियोजनाओं को ध्यान के अनुसार क्रमबद्ध करें - पहले वे जिन्हें आपकी ज़रूरत है",
+    "sort_direction_hint": "आरोही और अवरोही क्रम के बीच बदलें",
     "open_in_explorer": "एक्सप्लोरर में खोलें"
 }

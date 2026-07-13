@@ -62,5 +62,6 @@
     "already_running": "Agent Monitor for Claude v{running_version} вже запущено.\n\nБажаєте замінити запущений екземпляр?",
     "priority_order": "За пріоритетом",
     "priority_order_hint": "Сортувати проєкти за увагою - спершу ті, що потребують вас",
+    "sort_direction_hint": "Перемикання між зростанням і спаданням",
     "open_in_explorer": "Відкрити в Провіднику"
 }

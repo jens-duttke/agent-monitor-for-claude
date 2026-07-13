@@ -90,6 +90,7 @@ const DEFAULT_LABELS = {
     sort_status: 'Status',
     priority_order: 'Priority order',
     priority_order_hint: 'Sort projects by attention - the ones that need you first',
+    sort_direction_hint: 'Switch between ascending and descending order',
     empty_state: 'No active Claude Code agents.',
     empty_filter: 'No agents match this filter.',
     last_activity: 'Last activity {age} ago',
@@ -364,6 +365,7 @@ function applyBootstrap(bootstrap) {
     }
 
     updateSortTrigger();
+    updateSortDirButton();
     updatePriorityToggle();
 }
 
@@ -401,7 +403,12 @@ function sortSessions(sessions) {
 }
 
 function updateSortDirButton() {
-    document.getElementById('sort-dir').innerHTML = state.sortDir === 'desc' ? '&#9660;' : '&#9650;';
+    const button = document.getElementById('sort-dir');
+    if (!button) {
+        return;
+    }
+    button.innerHTML = state.sortDir === 'desc' ? '&#9660;' : '&#9650;';
+    button.dataset.tip = state.labels.sort_direction_hint || '';
 }
 
 function sortLabel(key) {
@@ -413,7 +420,9 @@ function updateSortTrigger() {
     const trigger = document.getElementById('sort-trigger');
     if (trigger) {
         trigger.innerHTML = '<span class="sort-trigger-label">' + esc(sortLabel(state.sort)) + '</span>'
-            + '<span class="sort-trigger-caret" aria-hidden="true">&#9662;</span>';
+            + '<svg class="sort-trigger-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+            + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+            + '<path d="m6 9 6 6 6-6"></path></svg>';
     }
 }
 
@@ -782,10 +791,13 @@ function renderFilters(counts) {
         const dot = def.dot ? ' ' + def.dot : '';
         const label = state.labels[def.label] || def.key;
         const tip = def.tip ? (state.labels[def.tip] || '') : '';
+        const count = counts[def.key];
         return '<button class="filter-chip' + dot + (active ? ' active' : '') + '" data-filter="' + def.key + '"'
             + (tip ? ' data-tip="' + esc(tip) + '"' : '')
             + ' aria-pressed="' + (active ? 'true' : 'false') + '">'
-            + esc(label) + '<span class="count">' + counts[def.key] + '</span></button>';
+            + esc(label)
+            + (count > 0 ? '<span class="count">' + count + '</span>' : '')
+            + '</button>';
     }).join('');
 
     container.querySelectorAll('.filter-chip[data-filter]').forEach((button) => {
