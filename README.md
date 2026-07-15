@@ -7,8 +7,6 @@ If you run many Claude Code agents across several projects, you cannot tell from
 > [!IMPORTANT]
 > This project is still in an early stage. Detailed issue reports - with steps to reproduce, what you expected, and what actually happened - are very welcome and help a lot.
 
-> Windows-only.
-
 ![The Agent Monitor window listing running Claude Code agents grouped by project, each showing its live status, estimated cost, model, host, and time since last activity](screenshot.png)
 
 ## Features
