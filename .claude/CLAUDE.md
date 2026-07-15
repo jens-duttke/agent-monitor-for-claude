@@ -147,6 +147,7 @@ Prioritize readability and auditability - this tool reads local Claude Code data
 - Update `__version__` in `agent_monitor_for_claude/__init__.py` and all four version fields in `version_info.py` (`filevers`, `prodvers`, `FileVersion`, `ProductVersion`)
 - In `CHANGELOG.md`: rename `## [Unreleased]` to `## [x.y.z] - YYYY-MM-DD`, add a fresh empty `## [Unreleased]` above it, and update the compare links
 - The GitHub release title is exactly the tag name (`vX.Y.Z`, e.g. `v0.2.0`) - no product-name prefix; the tag itself, the commit, and the push are done by the user, never by the assistant
+- Build the standalone EXE as part of the release - **the assistant runs `python build.py`** (produces `dist/AgentMonitorForClaude.exe` via PyInstaller on the spec). Do it once the version bump is in place, and never while another build or a running instance is active - concurrent PyInstaller runs lock the `build/` artifacts and fail with `WinError 32`. Verify the built EXE's `FileVersion` matches the release. Uploading the EXE to the GitHub release is the user's step, like the tag/commit/push
 
 ## Git
 - **NEVER create commits** - only suggest commit messages when asked; the user commits manually
