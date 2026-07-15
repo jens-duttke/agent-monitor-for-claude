@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import sys
+import threading
 import time
 import winreg
 from pathlib import Path
@@ -25,6 +26,7 @@ from .history import list_history
 from .i18n import T
 from .paths import config_dir
 from .pricing import load_pricing
+from .search import run_search
 from .session_delete import delete_session as _delete_session
 from .settings import POLL_INTERVAL, WINDOW_HEIGHT, WINDOW_WIDTH
 from .snapshot import build_snapshot, registry_fingerprint
@@ -53,6 +55,19 @@ def _window_background() -> str:
 
 class _MonitorApi:
     """Methods exposed to JavaScript via pywebview's JS bridge."""
+
+    def __init__(self) -> None:
+        # The window is attached once created (run below), so search results can
+        # be pushed into the page as they are found. `_search_seq` is the id of
+        # the latest search the UI started: a running search whose id no longer
+        # matches has been superseded and cancels itself.
+        self._window: Any = None
+        self._search_seq = 0
+        self._search_lock = threading.Lock()
+
+    def attach_window(self, window: Any) -> None:
+        """Bind the pywebview window used to push streaming search results."""
+        self._window = window
 
     def log(self, message: object) -> None:
         """Forward a UI-side diagnostic message to stderr.
@@ -86,6 +101,69 @@ class _MonitorApi:
         shows a loading state meanwhile.
         """
         return list_history()
+
+    def start_search(self, query: object, sessions: object, options: object, seq: object) -> bool:
+        """Start a streaming content search over the given in-view sessions.
+
+        Content-based but strictly encapsulated (see ``search``): the scan reads
+        transcripts locally and pushes back only matching session ids and
+        progress counts - never any conversation text.  ``options`` carries the
+        editor toggles (match case, whole word, regular expression).  Returns
+        immediately; the scan runs on its own daemon thread and reports through
+        ``window.__amcSearchPush`` as it goes, so results and the progress bar
+        fill in live.  ``seq`` is the UI's monotonic search id: starting a new
+        search bumps the active id, which makes any still-running earlier search
+        cancel itself.
+        """
+        try:
+            seq_value = int(seq)  # type: ignore[arg-type]  # validated below
+        except (TypeError, ValueError):
+            return False
+
+        with self._search_lock:
+            self._search_seq = seq_value
+
+        thread = threading.Thread(target=self._run_search, args=(query, sessions, options, seq_value), daemon=True)
+        thread.start()
+        return True
+
+    def _run_search(self, query: object, sessions: object, options: object, seq: int) -> None:
+        """Worker body: scan transcripts and push updates until done or superseded."""
+        def cancelled() -> bool:
+            return self._search_seq != seq
+
+        def on_update(processed: int, total: int, matches: list[str], done: bool, error: bool) -> None:
+            self._push_search(seq, processed, total, matches, done, error)
+
+        try:
+            run_search(query, sessions, options, on_update, cancelled)
+        except Exception:
+            # A search thread must never crash the app; tell the UI it finished
+            # so it can clear its loading/progress state.
+            if not cancelled():
+                self._push_search(seq, 0, 0, [], True, False)
+
+    def _push_search(self, seq: int, processed: int, total: int, matches: list[str], done: bool, error: bool) -> None:
+        """Push one search update into the page via the window bridge.
+
+        A superseded search (its id no longer current) is dropped, so a stale
+        scan cannot write results over a newer one.  Only ids, counts, and an
+        error flag cross the bridge - never conversation content.
+        """
+        window = self._window
+        if window is None or self._search_seq != seq:
+            return
+
+        payload = json.dumps({
+            'seq': seq, 'processed': processed, 'total': total,
+            'ids': list(matches), 'done': done, 'error': error,
+        })
+        try:
+            window.evaluate_js('window.__amcSearchPush && window.__amcSearchPush(' + payload + ')')
+        except Exception:
+            # The window may be closing, or the bridge briefly unavailable - a
+            # dropped progress update is harmless.
+            pass
 
     def delete_session(self, session_id: object, cwd: object) -> bool:
         """Delete a past session's transcript and subagent folder (user-initiated).
@@ -173,7 +251,7 @@ def run(verbose: bool = False) -> None:
     api = _MonitorApi()
 
     ui_dir = _ui_dir()
-    webview.create_window(
+    window = webview.create_window(
         T['app_title'],
         url=f'{ui_dir / "index.html"}?v={_asset_version(ui_dir)}',
         js_api=api,
@@ -182,6 +260,8 @@ def run(verbose: bool = False) -> None:
         min_size=(480, 360),
         background_color=_window_background(),
     )
+    # Let the bridge push streaming search results back into this window.
+    api.attach_window(window)
     on_started = print_runtime_diagnostics if verbose else None
     webview.start(on_started, private_mode=False, storage_path=str(_storage_dir()), icon=_icon_path())
 

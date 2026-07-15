@@ -41,6 +41,26 @@ const state = {
     pricing: {},
     pollInterval: 5,
     filters: new Set(),
+    // Free-text search over the session CONTENT (transcript text), in-session
+    // only (deliberately not persisted, so a restart never hides everything
+    // behind a stale query). The match is computed by the Python bridge, which
+    // reads the transcripts and returns only the matching session ids - no
+    // content ever reaches the UI. `searchMatches` holds that id set for the
+    // query in `searchQuery`; null means no content filter is active yet.
+    search: '',
+    searchMatches: null,
+    searchQuery: '',
+    searchLoading: false,
+    searchProcessed: 0,
+    searchTotal: 0,
+    searchSeq: 0,
+    searchTimer: null,
+    // Editor-style search options (persisted), plus whether the current query is
+    // an invalid regular expression (turns the box red).
+    searchMatchCase: false,
+    searchWholeWord: false,
+    searchRegex: false,
+    searchError: false,
     sort: 'activity',
     sortDir: 'asc',
     priorityOrder: true,
@@ -99,6 +119,12 @@ const DEFAULT_LABELS = {
     sort_direction_hint: 'Switch between ascending and descending order',
     empty_state: 'No active Claude Code agents.',
     empty_filter: 'No agents match this filter.',
+    search_placeholder: 'Search sessions',
+    search_loading: 'Searching sessions…',
+    search_match_case: 'Match case',
+    search_whole_word: 'Match whole word',
+    search_regex: 'Use regular expression',
+    search_regex_invalid: 'Invalid regular expression',
     last_activity: 'Last activity {age} ago',
     no_activity: 'No activity yet',
     tool_running: 'tool running',
@@ -378,6 +404,13 @@ function applyBootstrap(bootstrap) {
     document.getElementById('app-title').textContent = title;
     document.getElementById('app-subtitle').textContent = state.labels.subtitle;
     document.title = title;
+
+    const searchInput = document.getElementById('search-input');
+    if (searchInput) {
+        searchInput.placeholder = state.labels.search_placeholder;
+        searchInput.setAttribute('aria-label', state.labels.search_placeholder);
+    }
+    refreshSearchOptButtons();
 
     const effortBadge = document.getElementById('effort-badge');
     if (bootstrap.default_effort) {
@@ -839,14 +872,20 @@ function toggleFilter(key) {
     }
     persistFilters();
 
-    // Turning the history chip on is what triggers the (potentially second-long)
-    // scan of past sessions - lazily, off the UI thread, so the page never
-    // blocks. ensureHistoryLoaded re-renders when the data arrives.
-    if (key === 'history' && !wasActive) {
+    // Turning the history chip on triggers the (potentially second-long) scan of
+    // past sessions - lazily, off the UI thread, so the page never blocks. When
+    // it arrives, afterHistoryLoaded re-runs any active search over the widened
+    // scope and re-renders.
+    if (key === 'history' && !wasActive && state.history === null) {
         ensureHistoryLoaded();
+        return;
     }
 
-    if (state.last) {
+    // A chip toggle changes which sessions are in view - and thus the search
+    // scope - so re-run any active search; otherwise just re-render.
+    if (state.search.trim().length >= SEARCH_MIN_CHARS) {
+        runSearch();
+    } else if (state.last) {
         render(state.last);
     }
 }
@@ -867,9 +906,7 @@ async function ensureHistoryLoaded() {
         // leave history null so a later call (a re-toggle, or boot) retries.
         if (mockMode()) {
             state.history = Array.isArray(window.__MOCK_HISTORY__) ? window.__MOCK_HISTORY__ : [];
-            if (state.last) {
-                render(state.last);
-            }
+            afterHistoryLoaded();
         }
         return;
     }
@@ -887,7 +924,15 @@ async function ensureHistoryLoaded() {
     }
 
     state.historyLoading = false;
-    if (state.last) {
+    afterHistoryLoaded();
+}
+
+// Past sessions just became part of the view. Re-run any active search so its
+// scope now covers them too (they were not in the scope when it first ran).
+function afterHistoryLoaded() {
+    if (state.search.trim().length >= SEARCH_MIN_CHARS) {
+        runSearch();
+    } else if (state.last) {
         render(state.last);
     }
 }
@@ -933,10 +978,16 @@ function loadFilters() {
     return active.size > 0 ? active : new Set(DEFAULT_FILTER_KEYS);
 }
 
-function countByFilter(projects) {
+// Count sessions per filter bucket. With an `includeSession` predicate (the
+// search match), only matching sessions are counted, so the chip counts track
+// what the search has narrowed the view to.
+function countByFilter(projects, includeSession) {
     const counts = { all: 0, needs: 0, idle: 0, working: 0, background: 0, errored: 0, interrupted: 0, quiet: 0, new: 0, history: 0 };
     for (const project of projects) {
         for (const session of project.sessions) {
+            if (includeSession && !includeSession(session)) {
+                continue;
+            }
             counts.all += 1;
             const bucket = logic.sessionBucket(session);
             if (bucket) {
@@ -967,6 +1018,377 @@ function renderFilters(counts) {
     container.querySelectorAll('.filter-chip[data-filter]').forEach((button) => {
         button.addEventListener('click', () => toggleFilter(button.dataset.filter));
     });
+}
+
+// Content search. The query is matched against the transcript CONTENT, which
+// only the Python bridge can read; it streams back matching session ids (and
+// progress) via window.__amcSearchPush, and the UI shows them as they arrive.
+// The box combines with the status chips (both must match). A query shorter than
+// this is treated as no filter, so a single stray character never scans.
+const SEARCH_MIN_CHARS = 2;
+
+// Wait for a pause in typing before scanning, so a burst of keystrokes starts
+// one search, not one per character.
+const SEARCH_DEBOUNCE_MS = 300;
+
+// The editor-style option toggles: element id -> the state flag it drives.
+const SEARCH_OPT_BUTTONS = [
+    ['opt-case', 'searchMatchCase', 'search_match_case'],
+    ['opt-word', 'searchWholeWord', 'search_whole_word'],
+    ['opt-regex', 'searchRegex', 'search_regex'],
+];
+
+function initSearch() {
+    const input = document.getElementById('search-input');
+    if (!input) {
+        return;
+    }
+
+    // Receive streaming results pushed from the Python side. Registered here so
+    // it exists before any search can start.
+    window.__amcSearchPush = onSearchPush;
+
+    input.value = state.search;
+
+    input.addEventListener('input', () => {
+        state.search = input.value;
+        scheduleSearch();
+    });
+
+    input.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && input.value) {
+            event.stopPropagation();
+            input.value = '';
+            state.search = '';
+            scheduleSearch();
+        }
+    });
+
+    // Each toggle flips its option, is persisted, and re-runs the search at once
+    // (a click is a discrete action, so no debounce).
+    SEARCH_OPT_BUTTONS.forEach(([id, key]) => {
+        const button = document.getElementById(id);
+        if (!button) {
+            return;
+        }
+        button.addEventListener('click', () => {
+            state[key] = !state[key];
+            persistSearchOptions();
+            refreshSearchOptButtons();
+            runSearch();
+        });
+    });
+
+    refreshSearchOptButtons();
+}
+
+// Reflect the option flags on their buttons (active state + tooltip). Called on
+// init, after each toggle, and once labels arrive (applyBootstrap).
+function refreshSearchOptButtons() {
+    SEARCH_OPT_BUTTONS.forEach(([id, key, tipKey]) => {
+        const button = document.getElementById(id);
+        if (!button) {
+            return;
+        }
+        const on = !!state[key];
+        button.classList.toggle('active', on);
+        button.setAttribute('aria-pressed', on ? 'true' : 'false');
+        const tip = state.labels[tipKey];
+        if (tip) {
+            button.dataset.tip = tip;
+            button.setAttribute('aria-label', tip);
+        }
+    });
+}
+
+function persistSearchOptions() {
+    try {
+        localStorage.setItem('amc-search-opts', JSON.stringify({
+            matchCase: state.searchMatchCase,
+            wholeWord: state.searchWholeWord,
+            regex: state.searchRegex,
+        }));
+    } catch (e) { /* storage unavailable */ }
+}
+
+function searchOptions() {
+    return { match_case: state.searchMatchCase, whole_word: state.searchWholeWord, use_regex: state.searchRegex };
+}
+
+// Front-end regex validity check for instant red-box feedback. The backend
+// (Python `re`) is authoritative and can still flag an error via its push, but
+// this catches the common case without a round-trip.
+function isValidRegex(pattern) {
+    try {
+        new RegExp(pattern);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+// Toggle the invalid (red) state of the box, and give it a tooltip explaining
+// why while invalid.
+function updateSearchBox() {
+    const box = document.querySelector('.search-box');
+    if (box) {
+        box.classList.toggle('invalid', !!state.searchError);
+    }
+    const input = document.getElementById('search-input');
+    if (input) {
+        if (state.searchError) {
+            input.setAttribute('aria-invalid', 'true');
+            input.dataset.tip = state.labels.search_regex_invalid || '';
+        } else {
+            input.removeAttribute('aria-invalid');
+            delete input.dataset.tip;
+        }
+    }
+}
+
+function scheduleSearch() {
+    clearTimeout(state.searchTimer);
+    state.searchTimer = setTimeout(runSearch, SEARCH_DEBOUNCE_MS);
+}
+
+// The search scope is exactly the sessions the active filter chips show - not
+// every session. A live session is in scope only when its status chip is on;
+// history sessions only when the history chip is on. So Python reads only the
+// transcripts the user can actually see, and a session hidden by a filter is
+// never scanned (its match could not be shown anyway). With includeHistory
+// false, only the (chip-visible) live sessions are returned - used by the delta
+// rescan, since dead history transcripts never change.
+function collectSearchRefs(includeHistory) {
+    const refs = [];
+    const seen = new Set();
+    const add = (list, isHistory) => {
+        for (const raw of list || []) {
+            if (!raw.session_id || !raw.cwd) {
+                continue;
+            }
+            const bucket = isHistory ? 'history' : logic.filterBucket(logic.deriveStatus(raw));
+            if (!bucket || !state.filters.has(bucket)) {
+                continue;
+            }
+            const key = raw.session_id + '|' + raw.cwd;
+            if (!seen.has(key)) {
+                seen.add(key);
+                refs.push({ session_id: raw.session_id, cwd: raw.cwd });
+            }
+        }
+    };
+    add(state.last ? state.last.sessions : [], false);
+    if (includeHistory && state.filters.has('history') && Array.isArray(state.history)) {
+        add(state.history, true);
+    }
+    return refs;
+}
+
+function currentSessionRefs() {
+    return collectSearchRefs(true);
+}
+
+// Start (or clear) a content search. Bumps the sequence id so any in-flight scan
+// - and any late push from it - is superseded and ignored.
+function runSearch() {
+    const query = state.search.trim();
+    const active = query.length >= SEARCH_MIN_CHARS;
+    const seq = ++state.searchSeq;
+    const bridge = apiBridge();
+
+    // Regex mode with an invalid pattern: flag the box red at once and do not
+    // scan. (The backend re-validates too and can flag it via its push.)
+    if (active && state.searchRegex && !isValidRegex(query)) {
+        state.searchError = true;
+        state.searchMatches = null;
+        state.searchLoading = false;
+        state.searchProcessed = 0;
+        state.searchTotal = 0;
+        updateSearchProgress();
+        updateSearchBox();
+        if (state.last) {
+            render(state.last);
+        }
+        return;
+    }
+    state.searchError = false;
+    updateSearchBox();
+
+    if (!active) {
+        state.searchMatches = null;
+        state.searchQuery = '';
+        state.searchLoading = false;
+        state.searchProcessed = 0;
+        state.searchTotal = 0;
+        // Cancel a running backend search: the new (unused) seq invalidates it.
+        if (bridge && typeof bridge.start_search === 'function') {
+            try { bridge.start_search('', [], searchOptions(), seq); } catch (e) { /* bridge hiccup */ }
+        }
+        updateSearchProgress();
+        if (state.last) {
+            render(state.last);
+        }
+        return;
+    }
+
+    state.searchQuery = query;
+    state.searchMatches = new Set();
+    state.searchLoading = true;
+    state.searchProcessed = 0;
+    state.searchTotal = 0;
+    updateSearchProgress();
+    if (state.last) {
+        render(state.last);
+    }
+
+    if (!bridge || typeof bridge.start_search !== 'function') {
+        // Browser preview: no file access without the bridge, so fall back to a
+        // synchronous client-side match over the mock records' visible fields.
+        state.searchMatches = mockSearchMatches(query);
+        state.searchLoading = false;
+        updateSearchProgress();
+        if (state.last) {
+            render(state.last);
+        }
+        return;
+    }
+
+    try {
+        bridge.start_search(query, currentSessionRefs(), searchOptions(), seq);
+    } catch (e) {
+        state.searchLoading = false;
+        updateSearchProgress();
+        if (state.last) {
+            render(state.last);
+        }
+    }
+}
+
+// Refresh an active search when the snapshot changes, so newly-appearing matches
+// show up on their own. Transcripts are append-only: an existing match never
+// stops matching, and a NEW match can only appear in a live session that has
+// grown. So the delta scope is just the chip-visible live sessions not already
+// matched - cheap even with history on (dead history is never re-read, matched
+// sessions are skipped). Runs silently (no progress bar): the new matches simply
+// stream in and are ADDED to the set, so nothing already shown flickers away.
+function rescanForNewMatches() {
+    const query = state.search.trim();
+    if (query.length < SEARCH_MIN_CHARS || state.searchError || state.searchLoading) {
+        return;
+    }
+    if (!(state.searchMatches instanceof Set)) {
+        return;
+    }
+
+    const bridge = apiBridge();
+    if (!bridge || typeof bridge.start_search !== 'function') {
+        return;
+    }
+
+    const refs = collectSearchRefs(false).filter((ref) => !state.searchMatches.has(ref.session_id));
+    if (refs.length === 0) {
+        return;
+    }
+
+    // A fresh seq so any late push from a prior scan is ignored; matches are
+    // added to the existing set (never reset), so results only grow.
+    const seq = ++state.searchSeq;
+    try {
+        bridge.start_search(query, refs, searchOptions(), seq);
+    } catch (e) { /* bridge hiccup - the next change retries */ }
+}
+
+// One streaming update from the backend: {seq, processed, total, ids, done, error}.
+// A stale seq (a newer search has started) is ignored. Pure progress ticks only
+// move the bar; a re-render happens when new matches arrive or the scan ends.
+function onSearchPush(payload) {
+    if (!payload || payload.seq !== state.searchSeq) {
+        return;
+    }
+
+    // The backend rejected the pattern as an invalid regular expression.
+    if (payload.error) {
+        state.searchError = true;
+        state.searchLoading = false;
+        state.searchMatches = null;
+        updateSearchProgress();
+        updateSearchBox();
+        if (state.last) {
+            render(state.last);
+        }
+        return;
+    }
+
+    state.searchProcessed = payload.processed || 0;
+    state.searchTotal = payload.total || 0;
+
+    let changed = false;
+    if (Array.isArray(payload.ids) && payload.ids.length) {
+        if (!(state.searchMatches instanceof Set)) {
+            state.searchMatches = new Set();
+        }
+        for (const id of payload.ids) {
+            if (!state.searchMatches.has(id)) {
+                state.searchMatches.add(id);
+                changed = true;
+            }
+        }
+    }
+    if (payload.done) {
+        state.searchLoading = false;
+        changed = true;
+    }
+
+    updateSearchProgress();
+    if (changed && state.last) {
+        render(state.last);
+    }
+}
+
+// A thin determinate progress bar under the toolbar while a scan runs; before
+// the first update arrives (total unknown) it reads as indeterminate.
+function updateSearchProgress() {
+    const bar = document.getElementById('search-progress');
+    if (!bar) {
+        return;
+    }
+
+    bar.hidden = !state.searchLoading;
+    const indeterminate = state.searchLoading && state.searchTotal === 0;
+    bar.classList.toggle('indeterminate', indeterminate);
+
+    const fill = bar.querySelector('.search-progress-fill');
+    if (fill) {
+        const pct = state.searchTotal > 0
+            ? Math.min(100, Math.round((state.searchProcessed / state.searchTotal) * 100))
+            : 0;
+        fill.style.width = indeterminate ? '' : pct + '%';
+    }
+}
+
+// Preview-only fallback (no bridge, so no transcript access): match the query
+// against the mock records' visible fields, over the same in-view scope the real
+// search uses. Never used in the packaged app.
+function mockSearchMatches(query) {
+    const needle = query.toLowerCase();
+    const scope = new Set(currentSessionRefs().map((ref) => ref.session_id));
+    const matches = new Set();
+    const scan = (list) => {
+        for (const raw of list || []) {
+            if (!scope.has(raw.session_id)) {
+                continue;
+            }
+            const hay = [raw.title, raw.short_name, raw.cwd, raw.model_id].filter(Boolean).join(' ').toLowerCase();
+            if (hay.includes(needle)) {
+                matches.add(raw.session_id);
+            }
+        }
+    };
+    scan(state.last ? state.last.sessions : []);
+    if (Array.isArray(state.history)) {
+        scan(state.history);
+    }
+    return matches;
 }
 
 /* --- rendering --- */
@@ -1416,12 +1838,26 @@ function render(snapshot) {
     const loadingNote = (historyActive && state.historyLoading) ? state.labels.history_loading : '';
 
     const projects = logic.groupProjects(rawSessions, state.labels, prices);
-    const counts = countByFilter(projects);
+
+    // The content search narrows the whole view at once - the chip counts, the
+    // blocked banner, and the rows all reflect only sessions the backend matched
+    // (matches stream in, so the set grows live). A query below the minimum, or
+    // no query, matches everything. It combines with the status chips: a session
+    // shows only when both its chip is on and its content matched.
+    const searchActive = state.search.trim().length >= SEARCH_MIN_CHARS;
+    const matchesSearch = (session) => !searchActive
+        || (state.searchMatches != null && state.searchMatches.has(session.session_id));
+
+    const counts = countByFilter(projects, matchesSearch);
     renderFilters(counts);
 
     ensureShell();
 
-    if (counts.all === 0) {
+    // "No sessions at all" (or the history scan still loading) shows the empty
+    // state; a query that merely matched nothing falls through to the per-filter
+    // empty note below, so the search count is not mistaken for an idle machine.
+    const hasAnySession = projects.some((project) => project.sessions.length > 0);
+    if (!hasAnySession) {
         heroSlot.replaceChildren();
         panelsSlot.replaceChildren();
         stateSlot.innerHTML = emptyBlock(loadingNote || state.labels.empty_state);
@@ -1430,11 +1866,12 @@ function render(snapshot) {
     }
 
     // The banner shows only sessions genuinely blocked on a dialog (question,
-    // plan review, permission) - the ones that need feedback to continue.
+    // plan review, permission) that also match the search - the ones that need
+    // feedback to continue.
     const blocked = [];
     for (const project of projects) {
         for (const session of project.sessions) {
-            if (session.status === 'awaiting_permission') {
+            if (session.status === 'awaiting_permission' && matchesSearch(session)) {
                 blocked.push({ session, projectName: project.name });
             }
         }
@@ -1447,7 +1884,7 @@ function render(snapshot) {
 
     const visible = [];
     for (const project of projects) {
-        const sessions = sortSessions(project.sessions.filter(matchesFilter));
+        const sessions = sortSessions(project.sessions.filter((session) => matchesFilter(session) && matchesSearch(session)));
         if (sessions.length === 0) {
             continue;
         }
@@ -1457,7 +1894,12 @@ function render(snapshot) {
     const ordered = logic.sortProjects(visible, state.priorityOrder);
 
     reconcile(panelsSlot, ordered, (project) => project.cwd, createPanel, updatePanel);
-    if (loadingNote) {
+    // A live scan shows its own note (results keep filling in beneath it); then
+    // the history-loading note; then, once settled, the empty-filter note when
+    // nothing matched.
+    if (searchActive && state.searchLoading) {
+        stateSlot.innerHTML = emptyBlock(state.labels.search_loading);
+    } else if (loadingNote) {
         stateSlot.innerHTML = emptyBlock(loadingNote);
     } else {
         stateSlot.innerHTML = visible.length === 0 ? emptyBlock(state.labels.empty_filter || state.labels.empty_state) : '';
@@ -1503,6 +1945,8 @@ async function checkForChanges() {
         if (fingerprint !== state.fingerprint) {
             state.fingerprint = fingerprint;
             await tick();
+            // Content changed: let an active search pick up any new matches.
+            rescanForNewMatches();
         }
     } catch (err) {
         // Bridge hiccup - the regular full poll covers it.
@@ -1549,12 +1993,19 @@ async function boot() {
         state.sortDir = localStorage.getItem('amc-sort-dir') === 'desc' ? 'desc' : 'asc';
         state.priorityOrder = localStorage.getItem('amc-priority-order') !== '0';
         state.collapsed = new Set(JSON.parse(localStorage.getItem('amc-collapsed') || '[]'));
+        const searchOpts = JSON.parse(localStorage.getItem('amc-search-opts') || '{}');
+        state.searchMatchCase = !!searchOpts.matchCase;
+        state.searchWholeWord = !!searchOpts.wholeWord;
+        state.searchRegex = !!searchOpts.regex;
     } catch (e) {
         state.filters = new Set(FILTER_KEYS);
         state.sort = 'activity';
         state.sortDir = 'asc';
         state.priorityOrder = true;
         state.collapsed = new Set();
+        state.searchMatchCase = false;
+        state.searchWholeWord = false;
+        state.searchRegex = false;
     }
     if (!SORT_VALUES[state.sort]) {
         state.sort = 'activity';
@@ -1575,6 +2026,11 @@ async function boot() {
     }
     try {
         initPriorityToggle();
+    } catch (err) {
+        reportUiError(err);
+    }
+    try {
+        initSearch();
     } catch (err) {
         reportUiError(err);
     }

@@ -52,6 +52,24 @@
                 <button id="sort-dir" class="sort-dir" type="button" aria-label="Sort direction">&#9650;</button>
             </div>
         </div>
+        <div class="search-row">
+            <div class="search-box">
+                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="11" cy="11" r="7"></circle>
+                    <path d="m20 20-3.4-3.4"></path>
+                </svg>
+                <input id="search-input" type="search" autocomplete="off" spellcheck="false">
+                <div class="search-opts">
+                    <button id="opt-case" class="search-opt" type="button" aria-pressed="false">Aa</button>
+                    <button id="opt-word" class="search-opt search-opt-word" type="button" aria-pressed="false">ab</button>
+                    <button id="opt-regex" class="search-opt" type="button" aria-pressed="false">.*</button>
+                </div>
+            </div>
+        </div>
+        <div class="search-progress" id="search-progress" role="progressbar" hidden>
+            <div class="search-progress-fill"></div>
+        </div>
     </div>
     <main id="content" class="content"></main>
     <script>
