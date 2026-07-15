@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-15
+
 ### Added
 - A search box in the toolbar that narrows the view to sessions whose transcript *content* contains what you type. Three editor-style toggles refine it - match case, match whole word, and use a regular expression (an invalid pattern turns the box red), remembered across restarts. It searches only the sessions the active filter chips currently show, newest first, running locally and on demand with a progress bar, and matches stream in as they are found; the chip counts update to match, and Escape clears it. Results stay current as your agents work - a running session that newly contains the text appears on its own. The search only ever reports which sessions matched - never any of their content - and, like everything else, nothing leaves your machine.
 
@@ -62,6 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 13 languages, auto-detected from the system locale.
 - Optional settings file to tune the poll interval and window size.
 
-[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jens-duttke/agent-monitor-for-claude/releases/tag/v0.1.0
