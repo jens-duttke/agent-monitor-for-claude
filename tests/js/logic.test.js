@@ -230,6 +230,28 @@ test('deriveStatus: auto-mode pending tool is just working', () => {
     assert.equal(status, 'working');
 });
 
+test('deriveStatus: a pending dialog tool blocks even with an unrelated child process', () => {
+    // A dialog tool (question / plan review) never spawns a child, so a live
+    // child alongside it is unrelated background work and must not demote the
+    // block - the session is waiting on you, not busy. Holds in every mode.
+    assert.equal(logic.deriveStatus(raw({
+        pending_tool: true, last_tool_name: 'ExitPlanMode', permission_mode: 'default',
+        child_count: 1, last_entry_kind: 'assistant',
+    })), 'awaiting_permission');
+    assert.equal(logic.deriveStatus(raw({
+        pending_tool: true, last_tool_name: 'AskUserQuestion', permission_mode: 'auto',
+        child_count: 2, last_entry_kind: 'assistant',
+    })), 'awaiting_permission');
+});
+
+test('deriveStatus: a generic pending tool with a child still reads as executing', () => {
+    // A generic tool that spawned a child is running, not blocking - unchanged.
+    assert.equal(logic.deriveStatus(raw({
+        pending_tool: true, last_tool_name: 'Bash', permission_mode: 'default',
+        child_count: 1, last_entry_kind: 'assistant',
+    })), 'working');
+});
+
 test('pendingIsBlocking', () => {
     assert.equal(logic.pendingIsBlocking('AskUserQuestion', 'auto'), true);
     assert.equal(logic.pendingIsBlocking('ExitPlanMode', 'acceptEdits'), true);

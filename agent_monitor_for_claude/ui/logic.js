@@ -210,8 +210,13 @@ function historyNeedsRefresh(previousSessions, currentSessions) {
 // the registry's busy/idle field and any background work.
 function deriveStatus(raw) {
     const toolRunning = (raw.child_count || 0) > 0;
-    const pendingBlocking = Boolean(raw.pending_tool) && !toolRunning
-        && pendingIsBlocking(raw.last_tool_name, raw.permission_mode);
+    // A dialog tool (question / plan review) never spawns a child process, so a
+    // live child alongside a pending dialog is unrelated background work and must
+    // not demote the block - the dialog is waiting on you in every mode. Only a
+    // generic tool is gated by the child (a running child means it is executing,
+    // not prompting).
+    const pendingBlocking = Boolean(raw.pending_tool)
+        && (DIALOG_TOOLS.has(raw.last_tool_name) || (!toolRunning && pendingIsBlocking(raw.last_tool_name, raw.permission_mode)));
 
     let status = classify({
         alive: raw.alive,

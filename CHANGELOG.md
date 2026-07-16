@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- A session waiting on a question or plan-review dialog now reads "Needs you" even when an unrelated background process is running. Such a dialog was previously demoted to "Background" whenever the session had any live child process, hiding that it was actually waiting on you.
 - The UI now detects Simplified Chinese, Traditional Chinese, Hindi, and Indonesian on Windows systems that report the older descriptive locale names (e.g. "Chinese (Simplified)_China"). These languages previously fell back to English despite shipping a translation, unless the language was set manually.
 - With History shown, resuming a past session no longer lists it twice (a live row plus a stale history row with a broken "Delete"); the stale history row is dropped once the session is live again. And a session that ends while the app is running now moves into History on its own instead of disappearing until the next restart.
 - A crashed or force-killed session whose leftover registry entry was never cleaned up no longer disappears entirely. Once its last activity aged past the retention window it was dropped from the live overview yet still skipped by History; it now appears under History instead of vanishing from both views.
