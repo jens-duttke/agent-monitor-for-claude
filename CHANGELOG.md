@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-16
+
 ### Changed
 - The header (title, filter chips, and search) now stays fixed at the top while only the session list below it scrolls. The scrollbar sits in that list alone and its space is always reserved, so the layout no longer shifts sideways when the list grows tall enough to need it.
 
@@ -97,7 +99,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 13 languages, auto-detected from the system locale.
 - Optional settings file to tune the poll interval and window size.
 
-[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jens-duttke/agent-monitor-for-claude/releases/tag/v0.1.0
