@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- The abbreviated token count now rounds cleanly at the tier boundaries: a total just under a million reads "1.0M" instead of "1000k", and one just under 100k reads "100k" instead of "100.0k".
 - A misspelled or unknown key in the settings file is now reported in the settings-error dialog (and ignored), instead of being silently dropped while the default quietly applied. A key starting with an underscore is treated as a comment and left alone.
 - Sessions that used Claude 3.5 Haiku (often via subagents) now show a dollar cost instead of a plain token total. Its price was listed under a key the model id never resolved to, so the cost estimate was silently skipped for the whole session.
 - A History row whose transcript ends in one very large entry (a giant final tool result) now shows its model and its true last-activity age, instead of a blank model and an age taken from the file's modification time.

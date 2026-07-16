@@ -417,6 +417,17 @@ test('formatTokens', () => {
     assert.equal(logic.formatTokens(3100000), '3.1M');
 });
 
+test('formatTokens rounds cleanly across tier boundaries', () => {
+    // A value that rounds up across a boundary must promote, not overflow the tier.
+    assert.equal(logic.formatTokens(999500), '1.0M');   // not "1000k"
+    assert.equal(logic.formatTokens(999999), '1.0M');
+    assert.equal(logic.formatTokens(99999), '100k');    // not "100.0k"
+    assert.equal(logic.formatTokens(99955), '100k');
+    assert.equal(logic.formatTokens(99949), '99.9k');   // just below the boundary
+    assert.equal(logic.formatTokens(100000), '100k');
+    assert.equal(logic.formatTokens(1000000), '1.0M');
+});
+
 test('tokenLabels: empty usage yields no label', () => {
     assert.equal(logic.tokenLabels(null, {}), '');
     assert.equal(logic.tokenLabels({ input_tokens: 0, output_tokens: 0 }, {}), '');

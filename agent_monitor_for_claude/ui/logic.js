@@ -484,7 +484,14 @@ function formatTokens(count) {
     }
     if (value < 1000000) {
         const thousands = value / 1000;
-        return thousands >= 100 ? Math.round(thousands) + 'k' : thousands.toFixed(1) + 'k';
+        // Decide the tier and precision after rounding, so a value that rounds up
+        // across a boundary is promoted cleanly: 999,500 -> "1.0M" (not "1000k"),
+        // and 99,955 -> "100k" (not "100.0k", matching 100,000).
+        if (Math.round(thousands) >= 1000) {
+            return (value / 1000000).toFixed(1) + 'M';
+        }
+        const oneDecimal = Math.round(thousands * 10) / 10;
+        return oneDecimal >= 100 ? Math.round(thousands) + 'k' : oneDecimal.toFixed(1) + 'k';
     }
     return (value / 1000000).toFixed(1) + 'M';
 }
