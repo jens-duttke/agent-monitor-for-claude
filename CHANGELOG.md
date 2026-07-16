@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- A session's token total and estimated cost could sometimes jump too high and stay there. When two overview refreshes overlapped, a newly appended turn could be counted twice; the incremental usage scan is now serialized so each turn is summed exactly once.
 - Choosing "replace the running instance" no longer risks terminating an unrelated process. If the running instance is closed while that confirmation dialog is open, its process ID can be reused by Windows for another program; the app now re-checks that the instance is still running at the moment you confirm, and does nothing if it has already exited.
 - Subagent workflows are now recognized as finished when they complete. A completed workflow agent's final step is often a tool call rather than a plain closing message, which the previous check did not treat as done - so the running-subagent badge (⚡) and the "Background" status could stay up after a workflow had actually finished, clearing only once you sent a new prompt. Completion is now detected from the transcript's final turn regardless of how it ended.
 

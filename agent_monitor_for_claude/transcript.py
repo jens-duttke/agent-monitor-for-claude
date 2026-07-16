@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -122,6 +123,11 @@ class _ScanState:
 # The first poll reads the whole file once; afterwards only newly appended
 # bytes are parsed (tracked per path up to the last complete line).
 _scan_cache: dict[str, _ScanState] = {}
+
+# Serializes the read-absorb-store sequence below. pywebview runs each js_api
+# call on its own thread, so two overlapping snapshot builds can otherwise share
+# one cached state, both absorb the same appended bytes, and double-count usage.
+_scan_lock = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -470,40 +476,42 @@ def _scan_appended(path: Path) -> tuple[dict[str, int], dict[str, dict[str, int]
     history), the display title, and the latest permission mode.
     """
     cache_key = str(path)
-    state = _scan_cache.get(cache_key) or _ScanState()
 
-    try:
-        size = path.stat().st_size
-    except OSError:
-        return _scan_result(state)
+    with _scan_lock:
+        state = _scan_cache.get(cache_key) or _ScanState()
 
-    if size < state.consumed:
-        state = _ScanState()
-
-    result = state
-
-    if size > state.consumed:
         try:
-            with path.open('rb') as handle:
-                handle.seek(state.consumed)
-                data = handle.read(size - state.consumed)
+            size = path.stat().st_size
         except OSError:
             return _scan_result(state)
 
-        lines = data.split(b'\n')
-        # The final chunk may be a line still being written (or a file without
-        # a trailing newline): reflect it in the result, but keep it out of the
-        # cache so it is re-read - never double-counted - on the next poll.
-        trailing = lines.pop()
-        for raw_line in lines:
-            _absorb_line(raw_line, state)
-        state.consumed = size - len(trailing)
-        _scan_cache[cache_key] = state
+        if size < state.consumed:
+            state = _ScanState()
 
-        result = state.copy()
-        _absorb_line(trailing, result)
+        result = state
 
-    return _scan_result(result)
+        if size > state.consumed:
+            try:
+                with path.open('rb') as handle:
+                    handle.seek(state.consumed)
+                    data = handle.read(size - state.consumed)
+            except OSError:
+                return _scan_result(state)
+
+            lines = data.split(b'\n')
+            # The final chunk may be a line still being written (or a file without
+            # a trailing newline): reflect it in the result, but keep it out of the
+            # cache so it is re-read - never double-counted - on the next poll.
+            trailing = lines.pop()
+            for raw_line in lines:
+                _absorb_line(raw_line, state)
+            state.consumed = size - len(trailing)
+            _scan_cache[cache_key] = state
+
+            result = state.copy()
+            _absorb_line(trailing, result)
+
+        return _scan_result(result)
 
 
 def _scan_result(state: _ScanState) -> tuple[dict[str, int], dict[str, dict[str, int]], list[dict[str, str]], str | None, str | None]:
