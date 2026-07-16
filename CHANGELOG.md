@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- A session that is waiting on you but has not yet recorded which prompt it is waiting for no longer shows a misleading label (e.g. "Question for you" or "Plan review") left over from an earlier, already-answered tool. It now reads the neutral "Waiting for you" until the specific prompt is known.
 - Sessions that use stdio MCP servers are no longer shown as permanently busy. Such a server runs as a long-lived child process of the session, which was mistaken for a running tool - so an idle session read as "Background" and a session waiting on a permission prompt could read as "Working", hiding that it needed you. Child processes that start together with the session are now recognized as session-lifetime helpers and no longer counted as a running tool.
 - A session's token total and estimated cost could sometimes jump too high and stay there. When two overview refreshes overlapped, a newly appended turn could be counted twice; the incremental usage scan is now serialized so each turn is summed exactly once.
 - Choosing "replace the running instance" no longer risks terminating an unrelated process. If the running instance is closed while that confirmation dialog is open, its process ID can be reused by Windows for another program; the app now re-checks that the instance is still running at the moment you confirm, and does nothing if it has already exited.

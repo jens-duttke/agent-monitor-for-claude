@@ -601,7 +601,10 @@ function buildSession(raw, labels, prices) {
         short_name: raw.short_name,
         kind: raw.kind,
         status: status,
-        status_label: attentionLabel(status, raw.last_tool_name, labels, raw.usage_limited),
+        // Only name the tool when one is actually pending; last_tool_name lingers
+        // from a resolved tool, so the registry-`waiting` route (no pending tool)
+        // must fall through to the neutral label - matching the deriveStatus gate.
+        status_label: attentionLabel(status, raw.pending_tool ? raw.last_tool_name : null, labels, raw.usage_limited),
         needs_attention: needsAttention(status),
         model: formatModel(raw.model_id),
         model_switched: models.length > 1,

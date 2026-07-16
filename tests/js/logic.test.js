@@ -454,6 +454,34 @@ test('buildSession: a non-limit API error reads as errored with the generic labe
     assert.equal(session.status_label, 'Error');
 });
 
+test('buildSession: a registry-waiting block with a stale tool name stays neutral', () => {
+    // Blocked on you via the registry `waiting` route (no pending tool in the
+    // transcript yet), but an earlier, already-resolved tool left last_tool_name
+    // set. The label must stay neutral, not name that stale, resolved tool.
+    const session = logic.buildSession({
+        session_id: 's', pid: 1, cwd: 'd:\\x', short_name: 's', alive: true, has_transcript: true,
+        last_entry_kind: 'user_text', last_stop_reason: 'end_turn', pending_tool: false,
+        last_tool_name: 'AskUserQuestion', native_status: 'waiting', waiting_for: 'permission prompt',
+        usage: {}, child_count: 0,
+    }, {
+        status_needs_you: 'Waiting for you', status_question: 'Question for you',
+        status_awaiting_permission: 'Permission needed', status_plan_review: 'Plan review',
+    }, {});
+    assert.equal(session.status, 'awaiting_permission');
+    assert.equal(session.status_label, 'Waiting for you');
+});
+
+test('buildSession: a genuinely pending dialog tool keeps its specific label', () => {
+    // With a real pending tool, the name is meaningful and the precise label wins.
+    const session = logic.buildSession({
+        session_id: 's', pid: 1, cwd: 'd:\\x', short_name: 's', alive: true, has_transcript: true,
+        last_entry_kind: 'assistant', pending_tool: true, last_tool_name: 'AskUserQuestion',
+        permission_mode: 'default', native_status: null, usage: {}, child_count: 0,
+    }, { status_question: 'Question for you', status_needs_you: 'Waiting for you' }, {});
+    assert.equal(session.status, 'awaiting_permission');
+    assert.equal(session.status_label, 'Question for you');
+});
+
 test('modelHistory preserves the backend order and formats labels', () => {
     // A switch back to a prior model is a distinct run, so it appears again as
     // the last entry - the timeline is already ordered, modelHistory must not
