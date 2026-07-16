@@ -120,10 +120,20 @@ def _dpi_info() -> tuple[str, str]:
 
 
 def _redact_home(path_str: str) -> str:
-    """Replace the user's home directory with ``~`` to avoid exposing the username."""
-    home = str(Path.home())
-    if path_str.startswith(home):
-        return '~' + path_str[len(home):]
+    """Replace the user's home directory with ``~`` to avoid exposing the username.
+
+    Compares on the case- and separator-normalized paths: NTFS is
+    case-insensitive and a hand-typed ``CLAUDE_CONFIG_DIR`` can differ in casing
+    or slashes from ``Path.home()``, and a plain prefix check would also
+    over-match a sibling (``...\\jens2`` against home ``...\\jens``).
+    """
+    home_n = os.path.normcase(os.path.normpath(str(Path.home())))
+    norm = os.path.normcase(os.path.normpath(path_str))
+
+    if norm == home_n:
+        return '~'
+    if norm.startswith(home_n + os.sep):
+        return '~' + path_str[len(home_n):]
     return path_str
 
 
