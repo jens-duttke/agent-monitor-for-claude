@@ -549,6 +549,15 @@ test('sessionCostUsd sums per model, and bails to null on an unpriced model', ()
     assert.equal(logic.sessionCostUsd({}, PRICES), null);
 });
 
+test('sessionCostUsd ignores inherited Object.prototype keys', () => {
+    // A model id normalizing to an inherited property name must fall back to null,
+    // not resolve to a prototype member and silently price the model at $0.
+    const table = { 'opus-4-8': { input: 5, output: 25, cache_read: 0, cache_write_5m: 0, cache_write_1h: 0 } };
+    assert.equal(logic.sessionCostUsd({ 'claude-constructor': { output_tokens: 1000 } }, table), null);
+    assert.equal(logic.sessionCostUsd({ 'claude-hasOwnProperty': { output_tokens: 1000 } }, table), null);
+    assert.equal(logic.sessionCostUsd({ 'claude-opus-4-8': { output_tokens: 1000000 } }, table), 25);
+});
+
 test('formatCost is whole dollars, <$1 below a dollar, null passes through', () => {
     assert.equal(logic.formatCost(19.27), '$19');
     assert.equal(logic.formatCost(19.7), '$20');       // rounded to the nearest dollar

@@ -623,7 +623,11 @@ function sessionCostUsd(usageByModel, prices) {
             continue;
         }
         const key = modelPriceKey(modelId);
-        const rate = key ? table[key] : null;
+        // Own-property check: a key like "constructor"/"toString" would otherwise
+        // resolve to an inherited Object.prototype member (truthy) and price the
+        // model at $0 instead of falling back to the token total. modelId comes
+        // from untrusted on-disk transcripts.
+        const rate = key && Object.prototype.hasOwnProperty.call(table, key) ? table[key] : null;
         if (!rate) {
             return null;
         }
