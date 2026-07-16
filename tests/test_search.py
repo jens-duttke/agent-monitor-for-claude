@@ -83,12 +83,30 @@ class SearchTest(SearchEnvTest):
 
         self.assertEqual(self._matched_ids(self._run('absent', [self._ref('id-a')])), [])
 
-    def test_blank_oversized_or_non_string_query_matches_nothing(self) -> None:
+    def test_blank_or_non_string_query_matches_nothing(self) -> None:
         self._write('id-a', _CWD, 'hello world')
         refs = [self._ref('id-a')]
 
-        for query in ('', '   ', 'x' * 500, None, 123):
+        for query in ('', '   ', None, 123):
             self.assertEqual(self._matched_ids(self._run(query, refs)), [])
+
+    def test_over_long_query_is_rejected_even_when_present(self) -> None:
+        # A query longer than the cap must match nothing even when its exact text
+        # IS in the content - proving the length guard, not the text's absence.
+        long_text = 'y' * (search._MAX_QUERY_LEN + 1)
+        self._write('id-long', _CWD, long_text)
+
+        result = self._run(long_text, [self._ref('id-long')])
+
+        self.assertEqual(self._matched_ids(result), [])
+        self.assertFalse(self._errored(result))   # over-long is "no filter", not an error
+
+    def test_max_length_query_is_accepted(self) -> None:
+        # The boundary is inclusive: exactly the cap is a valid query and matches.
+        boundary_text = 'z' * search._MAX_QUERY_LEN
+        self._write('id-max', _CWD, boundary_text)
+
+        self.assertEqual(self._matched_ids(self._run(boundary_text, [self._ref('id-max')])), ['id-max'])
 
     def test_invalid_sessions_argument_matches_nothing(self) -> None:
         self.assertEqual(self._matched_ids(self._run('x', None)), [])
