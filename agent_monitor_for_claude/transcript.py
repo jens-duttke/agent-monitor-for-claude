@@ -422,11 +422,17 @@ def _parse(lines: list[str]) -> TranscriptState:
             # running turn.  The interrupt marker is a plain user turn on disk
             # but means the opposite of a fresh prompt - control is back with the
             # user and the model owes nothing - so it is tracked as its own kind.
-            last_entry_kind = 'user_interrupt' if _is_interrupt_marker(content) else 'user_text'
+            is_interrupt = _is_interrupt_marker(content)
+            last_entry_kind = 'user_interrupt' if is_interrupt else 'user_text'
             if isinstance(content, list):
                 for block in content:
                     if isinstance(block, dict) and block.get('type') == 'tool_result':
-                        last_entry_kind = 'tool_result'
+                        # Still record the resolved id so a pending tool is
+                        # cleared, but never let a tool_result downgrade the
+                        # interrupt marker: the whole turn was stopped, so the
+                        # interrupt wins (matching the documented precedence).
+                        if not is_interrupt:
+                            last_entry_kind = 'tool_result'
                         tool_use_id = block.get('tool_use_id')
                         if tool_use_id:
                             resolved_tool_ids.add(tool_use_id)
