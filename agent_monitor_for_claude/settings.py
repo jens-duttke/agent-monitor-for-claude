@@ -111,6 +111,14 @@ def _validate(data: dict[str, Any], path: Path) -> dict[str, Any]:
                 errors.append(f'  {key}: expected a string, got {type(value).__name__}')
                 drop.append(key)
 
+        elif not key.startswith('_'):
+            # An unrecognized key is almost always a typo (e.g. "pollinterval");
+            # report it like a type error instead of silently applying defaults. A
+            # leading underscore marks an intentional comment/metadata key and is
+            # left alone.
+            errors.append(f'  {key}: unknown setting')
+            drop.append(key)
+
     for key in drop:
         del data[key]
 
