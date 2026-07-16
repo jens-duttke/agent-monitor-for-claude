@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- A History row whose transcript ends in one very large entry (a giant final tool result) now shows its model and its true last-activity age, instead of a blank model and an age taken from the file's modification time.
 - A session that was continued from an earlier one no longer shows the automatic "This session is being continued from..." summary as its title; it now uses the first real prompt, in both the live and History lists.
 - Right after a change, the overview no longer briefly shows a stale status or age from an older refresh that finished after a newer one; only the most recent refresh is applied.
 - Typing a search query no longer briefly flashes a false "No agents match this filter" in the moment between the keystroke and the search actually running.

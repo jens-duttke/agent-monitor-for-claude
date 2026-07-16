@@ -216,6 +216,13 @@ def history_state_for(path: Path) -> HistoryState:
 
     title, cwd = _scan_title_cwd(path)
     tail = _parse(_read_tail(path))
+    # Escalate the tail window when the default read yields no timestamp, exactly
+    # like state_for: a single trailing entry larger than 256 KB (a giant tool
+    # result) would otherwise leave the model blank and the age from mtime.
+    for window in _TAIL_ESCALATION[1:]:
+        if tail.last_timestamp is not None:
+            break
+        tail = _parse(_read_tail(path, window))
     age_seconds = _activity_age(tail.last_timestamp, mtime)
 
     return HistoryState(session_id=session_id, cwd=cwd, title=title, model=tail.model, age_seconds=age_seconds)

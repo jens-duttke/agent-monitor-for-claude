@@ -7,7 +7,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_monitor_for_claude.transcript import _absorb_line, _model_timeline, _parse, _scan_title_cwd, _ScanState
+from agent_monitor_for_claude.transcript import (
+    _absorb_line,
+    _model_timeline,
+    _parse,
+    _scan_title_cwd,
+    _ScanState,
+    history_state_for,
+)
 
 
 def _lines(*entries: dict) -> list[str]:
@@ -162,6 +169,28 @@ class ModelTimelineOrderTest(unittest.TestCase):
     def test_unparseable_timestamps_do_not_crash(self) -> None:
         timeline = _model_timeline([('not-a-timestamp', 'opus'), ('2026-07-11T10:00:00Z', 'sonnet')])
         self.assertEqual({entry['model'] for entry in timeline}, {'opus', 'sonnet'})
+
+
+class HistoryStateEscalationTest(unittest.TestCase):
+    def test_escalates_the_tail_window_for_a_giant_final_entry(self) -> None:
+        # A history transcript ending in a single entry larger than the 256 KB
+        # default window must still recover the model and the last-turn timestamp
+        # (not fall back to file mtime), just like the live path does.
+        big_text = 'x' * 300000  # push the single entry past the 256 KB window
+        entry = {
+            'type': 'assistant', 'timestamp': '2020-01-01T00:00:00Z',
+            'message': {'stop_reason': 'end_turn', 'model': 'claude-opus-4-8',
+                        'usage': {'input_tokens': 5}, 'content': [{'type': 'text', 'text': big_text}]},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session.jsonl'
+            path.write_text(json.dumps(entry) + '\n', encoding='utf-8')
+            state = history_state_for(path)
+
+        self.assertEqual(state.model, 'claude-opus-4-8')
+        self.assertIsNotNone(state.age_seconds)
+        # Age from the 2020 timestamp (years), not the just-written file mtime (~0).
+        self.assertGreater(state.age_seconds, 365 * 24 * 3600)
 
 
 if __name__ == '__main__':
