@@ -162,6 +162,12 @@ def ensure_single_instance() -> bool:
         _mutex_handle = None
         return False
 
+    # The dialog can sit open indefinitely; re-read the holder at click time. A
+    # holder that exited meanwhile releases its shared-memory mapping, so a failed
+    # re-read yields no PID - never terminate the earlier PID, which the OS may have
+    # since recycled onto an unrelated process.
+    holder_pid, _ = _read_holder_info()
+
     if holder_pid:
         _terminate_pid(holder_pid)
     _kernel32.CloseHandle(_mutex_handle)
