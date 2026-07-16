@@ -65,7 +65,13 @@ def delete_session(session_id: str, cwd: str) -> bool:
     if _is_live(session_id):
         return False
 
-    root = projects_dir().resolve()
+    try:
+        root = projects_dir().resolve()
+    except OSError:
+        # A resolve failure (a reparse/symlink loop, an uncanonicalizable path)
+        # must degrade to a graceful refusal, never crash the bridge call.
+        return False
+
     slug = cwd_to_slug(cwd)
     transcript = root / slug / f'{session_id}.jsonl'
     session_dir = root / slug / session_id
@@ -110,5 +116,5 @@ def _within(root: Path, candidate: Path) -> bool:
     try:
         candidate.resolve().relative_to(root)
         return True
-    except ValueError:
+    except (OSError, ValueError):
         return False

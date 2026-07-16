@@ -12,9 +12,10 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from agent_monitor_for_claude.paths import cwd_to_slug
-from agent_monitor_for_claude.session_delete import delete_session
+from agent_monitor_for_claude.session_delete import delete_session, _within
 
 _CWD = 'd:\\PythonDev\\demo-proj'
 _UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
@@ -102,6 +103,20 @@ class DeleteSessionTest(DeleteEnvTest):
         self.assertFalse(target_dir.exists())
         self.assertTrue(keep.is_file())
         self.assertTrue(keep_dir.is_dir())
+
+
+class DeleteResolveErrorTest(unittest.TestCase):
+    """A path resolve failure must degrade to a graceful False, never raise."""
+
+    def test_within_returns_false_on_resolve_oserror(self) -> None:
+        with mock.patch.object(Path, 'resolve', side_effect=OSError):
+            self.assertFalse(_within(Path('C:/root'), Path('C:/root/x')))
+
+    def test_delete_session_returns_false_on_projects_dir_resolve_oserror(self) -> None:
+        with mock.patch('agent_monitor_for_claude.session_delete._is_live', return_value=False), \
+             mock.patch('agent_monitor_for_claude.session_delete.projects_dir') as projects_dir:
+            projects_dir.return_value.resolve.side_effect = OSError
+            self.assertFalse(delete_session(_UUID, _CWD))
 
 
 if __name__ == '__main__':
