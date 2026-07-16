@@ -173,6 +173,18 @@ def ensure_single_instance() -> bool:
     _kernel32.CloseHandle(_mutex_handle)
 
     _mutex_handle = _kernel32.CreateMutexW(None, False, _MUTEX_NAME)
+
+    # Confirm this instance actually became the sole owner. If the mutex still
+    # pre-exists, the previous holder outlived the terminate (it was elevated, or
+    # the wait timed out, or its PID was never recorded) - the replace failed, so
+    # leave the old instance running and exit rather than start a second window
+    # and hijack the holder record.
+    if not _mutex_handle or ctypes.get_last_error() == _ERROR_ALREADY_EXISTS:
+        if _mutex_handle:
+            _kernel32.CloseHandle(_mutex_handle)
+        _mutex_handle = None
+        return False
+
     _store_holder_info()
     return True
 

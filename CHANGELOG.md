@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- If "replace the running instance" cannot actually stop the old instance (for example it is running elevated), the app now detects that it did not become the sole instance and exits instead of silently starting a second window and taking over the ownership record.
 - A session waiting on a question or plan-review dialog now reads "Needs you" even when an unrelated background process is running. Such a dialog was previously demoted to "Background" whenever the session had any live child process, hiding that it was actually waiting on you.
 - The UI now detects Simplified Chinese, Traditional Chinese, Hindi, and Indonesian on Windows systems that report the older descriptive locale names (e.g. "Chinese (Simplified)_China"). These languages previously fell back to English despite shipping a translation, unless the language was set manually.
 - With History shown, resuming a past session no longer lists it twice (a live row plus a stale history row with a broken "Delete"); the stale history row is dropped once the session is live again. And a session that ends while the app is running now moves into History on its own instead of disappearing until the next restart.
