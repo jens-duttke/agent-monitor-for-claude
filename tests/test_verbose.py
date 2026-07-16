@@ -30,5 +30,19 @@ class RedactHomeTest(unittest.TestCase):
         self.assertEqual(self._redact('D:\\Work\\proj'), 'D:\\Work\\proj')
 
 
+class DotnetVersionTest(unittest.TestCase):
+    def test_non_dword_release_does_not_crash(self) -> None:
+        # A damaged registry can hold a non-DWORD Release; comparing it against
+        # the integer thresholds must not raise an uncaught TypeError at startup.
+        with mock.patch('agent_monitor_for_claude.verbose.winreg.OpenKey'), \
+             mock.patch('agent_monitor_for_claude.verbose.winreg.QueryValueEx', return_value=('not-a-dword', 1)):
+            self.assertEqual(verbose._dotnet_version(), 'not found')
+
+    def test_valid_release_maps_to_a_version(self) -> None:
+        with mock.patch('agent_monitor_for_claude.verbose.winreg.OpenKey'), \
+             mock.patch('agent_monitor_for_claude.verbose.winreg.QueryValueEx', return_value=(533320, 1)):
+            self.assertEqual(verbose._dotnet_version(), '4.8.1 (release 533320)')
+
+
 if __name__ == '__main__':
     unittest.main()

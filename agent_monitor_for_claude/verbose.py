@@ -85,6 +85,10 @@ def _dotnet_version() -> str:
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full') as key:
             release, _ = winreg.QueryValueEx(key, 'Release')
+            if not isinstance(release, int):
+                # A damaged registry can hold a non-DWORD Release; comparing it
+                # against the integer thresholds below would raise TypeError.
+                return 'not found'
             version_map = [
                 (533320, '4.8.1'), (528040, '4.8'), (461808, '4.7.2'), (461308, '4.7.1'),
                 (460798, '4.7'), (394802, '4.6.2'), (394254, '4.6.1'), (393295, '4.6'),
