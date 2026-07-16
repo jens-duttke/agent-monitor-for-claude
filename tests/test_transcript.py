@@ -95,6 +95,38 @@ class TitleSkipsInjectedMetaTest(unittest.TestCase):
             self.assertEqual(cwd, 'd:\\proj')
 
 
+_LIMIT_ERROR = {
+    'type': 'assistant', 'timestamp': '2026-07-11T10:00:00Z', 'isApiErrorMessage': True,
+    'apiErrorStatus': 429, 'message': {'stop_reason': 'error', 'model': 'claude-opus-4-8', 'usage': {}},
+}
+
+
+class UsageLimitedResetTest(unittest.TestCase):
+    def test_trailing_usage_limit_sets_the_flag(self) -> None:
+        state = _parse(_lines(_LIMIT_ERROR))
+        self.assertEqual(state.last_entry_kind, 'api_error')
+        self.assertTrue(state.usage_limited)
+
+    def test_usage_limited_is_reset_when_a_later_turn_supersedes_the_error(self) -> None:
+        # The CLI retried past a mid-conversation 429: last_entry_kind moves on, so
+        # the usage_limited flag must not linger True for the rest of the transcript.
+        state = _parse(_lines(
+            _LIMIT_ERROR,
+            {'type': 'assistant', 'timestamp': '2026-07-11T10:01:00Z',
+             'message': {'stop_reason': 'end_turn', 'model': 'claude-opus-4-8', 'usage': {}}},
+        ))
+        self.assertEqual(state.last_entry_kind, 'assistant')
+        self.assertFalse(state.usage_limited)
+
+    def test_usage_limited_is_reset_by_a_later_user_turn(self) -> None:
+        state = _parse(_lines(
+            _LIMIT_ERROR,
+            {'type': 'user', 'timestamp': '2026-07-11T10:01:00Z', 'message': {'content': 'try again'}},
+        ))
+        self.assertEqual(state.last_entry_kind, 'user_text')
+        self.assertFalse(state.usage_limited)
+
+
 class ModelEventGuardTest(unittest.TestCase):
     def test_non_string_model_is_not_recorded_as_an_event(self) -> None:
         # A mistyped, truthy non-string model must not reach model_timeline, which

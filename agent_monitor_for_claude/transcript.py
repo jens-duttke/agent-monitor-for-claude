@@ -407,6 +407,10 @@ def _parse(lines: list[str]) -> TranscriptState:
                 usage_limited = _is_usage_limit(entry)
             else:
                 last_entry_kind = 'assistant'
+                # A real turn superseded any earlier API error, so usage_limited
+                # (set only in the api_error branch) must not linger True - it
+                # reflects the trailing entry alone.
+                usage_limited = False
                 last_stop_reason = message.get('stop_reason')
                 entry_model = message.get('model')
                 # Keep the last *real* model for the column; the synthetic sentinel
@@ -427,6 +431,7 @@ def _parse(lines: list[str]) -> TranscriptState:
             # user and the model owes nothing - so it is tracked as its own kind.
             is_interrupt = _is_interrupt_marker(content)
             last_entry_kind = 'user_interrupt' if is_interrupt else 'user_text'
+            usage_limited = False
             if isinstance(content, list):
                 for block in content:
                     if isinstance(block, dict) and block.get('type') == 'tool_result':
@@ -446,6 +451,7 @@ def _parse(lines: list[str]) -> TranscriptState:
             # to respond - so no reply is owed. Recorded as its own kind so the
             # trailing command entries are not misread as a pending prompt.
             last_entry_kind = 'local_command'
+            usage_limited = False
 
     pending_tool = last_tool_id is not None and last_tool_id not in resolved_tool_ids
 
