@@ -1197,6 +1197,12 @@ function runSearch() {
         state.searchLoading = false;
         state.searchProcessed = 0;
         state.searchTotal = 0;
+        // Cancel any in-flight backend scan (a prior valid pattern still running):
+        // the local seq bump is invisible to Python, so without a fresh
+        // start_search the earlier scan reads every remaining transcript to the end.
+        if (bridge && typeof bridge.start_search === 'function') {
+            logic.settleCall(() => bridge.start_search('', [], searchOptions(), seq));
+        }
         updateSearchProgress();
         updateSearchBox();
         if (state.last) {
