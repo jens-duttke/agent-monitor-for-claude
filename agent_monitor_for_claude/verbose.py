@@ -46,10 +46,12 @@ def setup_console() -> None:
     if not have_out or not have_err:
         if not ctypes.windll.kernel32.AttachConsole(ATTACH_PARENT_PROCESS):
             ctypes.windll.kernel32.AllocConsole()
+        # errors='backslashreplace' (Python's own stderr default) so a lone
+        # surrogate in any diagnostic degrades to an escape instead of raising.
         if not have_out:
-            sys.stdout = open('CONOUT$', 'w', encoding='utf-8')  # noqa: SIM115
+            sys.stdout = open('CONOUT$', 'w', encoding='utf-8', errors='backslashreplace')  # noqa: SIM115
         if not have_err:
-            sys.stderr = open('CONOUT$', 'w', encoding='utf-8')  # noqa: SIM115
+            sys.stderr = open('CONOUT$', 'w', encoding='utf-8', errors='backslashreplace')  # noqa: SIM115
 
     os.environ['PYWEBVIEW_LOG'] = 'DEBUG'
 

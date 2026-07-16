@@ -53,6 +53,30 @@ def _window_background() -> str:
     return _WINDOW_BACKGROUND_LIGHT if apps_use_light else _WINDOW_BACKGROUND_DARK
 
 
+# Cap on a forwarded UI log line so a runaway message cannot flood the console.
+_LOG_MAX_LEN = 2000
+
+
+def _sanitize_log(message: object) -> str:
+    """Render an untrusted UI log message safe to print.
+
+    Escapes control characters (except tab/newline), C1 controls, DEL, and lone
+    surrogates - so crafted page text cannot retitle the window, clear the
+    screen, or overwrite earlier output via ANSI/OSC sequences, nor raise on a
+    strict-encoded stream - and caps the length.
+    """
+    out = []
+    for ch in str(message):
+        code = ord(ch)
+        printable = ch in '\t\n' or (0x20 <= code != 0x7f and not (0x80 <= code <= 0x9f) and not (0xd800 <= code <= 0xdfff))
+        out.append(ch if printable else '\\x{:02x}'.format(code))
+
+    cleaned = ''.join(out)
+    if len(cleaned) > _LOG_MAX_LEN:
+        cleaned = cleaned[:_LOG_MAX_LEN] + '...'
+    return cleaned
+
+
 class _MonitorApi:
     """Methods exposed to JavaScript via pywebview's JS bridge."""
 
@@ -81,7 +105,7 @@ class _MonitorApi:
         if sys.stderr is None:
             return
 
-        print('[UI]', message, file=sys.stderr, flush=True)
+        print('[UI]', _sanitize_log(message), file=sys.stderr, flush=True)
 
     def get_snapshot(self) -> dict[str, Any]:
         """Return the current session overview grouped by project."""

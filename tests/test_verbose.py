@@ -83,7 +83,7 @@ class SetupConsoleTest(unittest.TestCase):
             windll.kernel32.AttachConsole.return_value = 1
             verbose.setup_console()
             # Only the missing stdout is rebound; the usable stderr is untouched.
-            open_mock.assert_called_once()
+            open_mock.assert_called_once_with('CONOUT$', 'w', encoding='utf-8', errors='backslashreplace')
             self.assertIsNot(sys.stdout, None)
             self.assertIs(sys.stderr, err)
 

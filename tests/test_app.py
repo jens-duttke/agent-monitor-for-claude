@@ -1,10 +1,39 @@
 """Tests for the _MonitorApi bridge behavior."""
 from __future__ import annotations
 
+import io
 import unittest
 from unittest import mock
 
-from agent_monitor_for_claude.app import _MonitorApi
+from agent_monitor_for_claude import app
+from agent_monitor_for_claude.app import _LOG_MAX_LEN, _MonitorApi, _sanitize_log
+
+
+class SanitizeLogTest(unittest.TestCase):
+    def test_escapes_control_and_surrogate_chars(self) -> None:
+        self.assertEqual(_sanitize_log('hello'), 'hello')
+        self.assertEqual(_sanitize_log('a\tb\nc'), 'a\tb\nc')   # tab/newline are kept
+        self.assertNotIn('\x1b', _sanitize_log('\x1b[2Jx'))     # ESC (ANSI/OSC) escaped
+        self.assertNotIn('\x07', _sanitize_log('\x07'))         # BEL escaped
+        self.assertNotIn('\x7f', _sanitize_log('\x7f'))         # DEL escaped
+        self.assertNotIn('\ud800', _sanitize_log('x\ud800y'))   # lone surrogate escaped
+        self.assertIn('emoji \U0001f600', _sanitize_log('emoji \U0001f600'))  # real high chars kept
+
+    def test_caps_length(self) -> None:
+        out = _sanitize_log('a' * (_LOG_MAX_LEN + 500))
+        self.assertTrue(out.endswith('...'))
+        self.assertLessEqual(len(out), _LOG_MAX_LEN + 3)
+
+
+class LogSanitizeTest(unittest.TestCase):
+    def test_log_strips_control_chars_from_output(self) -> None:
+        api = _MonitorApi()
+        buf = io.StringIO()
+        with mock.patch.object(app.sys, 'stderr', buf):
+            api.log('\x1b[2Jhi')
+        out = buf.getvalue()
+        self.assertNotIn('\x1b', out)
+        self.assertIn('hi', out)
 
 
 class RunSearchFailureTest(unittest.TestCase):
