@@ -120,8 +120,14 @@ class _MonitorApi:
         except (TypeError, ValueError):
             return False
 
+        # pywebview dispatches each js_api call on its own worker thread with no
+        # ordering guarantee, so a later start_search can arrive before an earlier
+        # one. Never regress to an older seq: a stale, lower seq would abort the
+        # active search and get its pushes dropped, stranding the UI in
+        # "Searching...". A page reload resets the UI counter, and get_bootstrap
+        # resets this one to match, so the guard never rejects a fresh page.
         with self._search_lock:
-            self._search_seq = seq_value
+            self._search_seq = max(self._search_seq, seq_value)
 
         thread = threading.Thread(target=self._run_search, args=(query, sessions, options, seq_value), daemon=True)
         thread.start()
@@ -226,6 +232,12 @@ class _MonitorApi:
 
     def get_bootstrap(self) -> dict[str, Any]:
         """Return static UI configuration loaded once when the page starts."""
+        # A fresh page restarts the UI's search-seq counter at 0, so reset the
+        # backend's to match - otherwise the monotonic guard in start_search
+        # would keep rejecting the reloaded page's new, lower seqs.
+        with self._search_lock:
+            self._search_seq = 0
+
         return {
             'labels': dict(T),
             'poll_interval': POLL_INTERVAL,
