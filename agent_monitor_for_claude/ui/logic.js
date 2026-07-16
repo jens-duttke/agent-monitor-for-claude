@@ -206,6 +206,46 @@ function historyNeedsRefresh(previousSessions, currentSessions) {
     return previousSessions.some((session) => session && session.session_id && !currentIds.has(session.session_id));
 }
 
+// The content-search scope: exactly the sessions the active filter chips show.
+// A live session is in scope only when its status chip is on; history sessions
+// only when the history chip is on and includeHistory is set. With
+// includeHistory false (the delta rescan), only live, chip-visible sessions are
+// returned AND dead ones are skipped: a dead transcript is append-only and not
+// growing, so it can never gain a new match - re-reading it every poll is waste
+// the delta path must avoid. The initial full search (includeHistory true) still
+// reads a dead-but-visible session once.
+function searchScopeRefs(sessions, history, filterKeys, includeHistory) {
+    const refs = [];
+    const seen = new Set();
+    const filters = filterKeys instanceof Set ? filterKeys : new Set(filterKeys || []);
+
+    const add = (list, isHistory) => {
+        for (const raw of list || []) {
+            if (!raw || !raw.session_id || !raw.cwd) {
+                continue;
+            }
+            if (!includeHistory && !raw.alive) {
+                continue;
+            }
+            const bucket = isHistory ? 'history' : filterBucket(deriveStatus(raw));
+            if (!bucket || !filters.has(bucket)) {
+                continue;
+            }
+            const key = raw.session_id + '|' + raw.cwd;
+            if (!seen.has(key)) {
+                seen.add(key);
+                refs.push({ session_id: raw.session_id, cwd: raw.cwd });
+            }
+        }
+    };
+
+    add(sessions, false);
+    if (includeHistory && filters.has('history') && Array.isArray(history)) {
+        add(history, true);
+    }
+    return refs;
+}
+
 // The filter chips active on a first launch (or any fallback): every chip
 // except the ones that opt out (History), so the potentially large history scan
 // only runs once the user asks for it. Deriving this - rather than "all chips" -
@@ -813,6 +853,7 @@ const AMC_LOGIC = {
     sessionBucket,
     pruneResumedHistory,
     historyNeedsRefresh,
+    searchScopeRefs,
     defaultFilterKeys,
     settleCall,
     pendingIsBlocking,

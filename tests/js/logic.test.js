@@ -305,6 +305,36 @@ test('historyNeedsRefresh: true only when a previously-live session left the sna
     assert.equal(logic.historyNeedsRefresh([], [{ session_id: 'a' }]), false);
 });
 
+test('searchScopeRefs: the delta scope skips dead sessions the full scope keeps', () => {
+    const live = { session_id: 'a', cwd: 'd:\\a', alive: true, has_transcript: true, has_activity: true, last_entry_kind: 'user_text' };
+    const dead = { session_id: 'b', cwd: 'd:\\b', alive: false, has_transcript: true, has_activity: true };
+    const filters = new Set(['working', 'quiet']);
+
+    // Full search: a dead-but-visible (quiet) session is read once.
+    const full = logic.searchScopeRefs([live, dead], null, filters, true).map((r) => r.session_id).sort();
+    assert.deepEqual(full, ['a', 'b']);
+
+    // Delta rescan: dead sessions are skipped (append-only, cannot gain a match).
+    const delta = logic.searchScopeRefs([live, dead], null, filters, false).map((r) => r.session_id);
+    assert.deepEqual(delta, ['a']);
+});
+
+test('searchScopeRefs: history is only in scope for the full search with its chip on', () => {
+    const live = { session_id: 'a', cwd: 'd:\\a', alive: true, has_transcript: true, has_activity: true, last_entry_kind: 'user_text' };
+    const history = [{ session_id: 'h', cwd: 'd:\\h', alive: false, is_history: true }];
+
+    const full = logic.searchScopeRefs([live], history, new Set(['working', 'history']), true).map((r) => r.session_id).sort();
+    assert.deepEqual(full, ['a', 'h']);
+
+    // The delta never folds in history at all.
+    const delta = logic.searchScopeRefs([live], history, new Set(['working', 'history']), false).map((r) => r.session_id);
+    assert.deepEqual(delta, ['a']);
+
+    // History chip off: history is out of scope even for the full search.
+    const chipOff = logic.searchScopeRefs([live], history, new Set(['working']), true).map((r) => r.session_id);
+    assert.deepEqual(chipOff, ['a']);
+});
+
 test('defaultFilterKeys: excludes off-by-default chips (the history scan opt-out)', () => {
     const defs = [
         { key: 'needs' },

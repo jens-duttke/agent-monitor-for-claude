@@ -1158,37 +1158,17 @@ function scheduleSearch() {
     state.searchTimer = setTimeout(runSearch, SEARCH_DEBOUNCE_MS);
 }
 
-// The search scope is exactly the sessions the active filter chips show - not
-// every session. A live session is in scope only when its status chip is on;
-// history sessions only when the history chip is on. So Python reads only the
-// transcripts the user can actually see, and a session hidden by a filter is
-// never scanned (its match could not be shown anyway). With includeHistory
-// false, only the (chip-visible) live sessions are returned - used by the delta
-// rescan, since dead history transcripts never change.
+// The search scope (in logic.searchScopeRefs) is exactly the sessions the active
+// filter chips show - not every session - so Python reads only the transcripts
+// the user can actually see. The delta rescan (includeHistory false) additionally
+// skips dead sessions, which cannot gain a new match.
 function collectSearchRefs(includeHistory) {
-    const refs = [];
-    const seen = new Set();
-    const add = (list, isHistory) => {
-        for (const raw of list || []) {
-            if (!raw.session_id || !raw.cwd) {
-                continue;
-            }
-            const bucket = isHistory ? 'history' : logic.filterBucket(logic.deriveStatus(raw));
-            if (!bucket || !state.filters.has(bucket)) {
-                continue;
-            }
-            const key = raw.session_id + '|' + raw.cwd;
-            if (!seen.has(key)) {
-                seen.add(key);
-                refs.push({ session_id: raw.session_id, cwd: raw.cwd });
-            }
-        }
-    };
-    add(state.last ? state.last.sessions : [], false);
-    if (includeHistory && state.filters.has('history') && Array.isArray(state.history)) {
-        add(state.history, true);
-    }
-    return refs;
+    return logic.searchScopeRefs(
+        state.last ? state.last.sessions : [],
+        state.history,
+        state.filters,
+        includeHistory
+    );
 }
 
 function currentSessionRefs() {
