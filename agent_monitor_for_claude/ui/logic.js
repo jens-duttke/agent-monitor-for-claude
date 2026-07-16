@@ -206,6 +206,20 @@ function historyNeedsRefresh(previousSessions, currentSessions) {
     return previousSessions.some((session) => session && session.session_id && !currentIds.has(session.session_id));
 }
 
+// The filter chips active on a first launch (or any fallback): every chip
+// except the ones that opt out (History), so the potentially large history scan
+// only runs once the user asks for it. Deriving this - rather than "all chips" -
+// is what keeps a fallback from silently enabling an off-by-default chip.
+function defaultFilterKeys(filterDefs) {
+    const keys = [];
+    for (const def of filterDefs || []) {
+        if (def && def.key && !def.offByDefault) {
+            keys.push(def.key);
+        }
+    }
+    return keys;
+}
+
 // A fire-and-forget bridge call returns a promise, so a Python-side rejection
 // escapes a plain try/catch and lands in the global unhandledrejection handler -
 // which wipes the whole content area. Invoke the call, catch a synchronous
@@ -799,6 +813,7 @@ const AMC_LOGIC = {
     sessionBucket,
     pruneResumedHistory,
     historyNeedsRefresh,
+    defaultFilterKeys,
     settleCall,
     pendingIsBlocking,
     modeLabel,

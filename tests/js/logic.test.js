@@ -305,6 +305,17 @@ test('historyNeedsRefresh: true only when a previously-live session left the sna
     assert.equal(logic.historyNeedsRefresh([], [{ session_id: 'a' }]), false);
 });
 
+test('defaultFilterKeys: excludes off-by-default chips (the history scan opt-out)', () => {
+    const defs = [
+        { key: 'needs' },
+        { key: 'idle' },
+        { key: 'history', offByDefault: true },
+    ];
+    assert.deepEqual(logic.defaultFilterKeys(defs), ['needs', 'idle']);
+    assert.equal(logic.defaultFilterKeys(defs).includes('history'), false);
+    assert.deepEqual(logic.defaultFilterKeys(), []);
+});
+
 test('settleCall: a synchronous throw runs onError, not the caller', () => {
     const errors = [];
     const ret = logic.settleCall(() => { throw new Error('sync'); }, (e) => errors.push(e.message));

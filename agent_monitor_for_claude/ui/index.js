@@ -203,8 +203,9 @@ const FILTER_KEYS = new Set(FILTER_DEFS.map((def) => def.key));
 
 // The chips active on a first launch: every chip except the ones that opt out
 // (history), so the potentially large history scan only runs once the user asks
-// for it.
-const DEFAULT_FILTER_KEYS = FILTER_DEFS.filter((def) => !def.offByDefault).map((def) => def.key);
+// for it. Derived in logic.js so the "never a fallback to all chips" rule is
+// covered by a test.
+const DEFAULT_FILTER_KEYS = logic.defaultFilterKeys(FILTER_DEFS);
 
 function apiBridge() {
     return (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
@@ -2009,8 +2010,13 @@ async function boot() {
     }
     state.booted = true;
 
+    // loadFilters guards its own storage access and always returns a valid Set
+    // (defaulting to DEFAULT_FILTER_KEYS, which excludes the off-by-default
+    // History chip). Keep it out of the try below so a later corrupt value cannot
+    // discard the user's filter selection - and never fall back to enabling every
+    // chip, which would trigger the History scan unrequested.
+    state.filters = loadFilters();
     try {
-        state.filters = loadFilters();
         state.sort = localStorage.getItem('amc-sort') || 'activity';
         state.sortDir = localStorage.getItem('amc-sort-dir') === 'desc' ? 'desc' : 'asc';
         state.priorityOrder = localStorage.getItem('amc-priority-order') !== '0';
@@ -2020,7 +2026,6 @@ async function boot() {
         state.searchWholeWord = !!searchOpts.wholeWord;
         state.searchRegex = !!searchOpts.regex;
     } catch (e) {
-        state.filters = new Set(FILTER_KEYS);
         state.sort = 'activity';
         state.sortDir = 'asc';
         state.priorityOrder = true;
