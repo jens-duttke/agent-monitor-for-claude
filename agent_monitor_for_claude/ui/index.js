@@ -73,6 +73,10 @@ const state = {
     collapsed: new Set(),
     last: null,
     receivedAt: null,
+    // Epoch (ms) when the history list was fetched. History age_seconds is frozen
+    // at that moment, so history rows must age from here, not from receivedAt (the
+    // latest live-snapshot poll), or their age would freeze.
+    historyReceivedAt: null,
     fingerprint: null,
     checking: false,
     booted: false,
@@ -270,10 +274,6 @@ function esc(value) {
 
 function fmt(template, values) {
     return String(template || '').replace(/\{(\w+)\}/g, (_, key) => (values[key] != null ? values[key] : ''));
-}
-
-function ageLabel(session) {
-    return session.age_seconds == null ? '' : logic.formatAge(session.age_seconds, state.labels);
 }
 
 // Local calendar date as YYYY-MM-DD, used to pick the active price schedule.
@@ -913,6 +913,7 @@ async function ensureHistoryLoaded() {
         // leave history null so a later call (a re-toggle, or boot) retries.
         if (mockMode()) {
             state.history = Array.isArray(window.__MOCK_HISTORY__) ? window.__MOCK_HISTORY__ : [];
+            state.historyReceivedAt = Date.now();
             afterHistoryLoaded();
         }
         return;
@@ -929,6 +930,7 @@ async function ensureHistoryLoaded() {
     } catch (e) {
         state.history = [];
     }
+    state.historyReceivedAt = Date.now();
 
     state.historyLoading = false;
     afterHistoryLoaded();
@@ -1512,8 +1514,6 @@ function updateRow(row, session, projectName) {
         delete row.dataset.deeplink;
     }
 
-    const age = ageLabel(session);
-
     // The dot is now the primary status signal, so it names the status itself.
     const dot = row.querySelector('.dot');
     if (session.status_label) {
@@ -1528,12 +1528,20 @@ function updateRow(row, session, projectName) {
     row.querySelector('.model-cell').innerHTML = modelCellHtml(session);
     row.querySelector('.host-cell').textContent = hostText(session);
 
+    // A live row's age was captured at the latest snapshot (receivedAt); a
+    // history row's at the one-time history fetch (historyReceivedAt). Storing
+    // that capture epoch per row lets tickAges advance each age from the right
+    // moment, so history ages keep growing instead of freezing at fetch time.
     const ageEl = row.querySelector('.age');
-    ageEl.textContent = age;
     if (session.age_seconds != null) {
+        const ageAt = session.is_history ? state.historyReceivedAt : state.receivedAt;
         ageEl.dataset.age = session.age_seconds;
+        ageEl.dataset.ageAt = ageAt != null ? ageAt : Date.now();
+        ageEl.textContent = logic.formatAgeSince(session.age_seconds, Number(ageEl.dataset.ageAt), Date.now(), labels);
     } else {
         delete ageEl.dataset.age;
+        delete ageEl.dataset.ageAt;
+        ageEl.textContent = '';
     }
 
     const menuBtn = row.querySelector('.row-menu-btn');
@@ -1922,17 +1930,13 @@ function renderLoading() {
 }
 
 function tickAges() {
-    if (!state.last || state.receivedAt == null) {
+    if (!state.last) {
         return;
     }
 
-    const elapsed = Math.floor((Date.now() - state.receivedAt) / 1000);
-    if (elapsed < 1) {
-        return;
-    }
-
+    const now = Date.now();
     document.querySelectorAll('.age[data-age]').forEach((el) => {
-        el.textContent = logic.formatAge(Number(el.dataset.age) + elapsed, state.labels);
+        el.textContent = logic.formatAgeSince(Number(el.dataset.age), Number(el.dataset.ageAt), now, state.labels);
     });
 }
 

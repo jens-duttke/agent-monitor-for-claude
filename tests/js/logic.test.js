@@ -377,6 +377,23 @@ test('modeLabel', () => {
     assert.equal(logic.modeLabel(null), null);
 });
 
+test('formatAgeSince: advances the age from its capture epoch', () => {
+    const labels = { age_seconds: '{s}s', age_minutes: '{m}m', age_hours: '{h}h{m}', age_days: '{d}d' };
+    const now = 1_000_000_000_000;
+    // Captured just now: shows the base.
+    assert.equal(logic.formatAgeSince(30, now, now, labels), '30s');
+    // Captured an hour ago: a 30s base has advanced by 3600s -> ~1h.
+    assert.equal(logic.formatAgeSince(30, now - 3600_000, now, labels), '1h0');
+    // A history row captured long ago keeps growing, not frozen at the base:
+    const frozen = logic.formatAge(120, labels);            // what a pinned age would show
+    const advanced = logic.formatAgeSince(120, now - 172800_000, now, labels); // +2 days
+    assert.notEqual(advanced, frozen);
+    assert.equal(advanced, '2d');
+    // Null base is empty; a non-finite capture epoch formats the base as-is.
+    assert.equal(logic.formatAgeSince(null, now, now, labels), '');
+    assert.equal(logic.formatAgeSince(45, NaN, now, labels), '45s');
+});
+
 test('formatModel', () => {
     assert.equal(logic.formatModel('claude-opus-4-8[1m]'), 'Opus 4.8 1M');
     assert.equal(logic.formatModel('claude-haiku-4-5-20251001'), 'Haiku 4.5');

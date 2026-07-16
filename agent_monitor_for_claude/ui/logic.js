@@ -408,6 +408,22 @@ function formatAge(seconds, labels) {
     return fmt(labels.age_days, { d: Math.floor(hours / 24) });
 }
 
+// Format an age whose base value was captured at a past moment, advancing it to
+// now. A history row captures its age once, at fetch time, so it must age from
+// THAT epoch rather than the latest live-snapshot poll - otherwise its age
+// freezes near the fetch-time value while the true age grows. capturedAtMs and
+// nowMs are epoch milliseconds; a non-finite capturedAtMs formats the base as-is.
+function formatAgeSince(baseSeconds, capturedAtMs, nowMs, labels) {
+    if (baseSeconds == null) {
+        return '';
+    }
+    if (!Number.isFinite(capturedAtMs) || !Number.isFinite(nowMs)) {
+        return formatAge(baseSeconds, labels);
+    }
+    const elapsed = Math.max(0, (nowMs - capturedAtMs) / 1000);
+    return formatAge(baseSeconds + elapsed, labels);
+}
+
 // Turn an API model id into a short label without a mapping table, e.g.
 // "claude-opus-4-8[1m]" -> "Opus 4.8 1M", "claude-fable-5" -> "Fable 5".
 function formatModel(modelId) {
@@ -861,6 +877,7 @@ const AMC_LOGIC = {
     statusLabel,
     attentionLabel,
     formatAge,
+    formatAgeSince,
     formatModel,
     formatTokens,
     tokenLabels,
