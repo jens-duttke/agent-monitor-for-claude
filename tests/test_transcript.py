@@ -2,13 +2,19 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import unittest
+from pathlib import Path
 
-from agent_monitor_for_claude.transcript import _parse
+from agent_monitor_for_claude.transcript import _absorb_line, _parse, _scan_title_cwd, _ScanState
 
 
 def _lines(*entries: dict) -> list[str]:
     return [json.dumps(entry) for entry in entries]
+
+
+_CONTINUATION = 'This session is being continued from a previous conversation that ran out of context.'
 
 
 class InterruptVsToolResultTest(unittest.TestCase):
@@ -56,6 +62,37 @@ class InterruptVsToolResultTest(unittest.TestCase):
         ))
         self.assertEqual(state.last_entry_kind, 'user_interrupt')
         self.assertFalse(state.pending_tool)
+
+
+class TitleSkipsInjectedMetaTest(unittest.TestCase):
+    def test_absorb_line_ignores_a_meta_user_entry_for_the_first_prompt(self) -> None:
+        # An injected isMeta user entry (a continuation summary) must not become
+        # the session title - the first real prompt must, mirroring _parse.
+        state = _ScanState()
+        _absorb_line(json.dumps({
+            'type': 'user', 'isMeta': True, 'message': {'content': _CONTINUATION},
+        }).encode('utf-8'), state)
+        self.assertIsNone(state.first_prompt)
+
+        _absorb_line(json.dumps({
+            'type': 'user', 'message': {'content': 'the real first prompt'},
+        }).encode('utf-8'), state)
+        self.assertEqual(state.first_prompt, 'the real first prompt')
+
+    def test_scan_title_cwd_ignores_a_meta_user_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session.jsonl'
+            path.write_text('\n'.join([
+                json.dumps({'type': 'user', 'isMeta': True, 'cwd': 'd:\\proj',
+                            'message': {'content': _CONTINUATION}}),
+                json.dumps({'type': 'user', 'cwd': 'd:\\proj',
+                            'message': {'content': 'the real first prompt'}}),
+            ]), encoding='utf-8')
+
+            title, cwd = _scan_title_cwd(path)
+
+            self.assertEqual(title, 'the real first prompt')
+            self.assertEqual(cwd, 'd:\\proj')
 
 
 if __name__ == '__main__':

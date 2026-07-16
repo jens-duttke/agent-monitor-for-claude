@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- A session that was continued from an earlier one no longer shows the automatic "This session is being continued from..." summary as its title; it now uses the first real prompt, in both the live and History lists.
 - Right after a change, the overview no longer briefly shows a stale status or age from an older refresh that finished after a newer one; only the most recent refresh is applied.
 - Typing a search query no longer briefly flashes a false "No agents match this filter" in the moment between the keystroke and the search actually running.
 - Clicking a filter chip or a search-option toggle right after typing no longer restarts the search a moment later - the matches that had already appeared stay put instead of vanishing and reloading.

@@ -265,7 +265,10 @@ def _scan_title_cwd(path: Path) -> tuple[str | None, str | None]:
             value = entry.get('customTitle')
             if isinstance(value, str) and value:
                 state.custom_title = value
-        elif entry_type == 'user' and state.first_prompt is None and entry.get('isSidechain') is not True:
+        elif (entry_type == 'user' and state.first_prompt is None
+                and entry.get('isSidechain') is not True and entry.get('isMeta') is not True):
+            # Skip injected isMeta entries (a continuation summary) here too, so a
+            # history row's title is the first real prompt, not the machine digest.
             state.first_prompt = _prompt_display_text(entry)
 
     return state.title(), cwd
@@ -623,7 +626,11 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
         if isinstance(value, str) and value:
             state.permission_mode = value
 
-    elif entry_type == 'user' and state.first_prompt is None and entry.get('isSidechain') is not True:
+    elif (entry_type == 'user' and state.first_prompt is None
+            and entry.get('isSidechain') is not True and entry.get('isMeta') is not True):
+        # Skip injected isMeta entries (a continuation summary), mirroring _parse:
+        # the machine digest must not become the title, and it is a wider read
+        # than the title path intends.
         state.first_prompt = _prompt_display_text(entry)
 
 
