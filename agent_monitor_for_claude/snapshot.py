@@ -24,7 +24,7 @@ from .settings import ENDED_MAX_AGE, INCLUDE_COMPLETED
 from .subagents import count_subagents
 from .transcript import state_for
 
-__all__ = ['build_snapshot', 'registry_fingerprint']
+__all__ = ['build_snapshot', 'live_or_recent_ids', 'registry_fingerprint']
 
 
 def build_snapshot() -> dict[str, Any]:
@@ -96,6 +96,34 @@ def _build_session_record(record: dict[str, Any], probe_map: dict[int, Any]) -> 
         'subagents_labels': list(subagents.labels),
         'age_seconds': _display_age(transcript_state.age_seconds, record['started_at']),
     }
+
+
+def live_or_recent_ids() -> set[str]:
+    """Return the session ids the live snapshot currently retains.
+
+    A session is retained when its process is alive, or when it ended recently
+    enough to still be shown - the same liveness-and-retention rule
+    ``build_snapshot`` applies (see ``_include_ended``).  History dedupes against
+    exactly this set, so a session shows in exactly one view: one the live
+    overview drops (dead and older than the retention window) is left for the
+    history listing instead of vanishing from both because a stale, un-pruned
+    registry record still names it.
+    """
+    records = list_sessions()
+    probe_map = probe_all([(record['pid'], record['proc_start_ticks']) for record in records])
+
+    ids: set[str] = set()
+    for record in records:
+        info = probe_map.get(record['pid'])
+        if info is not None and info.alive:
+            ids.add(record['session_id'])
+            continue
+
+        age = state_for(record['session_id'], record['cwd']).age_seconds
+        if _include_ended(age):
+            ids.add(record['session_id'])
+
+    return ids
 
 
 def registry_fingerprint() -> str:

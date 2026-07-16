@@ -40,13 +40,13 @@ class HistoryEnvTest(unittest.TestCase):
         path.write_text('\n'.join(lines), encoding='utf-8')
         return path
 
-    def _write_session(self, session_id: str, cwd: str, pid: int) -> None:
+    def _write_session(self, session_id: str, cwd: str, pid: int, proc_start: str | None = None) -> None:
         sessions = Path(self._temp.name) / 'sessions'
         sessions.mkdir(exist_ok=True)
-        (sessions / f'{pid}.json').write_text(
-            json.dumps({'pid': pid, 'sessionId': session_id, 'cwd': cwd, 'name': session_id[:8], 'kind': 'interactive'}),
-            encoding='utf-8',
-        )
+        payload: dict = {'pid': pid, 'sessionId': session_id, 'cwd': cwd, 'name': session_id[:8], 'kind': 'interactive'}
+        if proc_start is not None:
+            payload['procStart'] = proc_start
+        (sessions / f'{pid}.json').write_text(json.dumps(payload), encoding='utf-8')
 
 
 class ListHistoryTest(HistoryEnvTest):
@@ -72,6 +72,9 @@ class ListHistoryTest(HistoryEnvTest):
             self.assertTrue(record['has_transcript'])
 
     def test_excludes_sessions_present_in_the_registry(self) -> None:
+        # The live session's registry PID is genuinely alive, so the live snapshot
+        # retains it and history must not double it; the dead one has no registry
+        # record and belongs in history.
         live_id = 'cccccccc-1111-2222-3333-444444444444'
         self._write_history_transcript('d--proj', live_id, [
             json.dumps({'type': 'user', 'timestamp': '2026-07-11T09:00:00Z', 'cwd': 'd:\\proj',
@@ -81,13 +84,31 @@ class ListHistoryTest(HistoryEnvTest):
             json.dumps({'type': 'user', 'timestamp': '2026-07-11T09:00:00Z', 'cwd': 'd:\\proj',
                         'message': {'content': 'dead one'}}),
         ])
-        self._write_session(live_id, 'd:\\proj', _LIVE_PID)
+        self._write_session(live_id, 'd:\\proj', os.getpid())
 
         records = list_history()
         ids = {record['session_id'] for record in records}
 
         self.assertNotIn(live_id, ids)
         self.assertIn('dddddddd-1111-2222-3333-444444444444', ids)
+
+    def test_dead_registry_record_past_retention_still_shows_in_history(self) -> None:
+        # A crashed/killed session can leave a registry record that was never
+        # pruned. Once its last activity is past the retention window the live
+        # snapshot drops it; it must still surface in history rather than vanish
+        # from both views. Dedup is therefore against the sessions the live
+        # snapshot actually retains, not every registry record.
+        dead_id = 'dddddddd-1111-2222-3333-444444444444'
+        self._write_history_transcript('d--proj', dead_id, [
+            json.dumps({'type': 'user', 'timestamp': '2020-01-01T09:00:00Z', 'cwd': 'd:\\proj',
+                        'message': {'content': 'crashed long ago'}}),
+        ])
+        # A live PID with a mismatched procStart is detected as PID reuse: not alive.
+        self._write_session(dead_id, 'd:\\proj', os.getpid(), proc_start='1')
+
+        ids = {record['session_id'] for record in list_history()}
+
+        self.assertIn(dead_id, ids)
 
     def test_custom_title_deep_in_file_outranks_first_prompt(self) -> None:
         # A rename entry sits far past any head window; the whole-file scan must

@@ -24,6 +24,7 @@ from typing import Any
 
 from .paths import cwd_to_slug, projects_dir
 from .sessions import list_sessions
+from .snapshot import live_or_recent_ids
 from .transcript import history_state_for
 
 __all__ = ['list_history']
@@ -32,11 +33,15 @@ __all__ = ['list_history']
 def list_history() -> list[dict[str, Any]]:
     """Return raw records for every past (non-live) session transcript.
 
-    Sessions that currently have a registry record are omitted: those are the
-    live (or just-ended) sessions the regular snapshot already shows, so listing
-    them here as well would double them up.  Each returned record mirrors the
-    shape the UI's ``buildSession`` consumes, marked ``is_history`` and always
-    ``alive: False`` (the process is gone, so the derived status is
+    Sessions the live snapshot still retains are omitted: those are the live (or
+    just-ended, within the retention window) sessions the regular snapshot
+    already shows, so listing them here as well would double them up.  The dedup
+    is against exactly that retained set (:func:`snapshot.live_or_recent_ids`),
+    not every registry record - a dead session whose registry record was never
+    pruned and whose activity is past the retention window is dropped by the live
+    snapshot, so it belongs here rather than nowhere.  Each returned record
+    mirrors the shape the UI's ``buildSession`` consumes, marked ``is_history``
+    and always ``alive: False`` (the process is gone, so the derived status is
     ``completed``).
 
     The working directory that groups a session under its project is resolved
@@ -53,7 +58,7 @@ def list_history() -> list[dict[str, Any]]:
         return []
 
     live = list_sessions()
-    live_ids = {record['session_id'] for record in live}
+    live_ids = live_or_recent_ids()
 
     # The live registry is the authority on a project's exact cwd (it is what the
     # live snapshot groups by), so prefer it; first writer wins per slug. Keyed
