@@ -1306,7 +1306,8 @@ function onSearchPush(payload) {
         return;
     }
 
-    // The backend rejected the pattern as an invalid regular expression.
+    // The search could not complete: an invalid regular expression, or the
+    // backend scan failed. Either way, do not present it as "no matches".
     if (payload.error) {
         state.searchError = true;
         state.searchLoading = false;

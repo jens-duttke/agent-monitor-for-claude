@@ -139,9 +139,11 @@ class _MonitorApi:
             run_search(query, sessions, options, on_update, cancelled)
         except Exception:
             # A search thread must never crash the app; tell the UI it finished
-            # so it can clear its loading/progress state.
+            # (so it clears its loading/progress state) but as an error, not a
+            # clean empty result - otherwise a failed scan reads as a confident
+            # "no session contains this text".
             if not cancelled():
-                self._push_search(seq, 0, 0, [], True, False)
+                self._push_search(seq, 0, 0, [], True, True)
 
     def _push_search(self, seq: int, processed: int, total: int, matches: list[str], done: bool, error: bool) -> None:
         """Push one search update into the page via the window bridge.
