@@ -260,6 +260,19 @@ function defaultFilterKeys(filterDefs) {
     return keys;
 }
 
+// Whether a session passes the content-search filter. A null match set means no
+// search has produced results yet - a fresh query still inside its typing
+// debounce, or a cleared/invalid one - so nothing is filtered and every session
+// shows. An empty Set means a search actually ran and matched nothing, so it
+// correctly hides everything. Without the null case a just-typed query would
+// briefly hide every row and flash a false "nothing matches".
+function sessionMatchesSearch(sessionId, searchActive, searchMatches) {
+    if (!searchActive || searchMatches == null) {
+        return true;
+    }
+    return searchMatches.has(sessionId);
+}
+
 // A fire-and-forget bridge call returns a promise, so a Python-side rejection
 // escapes a plain try/catch and lands in the global unhandledrejection handler -
 // which wipes the whole content area. Invoke the call, catch a synchronous
@@ -870,6 +883,7 @@ const AMC_LOGIC = {
     pruneResumedHistory,
     historyNeedsRefresh,
     searchScopeRefs,
+    sessionMatchesSearch,
     defaultFilterKeys,
     settleCall,
     pendingIsBlocking,

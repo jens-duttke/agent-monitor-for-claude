@@ -305,6 +305,15 @@ test('historyNeedsRefresh: true only when a previously-live session left the sna
     assert.equal(logic.historyNeedsRefresh([], [{ session_id: 'a' }]), false);
 });
 
+test('sessionMatchesSearch: a not-yet-run search (null matches) shows everything', () => {
+    const set = new Set(['a']);
+    assert.equal(logic.sessionMatchesSearch('a', false, null), true);       // no query
+    assert.equal(logic.sessionMatchesSearch('a', true, null), true);        // query pending in debounce -> show all
+    assert.equal(logic.sessionMatchesSearch('a', true, set), true);         // matched
+    assert.equal(logic.sessionMatchesSearch('z', true, set), false);        // not matched
+    assert.equal(logic.sessionMatchesSearch('z', true, new Set()), false);  // ran, matched nothing -> hide
+});
+
 test('searchScopeRefs: the delta scope skips dead sessions the full scope keeps', () => {
     const live = { session_id: 'a', cwd: 'd:\\a', alive: true, has_transcript: true, has_activity: true, last_entry_kind: 'user_text' };
     const dead = { session_id: 'b', cwd: 'd:\\b', alive: false, has_transcript: true, has_activity: true };

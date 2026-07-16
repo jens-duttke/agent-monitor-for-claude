@@ -1889,8 +1889,7 @@ function render(snapshot) {
     // no query, matches everything. It combines with the status chips: a session
     // shows only when both its chip is on and its content matched.
     const searchActive = state.search.trim().length >= SEARCH_MIN_CHARS;
-    const matchesSearch = (session) => !searchActive
-        || (state.searchMatches != null && state.searchMatches.has(session.session_id));
+    const matchesSearch = (session) => logic.sessionMatchesSearch(session.session_id, searchActive, state.searchMatches);
 
     const counts = countByFilter(projects, matchesSearch);
     renderFilters(counts);
