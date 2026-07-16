@@ -95,6 +95,26 @@ class TitleSkipsInjectedMetaTest(unittest.TestCase):
             self.assertEqual(cwd, 'd:\\proj')
 
 
+class ModelEventGuardTest(unittest.TestCase):
+    def test_non_string_model_is_not_recorded_as_an_event(self) -> None:
+        # A mistyped, truthy non-string model must not reach model_timeline, which
+        # crosses the bridge and would make formatModel operate on a non-string.
+        state = _ScanState()
+        _absorb_line(json.dumps({
+            'type': 'assistant', 'timestamp': '2026-07-11T10:00:00Z',
+            'message': {'stop_reason': 'end_turn', 'model': 123, 'usage': {'input_tokens': 5}},
+        }).encode('utf-8'), state)
+        self.assertEqual(state.model_events, [])
+
+    def test_string_model_is_recorded(self) -> None:
+        state = _ScanState()
+        _absorb_line(json.dumps({
+            'type': 'assistant', 'timestamp': '2026-07-11T10:00:00Z',
+            'message': {'stop_reason': 'end_turn', 'model': 'claude-opus-4-8', 'usage': {'input_tokens': 5}},
+        }).encode('utf-8'), state)
+        self.assertEqual(state.model_events, [('2026-07-11T10:00:00Z', 'claude-opus-4-8')])
+
+
 class ModelTimelineOrderTest(unittest.TestCase):
     def test_sorts_chronologically_not_lexicographically(self) -> None:
         # '...07.500Z' is chronologically LATER than '...07Z' but sorts BEFORE it

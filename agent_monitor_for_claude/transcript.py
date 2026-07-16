@@ -612,7 +612,7 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
             # which is sorted and run-compressed in _model_timeline - order is
             # resolved there because transcript entries are not strictly ordered.
             timestamp = entry.get('timestamp')
-            if (model and model != _SYNTHETIC_MODEL and entry.get('isSidechain') is not True
+            if (isinstance(model, str) and model and model != _SYNTHETIC_MODEL and entry.get('isSidechain') is not True
                     and isinstance(timestamp, str) and timestamp):
                 state.model_events.append((timestamp, model))
 
