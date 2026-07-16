@@ -51,11 +51,10 @@ const state = {
     // only (deliberately not persisted, so a restart never hides everything
     // behind a stale query). The match is computed by the Python bridge, which
     // reads the transcripts and returns only the matching session ids - no
-    // content ever reaches the UI. `searchMatches` holds that id set for the
-    // query in `searchQuery`; null means no content filter is active yet.
+    // content ever reaches the UI. `searchMatches` holds that id set; null means
+    // no content filter is active yet.
     search: '',
     searchMatches: null,
-    searchQuery: '',
     searchLoading: false,
     searchProcessed: 0,
     searchTotal: 0,
@@ -1012,13 +1011,12 @@ function loadFilters() {
 // search match), only matching sessions are counted, so the chip counts track
 // what the search has narrowed the view to.
 function countByFilter(projects, includeSession) {
-    const counts = { all: 0, needs: 0, idle: 0, working: 0, background: 0, errored: 0, interrupted: 0, quiet: 0, new: 0, history: 0 };
+    const counts = { needs: 0, idle: 0, working: 0, background: 0, errored: 0, interrupted: 0, quiet: 0, new: 0, history: 0 };
     for (const project of projects) {
         for (const session of project.sessions) {
             if (includeSession && !includeSession(session)) {
                 continue;
             }
-            counts.all += 1;
             const bucket = logic.sessionBucket(session);
             if (bucket) {
                 counts[bucket] += 1;
@@ -1239,7 +1237,6 @@ function runSearch() {
 
     if (!active) {
         state.searchMatches = null;
-        state.searchQuery = '';
         state.searchLoading = false;
         state.searchProcessed = 0;
         state.searchTotal = 0;
@@ -1254,7 +1251,6 @@ function runSearch() {
         return;
     }
 
-    state.searchQuery = query;
     state.searchMatches = new Set();
     state.searchLoading = true;
     state.searchProcessed = 0;
