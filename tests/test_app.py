@@ -37,6 +37,16 @@ class RunSearchFailureTest(unittest.TestCase):
         self.assertEqual(pushes, [])
 
 
+class FocusSessionPidTest(unittest.TestCase):
+    def test_non_finite_pid_returns_false_without_raising(self) -> None:
+        # int(float('inf')) raises OverflowError (not caught by TypeError/ValueError);
+        # a non-finite pid must degrade to a graceful False, never propagate.
+        api = _MonitorApi()
+        self.assertFalse(api.focus_session(float('inf')))
+        self.assertFalse(api.focus_session(float('-inf')))
+        self.assertFalse(api.focus_session(float('nan')))
+
+
 class StartSearchSeqTest(unittest.TestCase):
     """The active search seq must not regress, and must reset on a fresh page."""
 

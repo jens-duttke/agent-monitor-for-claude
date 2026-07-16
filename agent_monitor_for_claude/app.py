@@ -216,7 +216,9 @@ class _MonitorApi:
 
         try:
             pid_value = int(pid)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            # OverflowError covers a non-finite float (int(float('inf'))); NaN is
+            # a ValueError. Either way, degrade to a graceful refusal.
             return False
 
         name = project_name if isinstance(project_name, str) else ''
