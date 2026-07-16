@@ -79,6 +79,9 @@ const state = {
     historyReceivedAt: null,
     fingerprint: null,
     checking: false,
+    // Monotonic token so an older, slower snapshot cannot render over a newer
+    // one when the interval poll and a fingerprint-triggered tick overlap.
+    snapshotGen: 0,
     booted: false,
     // Past (non-live) sessions, fetched on demand the first time the history
     // chip is enabled and cached thereafter (dead sessions do not change). null
@@ -2011,12 +2014,22 @@ async function tick() {
         }
     }
 
+    // The interval poll and a fingerprint-triggered tick can overlap, and their
+    // snapshot promises race. Claim a generation before requesting: a result is
+    // rendered only if no newer tick has started meanwhile, so an older, slower
+    // snapshot never overwrites a newer one (nor resets the age base backward).
+    const gen = ++state.snapshotGen;
     try {
         const snapshot = await callSnapshot();
+        if (gen !== state.snapshotGen) {
+            return;
+        }
         state.receivedAt = Date.now();
         render(snapshot);
     } catch (err) {
-        reportUiError(err);
+        if (gen === state.snapshotGen) {
+            reportUiError(err);
+        }
     }
 }
 

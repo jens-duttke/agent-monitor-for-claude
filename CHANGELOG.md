@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Right after a change, the overview no longer briefly shows a stale status or age from an older refresh that finished after a newer one; only the most recent refresh is applied.
 - Typing a search query no longer briefly flashes a false "No agents match this filter" in the moment between the keystroke and the search actually running.
 - Clicking a filter chip or a search-option toggle right after typing no longer restarts the search a moment later - the matches that had already appeared stay put instead of vanishing and reloading.
 - Turning the History chip off and back on again while its first load is still running now immediately shows the chip as active with its loading note, instead of briefly looking inactive until the load finishes.
