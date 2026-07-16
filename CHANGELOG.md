@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Subagent workflows are now recognized as finished when they complete. A completed workflow agent's final step is often a tool call rather than a plain closing message, which the previous check did not treat as done - so the running-subagent badge (⚡) and the "Background" status could stay up after a workflow had actually finished, clearing only once you sent a new prompt. Completion is now detected from the transcript's final turn regardless of how it ended.
+
 ## [0.3.0] - 2026-07-15
 
 ### Added
