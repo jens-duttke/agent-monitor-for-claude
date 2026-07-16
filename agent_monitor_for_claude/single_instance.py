@@ -139,7 +139,18 @@ def ensure_single_instance() -> bool:
     """
     global _mutex_handle
     _mutex_handle = _kernel32.CreateMutexW(None, False, _MUTEX_NAME)
-    if ctypes.get_last_error() != _ERROR_ALREADY_EXISTS:
+    last_error = ctypes.get_last_error()
+
+    # The mutex API failed outright (NULL handle, not "already exists"):
+    # single-instancing cannot work. Fail open - let this instance run rather
+    # than refuse to start over a rare API failure - but do not write a holder
+    # record we cannot back with a held mutex, and do not treat it as a fresh
+    # creation.
+    if not _mutex_handle:
+        _mutex_handle = None
+        return True
+
+    if last_error != _ERROR_ALREADY_EXISTS:
         _store_holder_info()
         return True
 

@@ -81,5 +81,29 @@ class ReplacePathTest(unittest.TestCase):
         self.assertFalse(stored, 'a failed replace must not claim the holder record')
 
 
+class MutexCreationFailureTest(unittest.TestCase):
+    """A failed CreateMutexW must be distinguished from a fresh creation."""
+
+    def test_failed_mutex_creation_does_not_write_a_holder_record(self) -> None:
+        # CreateMutexW returned NULL with a non-ALREADY_EXISTS error: the mutex
+        # could not be created, so single-instancing degrades to off. The app
+        # still runs (fail open), but it must not write a holder record it does
+        # not back with a held mutex, nor treat the failure as a fresh creation.
+        _ERROR_ACCESS_DENIED = 5
+        fake_kernel = mock.Mock()
+        fake_kernel.CreateMutexW.return_value = 0  # NULL handle: creation failed
+        fake_kernel.CloseHandle.return_value = 1
+        store = mock.Mock()
+
+        with mock.patch.object(single_instance, '_kernel32', fake_kernel), \
+             mock.patch.object(single_instance, '_store_holder_info', store), \
+             mock.patch.object(ctypes, 'get_last_error', return_value=_ERROR_ACCESS_DENIED):
+            result = single_instance.ensure_single_instance()
+
+        self.assertTrue(result, 'a rare mutex API failure should not block startup')
+        self.assertFalse(store.called, 'no holder record without a held mutex')
+        self.assertIsNone(single_instance._mutex_handle)
+
+
 if __name__ == '__main__':
     unittest.main()
