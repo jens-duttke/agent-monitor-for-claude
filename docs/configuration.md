@@ -56,11 +56,13 @@ Top-level keys are **effective-from dates** (`YYYY-MM-DD`). The schedule with th
         "sonnet-5":  { "input": 2, "output": 10, "cache_read": 0.20, "cache_write_5m": 2.50, "cache_write_1h": 4 }
     },
     "2026-09-01": {
+        "opus-4-8":  { "input": 5, "output": 25, "cache_read": 0.50, "cache_write_5m": 6.25, "cache_write_1h": 10 },
         "sonnet-5":  { "input": 3, "output": 15, "cache_read": 0.30, "cache_write_5m": 3.75, "cache_write_1h": 6 }
     }
 }
 ```
 
+- A dated schedule **fully replaces** the previous one - schedules are never merged. List **every** model you use in each dated table, even the ones whose price did not change (note `opus-4-8` is repeated unchanged above): a model omitted from the active schedule loses its cost estimate once that date takes effect.
 - **Model keys** are family-version - the model id with `claude-`, any `[tier]`, and a trailing snapshot date removed (e.g. `claude-opus-4-8[1m]` and `claude-haiku-4-5-20251001` both need `opus-4-8` / `haiku-4-5`). Versions can be priced differently, so list each one you use.
 - All five rate fields are explicit (no multipliers), so cache prices that do not follow the usual ratios are handled correctly.
 - A session using a model that is not listed shows a plain token total instead of a cost, so nothing is ever priced wrong - add the model to fix it.

@@ -473,6 +473,20 @@ test('resolvePrices picks the schedule effective on the date', () => {
     assert.deepEqual(logic.resolvePrices({}, '2026-07-12'), {});
 });
 
+test('resolvePrices returns a schedule verbatim: a partial schedule drops other models', () => {
+    // The docs pricing example must list every model per date - a schedule fully
+    // replaces the previous one (no merge), so a model omitted from the active
+    // schedule loses its cost estimate once that date takes effect.
+    const schedules = {
+        '1970-01-01': { 'opus-4-8': { output: 25 }, 'sonnet-5': { output: 10 } },
+        '2026-09-01': { 'sonnet-5': { output: 15 } },  // partial: opus-4-8 omitted
+    };
+    const active = logic.resolvePrices(schedules, '2026-09-02');
+    assert.equal('opus-4-8' in active, false);
+    assert.equal(logic.sessionCostUsd({ 'claude-opus-4-8': { output_tokens: 1000000 } }, active), null);
+    assert.equal(logic.sessionCostUsd({ 'claude-sonnet-5': { output_tokens: 1000000 } }, active), 15);
+});
+
 test('usageCostUsd prices each token class with the model rate', () => {
     const rate = { input: 5, output: 25, cache_read: 0.5, cache_write_5m: 6.25, cache_write_1h: 10 };
     const perMillion = (u) => logic.usageCostUsd(u, rate);
