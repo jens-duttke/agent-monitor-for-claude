@@ -539,8 +539,13 @@ def _model_timeline(events: list[tuple[str, str]]) -> list[dict[str, str]]:
     used, left, and returned to appears more than once - the final entry is the
     currently active model with the time it was last switched to.
     """
+    # Sort by parsed epoch, not the raw string: lexicographic order matches
+    # chronological order only while every timestamp has an identical shape, but
+    # a fractional-seconds value ('...07.500Z') sorts before a whole-second one
+    # ('...07Z') though it is later, and an explicit offset mis-sorts against 'Z'.
+    # The raw string is kept for display; it breaks ties for equal epochs.
     timeline: list[dict[str, str]] = []
-    for timestamp, model in sorted(events, key=lambda event: event[0]):
+    for timestamp, model in sorted(events, key=lambda event: (_timestamp_epoch(event[0]) or 0.0, event[0])):
         if not timeline or timeline[-1]['model'] != model:
             timeline.append({'time': timestamp, 'model': model})
 

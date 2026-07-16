@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_monitor_for_claude.transcript import _absorb_line, _parse, _scan_title_cwd, _ScanState
+from agent_monitor_for_claude.transcript import _absorb_line, _model_timeline, _parse, _scan_title_cwd, _ScanState
 
 
 def _lines(*entries: dict) -> list[str]:
@@ -93,6 +93,23 @@ class TitleSkipsInjectedMetaTest(unittest.TestCase):
 
             self.assertEqual(title, 'the real first prompt')
             self.assertEqual(cwd, 'd:\\proj')
+
+
+class ModelTimelineOrderTest(unittest.TestCase):
+    def test_sorts_chronologically_not_lexicographically(self) -> None:
+        # '...07.500Z' is chronologically LATER than '...07Z' but sorts BEFORE it
+        # as a raw string ('.' < 'Z'), so a lexicographic sort would name the
+        # wrong model as current.
+        timeline = _model_timeline([
+            ('2026-07-11T10:53:07Z', 'opus'),
+            ('2026-07-11T10:53:07.500Z', 'sonnet'),
+        ])
+        self.assertEqual([entry['model'] for entry in timeline], ['opus', 'sonnet'])
+        self.assertEqual(timeline[-1]['time'], '2026-07-11T10:53:07.500Z')
+
+    def test_unparseable_timestamps_do_not_crash(self) -> None:
+        timeline = _model_timeline([('not-a-timestamp', 'opus'), ('2026-07-11T10:00:00Z', 'sonnet')])
+        self.assertEqual({entry['model'] for entry in timeline}, {'opus', 'sonnet'})
 
 
 if __name__ == '__main__':
