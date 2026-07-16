@@ -1,11 +1,23 @@
 """Tests for the verbose-diagnostics helpers (home-path redaction)."""
 from __future__ import annotations
 
+import os
+import sys
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from agent_monitor_for_claude import verbose
+
+
+class _FakeStream:
+    """A stand-in for a real, connected stream (has a valid fileno)."""
+
+    def fileno(self) -> int:
+        return 3
+
+    def write(self, _text: str) -> int:
+        return 0
 
 
 class RedactHomeTest(unittest.TestCase):
@@ -42,6 +54,38 @@ class DotnetVersionTest(unittest.TestCase):
         with mock.patch('agent_monitor_for_claude.verbose.winreg.OpenKey'), \
              mock.patch('agent_monitor_for_claude.verbose.winreg.QueryValueEx', return_value=(533320, 1)):
             self.assertEqual(verbose._dotnet_version(), '4.8.1 (release 533320)')
+
+
+class SetupConsoleTest(unittest.TestCase):
+    def test_usable_streams_are_not_clobbered(self) -> None:
+        # A console session or a redirected file must be left in place, or the
+        # console buffer would swallow output meant for the redirect target.
+        out, err = _FakeStream(), _FakeStream()
+        with mock.patch.object(verbose.sys, 'stdout', out), \
+             mock.patch.object(verbose.sys, 'stderr', err), \
+             mock.patch.object(verbose.ctypes, 'windll') as windll, \
+             mock.patch('builtins.open') as open_mock, \
+             mock.patch.dict(os.environ, {}, clear=False):
+            verbose.setup_console()
+            self.assertIs(sys.stdout, out)
+            self.assertIs(sys.stderr, err)
+            open_mock.assert_not_called()
+            windll.kernel32.AttachConsole.assert_not_called()
+            windll.kernel32.AllocConsole.assert_not_called()
+
+    def test_missing_stream_is_bound_to_the_console(self) -> None:
+        err = _FakeStream()
+        with mock.patch.object(verbose.sys, 'stdout', None), \
+             mock.patch.object(verbose.sys, 'stderr', err), \
+             mock.patch.object(verbose.ctypes, 'windll') as windll, \
+             mock.patch('builtins.open') as open_mock, \
+             mock.patch.dict(os.environ, {}, clear=False):
+            windll.kernel32.AttachConsole.return_value = 1
+            verbose.setup_console()
+            # Only the missing stdout is rebound; the usable stderr is untouched.
+            open_mock.assert_called_once()
+            self.assertIsNot(sys.stdout, None)
+            self.assertIs(sys.stderr, err)
 
 
 if __name__ == '__main__':

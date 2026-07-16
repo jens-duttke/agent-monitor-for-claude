@@ -29,16 +29,40 @@ _WEBVIEW2_GUIDS = [
 
 
 def setup_console() -> None:
-    """Attach to the parent console or allocate a new one and redirect output."""
+    """Ensure diagnostics have somewhere to print, without clobbering redirection.
+
+    A stream the shell already connected - a console session, or output the user
+    redirected to a file (``--verbose > diag.txt``) - is left untouched;
+    overwriting it with the console buffer (``CONOUT$``) would send everything to
+    the console and produce an empty redirect target. Only a missing/detached
+    stream (a frozen windowed build, where ``sys.stdout`` is ``None``) gets a
+    console attached and bound.
+    """
     ATTACH_PARENT_PROCESS = -1
 
-    if not ctypes.windll.kernel32.AttachConsole(ATTACH_PARENT_PROCESS):
-        ctypes.windll.kernel32.AllocConsole()
+    have_out = _stream_usable(sys.stdout)
+    have_err = _stream_usable(sys.stderr)
 
-    sys.stdout = open('CONOUT$', 'w', encoding='utf-8')  # noqa: SIM115
-    sys.stderr = open('CONOUT$', 'w', encoding='utf-8')  # noqa: SIM115
+    if not have_out or not have_err:
+        if not ctypes.windll.kernel32.AttachConsole(ATTACH_PARENT_PROCESS):
+            ctypes.windll.kernel32.AllocConsole()
+        if not have_out:
+            sys.stdout = open('CONOUT$', 'w', encoding='utf-8')  # noqa: SIM115
+        if not have_err:
+            sys.stderr = open('CONOUT$', 'w', encoding='utf-8')  # noqa: SIM115
 
     os.environ['PYWEBVIEW_LOG'] = 'DEBUG'
+
+
+def _stream_usable(stream: object) -> bool:
+    """Return True if *stream* is a real, connected stream (not None or detached)."""
+    if stream is None:
+        return False
+    try:
+        stream.fileno()
+        return True
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def _section(title: str) -> None:
