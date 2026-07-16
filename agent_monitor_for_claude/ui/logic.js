@@ -171,6 +171,41 @@ function sessionBucket(session) {
     return filterBucket(session ? session.status : null);
 }
 
+// The history cache is deduped against the live registry only once, at fetch
+// time. A past session that is resumed comes back into the live snapshot, so
+// folding the (now stale) cached history in as well would render it twice - a
+// live row plus a dimmed, undeletable history row. Drop any cached history
+// record whose session is currently live before folding it in.
+function pruneResumedHistory(historyRecords, liveSessions) {
+    if (!Array.isArray(historyRecords) || historyRecords.length === 0) {
+        return [];
+    }
+    const liveIds = new Set();
+    for (const session of liveSessions || []) {
+        if (session && session.session_id) {
+            liveIds.add(session.session_id);
+        }
+    }
+    return historyRecords.filter((record) => record && !liveIds.has(record.session_id));
+}
+
+// Whether the cached history is stale because a session that was live has left
+// the snapshot (it ended and its registry record was pruned). The one-shot
+// history fetch had excluded it as live, so without a re-fetch it would vanish
+// from both views. True when any previously-present session id is now gone.
+function historyNeedsRefresh(previousSessions, currentSessions) {
+    if (!Array.isArray(previousSessions) || previousSessions.length === 0) {
+        return false;
+    }
+    const currentIds = new Set();
+    for (const session of currentSessions || []) {
+        if (session && session.session_id) {
+            currentIds.add(session.session_id);
+        }
+    }
+    return previousSessions.some((session) => session && session.session_id && !currentIds.has(session.session_id));
+}
+
 // Full status for one raw record, combining the transcript-derived state with
 // the registry's busy/idle field and any background work.
 function deriveStatus(raw) {
@@ -726,6 +761,8 @@ const AMC_LOGIC = {
     needsAttention,
     filterBucket,
     sessionBucket,
+    pruneResumedHistory,
+    historyNeedsRefresh,
     pendingIsBlocking,
     modeLabel,
     statusLabel,

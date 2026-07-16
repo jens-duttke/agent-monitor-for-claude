@@ -261,6 +261,28 @@ test('attentionLabel', () => {
     assert.equal(logic.attentionLabel('working', null, labels), 'Working');
 });
 
+test('pruneResumedHistory: a resumed session is not folded in twice', () => {
+    const live = [{ session_id: 'a', alive: true }];
+    const history = [{ session_id: 'a', is_history: true }, { session_id: 'b', is_history: true }];
+    // Plain concat (the old behaviour) renders the resumed 'a' twice.
+    assert.equal(live.concat(history).filter((s) => s.session_id === 'a').length, 2);
+    // With the prune, the live session's stale history row is dropped.
+    const folded = live.concat(logic.pruneResumedHistory(history, live));
+    assert.equal(folded.filter((s) => s.session_id === 'a').length, 1);
+    assert.deepEqual(logic.pruneResumedHistory(history, live).map((s) => s.session_id), ['b']);
+    assert.deepEqual(logic.pruneResumedHistory([], live), []);
+    assert.deepEqual(logic.pruneResumedHistory(history, []).map((s) => s.session_id), ['a', 'b']);
+});
+
+test('historyNeedsRefresh: true only when a previously-live session left the snapshot', () => {
+    assert.equal(logic.historyNeedsRefresh([{ session_id: 'a' }, { session_id: 'b' }], [{ session_id: 'a' }]), true);
+    assert.equal(logic.historyNeedsRefresh([{ session_id: 'a' }], [{ session_id: 'a' }]), false);
+    assert.equal(logic.historyNeedsRefresh([{ session_id: 'a' }], []), true);
+    // A brand-new session appearing is not a reason to refresh history.
+    assert.equal(logic.historyNeedsRefresh([{ session_id: 'a' }], [{ session_id: 'a' }, { session_id: 'c' }]), false);
+    assert.equal(logic.historyNeedsRefresh([], [{ session_id: 'a' }]), false);
+});
+
 test('modeLabel', () => {
     assert.equal(logic.modeLabel('default'), 'Manual');
     assert.equal(logic.modeLabel('acceptEdits'), 'Auto-edit');

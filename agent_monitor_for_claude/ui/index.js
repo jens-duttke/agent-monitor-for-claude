@@ -1823,6 +1823,7 @@ function ensureShell() {
 }
 
 function render(snapshot) {
+    const previous = state.last;
     state.last = snapshot;
 
     const prices = logic.resolvePrices(state.pricing, todayIso());
@@ -1833,7 +1834,16 @@ function render(snapshot) {
     const historyActive = state.filters.has('history');
     let rawSessions = snapshot.sessions || [];
     if (historyActive && Array.isArray(state.history)) {
-        rawSessions = rawSessions.concat(state.history);
+        // Drop a resumed past session's stale history row (it is live again, so
+        // it is already in the snapshot) - otherwise it renders twice.
+        rawSessions = rawSessions.concat(logic.pruneResumedHistory(state.history, snapshot.sessions || []));
+        // A previously-live session that just left the snapshot (ended and its
+        // registry record pruned) was excluded from the one-shot history fetch;
+        // re-fetch so it can move into history instead of vanishing from both.
+        if (previous && logic.historyNeedsRefresh(previous.sessions, snapshot.sessions)) {
+            state.history = null;
+            ensureHistoryLoaded();
+        }
     }
     const loadingNote = (historyActive && state.historyLoading) ? state.labels.history_loading : '';
 
