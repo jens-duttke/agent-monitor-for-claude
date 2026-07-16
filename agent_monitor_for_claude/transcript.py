@@ -25,13 +25,14 @@ import os
 import re
 import threading
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .paths import transcript_path
 
-__all__ = ['TranscriptState', 'HistoryState', 'state_for', 'history_state_for']
+__all__ = ['TranscriptState', 'HistoryState', 'state_for', 'history_state_for', 'prune_scan_cache']
 
 # Bytes read from the end of the transcript.  Large enough to contain the last
 # several turns without loading a multi-megabyte file on every poll.  When a
@@ -128,6 +129,33 @@ _scan_cache: dict[str, _ScanState] = {}
 # call on its own thread, so two overlapping snapshot builds can otherwise share
 # one cached state, both absorb the same appended bytes, and double-count usage.
 _scan_lock = threading.Lock()
+
+
+def prune_scan_cache(active: Iterable[tuple[str, str]]) -> None:
+    """Drop scan-cache entries for sessions no longer in the registry.
+
+    The cache holds one ``_ScanState`` per transcript ever scanned - per-model
+    totals, the title, the full model-event list - and is otherwise never
+    evicted, so a long-running monitor's memory grows with every session ever
+    observed.  ``build_snapshot`` calls this each poll with the ``(session_id,
+    cwd)`` of every current registry record, so only live sessions are retained.
+
+    Parameters
+    ----------
+    active : iterable of (session_id, cwd)
+        Every current registry session; its cache key is computed exactly like
+        :func:`_scan_appended` (path, case-normalized), so the two always agree.
+    """
+    keep = {
+        os.path.normcase(str(transcript_path(session_id, cwd)))
+        for session_id, cwd in active
+        if session_id and cwd
+    }
+
+    with _scan_lock:
+        for key in list(_scan_cache):
+            if key not in keep:
+                del _scan_cache[key]
 
 
 @dataclass(frozen=True)
@@ -497,7 +525,10 @@ def _scan_appended(path: Path) -> tuple[dict[str, int], dict[str, dict[str, int]
     model-switch timeline of the main conversation (for the model-switch
     history), the display title, and the latest permission mode.
     """
-    cache_key = str(path)
+    # Normalize case so two registry cwds that differ only in case (they resolve
+    # to the same case-insensitive file) share one cache entry instead of each
+    # paying a full-file scan.
+    cache_key = os.path.normcase(str(path))
 
     with _scan_lock:
         state = _scan_cache.get(cache_key) or _ScanState()

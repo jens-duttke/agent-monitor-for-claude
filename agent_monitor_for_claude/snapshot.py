@@ -22,7 +22,7 @@ from .process_probe import probe_all
 from .sessions import list_sessions
 from .settings import ENDED_MAX_AGE, INCLUDE_COMPLETED
 from .subagents import count_subagents
-from .transcript import state_for
+from .transcript import prune_scan_cache, state_for
 
 __all__ = ['build_snapshot', 'live_or_recent_ids', 'registry_fingerprint']
 
@@ -45,6 +45,10 @@ def build_snapshot() -> dict[str, Any]:
 
         if session is not None:
             sessions.append(session)
+
+    # Evict scan-cache entries for sessions no longer in the registry so the
+    # cache does not grow unbounded over a long-running monitor.
+    prune_scan_cache((record['session_id'], record['cwd']) for record in records)
 
     return {
         'generated_at': datetime.now().astimezone().isoformat(timespec='seconds'),
