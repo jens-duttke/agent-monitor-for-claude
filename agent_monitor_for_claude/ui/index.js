@@ -910,6 +910,13 @@ function toggleFilter(key) {
 // note shows until the scan returns.
 async function ensureHistoryLoaded() {
     if (state.history !== null || state.historyLoading) {
+        // Already loading (or loaded): still reflect the current chip/loading
+        // state. Toggling History on again during the in-flight first load lands
+        // here, and without this render the chip would look inactive with no
+        // loading note until the fetch lands or the next poll.
+        if (state.last) {
+            render(state.last);
+        }
         return;
     }
 
