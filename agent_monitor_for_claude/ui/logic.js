@@ -206,6 +206,37 @@ function historyNeedsRefresh(previousSessions, currentSessions) {
     return previousSessions.some((session) => session && session.session_id && !currentIds.has(session.session_id));
 }
 
+// A fire-and-forget bridge call returns a promise, so a Python-side rejection
+// escapes a plain try/catch and lands in the global unhandledrejection handler -
+// which wipes the whole content area. Invoke the call, catch a synchronous
+// throw, and attach a rejection handler so an async failure is contained too;
+// onError runs for either. Returns the settled promise (for tests / optional
+// chaining), or undefined on a synchronous throw.
+function settleCall(thunk, onError) {
+    const handle = (error) => {
+        if (typeof onError === 'function') {
+            try {
+                onError(error);
+            } catch (inner) {
+                // Cleanup must never re-throw and re-enter the global handler.
+            }
+        }
+    };
+
+    let result;
+    try {
+        result = thunk();
+    } catch (error) {
+        handle(error);
+        return undefined;
+    }
+
+    if (result && typeof result.then === 'function') {
+        return result.then(undefined, handle);
+    }
+    return result;
+}
+
 // Full status for one raw record, combining the transcript-derived state with
 // the registry's busy/idle field and any background work.
 function deriveStatus(raw) {
@@ -768,6 +799,7 @@ const AMC_LOGIC = {
     sessionBucket,
     pruneResumedHistory,
     historyNeedsRefresh,
+    settleCall,
     pendingIsBlocking,
     modeLabel,
     statusLabel,

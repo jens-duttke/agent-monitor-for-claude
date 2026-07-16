@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- A failure while jumping to a session's window, opening its project folder, or starting a search no longer briefly replaces the whole overview with an error page; the failed action is now contained.
 - Starting two content searches in quick succession (for example toggling a search option mid-typing) no longer occasionally leaves the search stuck on "Searching sessions..." with no results.
 - If none of the language files can be loaded (a damaged install), the app now starts in English with default text instead of failing to open at all.
 - If a content search fails unexpectedly partway through, it now shows the search error state instead of presenting the failure as a confident "no session contains this text".

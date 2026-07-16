@@ -305,6 +305,31 @@ test('historyNeedsRefresh: true only when a previously-live session left the sna
     assert.equal(logic.historyNeedsRefresh([], [{ session_id: 'a' }]), false);
 });
 
+test('settleCall: a synchronous throw runs onError, not the caller', () => {
+    const errors = [];
+    const ret = logic.settleCall(() => { throw new Error('sync'); }, (e) => errors.push(e.message));
+    assert.deepEqual(errors, ['sync']);
+    assert.equal(ret, undefined);
+});
+
+test('settleCall: an async rejection is contained and runs onError', async () => {
+    const errors = [];
+    await logic.settleCall(() => Promise.reject(new Error('async')), (e) => errors.push(e.message));
+    assert.deepEqual(errors, ['async']);
+});
+
+test('settleCall: a resolved or plain call does not run onError', async () => {
+    const errors = [];
+    await logic.settleCall(() => Promise.resolve('ok'), (e) => errors.push(e));
+    assert.equal(logic.settleCall(() => 42, (e) => errors.push(e)), 42);
+    assert.deepEqual(errors, []);
+});
+
+test('settleCall: an onError that itself throws is swallowed', async () => {
+    // Cleanup must never re-throw and re-enter the global unhandledrejection path.
+    await logic.settleCall(() => Promise.reject(new Error('x')), () => { throw new Error('cleanup boom'); });
+});
+
 test('modeLabel', () => {
     assert.equal(logic.modeLabel('default'), 'Manual');
     assert.equal(logic.modeLabel('acceptEdits'), 'Auto-edit');

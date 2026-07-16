@@ -20,7 +20,13 @@ function reportUiError(detail) {
     try {
         const bridge = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
         if (bridge && typeof bridge.log === 'function') {
-            bridge.log(message);
+            // Contain an async rejection inline (not via logic.settleCall, which
+            // may not have loaded): a rejected bridge.log would otherwise re-enter
+            // unhandledrejection -> reportUiError and loop.
+            const pending = bridge.log(message);
+            if (pending && typeof pending.then === 'function') {
+                pending.then(undefined, () => {});
+            }
         }
     } catch (e) { /* bridge unavailable */ }
     try {
@@ -1222,7 +1228,7 @@ function runSearch() {
         state.searchTotal = 0;
         // Cancel a running backend search: the new (unused) seq invalidates it.
         if (bridge && typeof bridge.start_search === 'function') {
-            try { bridge.start_search('', [], searchOptions(), seq); } catch (e) { /* bridge hiccup */ }
+            logic.settleCall(() => bridge.start_search('', [], searchOptions(), seq));
         }
         updateSearchProgress();
         if (state.last) {
@@ -1253,15 +1259,18 @@ function runSearch() {
         return;
     }
 
-    try {
-        bridge.start_search(query, currentSessionRefs(), searchOptions(), seq);
-    } catch (e) {
-        state.searchLoading = false;
-        updateSearchProgress();
-        if (state.last) {
-            render(state.last);
+    // Fire-and-forget: a Python-side rejection must not escape to the global
+    // handler (which wipes the content area) or leave searchLoading stuck true.
+    logic.settleCall(
+        () => bridge.start_search(query, currentSessionRefs(), searchOptions(), seq),
+        () => {
+            state.searchLoading = false;
+            updateSearchProgress();
+            if (state.last) {
+                render(state.last);
+            }
         }
-    }
+    );
 }
 
 // Refresh an active search when the snapshot changes, so newly-appearing matches
@@ -1293,9 +1302,9 @@ function rescanForNewMatches() {
     // A fresh seq so any late push from a prior scan is ignored; matches are
     // added to the existing set (never reset), so results only grow.
     const seq = ++state.searchSeq;
-    try {
-        bridge.start_search(query, refs, searchOptions(), seq);
-    } catch (e) { /* bridge hiccup - the next change retries */ }
+    // Fire-and-forget; a bridge hiccup (sync or async) is contained - the next
+    // change retries - and never reaches the global handler.
+    logic.settleCall(() => bridge.start_search(query, refs, searchOptions(), seq));
 }
 
 // One streaming update from the backend: {seq, processed, total, ids, done, error}.
@@ -1704,20 +1713,22 @@ function openPath(cwd) {
     }
     const bridge = apiBridge();
     if (bridge && typeof bridge.open_path === 'function') {
-        bridge.open_path(cwd);
+        // Fire-and-forget: a Win32-side rejection must not wipe the content area.
+        logic.settleCall(() => bridge.open_path(cwd));
     }
 }
 
 function focusSession(el) {
     const bridge = apiBridge();
     if (bridge && typeof bridge.focus_session === 'function') {
-        bridge.focus_session(
+        // Fire-and-forget: a Win32-side rejection must not wipe the content area.
+        logic.settleCall(() => bridge.focus_session(
             Number(el.dataset.pid),
             el.dataset.project || '',
             el.dataset.session || '',
             el.dataset.deeplink === '1',
             el.dataset.title || ''
-        );
+        ));
     }
 }
 
