@@ -1198,6 +1198,13 @@ function currentSessionRefs() {
 // Start (or clear) a content search. Bumps the sequence id so any in-flight scan
 // - and any late push from it - is superseded and ignored.
 function runSearch() {
+    // A direct caller (a filter chip or a search-option toggle) can run this
+    // while a debounce timer from recent typing is still pending. Clear it, or it
+    // fires afterward and restarts an identical search - dropping the matches
+    // already streaming in and restarting the progress bar.
+    clearTimeout(state.searchTimer);
+    state.searchTimer = null;
+
     const query = state.search.trim();
     const active = query.length >= SEARCH_MIN_CHARS;
     const seq = ++state.searchSeq;

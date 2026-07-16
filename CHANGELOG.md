@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Clicking a filter chip or a search-option toggle right after typing no longer restarts the search a moment later - the matches that had already appeared stay put instead of vanishing and reloading.
 - Turning the History chip off and back on again while its first load is still running now immediately shows the chip as active with its loading note, instead of briefly looking inactive until the load finishes.
 - When two rows share the same session id (a live window plus a resumed terminal, or a live-and-History duplicate), an open row menu no longer jumps to the other row after the list reorders on a refresh.
 - If loading the History list fails, toggling the History chip off and on now retries instead of showing an empty list permanently until the app is restarted.
