@@ -90,31 +90,67 @@ class MeaningfulChildrenTest(unittest.TestCase):
         return _meaningful_children(self._SESSION, table, children_index, cache)
 
     def test_real_subtree_counted_and_console_excluded(self) -> None:
+        # A genuine tool runs later in the session (well after the session start),
+        # so its whole subtree is counted; the console host is always excluded.
         table = {
             1000: (1, 'claude.exe'),
             1001: (1000, 'node.exe'),
             1002: (1001, 'esbuild.exe'),
             1003: (1000, 'conhost.exe'),
         }
-        cache = {1000: 5000.0, 1001: 5001.0, 1002: 5002.0, 1003: 5000.5}
+        cache = {1000: 5000.0, 1001: 5100.0, 1002: 5200.0, 1003: 5000.5}
         self.assertEqual(sorted(set(self._children(table, cache))), ['esbuild.exe', 'node.exe'])
 
     def test_orphan_with_recycled_parent_pid_is_pruned(self) -> None:
         # 2000 claims the session PID as parent but started at boot, long before
         # the session - a stale link. Its own subtree (2001) must not leak in.
+        # 1001 runs later in the session, so it is a genuine tool child.
         table = {
             1000: (1, 'claude.exe'),
             1001: (1000, 'node.exe'),
             2000: (1000, 'lsass.exe'),
             2001: (2000, 'services.exe'),
         }
-        cache = {1000: 5000.0, 1001: 5001.0, 2000: 100.0, 2001: 90.0}
+        cache = {1000: 5000.0, 1001: 5100.0, 2000: 100.0, 2001: 90.0}
         self.assertEqual(sorted(set(self._children(table, cache))), ['node.exe'])
 
     def test_unverifiable_link_rejected(self) -> None:
         table = {1000: (1, 'claude.exe'), 3000: (1000, 'protected.exe')}
         cache = {1000: 5000.0, 3000: None}
         self.assertEqual(self._children(table, cache), [])
+
+    def test_session_lifetime_helper_not_counted(self) -> None:
+        # An stdio MCP server is spawned with the session and lives for its whole
+        # lifetime; it starts together with the session process, so it must not be
+        # read as a running tool (else every MCP user reads busy forever).
+        table = {
+            1000: (1, 'claude.exe'),
+            1001: (1000, 'node.exe'),
+        }
+        cache = {1000: 5000.0, 1001: 5000.3}
+        self.assertEqual(self._children(table, cache), [])
+
+    def test_helper_subtree_not_counted(self) -> None:
+        # A session-lifetime helper's own children start with it too and must not
+        # leak in as a running tool.
+        table = {
+            1000: (1, 'claude.exe'),
+            1001: (1000, 'node.exe'),
+            1002: (1001, 'python.exe'),
+        }
+        cache = {1000: 5000.0, 1001: 5000.5, 1002: 5001.0}
+        self.assertEqual(self._children(table, cache), [])
+
+    def test_tool_started_later_is_counted(self) -> None:
+        # A tool runs later in the session; alongside a session-lifetime helper,
+        # only the tool (started well after the session) is counted.
+        table = {
+            1000: (1, 'claude.exe'),
+            1001: (1000, 'node.exe'),
+            1002: (1000, 'bash.exe'),
+        }
+        cache = {1000: 5000.0, 1001: 5000.3, 1002: 5200.0}
+        self.assertEqual(self._children(table, cache), ['bash.exe'])
 
 
 class ChildLinkTest(unittest.TestCase):

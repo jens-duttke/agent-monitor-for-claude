@@ -32,6 +32,17 @@ __all__ = ['TERMINAL_WINDOW_OWNERS', 'ProcessInfo', 'ancestry', 'probe', 'probe_
 # presence must not be read as "a tool is running".
 _IGNORED_CHILD_NAMES = frozenset({'conhost.exe'})
 
+# A child that starts together with the session process is a session-lifetime
+# helper (a stdio MCP server, a file watcher), not a tool execution: a tool
+# child is spawned later, when the tool actually runs.  Descendants that start
+# within this window of the session's own start are therefore not counted as
+# running tools - otherwise a configured stdio MCP server (node/python/docker,
+# common) would make every session read as busy and hide "needs you" prompts
+# for its entire lifetime.  The window only affects the first seconds of a
+# session's life; a tool run later reads normally, and the transcript-based
+# classification still reports a just-started turn as working regardless.
+_SESSION_HELPER_WINDOW_SECONDS = 10.0
+
 # Editors that host a session in their own window.
 _EDITOR_HOSTS = {
     'code.exe': 'VS Code',
@@ -318,9 +329,14 @@ def _meaningful_children(
     child.  A link is accepted only when both start times are known and the
     child is not older than the parent, so those bogus links are pruned before
     the walk can descend into the system process tree.
+
+    Descendants that started together with the session itself are session-
+    lifetime helpers (stdio MCP servers, watchers) rather than tool executions,
+    and are skipped - see ``_SESSION_HELPER_WINDOW_SECONDS``.
     """
     names: list[str] = []
     visited = {pid}
+    session_start = _create_time(pid, create_time_cache)
     pending: list[tuple[int, int]] = [(pid, child_pid) for child_pid in children_index.get(pid, [])]
 
     while pending:
@@ -334,12 +350,30 @@ def _meaningful_children(
         entry = table.get(child_pid)
         if entry is None:
             continue
-        if entry[1] not in _IGNORED_CHILD_NAMES:
+        if entry[1] not in _IGNORED_CHILD_NAMES and not _is_session_helper(child_pid, session_start, create_time_cache):
             names.append(entry[1])
 
         pending.extend((child_pid, grandchild) for grandchild in children_index.get(child_pid, []))
 
     return names
+
+
+def _is_session_helper(child_pid: int, session_start: float | None, create_time_cache: dict[int, float | None]) -> bool:
+    """Return True if *child_pid* started together with the session process.
+
+    Such a child is a session-lifetime helper (an stdio MCP server, a watcher),
+    not a tool execution.  An unknown start time on either side leaves the child
+    counted - the guard only suppresses a child provably started with the
+    session, never one whose timing cannot be verified.
+    """
+    if session_start is None:
+        return False
+
+    child_start = _create_time(child_pid, create_time_cache)
+    if child_start is None:
+        return False
+
+    return child_start <= session_start + _SESSION_HELPER_WINDOW_SECONDS
 
 
 def _is_child_link_real(parent_pid: int, child_pid: int, create_time_cache: dict[int, float | None]) -> bool:
