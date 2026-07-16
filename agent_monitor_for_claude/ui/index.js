@@ -927,10 +927,14 @@ async function ensureHistoryLoaded() {
     try {
         const history = await bridge.get_history();
         state.history = Array.isArray(history) ? history : [];
+        state.historyReceivedAt = Date.now();
     } catch (e) {
-        state.history = [];
+        // A failed one-shot fetch must not cache []: that empty sentinel is what
+        // a genuine empty result uses, so the loaded-guard would be satisfied
+        // forever and never retry. Reset to null so toggling History off and on
+        // (or the next invalidation) re-fetches.
+        state.history = null;
     }
-    state.historyReceivedAt = Date.now();
 
     state.historyLoading = false;
     afterHistoryLoaded();

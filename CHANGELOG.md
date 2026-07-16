@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- If loading the History list fails, toggling the History chip off and on now retries instead of showing an empty list permanently until the app is restarted.
 - History rows' age now keeps counting up while the app is open, instead of staying frozen at the value it had when the History list was loaded.
 - If saved UI preferences cannot be read at startup (restricted or corrupt browser storage), the app no longer starts with every filter enabled - which would run the History scan without being asked and discard the saved filter selection. Your saved filters are preserved, and History stays off unless you turned it on.
 - A failure while jumping to a session's window, opening its project folder, or starting a search no longer briefly replaces the whole overview with an error page; the failed action is now contained.
