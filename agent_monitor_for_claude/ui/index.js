@@ -619,7 +619,11 @@ function openMenu(anchor, items, onSelect, context) {
         el,
         anchorEl: anchor,
         type: context.type,
-        sessionId: context.sessionId || null,
+        // The full row key (session_id + pid), not the session id alone: two rows
+        // can share a session id (a live window plus a --resume terminal, or a
+        // live+history duplicate), and re-anchoring on the id would jump to the
+        // wrong one after rows reorder.
+        rowKey: context.rowKey || null,
     };
 
     menu.onDocClick = (event) => {
@@ -671,7 +675,7 @@ function syncOpenMenu() {
     if (menu.type === 'sort') {
         anchor = document.getElementById('sort-trigger');
     } else if (menu.type === 'row') {
-        anchor = findRowMenuButton(menu.sessionId);
+        anchor = findRowMenuButton(menu.rowKey);
     }
 
     if (!anchor) {
@@ -687,11 +691,14 @@ function syncOpenMenu() {
     positionMenu(menu.el, anchor);
 }
 
-function findRowMenuButton(sessionId) {
-    const buttons = document.querySelectorAll('.row-menu-btn');
-    for (const button of buttons) {
-        if (button.dataset.session === sessionId) {
-            return button;
+function findRowMenuButton(rowKey) {
+    if (!rowKey) {
+        return null;
+    }
+    const rows = document.querySelectorAll('.row');
+    for (const row of rows) {
+        if (row.dataset.key === rowKey) {
+            return row.querySelector('.row-menu-btn');
         }
     }
     return null;
@@ -1739,6 +1746,8 @@ function onContentClick(event) {
         event.stopPropagation();
         const sessionId = menuBtn.dataset.session || '';
         const cwd = menuBtn.dataset.cwd || '';
+        const rowEl = menuBtn.closest('.row');
+        const menuRowKey = rowEl ? rowEl.dataset.key : '';
         const items = [{ key: 'copy-id', label: state.labels.copy_session_id }];
         if (menuBtn.dataset.history === '1') {
             items.push({ key: 'delete', label: state.labels.delete_session, danger: true });
@@ -1749,7 +1758,7 @@ function onContentClick(event) {
             } else if (key === 'delete') {
                 confirmDeleteSession(sessionId, cwd);
             }
-        }, { type: 'row', sessionId });
+        }, { type: 'row', rowKey: menuRowKey });
         return;
     }
 
