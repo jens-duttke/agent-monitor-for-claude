@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- If none of the language files can be loaded (a damaged install), the app now starts in English with default text instead of failing to open at all.
 - If a content search fails unexpectedly partway through, it now shows the search error state instead of presenting the failure as a confident "no session contains this text".
 - If "replace the running instance" cannot actually stop the old instance (for example it is running elevated), the app now detects that it did not become the sole instance and exits instead of silently starting a second window and taking over the ownership record.
 - A session waiting on a question or plan-review dialog now reads "Needs you" even when an unrelated background process is running. Such a dialog was previously demoted to "Background" whenever the session had any live child process, hiding that it was actually waiting on you.

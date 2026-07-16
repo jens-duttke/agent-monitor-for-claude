@@ -254,7 +254,9 @@ def run(verbose: bool = False) -> None:
 
     ui_dir = _ui_dir()
     window = webview.create_window(
-        T['app_title'],
+        # .get with an English default so an empty T (all locales failed to load)
+        # degrades to a titled window instead of crashing startup with a KeyError.
+        T.get('app_title', 'Agent Monitor for Claude'),
         url=f'{ui_dir / "index.html"}?v={_asset_version(ui_dir)}',
         js_api=api,
         width=WINDOW_WIDTH,

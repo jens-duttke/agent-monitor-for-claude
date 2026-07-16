@@ -19,6 +19,12 @@ from .i18n import T
 
 __all__ = ['ensure_single_instance', 'release_instance_lock']
 
+# English last-resort text for the empty-translations degradation path (when
+# every locale candidate, including en.json, failed to load and T is empty).
+_DEFAULT_APP_TITLE = 'Agent Monitor for Claude'
+_DEFAULT_ALREADY_RUNNING = ('Agent Monitor for Claude v{running_version} is already running.\n\n'
+                            'Do you want to replace the running instance?')
+
 _MUTEX_NAME = 'AgentMonitorForClaude_SingleInstance'
 _PID_MAPPING_NAME = 'AgentMonitorForClaude_HolderPID'
 _ERROR_ALREADY_EXISTS = 0xB7
@@ -161,11 +167,19 @@ def ensure_single_instance() -> bool:
 
     holder_pid, running_version = _read_holder_info()
 
-    title = T['app_title']
+    # T is empty when every locale candidate failed to load (its documented
+    # last-resort). Read through .get with English defaults so that degradation
+    # still shows a dialog instead of crashing startup with a KeyError.
+    title = T.get('app_title', _DEFAULT_APP_TITLE)
     if running_version:
         title += f' v{running_version}'
 
-    message = T['already_running'].format(running_version=running_version or '?')
+    template = T.get('already_running', _DEFAULT_ALREADY_RUNNING)
+    try:
+        message = template.format(running_version=running_version or '?')
+    except (KeyError, IndexError, ValueError):
+        # A translator-supplied template with a wrong placeholder must not crash.
+        message = _DEFAULT_ALREADY_RUNNING.format(running_version=running_version or '?')
 
     answer = ctypes.windll.user32.MessageBoxW(None, message, title, MB_YESNO | MB_ICONQUESTION | MB_TOPMOST)
     if answer != IDYES:

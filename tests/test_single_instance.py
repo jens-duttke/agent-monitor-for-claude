@@ -21,7 +21,9 @@ class ReplacePathTest(unittest.TestCase):
     kill when no live holder still claims the mapping.
     """
 
-    def _drive_replace(self, read_results, answer=_IDYES, sole_owner=True):
+    def _drive_replace(self, read_results, answer=_IDYES, sole_owner=True, translations=None):
+        if translations is None:
+            translations = {'app_title': 'X', 'already_running': 'running {running_version}'}
         terminated = []
         fake_kernel = mock.Mock()
         fake_kernel.CreateMutexW.return_value = 0x111
@@ -44,7 +46,7 @@ class ReplacePathTest(unittest.TestCase):
              mock.patch.object(single_instance, '_read_holder_info', side_effect=list(read_results)), \
              mock.patch.object(single_instance, '_terminate_pid', side_effect=terminated.append), \
              mock.patch.object(single_instance, '_store_holder_info', store), \
-             mock.patch.dict(single_instance.T, {'app_title': 'X', 'already_running': 'running {running_version}'}, clear=False), \
+             mock.patch.dict(single_instance.T, translations, clear=True), \
              mock.patch.object(ctypes, 'get_last_error', side_effect=fake_last_error), \
              mock.patch.object(ctypes.windll.user32, 'MessageBoxW', return_value=answer):
             result = single_instance.ensure_single_instance()
@@ -70,6 +72,14 @@ class ReplacePathTest(unittest.TestCase):
         self.assertFalse(result)
         self.assertEqual(terminated, [])
         self.assertFalse(stored)
+
+    def test_replace_survives_empty_translations(self) -> None:
+        # The documented last-resort degradation: all locale candidates failed
+        # and T is empty. The dialog must still build (English defaults) rather
+        # than crash startup with a KeyError.
+        result, terminated, stored = self._drive_replace([(1234, '0.3.0')], answer=_IDNO, translations={})
+        self.assertFalse(result)
+        self.assertEqual(terminated, [])
 
     def test_replace_fails_when_the_old_instance_survives(self) -> None:
         # The terminate did not take (elevated old instance, or the wait timed
