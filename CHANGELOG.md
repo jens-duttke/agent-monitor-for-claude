@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- The UI now detects Simplified Chinese, Traditional Chinese, Hindi, and Indonesian on Windows systems that report the older descriptive locale names (e.g. "Chinese (Simplified)_China"). These languages previously fell back to English despite shipping a translation, unless the language was set manually.
 - With History shown, resuming a past session no longer lists it twice (a live row plus a stale history row with a broken "Delete"); the stale history row is dropped once the session is live again. And a session that ends while the app is running now moves into History on its own instead of disappearing until the next restart.
 - A crashed or force-killed session whose leftover registry entry was never cleaned up no longer disappears entirely. Once its last activity aged past the retention window it was dropped from the live overview yet still skipped by History; it now appears under History instead of vanishing from both views.
 - A session that is waiting on you but has not yet recorded which prompt it is waiting for no longer shows a misleading label (e.g. "Question for you" or "Plan review") left over from an earlier, already-answered tool. It now reads the neutral "Waiting for you" until the specific prompt is known.

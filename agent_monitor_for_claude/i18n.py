@@ -17,12 +17,37 @@ __all__ = ['LOCALE_DIR', 'detect_lang_code', 'load_translations', 'T']
 
 LOCALE_DIR = Path(__file__).parent.parent / 'locale'
 
+# locale.normalize rewrites many Windows legacy 'Language_Country' names to an
+# ISO code, but leaves several untouched for which the app ships a locale file.
+# Map those language words by hand, keyed on the lowercased language part. A
+# value that already carries a region (e.g. 'zh-CN') resolves the file directly.
+_LEGACY_LANG_CODES = {
+    'ukrainian': 'uk',
+    'hindi': 'hi',
+    'indonesian': 'id',
+    'chinese (simplified)': 'zh-CN',
+    'chinese (traditional)': 'zh-TW',
+}
+
+# For the unqualified 'Chinese_<Country>' form the country decides the script,
+# and locale.normalize leaves the country word untranslated - so map it too.
+_LEGACY_CHINESE_REGIONS = {
+    'china': 'zh-CN',
+    'singapore': 'zh-CN',
+    'taiwan': 'zh-TW',
+    'hong kong': 'zh-TW',
+    'macao': 'zh-TW',
+    'macau': 'zh-TW',
+}
+
 
 def detect_lang_code(lang: str) -> str:
     """Detect the locale file code from a system locale string.
 
-    Lookup chain: ``{lang}-{REGION}.json`` -> ``{lang}.json`` -> ``en.json``.
-    No mapping table required - the locale directory *is* the configuration.
+    Lookup chain: a hand-maintained alias for the legacy Windows names
+    ``locale.normalize`` misses, then ``{lang}-{REGION}.json`` ->
+    ``{lang}.json`` -> ``en.json``.  Beyond those few aliases the locale
+    directory *is* the configuration.
 
     Parameters
     ----------
@@ -37,14 +62,20 @@ def detect_lang_code(lang: str) -> str:
     normalized = locale.normalize(lang).split('.')[0]
     parts = normalized.split('_', 1)
     base = parts[0].lower()
+    region_word = parts[1].lower() if len(parts) > 1 else ''
 
-    # On Windows, os.getlocale() returns e.g. 'German_Germany', and locale.normalize()
-    # fails to rewrite it to an ISO code, so base becomes 'german'. Re-split to match.
+    # On Windows, os.getlocale() returns e.g. 'German_Germany'. locale.normalize
+    # rewrites many such names to an ISO code, but misses some the app ships a
+    # locale for - resolve those from the alias tables first.
+    alias = _LEGACY_LANG_CODES.get(base)
+    if alias is None and base == 'chinese':
+        alias = _LEGACY_CHINESE_REGIONS.get(region_word)
+    if alias and (LOCALE_DIR / f'{alias}.json').exists():
+        return alias
+
+    # A still-descriptive base (locale.normalize did not shorten it) - re-split.
     if len(base) > 3:
         base = locale.normalize(parts[0]).split('.')[0].split('_')[0].lower()
-
-    if base == 'ukrainian':
-        base = 'uk'
 
     region = parts[1] if len(parts) > 1 and len(base) <= 3 else ''
 

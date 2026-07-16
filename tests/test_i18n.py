@@ -14,6 +14,22 @@ class DetectLangTest(unittest.TestCase):
     def test_windows_locale_name(self) -> None:
         self.assertEqual(detect_lang_code('German_Germany'), 'de')
 
+    def test_windows_legacy_ukrainian(self) -> None:
+        self.assertEqual(detect_lang_code('Ukrainian_Ukraine'), 'uk')
+
+    def test_windows_legacy_names_locale_normalize_misses(self) -> None:
+        # locale.normalize does not rewrite these legacy Windows names to an ISO
+        # code, so they must be mapped by hand to the shipped locale files.
+        self.assertEqual(detect_lang_code('Hindi_India'), 'hi')
+        self.assertEqual(detect_lang_code('Indonesian_Indonesia'), 'id')
+        self.assertEqual(detect_lang_code('Chinese (Simplified)_China'), 'zh-CN')
+        self.assertEqual(detect_lang_code('Chinese (Traditional)_Taiwan'), 'zh-TW')
+
+    def test_windows_legacy_chinese_by_region(self) -> None:
+        # The unqualified 'Chinese_<Country>' form is disambiguated by country.
+        self.assertEqual(detect_lang_code('Chinese_China'), 'zh-CN')
+        self.assertEqual(detect_lang_code('Chinese_Taiwan'), 'zh-TW')
+
     def test_unknown_falls_back_to_english(self) -> None:
         self.assertEqual(detect_lang_code('xx_YY'), 'en')
 
