@@ -679,6 +679,9 @@ function groupKey(cwd) {
 }
 
 function displayCwd(cwd) {
+    // Coerce like its siblings groupKey/projectName: a non-string cwd would
+    // otherwise throw on .length/[1] and blank the whole snapshot render.
+    cwd = String(cwd == null ? '' : cwd);
     if (cwd.length >= 2 && cwd[1] === ':' && /[a-zA-Z]/.test(cwd[0])) {
         return cwd[0].toUpperCase() + cwd.slice(1);
     }

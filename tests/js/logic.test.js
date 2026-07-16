@@ -725,6 +725,15 @@ test('STATUS_ORDER: needs -> working -> background -> errored -> idle -> interru
     assert.ok(order.interrupted < order.unknown);
 });
 
+test('displayCwd coerces a non-string cwd instead of throwing', () => {
+    assert.equal(logic.displayCwd('c:\\proj'), 'C:\\proj');   // drive letter upper-cased
+    assert.equal(logic.displayCwd('/usr/local'), '/usr/local');
+    // Hardening: a non-string cwd must not throw (groupProjects would blank the view).
+    assert.equal(logic.displayCwd(null), '');
+    assert.equal(logic.displayCwd(undefined), '');
+    assert.equal(logic.displayCwd(123), '123');
+});
+
 test('groupProjects groups case-insensitively', () => {
     const labels = { status_awaiting_input: 'Idle' };
     const projects = logic.groupProjects([
