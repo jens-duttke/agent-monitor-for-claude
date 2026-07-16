@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The header (title, filter chips, and search) now stays fixed at the top while only the session list below it scrolls. The scrollbar sits in that list alone and its space is always reserved, so the layout no longer shifts sideways when the list grows tall enough to need it.
 
 ### Fixed
+- The space around the session list is now even on all sides: the first project panel sits as far from the top bar as from the window edges, and the excess space after the last panel is gone.
 - The abbreviated token count now rounds cleanly at the tier boundaries: a total just under a million reads "1.0M" instead of "1000k", and one just under 100k reads "100k" instead of "100.0k".
 - A misspelled or unknown key in the settings file is now reported in the settings-error dialog (and ignored), instead of being silently dropped while the default quietly applied. A key starting with an underscore is treated as a comment and left alone.
 - Sessions that used Claude 3.5 Haiku (often via subagents) now show a dollar cost instead of a plain token total. Its price was listed under a key the model id never resolved to, so the cost estimate was silently skipped for the whole session.

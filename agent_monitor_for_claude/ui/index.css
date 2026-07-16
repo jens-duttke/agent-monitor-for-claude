@@ -621,10 +621,19 @@ body {
        shows without a thumb. Never scroll horizontally. */
     overflow-y: scroll;
     overflow-x: hidden;
-    padding: 22px 24px 44px;
+    /* Uniform breathing room on every side, so the first panel sits as far from
+       the top bar as from the window edges, and the last one likewise. */
+    padding: 24px;
     display: flex;
     flex-direction: column;
     gap: 18px;
+
+    /* The hero/panels/state slots are always present; an empty one must leave
+       the flex flow entirely, or its `gap` shows up as phantom extra spacing
+       above the first panel (empty hero) and below the last (empty state). */
+    & > :empty {
+        display: none;
+    }
 }
 
 .empty {
