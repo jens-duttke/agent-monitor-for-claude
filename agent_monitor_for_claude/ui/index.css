@@ -89,6 +89,10 @@
 
 html, body {
     height: 100%;
+    /* Only .content scrolls; the root and the body never do - otherwise a
+       transient root scrollbar (e.g. while the window is sizing on launch) would
+       sit to the right of the content's own scrollbar and then jump away. */
+    overflow: hidden;
 }
 
 body {
@@ -103,7 +107,6 @@ body {
        region below it, so the body itself never scrolls. */
     display: flex;
     flex-direction: column;
-    overflow: hidden;
 }
 
 /* --- Top bar (header + filters), fixed --- */
