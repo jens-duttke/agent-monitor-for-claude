@@ -33,12 +33,20 @@ def copy_text(text: str) -> bool:
     if not isinstance(text, str) or not text:
         return False
 
+    # Encode before touching the clipboard: a lone UTF-16 surrogate (which can
+    # survive json.loads over the bridge) raises here, and doing it first keeps
+    # the operation atomic - a failed copy must not have already emptied the
+    # existing clipboard contents.
+    try:
+        data = text.encode('utf-16-le') + b'\x00\x00'
+    except UnicodeEncodeError:
+        return False
+
     if not _user32.OpenClipboard(None):
         return False
 
     try:
         _user32.EmptyClipboard()
-        data = text.encode('utf-16-le') + b'\x00\x00'
         handle = _kernel32.GlobalAlloc(_GMEM_MOVEABLE, len(data))
         if not handle:
             return False

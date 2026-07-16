@@ -4,6 +4,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
+from agent_monitor_for_claude import clipboard
 from agent_monitor_for_claude.app import _MonitorApi
 
 
@@ -34,6 +35,19 @@ class CopyTextBridgeTest(unittest.TestCase):
         api = _MonitorApi()
         with mock.patch('agent_monitor_for_claude.app._copy_text', return_value=False):
             self.assertFalse(api.copy_text('session-id'))
+
+
+class CopyTextEncodingTest(unittest.TestCase):
+    """A value that cannot be UTF-16 encoded must fail before touching the clipboard."""
+
+    def test_lone_surrogate_returns_false_without_touching_the_clipboard(self) -> None:
+        # A lone UTF-16 surrogate (which survives json.loads over the bridge)
+        # cannot be encoded; copy_text must refuse before opening/emptying the
+        # clipboard, so existing clipboard contents are not wiped by a failed copy.
+        with mock.patch.object(clipboard._user32, 'OpenClipboard') as open_clip, \
+             mock.patch.object(clipboard._user32, 'EmptyClipboard'):
+            self.assertFalse(clipboard.copy_text('\ud800'))
+            open_clip.assert_not_called()
 
 
 if __name__ == '__main__':
