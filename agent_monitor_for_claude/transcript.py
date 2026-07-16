@@ -168,6 +168,12 @@ class TranscriptState:
     last_tool_name: str | None = None
     last_timestamp: str | None = None
     last_entry_kind: str | None = None
+    # Whether any line parsed into a valid entry (even one skipped for state, like
+    # a sidechain turn). Drives tail-window escalation: escalate only when nothing
+    # parsed (an unreadable tail), not merely when no main-conversation timestamp
+    # was captured - a long sidechain-only tail parses fine and must not re-read
+    # up to 16 MB every poll.
+    any_parsed: bool = False
     usage_limited: bool = False
     age_seconds: float | None = None
     title: str | None = None
@@ -205,7 +211,7 @@ def state_for(session_id: str, cwd: str) -> TranscriptState:
 
     state = _parse(_read_tail(path))
     for window in _TAIL_ESCALATION[1:]:
-        if state.last_timestamp is not None:
+        if state.any_parsed:
             break
         state = _parse(_read_tail(path, window))
 
@@ -244,11 +250,12 @@ def history_state_for(path: Path) -> HistoryState:
 
     title, cwd = _scan_title_cwd(path)
     tail = _parse(_read_tail(path))
-    # Escalate the tail window when the default read yields no timestamp, exactly
-    # like state_for: a single trailing entry larger than 256 KB (a giant tool
-    # result) would otherwise leave the model blank and the age from mtime.
+    # Escalate the tail window only when nothing parsed (an unreadable tail),
+    # exactly like state_for: a single trailing entry larger than 256 KB (a giant
+    # tool result) yields no complete line, leaving the model blank and the age
+    # from mtime. A parseable-but-timestampless tail must not keep escalating.
     for window in _TAIL_ESCALATION[1:]:
-        if tail.last_timestamp is not None:
+        if tail.any_parsed:
             break
         tail = _parse(_read_tail(path, window))
     age_seconds = _activity_age(tail.last_timestamp, mtime)
@@ -403,11 +410,16 @@ def _parse(lines: list[str]) -> TranscriptState:
     last_entry_kind: str | None = None
     usage_limited: bool = False
     model: str | None = None
+    any_parsed: bool = False
 
     for line in lines:
         entry = _load(line)
         if entry is None:
             continue
+
+        # A valid entry parsed - even if it is skipped for state below (sidechain
+        # or isMeta). This marks the tail as readable so escalation can stop.
+        any_parsed = True
 
         # Sidechain entries belong to embedded subagent conversations; their
         # turns and tool calls must not drive the main conversation's state.
@@ -497,6 +509,7 @@ def _parse(lines: list[str]) -> TranscriptState:
         last_tool_name=last_tool_name,
         last_timestamp=last_timestamp,
         last_entry_kind=last_entry_kind,
+        any_parsed=any_parsed,
         usage_limited=usage_limited,
         model=model,
     )

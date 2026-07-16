@@ -6,7 +6,10 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from agent_monitor_for_claude import transcript as tmod
+from agent_monitor_for_claude.paths import cwd_to_slug
 from agent_monitor_for_claude.transcript import (
     _absorb_line,
     _model_timeline,
@@ -191,6 +194,57 @@ class HistoryStateEscalationTest(unittest.TestCase):
         self.assertIsNotNone(state.age_seconds)
         # Age from the 2020 timestamp (years), not the just-written file mtime (~0).
         self.assertGreater(state.age_seconds, 365 * 24 * 3600)
+
+
+class TailEscalationTest(unittest.TestCase):
+    def test_parse_marks_a_parseable_sidechain_tail(self) -> None:
+        state = _parse(_lines({
+            'type': 'assistant', 'isSidechain': True, 'timestamp': '2026-07-11T10:00:00Z',
+            'message': {'model': 'x', 'usage': {}},
+        }))
+        self.assertTrue(state.any_parsed)
+        # A sidechain turn is skipped for the main conversation's timestamp/kind.
+        self.assertIsNone(state.last_timestamp)
+        self.assertIsNone(state.last_entry_kind)
+
+    def test_parse_marks_an_unparseable_tail(self) -> None:
+        self.assertFalse(_parse(['{ not json']).any_parsed)
+        self.assertFalse(_parse([]).any_parsed)
+
+    def test_state_for_stops_escalating_once_a_line_parses(self) -> None:
+        # A parseable-but-timestampless tail (sidechain only) must not escalate to
+        # the larger windows - that would re-read up to 16 MB on every poll.
+        previous = os.environ.get('CLAUDE_CONFIG_DIR')
+        temp = tempfile.TemporaryDirectory()
+        os.environ['CLAUDE_CONFIG_DIR'] = temp.name
+        tmod._scan_cache.clear()
+        try:
+            session_id, cwd = 'aaaaaaaa', 'd:\\proj'
+            slug_dir = Path(temp.name) / 'projects' / cwd_to_slug(cwd)
+            slug_dir.mkdir(parents=True)
+            (slug_dir / f'{session_id}.jsonl').write_text(
+                json.dumps({'type': 'assistant', 'isSidechain': True, 'message': {'model': 'x', 'usage': {}}}) + '\n',
+                encoding='utf-8',
+            )
+
+            calls = []
+            real_read_tail = tmod._read_tail
+
+            def spy(path, *args):
+                calls.append(1)
+                return real_read_tail(path, *args)
+
+            with mock.patch.object(tmod, '_read_tail', side_effect=spy):
+                tmod.state_for(session_id, cwd)
+
+            self.assertEqual(len(calls), 1, 'a parseable tail must not escalate the read window')
+        finally:
+            tmod._scan_cache.clear()
+            if previous is None:
+                os.environ.pop('CLAUDE_CONFIG_DIR', None)
+            else:
+                os.environ['CLAUDE_CONFIG_DIR'] = previous
+            temp.cleanup()
 
 
 if __name__ == '__main__':
