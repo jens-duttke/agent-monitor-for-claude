@@ -1,0 +1,4 @@
+# Build-only dependencies (in addition to the runtime ones). Needed to build the
+# standalone executable with build.py; not required just to run from source.
+-r requirements.txt
+pyinstaller

@@ -1,3 +1,2 @@
 pywebview
 psutil
-pyinstaller

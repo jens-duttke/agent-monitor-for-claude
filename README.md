@@ -63,7 +63,10 @@ Agent Monitor reads the session registry and transcript metadata that Claude Cod
 
 ## Building
 
+Building the standalone executable additionally needs PyInstaller, kept out of the runtime requirements:
+
 ```sh
+.venv\Scripts\pip install -r requirements-dev.txt
 .venv\Scripts\python build.py
 ```
 Produces `dist/AgentMonitorForClaude.exe`.
