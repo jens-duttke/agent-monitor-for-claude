@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The header (title, filter chips, and search) now stays fixed at the top while only the session list below it scrolls. The scrollbar sits in that list alone and its space is always reserved, so the layout no longer shifts sideways when the list grows tall enough to need it.
+
 ### Fixed
 - The abbreviated token count now rounds cleanly at the tier boundaries: a total just under a million reads "1.0M" instead of "1000k", and one just under 100k reads "100k" instead of "100.0k".
 - A misspelled or unknown key in the settings file is now reported in the settings-error dialog (and ignored), instead of being silently dropped while the default quietly applied. A key starting with an underscore is treated as a comment and left alone.

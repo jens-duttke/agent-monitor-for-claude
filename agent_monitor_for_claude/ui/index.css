@@ -99,14 +99,20 @@ body {
     line-height: 1.4;
     -webkit-user-select: none;
     user-select: none;
+    /* The page is split into a fixed top bar and a single scrolling content
+       region below it, so the body itself never scrolls. */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
-/* --- Top bar (header + filters), sticky --- */
+/* --- Top bar (header + filters), fixed --- */
 
 .topbar {
-    position: sticky;
-    top: 0;
-    z-index: 20;
+    flex: none;
+    /* Containing block for the absolutely-positioned search-progress bar, which
+       pins to the top bar's bottom edge. */
+    position: relative;
     background: var(--topbar-bg);
     border-bottom: 1px solid var(--border);
 }
@@ -601,6 +607,14 @@ body {
 /* --- Content --- */
 
 .content {
+    /* The only scrolling region: fills the space under the fixed top bar. */
+    flex: 1 1 auto;
+    min-height: 0;
+    /* Always reserve the vertical scrollbar (scroll, not auto) so the layout
+       never shifts when content grows past the viewport; when it fits, the track
+       shows without a thumb. Never scroll horizontally. */
+    overflow-y: scroll;
+    overflow-x: hidden;
     padding: 22px 24px 44px;
     display: flex;
     flex-direction: column;
