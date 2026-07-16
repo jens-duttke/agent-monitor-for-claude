@@ -457,7 +457,23 @@ test('modelPriceKey normalizes an id to its pricing key', () => {
     assert.equal(logic.modelPriceKey('claude-haiku-4-5-20251001'), 'haiku-4-5');
     assert.equal(logic.modelPriceKey('claude-sonnet-4-6'), 'sonnet-4-6');
     assert.equal(logic.modelPriceKey('claude-fable-5'), 'fable-5');
+    // 3.x ids put the version before the family, so the key differs in shape.
+    assert.equal(logic.modelPriceKey('claude-3-5-haiku-20241022'), '3-5-haiku');
     assert.equal(logic.modelPriceKey(null), null);
+});
+
+test('every real model id derives to a key that pricing.json actually contains', () => {
+    const pricing = require('../../pricing.json');
+    const ids = ['claude-opus-4-8[1m]', 'claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-3-5-haiku-20241022'];
+    for (const [date, table] of Object.entries(pricing)) {
+        if (date === '_comment') {
+            continue;
+        }
+        for (const id of ids) {
+            const key = logic.modelPriceKey(id);
+            assert.ok(key in table, `${id} -> ${key} missing from pricing.json schedule ${date}`);
+        }
+    }
 });
 
 test('resolvePrices picks the schedule effective on the date', () => {
