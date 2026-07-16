@@ -63,7 +63,8 @@ def _normalize(data: Any) -> dict[str, Any] | None:
     pid = data.get('pid')
     cwd = data.get('cwd')
 
-    if not isinstance(session_id, str) or not session_id or not isinstance(pid, int) or isinstance(pid, bool) or not isinstance(cwd, str):
+    if (not isinstance(session_id, str) or not session_id or not isinstance(pid, int) or isinstance(pid, bool)
+            or not isinstance(cwd, str) or not cwd):
         return None
 
     name = data.get('name')

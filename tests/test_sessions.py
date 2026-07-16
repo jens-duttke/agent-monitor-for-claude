@@ -70,6 +70,9 @@ class SessionsTest(unittest.TestCase):
         # An empty sessionId is not a usable required field - it must be dropped,
         # not pass the guard and yield a blank name/no transcript.
         self._write('f.json', {'pid': 10, 'sessionId': '', 'cwd': 'd:\\x'})
+        # An empty cwd is likewise unusable (a blank-named project panel, no
+        # transcript path), so it must be dropped too - not half-tolerated.
+        self._write('g.json', {'pid': 11, 'sessionId': 's', 'cwd': ''})
         self.assertEqual(list_sessions(), [])
 
     def test_parses_proc_start_and_started_at(self) -> None:
