@@ -97,6 +97,10 @@ def _build_session_record(record: dict[str, Any], probe_map: dict[int, Any]) -> 
         'subagents_running': subagents.running,
         'subagents_done': subagents.recent_done,
         'subagents_labels': list(subagents.labels),
+        'workflows': [
+            {'run_id': workflow.run_id, 'total': workflow.total, 'done': workflow.done, 'active': workflow.active}
+            for workflow in subagents.workflows
+        ],
         'age_seconds': _display_age(transcript_state.age_seconds, record['started_at']),
     }
 

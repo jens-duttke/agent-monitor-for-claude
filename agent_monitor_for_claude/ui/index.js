@@ -169,6 +169,7 @@ const DEFAULT_LABELS = {
     effort_badge: 'Default effort: {level}',
     subagents_running: 'Running subagents: {count}',
     subagents_finished: 'Recently finished: {count}',
+    subagents_workflow: 'Workflow: {done}/{total} agents',
     processes_running: 'Background processes: {count}',
     proc_open_hint: 'Show CPU, memory and task output',
     proc_close: 'Close',
@@ -184,7 +185,7 @@ const DEFAULT_LABELS = {
     proc_tasks_none: 'No background-task output - only run_in_background tasks write a live log.',
     task_label: 'Task {id}',
     task_active: 'active',
-    task_idle_for: 'idle {age}',
+    task_last_output: 'last output {age} ago',
     task_output_loading: 'Loading output…',
     task_output_empty: '(no output yet)',
     tasks_more: '+{count} older',
@@ -842,7 +843,9 @@ function openProcPanel(anchor) {
     const nameEl = row ? row.querySelector('.name') : null;
     const sessionName = nameEl ? nameEl.textContent.trim() : '';
     if (sessionName) {
-        el.querySelector('.proc-panel-session').textContent = ' - ' + sessionName;
+        // The gap before the dash comes from CSS margin, not a leading space -
+        // a flex item trims its leading whitespace, which glued "6" to "-".
+        el.querySelector('.proc-panel-session').textContent = '· ' + sessionName;
     }
 
     document.body.appendChild(el);
@@ -1076,7 +1079,7 @@ function updateTaskRow(row, task) {
     // (hours/minutes) - unlike the per-second process uptime.
     const active = task.age <= TASK_ACTIVE_SECONDS;
     row.querySelector('.proc-task-meta').textContent =
-        (active ? (labels.task_active || '') : fmt(labels.task_idle_for, { age: formatDurationCoarse(task.age) }))
+        (active ? (labels.task_active || '') : fmt(labels.task_last_output, { age: formatDurationCoarse(task.age) }))
         + ' · ' + formatBytes(task.size);
     row.classList.toggle('is-active', active);
 }
@@ -1092,6 +1095,7 @@ function toggleTask(panel, row, taskId) {
         out.hidden = false;
         row.classList.add('is-open');
         out.textContent = state.labels.task_output_loading || '…';
+        out.__rawText = null;
         callTaskOutput(panel.sessionId, panel.cwd, taskId).then((text) => {
             if (procPanel === panel && panel.expanded.has(taskId)) {
                 setTaskOutput(panel, taskId, text);
@@ -1102,6 +1106,9 @@ function toggleTask(panel, row, taskId) {
 }
 
 function setTaskOutput(panel, taskId, text) {
+    if (!panel.expanded.has(taskId)) {
+        return;
+    }
     const listEl = panel.el.querySelector('.proc-task-list');
     const row = Array.from(listEl.children).find((node) => node.dataset.taskId === taskId);
     if (!row) {
@@ -1111,14 +1118,25 @@ function setTaskOutput(panel, taskId, text) {
     if (!out || out.hidden) {
         return;
     }
+    // Don't clobber a selection the user is making inside this console: skip the
+    // live refresh while text here is selected, so it stays put and Ctrl+C can
+    // copy it. The next tick (once nothing is selected) catches up.
+    const selection = window.getSelection ? window.getSelection() : null;
+    if (selection && !selection.isCollapsed && selection.rangeCount > 0
+        && out.contains(selection.anchorNode) && out.contains(selection.focusNode)) {
+        return;
+    }
     const content = (text == null || text === '') ? (state.labels.task_output_empty || '') : text;
-    if (out.textContent === content) {
+    // Compare against the raw text, since the rendered HTML (colored spans) is
+    // no longer a faithful string to diff against.
+    if (out.__rawText === content) {
         return;
     }
     // Follow the tail only when the user is already at the bottom, so scrolling
     // back to read earlier output is not yanked away on the next refresh.
     const atBottom = out.scrollTop + out.clientHeight >= out.scrollHeight - 4;
-    out.textContent = content;
+    out.__rawText = content;
+    out.innerHTML = ansiToHtml(content);
     if (atBottom) {
         out.scrollTop = out.scrollHeight;
     }
@@ -1226,6 +1244,72 @@ function maxProcessUptime(stats) {
         }
     }
     return max;
+}
+
+// ANSI SGR foreground codes -> themed CSS class. Backgrounds and other
+// attributes are intentionally not mapped (kept simple and legible).
+const ANSI_FG = {
+    30: 'ansi-black', 31: 'ansi-red', 32: 'ansi-green', 33: 'ansi-yellow',
+    34: 'ansi-blue', 35: 'ansi-magenta', 36: 'ansi-cyan', 37: 'ansi-white',
+    90: 'ansi-bright-black', 91: 'ansi-bright-red', 92: 'ansi-bright-green', 93: 'ansi-bright-yellow',
+    94: 'ansi-bright-blue', 95: 'ansi-bright-magenta', 96: 'ansi-bright-cyan', 97: 'ansi-bright-white',
+};
+
+// Render terminal output as safe HTML: escape every text run, turn ANSI SGR
+// color codes into themed spans, and drop the other control sequences a
+// non-emulating console cannot honor (cursor moves, line erases). Only fixed,
+// known class names are emitted - never any part of the raw code - so nothing
+// untrusted reaches an attribute.
+function ansiToHtml(text) {
+    const csi = /\x1b\[[0-9;?]*[A-Za-z]/g;
+    let html = '';
+    let index = 0;
+    let fg = null;
+    let bold = false;
+
+    const flush = (segment) => {
+        if (!segment) {
+            return;
+        }
+        const escaped = esc(segment);
+        const classes = [];
+        if (fg) {
+            classes.push(fg);
+        }
+        if (bold) {
+            classes.push('ansi-bold');
+        }
+        html += classes.length ? '<span class="' + classes.join(' ') + '">' + escaped + '</span>' : escaped;
+    };
+
+    let match;
+    while ((match = csi.exec(text)) !== null) {
+        flush(text.slice(index, match.index));
+        index = csi.lastIndex;
+        const seq = match[0];
+        if (seq[seq.length - 1] !== 'm') {
+            continue;   // a cursor/erase control, not a color - drop it
+        }
+        const body = seq.slice(2, -1);
+        const params = body === '' ? ['0'] : body.split(';');
+        for (const param of params) {
+            const code = parseInt(param, 10);
+            if (code === 0) {
+                fg = null;
+                bold = false;
+            } else if (code === 1) {
+                bold = true;
+            } else if (code === 22) {
+                bold = false;
+            } else if (code === 39) {
+                fg = null;
+            } else if (ANSI_FG[code]) {
+                fg = ANSI_FG[code];
+            }
+        }
+    }
+    flush(text.slice(index));
+    return html;
 }
 
 // A mock entry may be a value or a thunk (so a preview can jitter live).
@@ -2050,14 +2134,28 @@ function nameCellHtml(session) {
         html += '<span class="mode-chip">' + esc(session.mode) + '</span>';
     }
 
-    // Running-subagent badge with a tooltip listing what each one is doing.
-    if (session.subagents_running > 0) {
-        const lines = [fmt(labels.subagents_running, { count: session.subagents_running })];
+    // Running-subagent badge with a tooltip listing what each one is doing. For a
+    // background workflow the badge shows the run's total agent count - stable
+    // across the fan-out phases where no single agent is momentarily running, so
+    // it no longer flickers away - and the tooltip leads with that total.
+    if (session.subagents_running > 0 || session.workflow_active) {
+        const lines = [];
+        if (session.workflow_active) {
+            lines.push(fmt(labels.subagents_workflow, { done: session.workflow_done, total: session.workflow_total }));
+        }
+        if (session.subagents_running > 0) {
+            lines.push(fmt(labels.subagents_running, { count: session.subagents_running }));
+        }
         (session.subagents_labels || []).forEach((label) => lines.push('• ' + label));
-        if (session.subagents_done > 0) {
+        // "Recently finished" is the agent-file scan's recent-window count; for a
+        // workflow the "{done}/{total}" line above already conveys progress, so
+        // this line is only for the plain-subagent case (never the cumulative
+        // workflow total mislabelled as "recently").
+        if (!session.workflow_active && session.subagents_done > 0) {
             lines.push(fmt(labels.subagents_finished, { count: session.subagents_done }));
         }
-        html += '<span class="agents-badge" data-tip="' + esc(lines.join('\n')) + '">⚡ ' + session.subagents_running + '</span>';
+        const badgeCount = session.workflow_active ? session.workflow_total : session.subagents_running;
+        html += '<span class="agents-badge" data-tip="' + esc(lines.join('\n')) + '">⚡ ' + badgeCount + '</span>';
     }
 
     // Background OS processes the session is running (e.g. a watched build).

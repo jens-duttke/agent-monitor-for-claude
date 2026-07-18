@@ -13,6 +13,15 @@ Only control fields are read - file timestamps, the transcript tail's entry
 ``type``/``stop_reason``/block ``type``, and each ``meta.json``'s two display
 fields (``agentType``, ``description``) - never the subagent's own
 conversation content.
+
+For a workflow (``workflows/<run>/``) the per-agent files leave a gap between
+fan-out phases where no single agent is momentarily running, which would make
+the whole workflow flicker between "your turn" and "working". So each run's
+``journal.jsonl`` is read as a workflow-level signal: it records one ``started``
+and one ``result`` event per agent, giving both the run's total agent count and
+whether it is still active. Only each event's ``type`` and ``agentId`` decide the
+counts; a ``result`` event's payload (the agent's returned content) is never
+accessed or surfaced.
 """
 from __future__ import annotations
 
@@ -25,7 +34,7 @@ from pathlib import Path
 from .paths import cwd_to_slug, projects_dir
 from .settings import SUBAGENT_RECENT_SECONDS
 
-__all__ = ['SubagentInfo', 'count_subagents']
+__all__ = ['SubagentInfo', 'WorkflowActivity', 'count_subagents']
 
 _SUBAGENT_TAIL_BYTES = 65536
 
@@ -44,6 +53,21 @@ _DONE_STOP_REASONS = frozenset({'end_turn', 'stop_sequence'})
 # not misread as done. Kept well below ``SUBAGENT_RECENT_SECONDS``.
 _SUBAGENT_SETTLE_SECONDS = 30
 
+# A workflow with no open agent (every started one has returned) still counts as
+# active while its journal was written this recently, bridging the orchestration
+# pause between two fan-out phases when no single agent is momentarily running.
+_WORKFLOW_GRACE_SECONDS = 30
+
+
+@dataclass(frozen=True)
+class WorkflowActivity:
+    """Journal-derived activity for one background workflow run."""
+
+    run_id: str
+    total: int
+    done: int
+    active: bool
+
 
 @dataclass(frozen=True)
 class SubagentInfo:
@@ -52,6 +76,7 @@ class SubagentInfo:
     running: int = 0
     recent_done: int = 0
     labels: tuple[str, ...] = ()
+    workflows: tuple[WorkflowActivity, ...] = ()
 
 
 def count_subagents(session_id: str, cwd: str) -> SubagentInfo:
@@ -90,8 +115,9 @@ def count_subagents(session_id: str, cwd: str) -> SubagentInfo:
             running_paths.append(path)
 
     labels = tuple(label for label in (_label(path) for path in running_paths) if label)
+    workflows = _workflow_activity(directory, now)
 
-    return SubagentInfo(running=len(running_paths), recent_done=recent_done, labels=labels)
+    return SubagentInfo(running=len(running_paths), recent_done=recent_done, labels=labels, workflows=workflows)
 
 
 def _is_finished(agent_path: Path, age: float) -> bool:
@@ -165,6 +191,108 @@ def _last_entry(data: bytes) -> tuple[str | None, bool] | None:
         return stop_reason if isinstance(stop_reason, str) else None, executing_tool
 
     return None
+
+
+def _workflow_activity(subagents_dir: Path, now: float) -> tuple[WorkflowActivity, ...]:
+    """Return per-workflow activity from each run's ``journal.jsonl``.
+
+    A workflow counts as active while it still has agents that started but have
+    not returned, or while its journal was written within the grace window (the
+    orchestration pause between fan-out phases, when no single agent is
+    momentarily running). A run whose journal has been quiet longer than the
+    recent window is long finished and dropped. Only each event's ``type`` and
+    ``agentId`` decide the counts; a ``result`` payload is never accessed.
+    """
+    workflows_root = subagents_dir / 'workflows'
+
+    try:
+        run_dirs = [entry for entry in workflows_root.iterdir() if entry.is_dir()]
+    except OSError:
+        return ()
+
+    activities: list[WorkflowActivity] = []
+    for run_dir in run_dirs:
+        journal = run_dir / 'journal.jsonl'
+
+        try:
+            journal_age = now - journal.stat().st_mtime
+        except OSError:
+            continue
+
+        if journal_age > SUBAGENT_RECENT_SECONDS:
+            continue
+
+        total, done = _journal_counts(journal)
+        if total == 0:
+            continue
+
+        active = total > done or journal_age < _WORKFLOW_GRACE_SECONDS
+        activities.append(WorkflowActivity(run_id=run_dir.name, total=total, done=done, active=active))
+
+    return tuple(activities)
+
+
+# {journal path: (mtime_ns, size, (started, done))} - the append-only journal is
+# re-parsed only when it grew. Bounded so a long-lived monitor cannot grow it
+# without limit.
+_journal_cache: dict[str, tuple[int, int, tuple[int, int]]] = {}
+_JOURNAL_CACHE_MAX = 64
+
+
+def _journal_counts(journal_path: Path) -> tuple[int, int]:
+    """Return ``(started, done)`` distinct-agent counts from a workflow journal.
+
+    Each line's ``type`` and ``agentId`` decide the counts; a ``result`` line's
+    payload (the agent's returned content) is parsed away with the line but never
+    accessed or surfaced. A malformed line is skipped.
+
+    The journal is append-only, so the parse is cached by its size and mtime: a
+    poll where nothing was appended reuses the previous counts instead of
+    re-reading the whole file (which, for a large run, is dominated by the very
+    ``result`` payloads the counts do not need).
+    """
+    try:
+        stat_result = journal_path.stat()
+    except OSError:
+        return 0, 0
+
+    key = str(journal_path)
+    cached = _journal_cache.get(key)
+    if cached is not None and cached[0] == stat_result.st_mtime_ns and cached[1] == stat_result.st_size:
+        return cached[2]
+
+    started: set[str] = set()
+    done: set[str] = set()
+    try:
+        with journal_path.open('r', encoding='utf-8', errors='replace') as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except (ValueError, UnicodeDecodeError):
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+
+                agent_id = entry.get('agentId')
+                if not isinstance(agent_id, str) or not agent_id:
+                    continue
+
+                kind = entry.get('type')
+                if kind == 'started':
+                    started.add(agent_id)
+                elif kind == 'result':
+                    done.add(agent_id)
+    except OSError:
+        return 0, 0
+
+    counts = (len(started), len(done))
+    while len(_journal_cache) >= _JOURNAL_CACHE_MAX:
+        _journal_cache.pop(next(iter(_journal_cache)))
+    _journal_cache[key] = (stat_result.st_mtime_ns, stat_result.st_size, counts)
+    return counts
 
 
 def _subagents_dir(session_id: str, cwd: str) -> Path | None:

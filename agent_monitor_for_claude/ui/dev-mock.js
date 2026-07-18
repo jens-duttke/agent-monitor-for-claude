@@ -44,7 +44,7 @@ function rawSession(overrides) {
         has_transcript: true, has_activity: true, last_entry_kind: 'assistant', last_stop_reason: 'end_turn',
         pending_tool: false, last_tool_name: null, usage_limited: false, permission_mode: null,
         model_id: null, usage: {}, usage_by_model: {}, model_timeline: [], title: null,
-        subagents_running: 0, subagents_done: 0, subagents_labels: [], age_seconds: 0,
+        subagents_running: 0, subagents_done: 0, subagents_labels: [], workflows: [], age_seconds: 0,
     }, overrides);
 }
 
@@ -95,6 +95,27 @@ window.__MOCK_SNAPSHOT__ = {
             ...priced('claude-opus-4-8[1m]', {
                 input_tokens: 62100, output_tokens: 14900, cache_read_input_tokens: 41200000,
                 cache_creation_input_tokens: 1800000, cache_creation_5m_input_tokens: 1200000, cache_creation_1h_input_tokens: 600000,
+            }),
+        }),
+
+        // A background workflow. Its badge shows the run's total agent count (12),
+        // read from the workflow journal - stable across the fan-out phases where
+        // no single agent is momentarily running, so the row no longer flickers
+        // between "Background" and "Idle". The turn itself ended (end_turn), yet
+        // the still-active workflow keeps it reading as "Background".
+        rawSession({
+            session_id: 'h3f', short_name: 'helios-shader-audit', pid: 30980, entrypoint: 'claude-vscode', host: 'VS Code',
+            title: 'Deep-research the shader hot-reload regression', permission_mode: 'auto',
+            subagents_running: 6,
+            subagents_labels: [
+                'workflow-subagent', 'workflow-subagent', 'workflow-subagent',
+                'workflow-subagent', 'workflow-subagent', 'workflow-subagent',
+            ],
+            workflows: [{ run_id: 'wf_a63b7dde', total: 12, done: 4, active: true }],
+            age_seconds: 34,
+            ...priced('claude-opus-4-8[1m]', {
+                input_tokens: 38000, output_tokens: 8200, cache_read_input_tokens: 28000000,
+                cache_creation_input_tokens: 1100000, cache_creation_5m_input_tokens: 700000, cache_creation_1h_input_tokens: 400000,
             }),
         }),
 
@@ -284,10 +305,11 @@ window.__MOCK_TASK_OUTPUT__ = {
         '[ ' + (20 + __ramp(40)) + '%] Building CXX object src/restir/denoise.cpp.o',
     ].join('\n'),
     r1n8xq: () => [
-        '== sanity: original vs recomb ==',
-        'seq  frame  0  Yhash=ad56e60a1ea1a6c2  OK',
-        'seq  frame  1  Yhash=b5bc2ac56f81ef12  OK',
-        '  [prefix_base] MVCDS-4: ALL 9 frames bit-exact',
+        // ANSI SGR codes so the preview shows the console's colorization.
+        '\x1b[1m== native edge264 MT (-kb) ==\x1b[0m',
+        '\x1b[32mPASS\x1b[0m  \x1b[33mUNSUPPORTED\x1b[0m  \x1b[31mFAIL\x1b[0m',
+        'seq  frame  0  Yhash=ad56e60a1ea1a6c2  \x1b[32mOK\x1b[0m',
+        'seq  frame  1  Yhash=b5bc2ac56f81ef12  \x1b[32mOK\x1b[0m',
         '  [prefix_base] MVCRP_2: ' + (120 + __ramp(130)) + '/250 frames…',
     ].join('\n'),
     w2k5vt: 'setup complete.\nwaiting for input…\n',

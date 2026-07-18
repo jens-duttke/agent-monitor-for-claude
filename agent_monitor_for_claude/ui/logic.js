@@ -137,6 +137,18 @@ function refineWithBackgroundWork(status, backgroundWork) {
     return status;
 }
 
+// The workflow runs the snapshot reports as still active (from each run's
+// journal: agents still open, or its journal written within the grace window).
+// This is a workflow-level signal, robust to the gap between fan-out phases
+// where no single agent is momentarily running - which otherwise flickered the
+// whole session between "working" and "your turn".
+function activeWorkflows(workflows) {
+    if (!Array.isArray(workflows)) {
+        return [];
+    }
+    return workflows.filter((workflow) => workflow && workflow.active);
+}
+
 function needsAttention(status) {
     return NEEDS_ATTENTION.has(status);
 }
@@ -329,13 +341,14 @@ function deriveStatus(raw) {
     if (raw.alive) {
         status = refineWithNative(status, raw.native_status, raw.waiting_for);
         // A force-stopped turn (an interrupt, or an API error such as a usage
-        // limit) tears down in-process subagents, so a still-"running" count is
-        // a phantom until the recent window clears it - it must not promote the
-        // session to "processing". A detached OS child process (a build or
-        // server) can outlive the stop, so it still counts.
+        // limit) tears down in-process subagents and workflows, so a still-"running"
+        // count or a still-"active" workflow is a phantom until the recent window
+        // clears it - it must not promote the session to "processing". A detached
+        // OS child process (a build or server) can outlive the stop, so it counts.
         const turnStopped = raw.last_entry_kind === 'user_interrupt' || raw.last_entry_kind === 'api_error';
         const subagentsRunning = turnStopped ? 0 : (raw.subagents_running || 0);
-        const backgroundWork = subagentsRunning > 0 || toolRunning;
+        const workflowRunning = !turnStopped && activeWorkflows(raw.workflows).length > 0;
+        const backgroundWork = subagentsRunning > 0 || toolRunning || workflowRunning;
         status = refineWithBackgroundWork(status, backgroundWork);
     }
     return status;
@@ -731,13 +744,17 @@ function buildSession(raw, labels, prices) {
     const usage = raw.usage || {};
     const models = modelHistory(raw.model_timeline);
 
-    // In-process subagents die when the turn is force-stopped - by an interrupt
-    // or an API error (a usage limit stops the whole CLI) - so any still-"running"
-    // count is a phantom the recent window has yet to clear. Hide it here too, so
-    // the row does not show a running subagent next to a stopped status.
+    // In-process subagents and workflows die when the turn is force-stopped - by
+    // an interrupt or an API error (a usage limit stops the whole CLI) - so any
+    // still-"running" count or "active" workflow is a phantom the recent window
+    // has yet to clear. Hide them here too, so the row does not show a running
+    // subagent or workflow badge next to a stopped status.
     const turnStopped = raw.last_entry_kind === 'user_interrupt' || raw.last_entry_kind === 'api_error';
     const subagentsRunning = turnStopped ? 0 : (raw.subagents_running || 0);
     const subagentsLabels = turnStopped ? [] : (raw.subagents_labels || []);
+    const workflows = turnStopped ? [] : activeWorkflows(raw.workflows);
+    const workflowTotal = workflows.reduce((sum, workflow) => sum + (workflow.total || 0), 0);
+    const workflowDone = workflows.reduce((sum, workflow) => sum + (workflow.done || 0), 0);
 
     // Two parts so the row can animate the reveal: a compact anchor shown by
     // default (the cost when it can be priced, else a plain token total so the
@@ -783,6 +800,9 @@ function buildSession(raw, labels, prices) {
         subagents_running: subagentsRunning,
         subagents_done: raw.subagents_done || 0,
         subagents_labels: subagentsLabels,
+        workflow_active: workflows.length > 0,
+        workflow_total: workflowTotal,
+        workflow_done: workflowDone,
         processes: raw.child_count || 0,
         tool_running: toolRunning,
         host: hostLabel(raw.host, raw.entrypoint),
@@ -890,6 +910,7 @@ const AMC_LOGIC = {
     deriveStatus,
     refineWithNative,
     refineWithBackgroundWork,
+    activeWorkflows,
     needsAttention,
     filterBucket,
     sessionBucket,

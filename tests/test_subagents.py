@@ -138,6 +138,72 @@ class SubagentsTest(unittest.TestCase):
         self.assertIn('Benign label', serialized)
         self.assertNotIn('SECRET_SUBAGENT_BODY', serialized)
 
+    def _add_journal(self, run: str, started: list[str], done: list[str], age_seconds: float) -> None:
+        directory = self._dir / 'workflows' / run
+        directory.mkdir(parents=True, exist_ok=True)
+
+        lines = [_line({'type': 'started', 'agentId': agent_id, 'key': 'v2:x'}) for agent_id in started]
+        for agent_id in done:
+            lines.append(_line({'type': 'result', 'agentId': agent_id, 'key': 'v2:x', 'result': {'summary': 'SECRET_WORKFLOW_RESULT'}}))
+
+        journal = directory / 'journal.jsonl'
+        journal.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+
+        mtime = time.time() - age_seconds
+        os.utime(journal, (mtime, mtime))
+
+    def test_workflow_total_and_active_from_journal(self) -> None:
+        ids = [f'a{index}' for index in range(12)]
+        self._add_journal('wf_1', started=ids, done=ids[:4], age_seconds=5)
+
+        info = count_subagents(_SESSION_ID, _CWD)
+
+        self.assertEqual(len(info.workflows), 1)
+        workflow = info.workflows[0]
+        self.assertEqual(workflow.run_id, 'wf_1')
+        self.assertEqual(workflow.total, 12)
+        self.assertEqual(workflow.done, 4)
+        self.assertTrue(workflow.active)
+
+    def test_workflow_all_done_is_active_within_grace_window(self) -> None:
+        # Every started agent has returned (a fan-out phase just closed), but the
+        # journal was written seconds ago - the workflow bridges the pause before
+        # the next phase, so it must still read as active.
+        ids = ['a', 'b', 'c']
+        self._add_journal('wf_1', started=ids, done=ids, age_seconds=5)
+
+        self.assertTrue(count_subagents(_SESSION_ID, _CWD).workflows[0].active)
+
+    def test_workflow_all_done_and_settled_is_inactive(self) -> None:
+        # Same balance, but the journal has been quiet past the grace window - the
+        # workflow has genuinely finished and must no longer read as active.
+        ids = ['a', 'b', 'c']
+        self._add_journal('wf_1', started=ids, done=ids, age_seconds=120)
+
+        self.assertFalse(count_subagents(_SESSION_ID, _CWD).workflows[0].active)
+
+    def test_workflow_with_open_agent_stays_active_despite_quiet_journal(self) -> None:
+        # An agent is still open (started, no result) during a long silent think,
+        # so the journal has not been written for a while. total > done keeps the
+        # workflow active regardless of journal age - a thinking agent must never
+        # flip the session to "your turn", the same trap the main status rule avoids.
+        self._add_journal('wf_1', started=['a', 'b'], done=['a'], age_seconds=300)
+
+        self.assertTrue(count_subagents(_SESSION_ID, _CWD).workflows[0].active)
+
+    def test_workflow_older_than_window_is_dropped(self) -> None:
+        self._add_journal('wf_1', started=['a'], done=['a'], age_seconds=99999)
+
+        self.assertEqual(count_subagents(_SESSION_ID, _CWD).workflows, ())
+
+    def test_workflow_journal_never_surfaces_result_content(self) -> None:
+        self._add_journal('wf_1', started=['a'], done=['a'], age_seconds=5)
+
+        info = count_subagents(_SESSION_ID, _CWD)
+
+        serialized = json.dumps([(w.run_id, w.total, w.done, w.active) for w in info.workflows])
+        self.assertNotIn('SECRET_WORKFLOW_RESULT', serialized)
+
 
 if __name__ == '__main__':
     unittest.main()

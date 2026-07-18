@@ -205,6 +205,34 @@ test('deriveStatus: an errored session with a phantom subagent stays errored, no
     assert.equal(status, 'errored');
 });
 
+test('deriveStatus: a finished turn with an active workflow is processing (bridges the fan-out gap)', () => {
+    // The turn ended, but the workflow is still active (its journal reports open
+    // agents, or was written within the grace window). Even with no single agent
+    // momentarily running, the session reads as background work, not "your turn".
+    const status = logic.deriveStatus(raw({
+        last_entry_kind: 'assistant', last_stop_reason: 'end_turn',
+        subagents_running: 0, child_count: 0,
+        workflows: [{ run_id: 'wf_1', total: 12, done: 12, active: true }],
+    }));
+    assert.equal(status, 'processing');
+});
+
+test('deriveStatus: an interrupted session with a phantom active workflow stays interrupted', () => {
+    // The interrupt tore down the in-process workflow; its still-"active" flag is
+    // a phantom the recent window has not cleared and must not promote the session.
+    const status = logic.deriveStatus(raw({
+        last_entry_kind: 'user_interrupt', native_status: null,
+        subagents_running: 0, child_count: 0,
+        workflows: [{ run_id: 'wf_1', total: 12, done: 6, active: true }],
+    }));
+    assert.equal(status, 'interrupted');
+});
+
+test('activeWorkflows: keeps only active runs and tolerates a missing field', () => {
+    assert.deepEqual(logic.activeWorkflows(undefined), []);
+    assert.deepEqual(logic.activeWorkflows([{ active: false }, { run_id: 'w', active: true }]), [{ run_id: 'w', active: true }]);
+});
+
 test('deriveStatus: registry waiting-for-permission overrides a stale fresh prompt', () => {
     // The user answered a prompt; the tool_use for the pending permission has
     // not yet landed in the transcript, so the structural rule still sees the
@@ -613,6 +641,31 @@ test('buildSession: a usage limit reads as errored, is named specifically, and c
     assert.equal(session.needs_attention, true);
     assert.equal(session.subagents_running, 0);
     assert.deepEqual(session.subagents_labels, []);
+});
+
+test('buildSession: an active workflow exposes its total and reads as processing', () => {
+    const session = logic.buildSession({
+        session_id: 's', pid: 1, cwd: 'd:\\x', short_name: 's', alive: true, has_transcript: true,
+        last_entry_kind: 'assistant', last_stop_reason: 'end_turn', usage: {},
+        subagents_running: 0, subagents_labels: [], child_count: 0,
+        workflows: [{ run_id: 'wf_1', total: 12, done: 4, active: true }],
+    }, {}, {});
+    assert.equal(session.status, 'processing');
+    assert.equal(session.workflow_active, true);
+    assert.equal(session.workflow_total, 12);
+    assert.equal(session.workflow_done, 4);
+});
+
+test('buildSession: a force-stop clears the phantom workflow badge', () => {
+    const session = logic.buildSession({
+        session_id: 's', pid: 1, cwd: 'd:\\x', short_name: 's', alive: true, has_transcript: true,
+        last_entry_kind: 'user_interrupt', native_status: null, usage: {},
+        subagents_running: 0, subagents_labels: [], child_count: 0,
+        workflows: [{ run_id: 'wf_1', total: 12, done: 4, active: true }],
+    }, { status_interrupted: 'Interrupted' }, {});
+    assert.equal(session.status, 'interrupted');
+    assert.equal(session.workflow_active, false);
+    assert.equal(session.workflow_total, 0);
 });
 
 test('buildSession: a history record is completed, flagged, and content-free', () => {

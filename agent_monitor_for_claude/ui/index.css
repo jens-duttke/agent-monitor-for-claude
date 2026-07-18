@@ -46,6 +46,25 @@
     /* Solid colors for native popup lists (select options). */
     --menu-bg: #30302e;
     --menu-fg: #e8e6dd;
+
+    /* Terminal (ANSI) palette for the task-output console, tuned to read on the
+       dark console background. */
+    --ansi-black: #6b6b6b;
+    --ansi-red: #e5726a;
+    --ansi-green: #6cc26c;
+    --ansi-yellow: #d7bf6a;
+    --ansi-blue: #7aa6e0;
+    --ansi-magenta: #c88fd9;
+    --ansi-cyan: #5fc0cf;
+    --ansi-white: #d8d5cc;
+    --ansi-bright-black: #8a877c;
+    --ansi-bright-red: #ff8a80;
+    --ansi-bright-green: #86e08a;
+    --ansi-bright-yellow: #ecd47a;
+    --ansi-bright-blue: #9cc0ff;
+    --ansi-bright-magenta: #e0a8ee;
+    --ansi-bright-cyan: #7fdcea;
+    --ansi-bright-white: #f5f3ec;
 }
 
 :root[data-theme="light"] {
@@ -79,6 +98,24 @@
 
     --menu-bg: #ffffff;
     --menu-fg: #3d3d3a;
+
+    /* Terminal (ANSI) palette tuned to read on the light console background. */
+    --ansi-black: #3d3d3a;
+    --ansi-red: #c5352b;
+    --ansi-green: #217a3f;
+    --ansi-yellow: #9a6b00;
+    --ansi-blue: #2f5fd8;
+    --ansi-magenta: #9333a8;
+    --ansi-cyan: #0f7a8a;
+    --ansi-white: #6b6b6b;
+    --ansi-bright-black: #75726a;
+    --ansi-bright-red: #d0392a;
+    --ansi-bright-green: #1e8a55;
+    --ansi-bright-yellow: #b7860b;
+    --ansi-bright-blue: #2f6bd8;
+    --ansi-bright-magenta: #a83fc0;
+    --ansi-bright-cyan: #1592a8;
+    --ansi-bright-white: #3d3d3a;
 }
 
 * {
@@ -1170,6 +1207,7 @@ body {
 .proc-panel-session {
     flex: 0 1 auto;
     min-width: 0;
+    margin-left: 0.4em;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1338,9 +1376,10 @@ body {
 .proc-task-meta {
     flex: none;
     display: inline-flex;
-    align-items: center;
+    align-items: baseline;
     gap: 6px;
     color: var(--fg-dim);
+    font-size: 12px;
     font-variant-numeric: tabular-nums;
 
     /* A leading dot marks an actively-writing task. */
@@ -1366,6 +1405,28 @@ body {
     line-height: 1.45;
     white-space: pre;
     color: var(--fg);
+    /* Selectable so a range can be marked and copied with Ctrl+C; the live
+       refresh pauses while a selection is active (see setTaskOutput). */
+    user-select: text;
+    cursor: text;
+
+    .ansi-bold { font-weight: 700; }
+    .ansi-black { color: var(--ansi-black); }
+    .ansi-red { color: var(--ansi-red); }
+    .ansi-green { color: var(--ansi-green); }
+    .ansi-yellow { color: var(--ansi-yellow); }
+    .ansi-blue { color: var(--ansi-blue); }
+    .ansi-magenta { color: var(--ansi-magenta); }
+    .ansi-cyan { color: var(--ansi-cyan); }
+    .ansi-white { color: var(--ansi-white); }
+    .ansi-bright-black { color: var(--ansi-bright-black); }
+    .ansi-bright-red { color: var(--ansi-bright-red); }
+    .ansi-bright-green { color: var(--ansi-bright-green); }
+    .ansi-bright-yellow { color: var(--ansi-bright-yellow); }
+    .ansi-bright-blue { color: var(--ansi-bright-blue); }
+    .ansi-bright-magenta { color: var(--ansi-bright-magenta); }
+    .ansi-bright-cyan { color: var(--ansi-bright-cyan); }
+    .ansi-bright-white { color: var(--ansi-bright-white); }
 }
 
 .proc-task-note {
