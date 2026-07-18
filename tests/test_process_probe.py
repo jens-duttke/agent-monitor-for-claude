@@ -11,9 +11,11 @@ import psutil
 from agent_monitor_for_claude.process_probe import (
     TERMINAL_WINDOW_OWNERS,
     probe,
+    process_stats,
     _classify_ancestry,
     _is_child_link_real,
     _meaningful_children,
+    _sample_process,
     _ticks_match_epoch,
 )
 
@@ -83,11 +85,14 @@ class MeaningfulChildrenTest(unittest.TestCase):
 
     _SESSION = 1000
 
-    def _children(self, table: dict, cache: dict) -> list[str]:
+    def _walk(self, table: dict, cache: dict) -> list[tuple[int, str]]:
         children_index: dict[int, list[int]] = {}
         for pid, (ppid, _name) in table.items():
             children_index.setdefault(ppid, []).append(pid)
         return _meaningful_children(self._SESSION, table, children_index, cache)
+
+    def _children(self, table: dict, cache: dict) -> list[str]:
+        return [name for _pid, name in self._walk(table, cache)]
 
     def test_real_subtree_counted_and_console_excluded(self) -> None:
         # A genuine tool runs later in the session (well after the session start),
@@ -152,6 +157,17 @@ class MeaningfulChildrenTest(unittest.TestCase):
         cache = {1000: 5000.0, 1001: 5000.3, 1002: 5200.0}
         self.assertEqual(self._children(table, cache), ['bash.exe'])
 
+    def test_walk_returns_pid_with_name(self) -> None:
+        # The panel needs each descendant's PID, not just its name, so two
+        # instances of the same executable are listed (and probed) separately.
+        table = {
+            1000: (1, 'claude.exe'),
+            1001: (1000, 'bash.exe'),
+            1002: (1000, 'bash.exe'),
+        }
+        cache = {1000: 5000.0, 1001: 5200.0, 1002: 5300.0}
+        self.assertEqual(sorted(self._walk(table, cache)), [(1001, 'bash.exe'), (1002, 'bash.exe')])
+
 
 class ChildLinkTest(unittest.TestCase):
     def test_child_started_after_parent_is_real(self) -> None:
@@ -182,6 +198,34 @@ class ProbeRecyclingTest(unittest.TestCase):
 
     def test_probe_without_ticks_keeps_previous_behavior(self) -> None:
         self.assertTrue(probe(os.getpid()).alive)
+
+
+class ProcessStatsTest(unittest.TestCase):
+    def test_unknown_pid_returns_empty(self) -> None:
+        # A PID not in the process table yields no stats, never a crash.
+        self.assertEqual(process_stats(2 ** 31 - 1), [])
+
+    def test_stale_ticks_returns_empty(self) -> None:
+        pid = os.getpid()
+        create_time = psutil.Process(pid).create_time()
+        stale_ticks = _to_ticks(datetime.fromtimestamp(create_time) - timedelta(hours=2))
+        self.assertEqual(process_stats(pid, stale_ticks), [])
+
+    def test_sample_process_primes_then_reports(self) -> None:
+        pid = os.getpid()
+        create_time = psutil.Process(pid).create_time()
+
+        # First sample establishes the baseline (cpu is unknown), but memory is
+        # available immediately.
+        cpu, rss = _sample_process(pid, create_time)
+        self.assertIsNone(cpu)
+        self.assertIsInstance(rss, int)
+        self.assertGreater(rss, 0)
+
+        # A later sample reports a real, non-negative CPU share.
+        cpu, rss = _sample_process(pid, create_time)
+        self.assertIsInstance(cpu, float)
+        self.assertGreaterEqual(cpu, 0.0)
 
 
 if __name__ == '__main__':

@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import io
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from agent_monitor_for_claude import app
 from agent_monitor_for_claude.app import _LOG_MAX_LEN, _MonitorApi, _sanitize_log
+from agent_monitor_for_claude.paths import cwd_to_slug
 
 
 class SanitizeLogTest(unittest.TestCase):
@@ -34,6 +37,35 @@ class LogSanitizeTest(unittest.TestCase):
         out = buf.getvalue()
         self.assertNotIn('\x1b', out)
         self.assertIn('hi', out)
+
+
+class ScratchpadPathTest(unittest.TestCase):
+    _SESSION = '6e22e66f-6298-442a-9762-2a5b65052389'
+    _CWD = r'D:\WebDev\vs-edge264'
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.mkdtemp()
+        patcher = mock.patch('tempfile.gettempdir', return_value=self._tmp)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self._scratch = Path(self._tmp) / 'claude' / cwd_to_slug(self._CWD) / self._SESSION / 'scratchpad'
+
+    def test_returns_path_only_when_directory_exists(self) -> None:
+        api = _MonitorApi()
+        self.assertEqual(api.scratchpad_path(self._SESSION, self._CWD), '')
+
+        self._scratch.mkdir(parents=True)
+        self.assertEqual(api.scratchpad_path(self._SESSION, self._CWD), str(self._scratch))
+
+    def test_rejects_bad_input(self) -> None:
+        api = _MonitorApi()
+        self.assertEqual(api.scratchpad_path('', self._CWD), '')
+        self.assertEqual(api.scratchpad_path(self._SESSION, ''), '')
+        self.assertEqual(api.scratchpad_path(None, None), '')
+        # A non-UUID session id (e.g. a traversal attempt) is refused before it
+        # is ever built into a path.
+        self.assertEqual(api.scratchpad_path('..\\..\\Windows', self._CWD), '')
+        self.assertEqual(api.scratchpad_path('not-a-uuid', self._CWD), '')
 
 
 class RunSearchFailureTest(unittest.TestCase):

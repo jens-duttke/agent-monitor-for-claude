@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- The background-process badge now opens a panel (click it) instead of a plain tooltip. It has two parts: a live table of the agent's descendant processes with per-process CPU, memory, and how long each has been running (refreshed every second), and a list of the agent's background tasks. Only tasks from the current run are listed - one whose output was last written before the running processes even started is a leftover from an earlier run and is hidden. Each task row shows what it is (the description or command it was started with) and expands to a mono-space console that tails that task's live output, so you can watch progress and estimate how long it still needs. When a task redirected its output to a file in its own scratchpad or project folder (so its default log stays empty), the panel follows that redirect and shows the real output. The task output is read from disk only while a row is expanded, and only which processes exist plus their resource use ever leave the reader - never any command line.
+- For agents working through WSL, the panel adds a clearly-labelled "WSL2 VM" row with the virtual machine's total CPU and memory. WSL runs its Linux processes inside that shared VM, so the Windows-side `wsl.exe` helpers read as idle; the VM row is where the real usage shows. It is marked as machine-wide (shared across all WSL distributions and sessions), not this session alone.
+- A session's row menu now offers "Open scratchpad" (opens the session's scratchpad folder in Explorer), shown only when that session actually has a scratchpad directory.
+
 ## [0.4.0] - 2026-07-16
 
 ### Changed

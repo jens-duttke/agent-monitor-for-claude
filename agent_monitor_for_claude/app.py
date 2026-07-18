@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -24,12 +25,16 @@ from . import __version__
 from .clipboard import copy_text as _copy_text
 from .history import list_history
 from .i18n import T
-from .paths import config_dir
+from .paths import config_dir, scratchpad_dir
 from .pricing import load_pricing
+from .process_probe import process_stats
 from .search import run_search
 from .session_delete import delete_session as _delete_session
+from .sessions import list_sessions
 from .settings import POLL_INTERVAL, WINDOW_HEIGHT, WINDOW_WIDTH
 from .snapshot import build_snapshot, registry_fingerprint
+from .tasks import list_tasks
+from .tasks import read_task_output as _read_task_output
 from .verbose import print_runtime_diagnostics
 from .window_focus import focus_session_window, open_directory, open_vscode_session
 
@@ -55,6 +60,9 @@ def _window_background() -> str:
 
 # Cap on a forwarded UI log line so a runaway message cannot flood the console.
 _LOG_MAX_LEN = 2000
+
+# Session ids are UUIDs; validated before a session id is built into a path.
+_SESSION_UUID = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
 
 
 def _sanitize_log(message: object) -> str:
@@ -125,6 +133,75 @@ class _MonitorApi:
         shows a loading state meanwhile.
         """
         return list_history()
+
+    def get_process_stats(self, pid: object) -> list[dict[str, Any]]:
+        """Return live CPU / memory / uptime for one session's descendant processes.
+
+        Called only while the process panel is open, on a per-second timer.  The
+        session's recorded process start time is looked up from the registry so
+        a recycled PID is rejected (``process_stats``).  Reports only resource
+        numbers and process names - never a command line.
+        """
+        if isinstance(pid, bool) or not isinstance(pid, (int, float, str)):
+            return []
+
+        try:
+            pid_value = int(pid)
+        except (TypeError, ValueError, OverflowError):
+            return []
+
+        proc_start_ticks = None
+        for record in list_sessions():
+            if record.get('pid') == pid_value:
+                proc_start_ticks = record.get('proc_start_ticks')
+                break
+
+        stats = process_stats(pid_value, proc_start_ticks)
+        return [
+            {
+                'pid': stat.pid, 'name': stat.name, 'cpu': stat.cpu_percent,
+                'rss': stat.rss_bytes, 'uptime': stat.uptime_seconds, 'kind': stat.kind,
+            }
+            for stat in stats
+        ]
+
+    def get_tasks(self, session_id: object, cwd: object, max_age: object = None) -> dict[str, Any]:
+        """Return the session's recent background tasks (metadata, plus labels).
+
+        Enumeration reads no output content - only each file's name, size, and
+        last-write age, plus the task's label from the transcript.  The output
+        text is fetched separately, and only when the user expands a task
+        (``read_task_output``).  ``max_age`` (seconds, from the UI) drops tasks
+        last written before the oldest running process started - those belong to
+        an earlier run - so a value <= 0 or missing keeps them all.
+        """
+        if not isinstance(session_id, str) or not isinstance(cwd, str):
+            return {'tasks': [], 'total': 0}
+
+        recent = None
+        if isinstance(max_age, (int, float)) and not isinstance(max_age, bool) and max_age > 0:
+            recent = float(max_age)
+
+        infos, total = list_tasks(session_id, cwd, recent_seconds=recent)
+        return {
+            'tasks': [
+                {'id': info.task_id, 'size': info.size_bytes, 'age': info.age_seconds, 'label': info.label}
+                for info in infos
+            ],
+            'total': total,
+        }
+
+    def read_task_output(self, session_id: object, cwd: object, task_id: object) -> str | None:
+        """Return the tail of one background task's live output (user-initiated).
+
+        The one bridge method that surfaces process output text.  Reached only
+        when the user expands a task row; the read is confined to the session's
+        task-output directory and both ids are validated (see ``tasks``).
+        """
+        if not isinstance(session_id, str) or not isinstance(cwd, str) or not isinstance(task_id, str):
+            return None
+
+        return _read_task_output(session_id, cwd, task_id)
 
     def start_search(self, query: object, sessions: object, options: object, seq: object) -> bool:
         """Start a streaming content search over the given in-view sessions.
@@ -223,6 +300,23 @@ class _MonitorApi:
             return False
 
         return open_directory(path)
+
+    def scratchpad_path(self, session_id: object, cwd: object) -> str:
+        """Return the session's scratchpad directory if it exists, else ''.
+
+        Checked on demand when the row menu opens (so no per-poll cost), so the
+        UI can offer an "open scratchpad" entry only when there is one.  The
+        returned path is validated again by ``open_path`` before the shell sees
+        it.
+        """
+        if not isinstance(session_id, str) or not _SESSION_UUID.match(session_id) or not isinstance(cwd, str) or not cwd:
+            return ''
+
+        directory = scratchpad_dir(session_id, cwd)
+        try:
+            return str(directory) if directory.is_dir() else ''
+        except OSError:
+            return ''
 
     def focus_session(self, pid: object, project_name: object = '', session_id: object = '', vscode_deeplink: object = False,
                       session_title: object = '') -> bool:

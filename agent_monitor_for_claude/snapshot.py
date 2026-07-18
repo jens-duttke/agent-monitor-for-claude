@@ -79,7 +79,6 @@ def _build_session_record(record: dict[str, Any], probe_map: dict[int, Any]) -> 
         'waiting_for': record['waiting_for'],
         'alive': info.alive,
         'child_count': info.child_count,
-        'child_names': list(info.child_names),
         'host': info.host,
         'via_cli': info.via_cli,
         'has_transcript': transcript_state.has_transcript,

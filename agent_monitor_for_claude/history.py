@@ -145,7 +145,6 @@ def _build_history_record(path: Path) -> dict[str, Any] | None:
         'native_status': None,
         'waiting_for': None,
         'child_count': 0,
-        'child_names': [],
         'host': None,
         'via_cli': False,
         'has_activity': state.age_seconds is not None,

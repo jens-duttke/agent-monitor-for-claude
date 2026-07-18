@@ -784,7 +784,6 @@ function buildSession(raw, labels, prices) {
         subagents_done: raw.subagents_done || 0,
         subagents_labels: subagentsLabels,
         processes: raw.child_count || 0,
-        process_names: raw.child_names || [],
         tool_running: toolRunning,
         host: hostLabel(raw.host, raw.entrypoint),
         via_cli: isViaCli(raw),

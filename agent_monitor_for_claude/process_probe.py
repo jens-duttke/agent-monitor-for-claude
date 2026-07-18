@@ -8,8 +8,14 @@ alive, is a tool currently executing (meaningful child process), which
 application hosts it right now, and is it driven through the CLI (a shell
 sits between the session process and its GUI host).  Working from one scan
 keeps the result current on every poll and avoids per-PID process walks.
-Only process names, parent links, and start times are inspected - never
+Only process names, parent links, and start times are inspected here - never
 command lines or arguments.
+
+``process_stats`` is a separate, on-demand path: it reports live CPU, memory
+(RSS), and uptime for one session's descendant processes, and is used only
+while the user has the process panel open.  It opens a handle per descendant
+(a handful, not the whole table), which is why it stays out of the per-second
+snapshot scan above.  It still reads no command line or argument.
 
 When the registry record carries the original process start time (``procStart``,
 .NET ticks of the local wall clock), it is compared against the live process:
@@ -20,17 +26,27 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.wintypes
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Iterable
+from typing import Any, Iterable
 
 import psutil
 
-__all__ = ['TERMINAL_WINDOW_OWNERS', 'ProcessInfo', 'ancestry', 'probe', 'probe_all', 'process_names']
+__all__ = [
+    'ChildProcessStat', 'ProcessInfo', 'TERMINAL_WINDOW_OWNERS',
+    'ancestry', 'probe', 'probe_all', 'process_names', 'process_stats',
+]
 
 # Child processes that a Claude Code session always owns while idle; their
 # presence must not be read as "a tool is running".
 _IGNORED_CHILD_NAMES = frozenset({'conhost.exe'})
+
+# WSL relay processes on the Windows side; their presence means the session's
+# real work runs inside the WSL2 utility VM, which is surfaced only as the shared
+# ``vmmem*`` process below.
+_WSL_RELAY_NAMES = frozenset({'wsl.exe', 'wslhost.exe'})
 
 # A child that starts together with the session process is a session-lifetime
 # helper (a stdio MCP server, a file watcher), not a tool execution: a tool
@@ -107,7 +123,23 @@ class ProcessInfo:
     host: str | None = None
     via_cli: bool = False
     child_count: int = 0
-    child_names: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ChildProcessStat:
+    """Live resource usage of one process shown in the process panel.
+
+    ``kind`` is ``'process'`` for a real descendant process, or ``'wsl_vm'`` for
+    the shared WSL2 utility VM appended as context (see ``process_stats``); a VM
+    row's figures are machine-wide, not this session's, so the UI labels it.
+    """
+
+    pid: int
+    name: str
+    cpu_percent: float | None
+    rss_bytes: int | None
+    uptime_seconds: float | None
+    kind: str = 'process'
 
 
 def probe_all(requests: Iterable[tuple[int, int | None]]) -> dict[int, ProcessInfo]:
@@ -161,7 +193,6 @@ def probe_all(requests: Iterable[tuple[int, int | None]]) -> dict[int, ProcessIn
             host=host,
             via_cli=via_cli,
             child_count=len(children),
-            child_names=tuple(sorted(set(children))),
         )
 
     return result
@@ -182,6 +213,177 @@ def ancestry(pid: int) -> list[tuple[int, str]]:
 def process_names() -> dict[int, str]:
     """Return ``{pid: lowercased executable name}`` for every running process."""
     return {pid: name for pid, (_ppid, name) in _scan_processes().items()}
+
+
+def process_stats(pid: int, proc_start_ticks: int | None = None) -> list[ChildProcessStat]:
+    """Return live CPU / memory / uptime for a session's descendant processes.
+
+    The descendant set is exactly the one the badge count is built from
+    (``_meaningful_children``), so the panel lists precisely the processes the
+    badge counts.  CPU is sampled non-blocking (the delta since the previous
+    call on the same process), so the first reading of a freshly seen process
+    is ``None`` - a real percentage arrives on the next call a second later.
+    CPU is the raw per-process figure where 100% is one fully-used core (and a
+    multi-threaded process can exceed 100%), so a busy process reads as busy
+    instead of being divided down to a few percent on a many-core machine.
+
+    Each descendant is listed and sampled individually, so a worker child's CPU
+    shows on its own row rather than being rolled into the parent (psutil's
+    per-process figure excludes children).  A process running inside a WSL2
+    distribution is not a Windows child at all - it lives in the WSL utility VM.
+    When the session uses WSL, that VM's own usage (``vmmem*``) is appended as a
+    trailing ``'wsl_vm'`` row so the otherwise-idle relay processes are put in
+    context; the figure is machine-wide (shared across all WSL distributions and
+    sessions), which the UI labels.
+
+    Parameters
+    ----------
+    pid : int
+        The session process id from the registry.
+    proc_start_ticks : int or None
+        The recorded process start time (.NET local-time ticks); when given, a
+        mismatch means Windows recycled the PID and an empty list is returned.
+
+    Returns
+    -------
+    list[ChildProcessStat]
+        One entry per descendant process, ordered by name then pid so the rows
+        stay put across refreshes.  Empty when the session process is gone or
+        stale.
+    """
+    table = _scan_processes()
+    if table.get(pid) is None:
+        return []
+
+    create_time_cache: dict[int, float | None] = {}
+    create_time = _create_time(pid, create_time_cache)
+    if create_time is None:
+        return []
+
+    if proc_start_ticks and not _ticks_match_epoch(proc_start_ticks, create_time):
+        return []
+
+    children_index: dict[int, list[int]] = {}
+    for child_pid, (ppid, _name) in table.items():
+        children_index.setdefault(ppid, []).append(child_pid)
+
+    children = _meaningful_children(pid, table, children_index, create_time_cache)
+
+    now = time.time()
+    stats: list[ChildProcessStat] = []
+    live_pids: set[int] = set()
+    for child_pid, name in children:
+        live_pids.add(child_pid)
+        child_start = create_time_cache.get(child_pid)
+        cpu, rss = _sample_process(child_pid, child_start)
+        uptime = None if child_start is None else max(0.0, now - child_start)
+        stats.append(ChildProcessStat(pid=child_pid, name=name, cpu_percent=cpu, rss_bytes=rss, uptime_seconds=uptime))
+
+    stats.sort(key=lambda stat: (stat.name, stat.pid))
+
+    # A WSL session's real work runs inside the WSL2 utility VM, not as a Windows
+    # child, so the relay processes above read as idle.  Append the VM's own
+    # usage as context - computed before pruning so its handle is not evicted.
+    vm_stat = _wsl_vm_stat(children, table, create_time_cache, live_pids)
+    _prune_sample_cache(live_pids)
+    if vm_stat is not None:
+        stats.append(vm_stat)
+
+    return stats
+
+
+# Live psutil handles kept between calls so cpu_percent() can report the delta
+# since the previous sample.  Keyed by pid and validated against the process
+# start time, so a recycled PID never inherits the old handle's baseline.
+_sample_lock = threading.Lock()
+_sample_cache: dict[int, tuple[float, Any]] = {}
+
+
+def _sample_process(pid: int, create_time: float | None) -> tuple[float | None, int | None]:
+    """Return ``(cpu_percent, rss_bytes)`` for one process.
+
+    ``cpu_percent`` is the raw per-process figure (100% is one fully-used core)
+    and is ``None`` on the first sample of a newly seen process (the baseline
+    call), then a real percentage once a prior sample exists.  A vanished or
+    inaccessible process yields ``(None, None)``.
+    """
+    with _sample_lock:
+        cached = _sample_cache.get(pid)
+        fresh = cached is None or (create_time is not None and abs(cached[0] - create_time) > 1.0)
+        if fresh:
+            try:
+                proc = psutil.Process(pid)
+            except psutil.Error:
+                _sample_cache.pop(pid, None)
+                return None, None
+            _sample_cache[pid] = (create_time if create_time is not None else 0.0, proc)
+        proc = _sample_cache[pid][1]
+
+    try:
+        raw_cpu = proc.cpu_percent(interval=None)
+        rss = int(proc.memory_info().rss)
+    except psutil.Error:
+        with _sample_lock:
+            _sample_cache.pop(pid, None)
+        return None, None
+
+    cpu = None if fresh else raw_cpu
+    return cpu, rss
+
+
+def _prune_sample_cache(live_pids: set[int]) -> None:
+    """Drop cached handles for processes no longer in the current descendant set."""
+    with _sample_lock:
+        for pid in list(_sample_cache):
+            if pid not in live_pids:
+                _sample_cache.pop(pid, None)
+
+
+def _wsl_vm_stat(
+    children: list[tuple[int, str]],
+    table: dict[int, tuple[int, str]],
+    create_time_cache: dict[int, float | None],
+    live_pids: set[int],
+) -> ChildProcessStat | None:
+    """Return the WSL2 utility VM's usage when the session uses WSL, else None.
+
+    The VM (``vmmem*``) is not a child of the session and is shared across every
+    WSL distribution and session, so it is returned as a ``'wsl_vm'`` context row
+    with no uptime, never as a per-session process.  Its pid is added to
+    *live_pids* so the CPU-sample cache keeps its handle across calls.
+    """
+    if not any(name in _WSL_RELAY_NAMES for _pid, name in children):
+        return None
+
+    vm_pid = _find_wsl_vm(table)
+    if vm_pid is None:
+        return None
+
+    live_pids.add(vm_pid)
+    vm_start = _create_time(vm_pid, create_time_cache)
+    cpu, rss = _sample_process(vm_pid, vm_start)
+    return ChildProcessStat(pid=vm_pid, name=table[vm_pid][1], cpu_percent=cpu, rss_bytes=rss, uptime_seconds=None, kind='wsl_vm')
+
+
+def _find_wsl_vm(table: dict[int, tuple[int, str]]) -> int | None:
+    """Return the pid of the WSL2 utility VM process, or None if not unambiguous.
+
+    Prefers a ``vmmem`` process whose name names WSL (``vmmemWSL``); falls back to
+    a lone ``vmmem*`` process.  When several unrelated VMs run and none clearly
+    belongs to WSL, returns None rather than guessing (a wrong VM would mislead).
+    """
+    candidates = [(pid, name) for pid, (_ppid, name) in table.items() if name.startswith('vmmem')]
+    if not candidates:
+        return None
+
+    for pid, name in candidates:
+        if 'wsl' in name:
+            return pid
+
+    if len(candidates) == 1:
+        return candidates[0][0]
+
+    return None
 
 
 class _PROCESSENTRY32W(ctypes.Structure):
@@ -317,8 +519,8 @@ def _meaningful_children(
     table: dict[int, tuple[int, str]],
     children_index: dict[int, list[int]],
     create_time_cache: dict[int, float | None],
-) -> list[str]:
-    """Return the names of the genuine process tree below *pid*, excluding the console host.
+) -> list[tuple[int, str]]:
+    """Return the genuine process tree below *pid* as ``(pid, name)``, excluding the console host.
 
     Every parent -> child link is validated against PID reuse, exactly like the
     ancestor walk: a real child cannot have started before its parent.  This is
@@ -334,7 +536,7 @@ def _meaningful_children(
     lifetime helpers (stdio MCP servers, watchers) rather than tool executions,
     and are skipped - see ``_SESSION_HELPER_WINDOW_SECONDS``.
     """
-    names: list[str] = []
+    children: list[tuple[int, str]] = []
     visited = {pid}
     session_start = _create_time(pid, create_time_cache)
     pending: list[tuple[int, int]] = [(pid, child_pid) for child_pid in children_index.get(pid, [])]
@@ -351,11 +553,11 @@ def _meaningful_children(
         if entry is None:
             continue
         if entry[1] not in _IGNORED_CHILD_NAMES and not _is_session_helper(child_pid, session_start, create_time_cache):
-            names.append(entry[1])
+            children.append((child_pid, entry[1]))
 
         pending.extend((child_pid, grandchild) for grandchild in children_index.get(child_pid, []))
 
-    return names
+    return children
 
 
 def _is_session_helper(child_pid: int, session_start: float | None, create_time_cache: dict[int, float | None]) -> bool:

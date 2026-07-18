@@ -40,7 +40,7 @@ function rawSession(overrides) {
     return Object.assign({
         pid: 0, session_id: '', cwd: 'D:\\Projects\\helios-renderer', short_name: '', kind: 'interactive',
         entrypoint: null, native_status: null, waiting_for: null, alive: true,
-        child_count: 0, child_names: [], host: null, via_cli: false,
+        child_count: 0, host: null, via_cli: false,
         has_transcript: true, has_activity: true, last_entry_kind: 'assistant', last_stop_reason: 'end_turn',
         pending_tool: false, last_tool_name: null, usage_limited: false, permission_mode: null,
         model_id: null, usage: {}, usage_by_model: {}, model_timeline: [], title: null,
@@ -73,7 +73,7 @@ window.__MOCK_SNAPSHOT__ = {
             session_id: 'h2b', short_name: 'helios-renderer-7e', pid: 13360, entrypoint: 'claude-vscode', host: 'VS Code',
             title: 'Port the ReSTIR denoiser to compute shaders', permission_mode: 'acceptEdits',
             last_entry_kind: 'tool_result', last_stop_reason: 'tool_use',
-            child_count: 2, child_names: ['cmake.exe', 'helios-viewer.exe'],
+            child_count: 2,
             age_seconds: 6,
             ...priced('claude-opus-4-8[1m]', {
                 input_tokens: 41800, output_tokens: 9600, cache_read_input_tokens: 33500000,
@@ -90,7 +90,7 @@ window.__MOCK_SNAPSHOT__ = {
                 'Diff SPIR-V output across a hot reload',
                 'Audit the pipeline-cache invalidation path',
             ],
-            child_count: 1, child_names: ['helios-tests.exe'],
+            child_count: 1,
             age_seconds: 12,
             ...priced('claude-opus-4-8[1m]', {
                 input_tokens: 62100, output_tokens: 14900, cache_read_input_tokens: 41200000,
@@ -222,7 +222,7 @@ window.__MOCK_SNAPSHOT__ = {
             entrypoint: 'claude-vscode', host: 'VS Code',
             title: 'Sweep Argon2id memory-hardness parameters', permission_mode: 'acceptEdits',
             last_entry_kind: 'tool_result', last_stop_reason: 'tool_use',
-            child_count: 1, child_names: ['argon2-bench.exe'],
+            child_count: 1,
             age_seconds: 27,
             ...priced('claude-fable-5', {
                 input_tokens: 17200, output_tokens: 3600, cache_read_input_tokens: 11500000,
@@ -230,6 +230,80 @@ window.__MOCK_SNAPSHOT__ = {
             }),
         }),
     ],
+};
+
+// --- process panel preview (get_process_stats / get_tasks / read_task_output) ---
+//
+// The panel polls these once a second while it is open. Values here are INVENTED
+// and driven off the wall clock so the browser preview feels live (Date.now and
+// Math.random are fine in a browser preview, unlike workflow scripts); a thunk is
+// called on each poll. Keyed exactly like the real bridge: process stats by pid,
+// tasks by session id, output by task id.
+const __secs = () => Math.floor(Date.now() / 1000);
+const __wiggle = (base, spread) => Math.max(0, base + (Math.random() - 0.5) * spread);
+const __ramp = (span) => __secs() % span;
+
+window.__MOCK_PROC_STATS__ = {
+    // helios-renderer-7e: a CMake build feeding a live viewer.
+    13360: () => ([
+        { pid: 21804, name: 'cmake.exe', cpu: __wiggle(38, 22), rss: 214 * 1024 * 1024, uptime: 6 + __ramp(600) },
+        { pid: 22190, name: 'helios-viewer.exe', cpu: __wiggle(12, 8), rss: 486 * 1024 * 1024, uptime: 6 + __ramp(600) },
+    ]),
+    // helios-renderer-c1: a single long-running test binary.
+    30512: () => ([
+        { pid: 18664, name: 'helios-tests.exe', cpu: __wiggle(64, 20), rss: 158 * 1024 * 1024, uptime: 12 + __ramp(600) },
+    ]),
+    // cipher-vault: an Argon2 sweep running under WSL - the Windows-side relays
+    // read as idle, and the real load shows up as the shared WSL2-VM row.
+    29456: () => ([
+        { pid: 27200, name: 'wsl.exe', cpu: 0, rss: 13 * 1024 * 1024, uptime: 27 + __ramp(600) },
+        { pid: 27210, name: 'bash.exe', cpu: 0, rss: 8 * 1024 * 1024, uptime: 27 + __ramp(600) },
+        { pid: 9000, name: 'vmmemWSL', cpu: __wiggle(180, 40), rss: 7.3 * 1024 * 1024 * 1024, uptime: null, kind: 'wsl_vm' },
+    ]),
+};
+
+window.__MOCK_TASKS__ = {
+    h2b: [
+        { id: 'a7f3k9', size: 4200, age: 1, label: 'Build spectral upsampling in the background' },
+    ],
+    h3c: [
+        { id: 'r1n8xq', size: 91800, age: 2, label: 'Run the ReSTIR frame regression suite' },
+        { id: 'w2k5vt', size: 640, age: 420, label: 'Warm up the shader cache' },
+    ],
+    c2j: [
+        { id: 'b3n1lm', size: 12600, age: 0, label: 'Sweep Argon2id memory-hardness parameters' },
+    ],
+};
+
+window.__MOCK_TASK_OUTPUT__ = {
+    a7f3k9: () => [
+        '-- 3rdparty/ --',
+        '[  8%] Building CXX object src/spectral/upsample.cpp.o',
+        '[ 12%] Building CXX object src/spectral/brdf.cpp.o',
+        '[ 17%] Building CXX object src/restir/reservoir.cpp.o',
+        '[ ' + (20 + __ramp(40)) + '%] Building CXX object src/restir/denoise.cpp.o',
+    ].join('\n'),
+    r1n8xq: () => [
+        '== sanity: original vs recomb ==',
+        'seq  frame  0  Yhash=ad56e60a1ea1a6c2  OK',
+        'seq  frame  1  Yhash=b5bc2ac56f81ef12  OK',
+        '  [prefix_base] MVCDS-4: ALL 9 frames bit-exact',
+        '  [prefix_base] MVCRP_2: ' + (120 + __ramp(130)) + '/250 frames…',
+    ].join('\n'),
+    w2k5vt: 'setup complete.\nwaiting for input…\n',
+    b3n1lm: () => [
+        'argon2id  m=262144  t=3  p=4',
+        'hash: 41.2 ms  (target < 50 ms)',
+        'sweep ' + (14 + __ramp(18)) + '/32 parameter sets done',
+    ].join('\n'),
+};
+
+// Sessions whose row menu should offer "Open scratchpad" - a non-empty path is
+// all the check needs (opening it is a no-op without a bridge).
+window.__MOCK_SCRATCHPADS__ = {
+    h2b: 'D:\\Projects\\helios-renderer\\.scratch',
+    h3c: 'D:\\Projects\\helios-renderer\\.scratch',
+    c2j: 'D:\\Projects\\cipher-vault\\.scratch',
 };
 
 // Past, non-live sessions - the on-demand history listing (get_history). All are
