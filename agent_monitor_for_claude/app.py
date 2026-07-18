@@ -15,7 +15,6 @@ import re
 import sys
 import threading
 import time
-import winreg
 from pathlib import Path
 from typing import Any
 
@@ -36,27 +35,10 @@ from .snapshot import build_snapshot, registry_fingerprint
 from .tasks import list_tasks
 from .tasks import read_task_output as _read_task_output
 from .verbose import print_runtime_diagnostics
+from .window_background import apply_native_background, window_background_color
 from .window_focus import focus_session_window, open_directory, open_vscode_session
 
 __all__ = ['run']
-
-# Initial window paint colors matching the UI themes, so the window does not
-# flash in the wrong brightness before the page loads.  The page itself picks
-# the stored theme (or the system preference) before first paint.
-_WINDOW_BACKGROUND_DARK = '#0d0f14'
-_WINDOW_BACKGROUND_LIGHT = '#eef1f6'
-
-
-def _window_background() -> str:
-    """Match the initial window color to the Windows app theme."""
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize') as key:
-            apps_use_light, _ = winreg.QueryValueEx(key, 'AppsUseLightTheme')
-    except OSError:
-        return _WINDOW_BACKGROUND_DARK
-
-    return _WINDOW_BACKGROUND_LIGHT if apps_use_light else _WINDOW_BACKGROUND_DARK
-
 
 # Cap on a forwarded UI log line so a runaway message cannot flood the console.
 _LOG_MAX_LEN = 2000
@@ -100,6 +82,22 @@ class _MonitorApi:
     def attach_window(self, window: Any) -> None:
         """Bind the pywebview window used to push streaming search results."""
         self._window = window
+
+    def set_window_background(self, color: object) -> bool:
+        """Match the native window's background to the page's content colour.
+
+        The page reports its effective ``--bg`` once its theme is resolved (the
+        stored preference Python cannot see) and again on every theme switch, so
+        the client area exposed while WebView2 lags a resize shows the content
+        colour instead of the wrong-brightness system-theme guess.  Only a
+        validated ``#rrggbb`` colour is applied; anything else is a no-op.
+        """
+        window = self._window
+        if window is None or not isinstance(color, str):
+            return False
+
+        native = getattr(window, 'native', None)
+        return apply_native_background(native, color)
 
     def log(self, message: object) -> None:
         """Forward a UI-side diagnostic message to stderr.
@@ -394,7 +392,7 @@ def run(verbose: bool = False) -> None:
         width=WINDOW_WIDTH,
         height=WINDOW_HEIGHT,
         min_size=(480, 360),
-        background_color=_window_background(),
+        background_color=window_background_color(),
     )
     # Let the bridge push streaming search results back into this window.
     api.attach_window(window)

@@ -408,8 +408,24 @@ function setThemeIcon(theme) {
     document.getElementById('theme-toggle').innerHTML = theme === 'dark' ? '&#9788;' : '&#9790;';
 }
 
+// Report the resolved content colour to Python so the native window matches it.
+// Python only knows the system theme, not the page's stored preference, so
+// without this a dark UI on a light system shows a light window edge while
+// WebView2 lags a resize (and vice versa).
+function reportWindowBackground() {
+    const bridge = apiBridge();
+    if (!bridge || typeof bridge.set_window_background !== 'function') {
+        return;
+    }
+    const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    if (bg) {
+        Promise.resolve(bridge.set_window_background(bg)).catch(() => { /* window closing */ });
+    }
+}
+
 function initTheme() {
     setThemeIcon(currentTheme());
+    reportWindowBackground();
     document.getElementById('theme-toggle').addEventListener('click', () => {
         const next = currentTheme() === 'dark' ? 'light' : 'dark';
         document.documentElement.setAttribute('data-theme', next);
@@ -417,6 +433,7 @@ function initTheme() {
             localStorage.setItem('amc-theme', next);
         } catch (e) { /* storage unavailable */ }
         setThemeIcon(next);
+        reportWindowBackground();
     });
 }
 

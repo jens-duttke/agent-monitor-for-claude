@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The running-subagent badge (⚡) now shows a background workflow's total agent count, and its tooltip leads with it (e.g. "Workflow: 12 agents"). Previously it only counted the agents running at that instant, so a workflow whose earlier agents had already finished looked smaller than it was.
 
 ### Fixed
+- When you enlarge the window, the area briefly uncovered before WebView2 catches up now shows the app's own background colour instead of a mismatched light or dark edge. The window background follows the theme you actually set in the app, not the Windows system theme, so it stays correct even when the two differ.
 - A session running a background workflow no longer flickers between "Background" and "Idle" - with the ⚡ badge blinking out - during the brief pauses between a workflow's fan-out phases, when no single agent is momentarily running. The workflow is now tracked as one unit, so the session reads as busy for as long as the workflow is actually running.
 
 ## [0.4.0] - 2026-07-16
