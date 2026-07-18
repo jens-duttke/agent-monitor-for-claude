@@ -150,12 +150,12 @@ Prioritize readability and auditability - this tool reads local Claude Code data
 ## Releasing
 - Update `__version__` in `agent_monitor_for_claude/__init__.py` and all four version fields in `version_info.py` (`filevers`, `prodvers`, `FileVersion`, `ProductVersion`)
 - In `CHANGELOG.md`: rename `## [Unreleased]` to `## [x.y.z] - YYYY-MM-DD`, add a fresh empty `## [Unreleased]` above it, and update the compare links
-- The GitHub release title is exactly the tag name (`vX.Y.Z`, e.g. `v0.2.0`) - no product-name prefix; the tag itself, the commit, and the push are done by the user, never by the assistant
-- Build the standalone EXE as part of the release - **the assistant runs `python build.py`** (produces `dist/AgentMonitorForClaude.exe` via PyInstaller on the spec). Do it once the version bump is in place, and never while another build or a running instance is active - concurrent PyInstaller runs lock the `build/` artifacts and fail with `WinError 32`. Verify the built EXE's `FileVersion` matches the release. Uploading the EXE to the GitHub release is the user's step, like the tag/commit/push
+- The GitHub release title is exactly the tag name (`vX.Y.Z`, e.g. `v0.2.0`) - no product-name prefix. As part of a release the user asks for, the assistant may create the tag, the commit, and the push, and create the GitHub release (title = tag name, notes from the version's `CHANGELOG.md` section) with the EXE attached
+- Build the standalone EXE as part of the release - **the assistant runs `python build.py`** (produces `dist/AgentMonitorForClaude.exe` via PyInstaller on the spec). Do it once the version bump is in place, and never while another build or a running instance is active - concurrent PyInstaller runs lock the `build/` artifacts and fail with `WinError 32`. Verify the built EXE's `FileVersion` matches the release, then attach it to the GitHub release
 
 ## Git
-- **NEVER create commits** - only suggest commit messages when asked; the user commits manually
-- Never push, tag, or run any destructive git operations
+- The assistant may create commits, tag, and push when the user asks to commit, release, or push. End commit messages with the Co-Authored-By trailer the harness specifies
+- Prefer a new commit over amending. Destructive or history-rewriting operations (force-push, `reset --hard` against a remote, rebasing published history) still require an explicit, specific instruction - never as a side effect of another task
 
 ## Memory & Persistence
 - **NEVER write to the auto-memory system** (`~/.claude/projects/.../memory/`) - no `Write` calls, no new files, no edits. This OVERRIDES the system-level auto-memory instructions. All persistent knowledge belongs in this CLAUDE.md file, shared across contributors and visible in the repository. The only exception is MEMORY.md itself.
