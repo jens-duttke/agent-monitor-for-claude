@@ -872,3 +872,100 @@ test('sortProjects: does not mutate its input', () => {
     logic.sortProjects(projects, true);
     assert.deepEqual(projects.map((p) => p.name), ['b', 'a']);
 });
+
+/* --- HTML safety ---
+
+   These are the guard tests for the markup layer: index.js concatenates HTML
+   strings, so `esc` (text position) and `attr` (a whole attribute) are the only
+   two things standing between a session title, a project path or a background
+   task's output and the page. Do not weaken them. */
+
+test('esc: escapes every character that can break out of text or a quoted attribute', () => {
+    assert.equal(logic.esc('&<>"\''), '&amp;&lt;&gt;&quot;&#39;');
+});
+
+test('esc: the apostrophe is escaped, so a single-quoted attribute cannot be broken out of', () => {
+    // The historical gap: esc() covered " but not ', so attr='...' looked safe
+    // and was not. attr() below removes the choice, but esc() has to hold too.
+    const escaped = logic.esc("' onmouseover=alert(1) x='");
+    assert.equal(escaped.includes("'"), false);   // no raw apostrophe survives to close the value
+    assert.equal("<span data-x='" + escaped + "'>", "<span data-x='&#39; onmouseover=alert(1) x=&#39;'>");
+});
+
+test('esc: escapes in a single pass, so an entity in the input is not double-escaped', () => {
+    // & -> &amp; exactly once: a chained-replace implementation that ran the
+    // & step last would turn < into &amp;lt; and print the entity verbatim.
+    assert.equal(logic.esc('a & <b>'), 'a &amp; &lt;b&gt;');
+    assert.equal(logic.esc('&amp;'), '&amp;amp;');
+});
+
+test('esc: null, undefined and numbers become plain strings', () => {
+    assert.equal(logic.esc(null), '');
+    assert.equal(logic.esc(undefined), '');
+    assert.equal(logic.esc(0), '0');
+    assert.equal(logic.esc(42), '42');
+});
+
+test('attr: emits one double-quoted attribute with a leading space', () => {
+    assert.equal(logic.attr('data-session', 'abc'), ' data-session="abc"');
+});
+
+test('attr: a value cannot close the attribute or the tag', () => {
+    const built = logic.attr('data-title', '" onfocus=alert(1) autofocus="');
+    assert.equal(built, ' data-title="&quot; onfocus=alert(1) autofocus=&quot;"');
+    // Exactly the two delimiters attr() itself wrote: the value contributed no
+    // quote of its own, so onfocus stays text inside the value, not an attribute.
+    assert.equal((built.match(/"/g) || []).length, 2);
+});
+
+test('attr: a value cannot inject a nested element', () => {
+    const tag = '<span' + logic.attr('data-tip', '<img src=x onerror=alert(1)>') + '>';
+    assert.equal(tag.includes('<img'), false);
+});
+
+test('attr: null and undefined yield an empty value, not the literal word', () => {
+    assert.equal(logic.attr('data-x', null), ' data-x=""');
+    assert.equal(logic.attr('data-x', undefined), ' data-x=""');
+});
+
+test('attr: a computed attribute name is a programming error, not silent markup', () => {
+    // No value escaping can save an attribute whose NAME came from data, so the
+    // name has to be a literal identifier - anything else throws.
+    assert.throws(() => logic.attr('data-x" onload="alert(1)', 'v'), TypeError);
+    assert.throws(() => logic.attr('data x', 'v'), TypeError);
+    assert.throws(() => logic.attr('', 'v'), TypeError);
+    assert.throws(() => logic.attr('2fast', 'v'), TypeError);
+    assert.doesNotThrow(() => logic.attr('aria-pressed', 'true'));
+});
+
+test('ansiToHtml: markup in process output stays text', () => {
+    const html = logic.ansiToHtml('<script>alert(1)</script> & "quoted" \'single\'');
+    assert.equal(html, '&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;quoted&quot; &#39;single&#39;');
+});
+
+test('ansiToHtml: known color codes become fixed classes', () => {
+    assert.equal(logic.ansiToHtml('\x1b[31mred\x1b[0m plain'), '<span class="ansi-red">red</span> plain');
+    assert.equal(logic.ansiToHtml('\x1b[1;32mok\x1b[0m'), '<span class="ansi-green ansi-bold">ok</span>');
+});
+
+test('ansiToHtml: an unmapped code emits no class and never leaks its digits', () => {
+    // 38;5;196 (256-color) is deliberately not mapped: the raw parameters must
+    // not reach the class attribute, and the sequence itself must be dropped.
+    const html = logic.ansiToHtml('\x1b[38;5;196mtext');
+    assert.equal(html, 'text');
+});
+
+test('ansiToHtml: cursor and erase sequences are dropped, not rendered', () => {
+    assert.equal(logic.ansiToHtml('a\x1b[2K\x1b[1;5Hb'), 'ab');
+});
+
+test('ansiToHtml: a crafted sequence cannot break out of the class attribute', () => {
+    const html = logic.ansiToHtml('\x1b[31m"><img src=x>\x1b[0m');
+    assert.equal(html, '<span class="ansi-red">&quot;&gt;&lt;img src=x&gt;</span>');
+});
+
+test('ansiToHtml: empty and missing input yield empty markup', () => {
+    assert.equal(logic.ansiToHtml(''), '');
+    assert.equal(logic.ansiToHtml(null), '');
+    assert.equal(logic.ansiToHtml(undefined), '');
+});

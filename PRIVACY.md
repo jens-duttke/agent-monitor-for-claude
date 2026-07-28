@@ -167,6 +167,10 @@ redirect target parsed from the recorded command is read instead - but only when
 inside the session's own scratchpad directory or its project directory. A redirect pointing anywhere
 else on your disk is ignored.
 
+That output is displayed as text, never as page markup: every run of characters is HTML-escaped before
+it reaches the window, and the only thing derived from the terminal's colour codes is a class name from
+a fixed internal list. Output cannot introduce an element, an attribute, or a script into the interface.
+
 ### Processes and windows
 
 To tell a live session from a finished one and to count its background work, each refresh takes one
@@ -315,7 +319,7 @@ looks like a hidden exception:
   application code does not perform them: the preference folder is created and filled by pywebview and
   WebView2, which [app.py](agent_monitor_for_claude/app.py) points at that location, and the temp
   extraction is done by the single-file launcher before any application code runs.
-- The dynamic-execution search matches one line in `ui/index.js`, a regular expression's `.exec()`
+- The dynamic-execution search matches one line in `ui/logic.js`, a regular expression's `.exec()`
   call used to strip terminal color codes. There is no `eval`, no `exec`, no `__import__`, and no
   encoded payload anywhere in the application. (`compile` does occur, as `re.compile`, which builds a
   regular expression and cannot execute code.) One related call deserves naming: the backend uses
@@ -341,6 +345,10 @@ node --test tests/js/logic.test.js     # interface logic
 - [tests/test_session_delete.py](tests/test_session_delete.py) asserts the deletion guards: that a
   non-UUID id is rejected, that a session with a live process is refused, that only the named session's
   files are removed, and that the path-confinement helper fails closed when a path cannot be resolved.
+- [tests/js/logic.test.js](tests/js/logic.test.js) asserts the display boundary in its "HTML safety"
+  group: that escaping covers every character able to leave a text or attribute position, that an
+  attribute value cannot break out of its attribute, and that background-task output containing markup
+  stays text and yields only class names from the fixed internal list.
 
 If you find any statement in this document that the code does not support, please report it as an
 issue - that is a bug in the same sense as any other.

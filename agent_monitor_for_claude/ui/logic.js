@@ -15,6 +15,118 @@ function fmt(template, values) {
     return String(template == null ? '' : template).replace(/\{(\w+)\}/g, (_, key) => (values[key] != null ? values[key] : ''));
 }
 
+/* --- HTML safety ---
+
+   The UI builds its markup by string concatenation, so every interpolated value
+   has to pass through one of exactly two primitives: `esc` in text position,
+   `attr` for a whole attribute. They live here, not in index.js, because they
+   are pure - that is what puts them under the Node test suite, where the
+   guarantee below is asserted rather than assumed.
+
+   `esc` escapes the five characters that can leave text position or a quoted
+   attribute value, in a single pass - a chained-replace version silently
+   double-escapes if the `&` step is ever reordered. It covers text and any
+   quoted attribute; it is NOT sufficient in an unquoted attribute, in a
+   URL-bearing attribute (`href`/`src`, where a `javascript:` value needs no
+   metacharacter at all), or inside `<style>`/`<script>` (the page's CSP
+   forbids both anyway). The backtick is deliberately not escaped: it only ever
+   delimited attributes in IE < 10, and the sole target here is a modern
+   WebView2/Chromium.
+
+   Prefer `attr`: it owns the quotes, so a call site cannot pick a quoting style
+   the escaping does not cover, and that choice never has to be re-audited when
+   `esc` changes. Escaping the value alone leaves that decision at the call site,
+   where a wrong one still reads as escaped at a glance. */
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+const ATTR_NAME = /^[a-zA-Z][a-zA-Z0-9-]*$/;
+
+function esc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, (char) => HTML_ESCAPES[char]);
+}
+
+// One double-quoted attribute, leading space included, ready to concatenate
+// into a tag. The name has to be a literal in the code: a name built from data
+// would be markup injection that no amount of value escaping can catch, so a
+// name that is not a plain HTML identifier is a programming error and throws
+// (surfaced by reportUiError) rather than emitting half an attribute.
+function attr(name, value) {
+    if (!ATTR_NAME.test(String(name))) {
+        throw new TypeError('attr: attribute name must be a literal identifier, got ' + String(name));
+    }
+    return ' ' + name + '="' + esc(value) + '"';
+}
+
+/* --- terminal output rendering --- */
+
+// ANSI SGR foreground codes -> themed CSS class. Backgrounds and other
+// attributes are intentionally not mapped (kept simple and legible).
+const ANSI_FG = {
+    30: 'ansi-black', 31: 'ansi-red', 32: 'ansi-green', 33: 'ansi-yellow',
+    34: 'ansi-blue', 35: 'ansi-magenta', 36: 'ansi-cyan', 37: 'ansi-white',
+    90: 'ansi-bright-black', 91: 'ansi-bright-red', 92: 'ansi-bright-green', 93: 'ansi-bright-yellow',
+    94: 'ansi-bright-blue', 95: 'ansi-bright-magenta', 96: 'ansi-bright-cyan', 97: 'ansi-bright-white',
+};
+
+// Render a background task's output as safe HTML: escape every text run, turn
+// ANSI SGR color codes into themed spans, and drop the other control sequences
+// a non-emulating console cannot honor (cursor moves, line erases). This is the
+// one place untrusted process output reaches markup, so only fixed class names
+// from ANSI_FG are ever emitted - never any part of the raw code - and every
+// text run goes through `esc`.
+function ansiToHtml(value) {
+    const text = String(value == null ? '' : value);
+    const csi = /\x1b\[[0-9;?]*[A-Za-z]/g;
+    let html = '';
+    let index = 0;
+    let fg = null;
+    let bold = false;
+
+    const flush = (segment) => {
+        if (!segment) {
+            return;
+        }
+        const escaped = esc(segment);
+        const classes = [];
+        if (fg) {
+            classes.push(fg);
+        }
+        if (bold) {
+            classes.push('ansi-bold');
+        }
+        html += classes.length ? '<span' + attr('class', classes.join(' ')) + '>' + escaped + '</span>' : escaped;
+    };
+
+    let match;
+    while ((match = csi.exec(text)) !== null) {
+        flush(text.slice(index, match.index));
+        index = csi.lastIndex;
+        const seq = match[0];
+        if (seq[seq.length - 1] !== 'm') {
+            continue;   // a cursor/erase control, not a color - drop it
+        }
+        const body = seq.slice(2, -1);
+        const params = body === '' ? ['0'] : body.split(';');
+        for (const param of params) {
+            const code = parseInt(param, 10);
+            if (code === 0) {
+                fg = null;
+                bold = false;
+            } else if (code === 1) {
+                bold = true;
+            } else if (code === 22) {
+                bold = false;
+            } else if (code === 39) {
+                fg = null;
+            } else if (ANSI_FG[code]) {
+                fg = ANSI_FG[code];
+            }
+        }
+    }
+    flush(text.slice(index));
+    return html;
+}
+
 /* --- status classification (ported from the former status.py) --- */
 
 const NEEDS_ATTENTION = new Set(['awaiting_input', 'awaiting_permission', 'interrupted', 'errored']);
@@ -906,6 +1018,9 @@ function groupProjects(rawSessions, labels, prices) {
 
 const AMC_LOGIC = {
     fmt,
+    esc,
+    attr,
+    ansiToHtml,
     classify,
     deriveStatus,
     refineWithNative,

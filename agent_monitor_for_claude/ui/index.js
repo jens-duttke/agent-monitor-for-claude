@@ -32,6 +32,10 @@ function reportUiError(detail) {
     try {
         const content = document.getElementById('content');
         if (content) {
+            // Escaped inline, not via logic.esc: this handler has to survive
+            // logic.js itself failing to load, which is one of the errors it
+            // reports. `&` and `<` are the two that matter in text position -
+            // and `&` first, so the entities below are not re-escaped.
             content.innerHTML = '<div class="empty error">UI error - see details below:\n\n'
                 + message.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</div>';
         }
@@ -286,13 +290,17 @@ async function callSnapshot() {
     return window.__MOCK_SNAPSHOT__ || { generated_at: '', sessions: [] };
 }
 
-function esc(value) {
-    return String(value == null ? '' : value)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-}
+/* The HTML-safety primitives. They live in logic.js (pure, so the Node test
+   suite covers them) and are aliased here because the markup builders below use
+   them densely: `esc` for a value in text position, `attr` for a whole
+   attribute - `attr` owns the quoting, so a call site cannot pick a quoting
+   style that escaping does not cover. Every interpolated value in this file goes
+   through one of the two, numbers included; the single exception is
+   reportUiError above, which escapes inline so it still works when logic.js is
+   the thing that failed to load. See the contract in logic.js. */
+const esc = logic.esc;
+const attr = logic.attr;
+const ansiToHtml = logic.ansiToHtml;
 
 function fmt(template, values) {
     return String(template || '').replace(/\{(\w+)\}/g, (_, key) => (values[key] != null ? values[key] : ''));
@@ -988,7 +996,7 @@ function renderProcTable(panel, stats) {
     for (const stat of stats) {
         if (stat.kind === 'wsl_vm') {
             rows += '<tr class="proc-vm">'
-                + '<td class="proc-name" data-tip="' + esc(labels.proc_wsl_vm_tip || '') + '">' + esc(labels.proc_wsl_vm || 'WSL2 VM') + '</td>'
+                + '<td class="proc-name"' + attr('data-tip', labels.proc_wsl_vm_tip || '') + '>' + esc(labels.proc_wsl_vm || 'WSL2 VM') + '</td>'
                 + '<td class="proc-num">' + esc(formatCpu(stat.cpu)) + '</td>'
                 + '<td class="proc-num">' + esc(formatBytes(stat.rss)) + '</td>'
                 + '<td class="proc-num">-</td>'
@@ -1261,72 +1269,6 @@ function maxProcessUptime(stats) {
         }
     }
     return max;
-}
-
-// ANSI SGR foreground codes -> themed CSS class. Backgrounds and other
-// attributes are intentionally not mapped (kept simple and legible).
-const ANSI_FG = {
-    30: 'ansi-black', 31: 'ansi-red', 32: 'ansi-green', 33: 'ansi-yellow',
-    34: 'ansi-blue', 35: 'ansi-magenta', 36: 'ansi-cyan', 37: 'ansi-white',
-    90: 'ansi-bright-black', 91: 'ansi-bright-red', 92: 'ansi-bright-green', 93: 'ansi-bright-yellow',
-    94: 'ansi-bright-blue', 95: 'ansi-bright-magenta', 96: 'ansi-bright-cyan', 97: 'ansi-bright-white',
-};
-
-// Render terminal output as safe HTML: escape every text run, turn ANSI SGR
-// color codes into themed spans, and drop the other control sequences a
-// non-emulating console cannot honor (cursor moves, line erases). Only fixed,
-// known class names are emitted - never any part of the raw code - so nothing
-// untrusted reaches an attribute.
-function ansiToHtml(text) {
-    const csi = /\x1b\[[0-9;?]*[A-Za-z]/g;
-    let html = '';
-    let index = 0;
-    let fg = null;
-    let bold = false;
-
-    const flush = (segment) => {
-        if (!segment) {
-            return;
-        }
-        const escaped = esc(segment);
-        const classes = [];
-        if (fg) {
-            classes.push(fg);
-        }
-        if (bold) {
-            classes.push('ansi-bold');
-        }
-        html += classes.length ? '<span class="' + classes.join(' ') + '">' + escaped + '</span>' : escaped;
-    };
-
-    let match;
-    while ((match = csi.exec(text)) !== null) {
-        flush(text.slice(index, match.index));
-        index = csi.lastIndex;
-        const seq = match[0];
-        if (seq[seq.length - 1] !== 'm') {
-            continue;   // a cursor/erase control, not a color - drop it
-        }
-        const body = seq.slice(2, -1);
-        const params = body === '' ? ['0'] : body.split(';');
-        for (const param of params) {
-            const code = parseInt(param, 10);
-            if (code === 0) {
-                fg = null;
-                bold = false;
-            } else if (code === 1) {
-                bold = true;
-            } else if (code === 22) {
-                bold = false;
-            } else if (code === 39) {
-                fg = null;
-            } else if (ANSI_FG[code]) {
-                fg = ANSI_FG[code];
-            }
-        }
-    }
-    flush(text.slice(index));
-    return html;
 }
 
 // A mock entry may be a value or a thunk (so a preview can jitter live).
@@ -1719,11 +1661,14 @@ function renderFilters(counts) {
         const label = state.labels[def.label] || def.key;
         const tip = def.tip ? (state.labels[def.tip] || '') : '';
         const count = counts[def.key];
-        return '<button class="filter-chip' + dot + (active ? ' active' : '') + '" data-filter="' + def.key + '"'
-            + (tip ? ' data-tip="' + esc(tip) + '"' : '')
-            + ' aria-pressed="' + (active ? 'true' : 'false') + '">'
+        return '<button'
+            + attr('class', 'filter-chip' + dot + (active ? ' active' : ''))
+            + attr('data-filter', def.key)
+            + (tip ? attr('data-tip', tip) : '')
+            + attr('aria-pressed', active ? 'true' : 'false')
+            + '>'
             + esc(label)
-            + (count > 0 ? '<span class="count">' + count + '</span>' : '')
+            + (count > 0 ? '<span class="count">' + esc(count) + '</span>' : '')
             + '</button>';
     }).join('');
 
@@ -2140,7 +2085,7 @@ function modelCellHtml(session) {
     }
     const history = session.model_history || [];
     const lines = history.map((entry) => fmtDateTime(entry.time) + '  ' + entry.label);
-    return name + '<span class="model-more" data-tip="' + esc(lines.join('\n')) + '">+' + (history.length - 1) + '</span>';
+    return name + '<span class="model-more"' + attr('data-tip', lines.join('\n')) + '>+' + esc(history.length - 1) + '</span>';
 }
 
 function nameCellHtml(session) {
@@ -2172,7 +2117,7 @@ function nameCellHtml(session) {
             lines.push(fmt(labels.subagents_finished, { count: session.subagents_done }));
         }
         const badgeCount = session.workflow_active ? session.workflow_total : session.subagents_running;
-        html += '<span class="agents-badge" data-tip="' + esc(lines.join('\n')) + '">⚡ ' + badgeCount + '</span>';
+        html += '<span class="agents-badge"' + attr('data-tip', lines.join('\n')) + '>⚡ ' + esc(badgeCount) + '</span>';
     }
 
     // Background OS processes the session is running (e.g. a watched build).
@@ -2181,10 +2126,11 @@ function nameCellHtml(session) {
     // as data attributes. data-tip gives a hover hint about the click action.
     if (session.processes > 0) {
         html += '<span class="proc-badge"'
-            + ' data-proc-pid="' + esc(session.pid) + '"'
-            + ' data-proc-session="' + esc(session.session_id) + '"'
-            + ' data-proc-cwd="' + esc(session.cwd) + '"'
-            + ' data-tip="' + esc(labels.proc_open_hint || '') + '">⚙ ' + session.processes + '</span>';
+            + attr('data-proc-pid', session.pid)
+            + attr('data-proc-session', session.session_id)
+            + attr('data-proc-cwd', session.cwd)
+            + attr('data-tip', labels.proc_open_hint || '')
+            + '>⚙ ' + esc(session.processes) + '</span>';
     }
 
     return html;
@@ -2394,12 +2340,14 @@ function reconcile(container, items, keyOf, create, update) {
 
 function setHero(blocked) {
     const links = blocked.map(({ session, projectName }) =>
-        '<button class="hero-link" data-pid="' + Number(session.pid) + '"'
-        + ' data-project="' + esc(projectName) + '"'
-        + ' data-session="' + esc(session.session_id || '') + '"'
-        + ' data-title="' + esc(session.title || '') + '"'
-        + (session.vscode_deeplink ? ' data-deeplink="1"' : '')
-        + ' data-tip="' + esc(session.status_label) + '">'
+        '<button class="hero-link"'
+        + attr('data-pid', Number(session.pid))
+        + attr('data-project', projectName)
+        + attr('data-session', session.session_id || '')
+        + attr('data-title', session.title || '')
+        + (session.vscode_deeplink ? attr('data-deeplink', '1') : '')
+        + attr('data-tip', session.status_label)
+        + '>'
         + esc(session.name) + '</button>'
     ).join('');
 
