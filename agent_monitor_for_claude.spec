@@ -15,6 +15,8 @@ a = Analysis(
         ('pricing.json', '.'),
         ('agent_monitor_for_claude/ui/index.html', 'agent_monitor_for_claude/ui'),
         ('agent_monitor_for_claude/ui/index.css', 'agent_monitor_for_claude/ui'),
+        ('agent_monitor_for_claude/ui/boot.js', 'agent_monitor_for_claude/ui'),
+        ('agent_monitor_for_claude/ui/boot-scripts.js', 'agent_monitor_for_claude/ui'),
         ('agent_monitor_for_claude/ui/logic.js', 'agent_monitor_for_claude/ui'),
         ('agent_monitor_for_claude/ui/index.js', 'agent_monitor_for_claude/ui'),
         # ui/dev-mock.js is intentionally NOT bundled: it holds the browser

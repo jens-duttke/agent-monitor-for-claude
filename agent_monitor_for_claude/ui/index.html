@@ -3,31 +3,19 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- The page needs nothing from the network, so it is forbidden from asking:
+         default-src 'none' blocks every resource type not named below, and
+         connect-src 'none' leaves fetch / XHR / WebSocket / EventSource with
+         nowhere to go. Scripts and styles come from this page's own origin only,
+         with no inline script allowed - which is why the bootstrap lives in
+         boot.js and boot-scripts.js instead of inline blocks. Holds for both
+         origins this page runs under: the app's 127.0.0.1 asset server, and a
+         file:// page in the no-bridge browser preview. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none';
+        script-src 'self'; style-src 'self'; img-src 'self';
+        connect-src 'none'; base-uri 'none'; form-action 'none'">
     <title>Agent Monitor for Claude</title>
-    <script>
-        // Apply the saved / preferred theme before first paint to avoid a flash.
-        (function () {
-            try {
-                var t = localStorage.getItem('amc-theme')
-                    || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
-                document.documentElement.setAttribute('data-theme', t);
-            } catch (e) {
-                document.documentElement.setAttribute('data-theme', 'dark');
-            }
-        })();
-    </script>
-    <script>
-        // Version every bundled asset with the ?v= token from the page URL
-        // (see app._asset_version). document.write keeps these parser-inserted,
-        // preserving load order and DOMContentLoaded timing exactly, while the
-        // fresh URL stops WebView2's persistent cache serving a stale copy after
-        // an app update.
-        (function () {
-            var v = new URLSearchParams(location.search).get('v');
-            window.__assetQuery = v ? '?v=' + encodeURIComponent(v) : '';
-            document.write('<link rel="stylesheet" href="index.css' + window.__assetQuery + '">');
-        })();
-    </script>
+    <script src="boot.js"></script>
 </head>
 <body>
     <div class="topbar">
@@ -72,12 +60,6 @@
         </div>
     </div>
     <main id="content" class="content"></main>
-    <script>
-        (function () {
-            var q = window.__assetQuery || '';
-            document.write('<script src="logic.js' + q + '"><\/script>');
-            document.write('<script src="index.js' + q + '"><\/script>');
-        })();
-    </script>
+    <script src="boot-scripts.js"></script>
 </body>
 </html>

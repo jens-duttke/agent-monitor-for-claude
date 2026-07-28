@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- The window's page now declares a Content-Security-Policy that forbids it from reaching the network at all: no requests, and no scripts, styles, or images from anywhere but the app's own bundled files. The app never made a network request in the first place - now the browser engine would refuse one even if asked. A new `PRIVACY.md` states what the app reads, keeps, shows, and writes, with the commands and tests to verify each claim yourself.
+
 ## [0.5.0] - 2026-07-18
 
 ### Added
