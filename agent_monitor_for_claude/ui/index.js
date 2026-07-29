@@ -1409,11 +1409,17 @@ function toast(message) {
 // Ask before deleting, then call the bridge. On success the session is dropped
 // from the cached history and the view re-renders; the deletion itself runs on
 // a worker thread, so awaiting it never blocks the window.
-function confirmDeleteSession(sessionId, cwd) {
+function confirmDeleteSession(sessionId, cwd, name, age) {
     if (!sessionId) {
         return;
     }
-    showConfirm(state.labels.delete_confirm_title, state.labels.delete_confirm_body, state.labels.delete_confirm_ok, async () => {
+
+    // The dialog quotes the row back, so it confirms *which* session is going -
+    // not just that a deletion was intended. A generic prompt cannot catch the
+    // one mistake that matters here: the menu of the wrong, similar-looking row.
+    const labels = state.labels;
+    const target = [name, age].filter(Boolean).join(' · ');
+    showConfirm(labels.delete_confirm_title, labels.delete_confirm_body, target, labels.delete_confirm_ok, async () => {
         const bridge = apiBridge();
         if (!bridge || typeof bridge.delete_session !== 'function') {
             return;
@@ -1442,8 +1448,9 @@ function confirmDeleteSession(sessionId, cwd) {
 
 // A themed, self-contained confirmation modal (the native confirm dialog is
 // unthemed and blocking, and the app deliberately avoids native chrome). Escape
-// or a backdrop click cancels; only the primary button runs onConfirm.
-function showConfirm(title, body, okLabel, onConfirm) {
+// or a backdrop click cancels; only the primary button runs onConfirm. The
+// optional detail line names what the action targets and is dropped when empty.
+function showConfirm(title, body, detail, okLabel, onConfirm) {
     closeConfirm();
 
     const overlay = document.createElement('div');
@@ -1451,6 +1458,7 @@ function showConfirm(title, body, okLabel, onConfirm) {
     overlay.id = 'confirm-overlay';
     overlay.innerHTML = '<div class="modal" role="dialog" aria-modal="true">'
         + '<div class="modal-title"></div>'
+        + '<div class="modal-detail"></div>'
         + '<div class="modal-body"></div>'
         + '<div class="modal-actions">'
         +     '<button class="modal-btn" type="button" data-act="cancel"></button>'
@@ -1458,6 +1466,7 @@ function showConfirm(title, body, okLabel, onConfirm) {
         + '</div></div>';
 
     overlay.querySelector('.modal-title').textContent = title || '';
+    overlay.querySelector('.modal-detail').textContent = detail || '';
     overlay.querySelector('.modal-body').textContent = body || '';
 
     const cancelBtn = overlay.querySelector('[data-act="cancel"]');
@@ -1478,7 +1487,10 @@ function showConfirm(title, body, okLabel, onConfirm) {
 
     document.addEventListener('keydown', onConfirmKey, true);
     document.body.appendChild(overlay);
-    okBtn.focus();
+    // The destructive button is never the one under the initial focus: a dialog
+    // that appears is often dismissed with a reflex Enter or Space, and that key
+    // must cancel, never delete.
+    cancelBtn.focus();
 }
 
 function onConfirmKey(event) {
@@ -2432,9 +2444,16 @@ async function openRowMenu(menuBtn) {
         } else if (key === 'scratchpad') {
             openPath(scratchpad);
         } else if (key === 'delete') {
-            confirmDeleteSession(sessionId, cwd);
+            confirmDeleteSession(sessionId, cwd, rowCellText(rowEl, '.name'), rowCellText(rowEl, '.age'));
         }
     }, { type: 'row', rowKey: menuRowKey });
+}
+
+// The rendered text of one of a row's cells - read at click time, so a dialog
+// quotes exactly what the user saw (a live-ticking age included).
+function rowCellText(rowEl, selector) {
+    const cell = rowEl ? rowEl.querySelector(selector) : null;
+    return cell ? cell.textContent.trim() : '';
 }
 
 // Return the session's scratchpad path when one exists, else '' (no entry).

@@ -1537,6 +1537,24 @@ body {
         margin-bottom: 8px;
     }
 
+    /* Names what the action targets, so the dialog is read as "this one" rather
+       than a generic prompt. Dropped from the flow when there is nothing to name. */
+    .modal-detail {
+        font-size: 13px;
+        line-height: 1.45;
+        color: var(--fg);
+        margin-bottom: 12px;
+        padding: 8px 10px;
+        border-left: 3px solid var(--c-errored);
+        border-radius: 0 var(--radius-control) var(--radius-control) 0;
+        background: var(--control-bg);
+        overflow-wrap: anywhere;
+
+        &:empty {
+            display: none;
+        }
+    }
+
     .modal-body {
         font-size: 13px;
         line-height: 1.5;

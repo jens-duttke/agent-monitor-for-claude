@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The confirmation before deleting a past session now names the session it is about to delete - its title and how long ago it was last active, quoted from the row you opened the menu on. The keyboard focus also starts on "Cancel" instead of "Delete", so pressing Enter or Space to dismiss the dialog can no longer delete anything. Deletion is still permanent, but confirming it is no longer a generic prompt that looks the same for every session.
+
 ### Added
 - The window's page now declares a Content-Security-Policy that forbids it from reaching the network at all: no requests, and no scripts, styles, or images from anywhere but the app's own bundled files. The app never made a network request in the first place - now the browser engine would refuse one even if asked. A new `PRIVACY.md` states what the app reads, keeps, shows, and writes, with the commands and tests to verify each claim yourself.
 
