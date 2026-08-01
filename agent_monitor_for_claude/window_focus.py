@@ -16,6 +16,12 @@ ancestor search finds nothing, so a fallback matches the session title - which
 Claude Code sets as the terminal title - against windows owned by a known
 terminal or console host.
 
+A session running inside a WSL distribution has no Windows process at all -
+the agent runs inside the distro, so there is no pid and no ancestor chain to
+walk in the first place.  ``app.py`` routes those sessions straight to
+:func:`focus_terminal_window`, the same title-only match used as the
+fallback above, skipping the pid-based search entirely.
+
 Side effects are limited to Win32 window enumeration and activation, and run
 only on an explicit user click.  Window titles are compared in memory to pick
 the right window - never stored, logged, or displayed.
@@ -29,7 +35,7 @@ import re
 
 from .process_probe import TERMINAL_WINDOW_OWNERS, ancestry, process_names
 
-__all__ = ['focus_session_window', 'open_directory', 'open_vscode_session', 'vscode_session_url']
+__all__ = ['focus_session_window', 'focus_terminal_window', 'open_directory', 'open_vscode_session', 'vscode_session_url']
 
 # Official deep link of the Claude Code VS Code extension (since v2.1.72):
 # focuses the tab of an already-open session in the focused VS Code window.
@@ -78,6 +84,39 @@ def focus_session_window(pid: int, project_name: str, session_title: str = '') -
 
     if hwnd is None:
         hwnd = select_terminal_window(windows, process_names(), session_title)
+
+    if hwnd is None:
+        return False
+
+    return _activate(hwnd)
+
+
+def focus_terminal_window(session_title: str) -> bool:
+    """Bring a session's terminal window to the foreground by its title alone.
+
+    A session running inside a WSL distribution has no Windows process at all
+    - the agent runs inside the distro - so there is no pid to search from and
+    no window can ever sit on a process chain the way :func:`focus_session_window`
+    walks for a native session.  The session's terminal is still a Windows-side
+    window (some terminal emulator hosts it), and Claude Code sets that
+    terminal's title to the session title exactly as it does for a native
+    session, so matching on the title alone - the same fallback
+    :func:`focus_session_window` already uses when the ancestor search finds
+    nothing - is the only route that can ever find it.
+
+    Parameters
+    ----------
+    session_title : str
+        The session title shown in the UI, matched against terminal and
+        console window titles; see :func:`select_terminal_window`.
+
+    Returns
+    -------
+    bool
+        True if a matching terminal window was found and activated.
+    """
+    windows = _enum_windows()
+    hwnd = select_terminal_window(windows, process_names(), session_title)
 
     if hwnd is None:
         return False
