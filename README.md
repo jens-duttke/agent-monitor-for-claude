@@ -40,7 +40,7 @@ If you run many Claude Code agents across several projects, you cannot tell from
 - Windows 10 / 11
 - [Microsoft Edge WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (pre-installed on current Windows)
 - Claude Code (this tool reads the session data it writes under `~/.claude/`)
-- WSL sessions need WSL2 with the distro running - see [docs/configuration.md](docs/configuration.md) to turn WSL monitoring off
+- WSL sessions need WSL2 with the distro running, plus the `\\wsl.localhost` UNC share that Windows 11 (or Windows 10 with the Microsoft Store version of WSL) exposes for it - on an older inbox WSL build without that share, the feature quietly finds nothing; see [docs/configuration.md](docs/configuration.md) to turn WSL monitoring off
 - Python 3.10 or newer - only to run or build from source; the prebuilt executable bundles its own Python
 
 ## Getting started
