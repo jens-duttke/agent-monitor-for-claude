@@ -36,7 +36,7 @@ import psutil
 
 __all__ = [
     'ChildProcessStat', 'ProcessInfo', 'TERMINAL_WINDOW_OWNERS',
-    'ancestry', 'probe', 'probe_all', 'process_names', 'process_stats',
+    'ancestry', 'probe', 'probe_all', 'process_names', 'process_stats', 'vmmem_present',
 ]
 
 # Child processes that a Claude Code session always owns while idle; their
@@ -213,6 +213,18 @@ def ancestry(pid: int) -> list[tuple[int, str]]:
 def process_names() -> dict[int, str]:
     """Return ``{pid: lowercased executable name}`` for every running process."""
     return {pid: name for pid, (_ppid, name) in _scan_processes().items()}
+
+
+def vmmem_present() -> bool:
+    """Return whether a ``vmmem*`` process (the shared WSL2 utility VM) is currently running.
+
+    One ``_scan_processes()`` pass, reused by ``wsl.py`` as the cheap gate
+    before it ever invokes ``wsl.exe``: no VM running means no distro can be
+    running either, so WSL discovery costs nothing beyond this scan while WSL
+    is unused.
+    """
+    table = _scan_processes()
+    return any(name.startswith('vmmem') for _pid, (_ppid, name) in table.items())
 
 
 def process_stats(pid: int, proc_start_ticks: int | None = None) -> list[ChildProcessStat]:

@@ -35,6 +35,16 @@ class ValidateTest(unittest.TestCase):
         self.assertEqual(result, data)
         dialog.assert_not_called()
 
+    def test_wsl_wrong_type_is_reported_and_dropped(self) -> None:
+        # 'wsl' is a bool key like 'include_completed' - a string value must be
+        # reported and dropped exactly like any other type mismatch.
+        with mock.patch('agent_monitor_for_claude.settings._error_dialog') as dialog:
+            result = settings._validate({'wsl': 'yes'}, Path('x'))
+
+        self.assertNotIn('wsl', result)
+        dialog.assert_called_once()
+        self.assertIn('wsl', dialog.call_args[0][0])
+
 
 if __name__ == '__main__':
     unittest.main()
