@@ -90,13 +90,13 @@ from the shell actions under [Actions performed on your behalf](#actions-perform
 those hand a path or a URI to Windows and let it decide what opens; this is the one place the
 application itself starts a process, waits for it, and reads what it printed.
 
-It runs rarely, not on every refresh. The process-table scan every refresh already does (see
-[Processes and windows](#processes-and-windows)) is also checked for a `vmmem*` process - the shared
-WSL2 utility VM - and `wsl.exe` is skipped entirely when that is absent, which it is on any machine with
-no WSL distribution currently running. When `vmmem` is present, the distribution list is still cached
-for about ten seconds, so a normal poll cadence does not re-run it every cycle. Turn the `wsl` setting
-off (see [docs/configuration.md](docs/configuration.md)) and none of this - the extra process check, the
-cache, or the command itself - ever runs.
+It runs rarely, not on every refresh. A dedicated pass over the process table - separate from the one
+[Processes and windows](#processes-and-windows) describes, and cached for five seconds - checks for a
+`vmmem*` process, the shared WSL2 utility VM, and `wsl.exe` is skipped entirely when that is absent,
+which it is on any machine with no WSL distribution currently running. When `vmmem` is present, the
+distribution list is still cached for about ten seconds, so a normal poll cadence does not re-run it
+every cycle. Turn the `wsl` setting off (see [docs/configuration.md](docs/configuration.md)) and none of
+this - the extra process check, the cache, or the command itself - ever runs.
 
 **A stopped distribution is never touched.** Reading a file under `\\wsl.localhost\<distro>\` starts
 that distribution if it was not already running, so every WSL read described below only ever targets a
@@ -251,6 +251,10 @@ location differs: instead of `~/.claude/`, it is read at `\\wsl.localhost\<distr
 distribution that is already running. This is optional and on by default; the `wsl` setting (see
 [docs/configuration.md](docs/configuration.md)) turns it off, and [Programs it runs](#programs-it-runs)
 states the guarantee that a distribution which is not already running is never touched at all.
+
+One consequence of watching a distribution that *is* running is worth stating plainly: these periodic
+reads count as activity against it and can keep it from idling out on its own; turning the `wsl` setting
+off stops that too, along with everything else in this section.
 
 One more thing is read that has no Windows counterpart: `\\wsl.localhost\<distro>\proc\`, the
 distribution's own Linux process table, exposed read-only over the same mount. Every refresh it stands in
@@ -409,9 +413,9 @@ grep -rn "'wsl.exe', '--list'" agent_monitor_for_claude/ --include=*.py
 grep -nE "subprocess\.[A-Za-z_]*\(|os\.system|os\.popen|Popen\(|ShellExecute|CreateProcess|os\.exec" agent_monitor_for_claude/wsl.py
 ```
 
-Both commands print exactly one line each: the first is `agent_monitor_for_claude/wsl.py:155`, the
+Both commands print exactly one line each: the first is `agent_monitor_for_claude/wsl.py:171`, the
 `['wsl.exe', '--list', '--running', '--quiet']` argument list - the single place in the entire codebase
-where that command line is built; the second is `wsl.py:154`, `result = subprocess.run(...)` - the only
+where that command line is built; the second is `wsl.py:170`, `result = subprocess.run(...)` - the only
 process-spawning call anywhere in the file. (`process_probe.py` separately holds the string `'wsl.exe'`
 too, but only as a name to *recognize* an already-running Windows process as a WSL relay child, never to
 invoke anything - a broader `grep -rn "wsl.exe" agent_monitor_for_claude/ --include=*.py` finds that

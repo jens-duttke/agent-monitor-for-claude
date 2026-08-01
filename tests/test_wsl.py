@@ -149,11 +149,19 @@ class WslRootsGateTests(unittest.TestCase):
             probe.assert_not_called()
 
     def test_discovery_cached_within_ttl(self):
+        # Pins the whole discovery step, not just the distro listing: a second
+        # call within the TTL must not re-glob for .claude directories either
+        # (_discover_roots costs several 9P round trips per distro), so both
+        # the distro listing and the root discovery itself are patched and
+        # checked - patching only _list_running_distros would leave the more
+        # expensive glob step uncovered, letting it re-run on every call.
         with mock.patch.object(wsl, '_vmmem_present', return_value=True), \
-             mock.patch.object(wsl, '_list_running_distros', return_value=[]) as listing:
+             mock.patch.object(wsl, '_list_running_distros', return_value=['Ubuntu']) as listing, \
+             mock.patch.object(wsl, '_discover_roots', return_value=[]) as discover:
             wsl.wsl_roots()
             wsl.wsl_roots()
             self.assertEqual(listing.call_count, 1)
+            self.assertEqual(discover.call_count, 1)
 
 
 def _write_stat(proc_dir: Path, pid: int, comm: str, ppid: int, starttime: int,

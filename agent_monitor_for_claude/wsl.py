@@ -19,11 +19,18 @@ to uphold, both load-bearing for the app's read-only, no-network posture:
 
 Two short-lived caches keep the steady-state cost near zero while WSL is not
 in use: a ``vmmem*`` process (the shared WSL2 utility VM) must be seen before
-``wsl.exe`` is ever invoked at all (``_VMMEM_TTL``), and the running-distro
-list itself is cached a little longer, once that is true (``_DISCOVERY_TTL``).
-The moment a check finds ``vmmem`` gone, both caches are dropped immediately -
-a VM shutdown (and every distro that ran under it) reads as gone on the very
-next poll rather than lingering for the discovery cache window.
+``wsl.exe`` is ever invoked at all (``_VMMEM_TTL``), and the discovered root
+list - the running-distro list *and* the UNC globbing that turns it into
+``SessionRoot`` objects - is cached a little longer, once that is true
+(``_DISCOVERY_TTL``). Caching the roots, not just the distro names, matters
+because :func:`wsl_roots` is called roughly once a second (the UI's
+fingerprint poll, plus every bridge call): without it, every one of those
+calls would re-run the per-distro globbing (a home ``is_dir()``, an
+``iterdir()``, and an ``is_dir()`` per ``.claude`` candidate) regardless of
+the distro list itself being cached. The moment a check finds ``vmmem`` gone,
+both caches are dropped immediately - a VM shutdown (and every distro that ran
+under it) reads as gone on the very next poll rather than lingering for the
+discovery cache window.
 """
 from __future__ import annotations
 
@@ -61,7 +68,7 @@ _DISCOVERY_TTL = 10.0
 # so a cache hit on one thread never blocks behind a slow refresh on another.
 _cache_lock = threading.Lock()
 _vmmem_cache: tuple[float, bool] | None = None
-_discovery_cache: tuple[float, list[str]] | None = None
+_discovery_cache: tuple[float, list[SessionRoot]] | None = None
 
 
 def wsl_roots() -> list[SessionRoot]:
@@ -70,10 +77,10 @@ def wsl_roots() -> list[SessionRoot]:
     Returns ``[]`` without any subprocess call or filesystem access whenever
     ``settings.WSL_MONITORING`` is off, or whenever no ``vmmem*`` process is
     running - no WSL2 utility VM means no distro can be running either.
-    Otherwise the running-distro list is discovered (both checks cached, see
-    the module docstring) and turned into roots by :func:`_discover_roots`. A
-    distro absent from that running list is never touched by any filesystem
-    access.
+    Otherwise the discovered root list is served from cache when fresh, or
+    rediscovered via :func:`_discover_roots` (both checks cached, see the
+    module docstring). A distro absent from the running list is never touched
+    by any filesystem access.
 
     Returns
     -------
@@ -87,8 +94,7 @@ def wsl_roots() -> list[SessionRoot]:
     if not _vmmem_present_cached():
         return []
 
-    distros = _list_running_distros_cached()
-    return _discover_roots(distros, _UNC_BASE)
+    return _discovered_roots_cached()
 
 
 def reset_caches() -> None:
@@ -103,8 +109,8 @@ def _vmmem_present_cached() -> bool:
     """Return whether a ``vmmem*`` process exists, refreshed at most every ``_VMMEM_TTL`` seconds.
 
     A check that finds vmmem gone also drops the discovery cache immediately,
-    so a shut-down WSL2 VM does not leave a stale distro list served for the
-    rest of the discovery TTL.
+    so a shut-down WSL2 VM does not leave stale roots served for the rest of
+    the discovery TTL.
     """
     global _vmmem_cache, _discovery_cache
 
@@ -122,8 +128,17 @@ def _vmmem_present_cached() -> bool:
     return present
 
 
-def _list_running_distros_cached() -> list[str]:
-    """Return the running-distro list, refreshed at most every ``_DISCOVERY_TTL`` seconds."""
+def _discovered_roots_cached() -> list[SessionRoot]:
+    """Return the discovered ``SessionRoot`` list, refreshed at most every ``_DISCOVERY_TTL`` seconds.
+
+    Caches the roots themselves, not just the running-distro name list that produces them:
+    :func:`_discover_roots`'s UNC globbing (a ``home`` directory ``is_dir()``, an ``iterdir()``, then an
+    ``is_dir()`` per candidate ``.claude``) costs several 9P round trips per distro, and this function is
+    called roughly once a second (:func:`wsl_roots` is reached from the UI's per-second fingerprint poll,
+    plus every bridge call) - re-running that glob on every call would defeat the point of caching at
+    all. A cache miss re-lists the running distros and rediscovers their roots together, so the two never
+    drift out of step with each other.
+    """
     global _discovery_cache
 
     with _cache_lock:
@@ -131,11 +146,12 @@ def _list_running_distros_cached() -> list[str]:
             return _discovery_cache[1]
 
     distros = _list_running_distros()
+    roots = _discover_roots(distros, _UNC_BASE)
 
     with _cache_lock:
-        _discovery_cache = (time.monotonic(), distros)
+        _discovery_cache = (time.monotonic(), roots)
 
-    return distros
+    return roots
 
 
 def _list_running_distros() -> list[str]:
