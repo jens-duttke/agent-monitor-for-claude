@@ -62,6 +62,74 @@ class DiscoverRootsTests(unittest.TestCase):
         for path in checked:
             self.assertTrue(path.startswith('\\\\wsl.localhost\\Ubuntu'), path)
 
+    def test_unreadable_candidate_is_skipped_not_the_whole_distro(self):
+        # Real-machine bug: root/.claude is routinely unreadable (WinError 5,
+        # PermissionError) over the 9P share - Path.is_dir() only swallows
+        # not-found-style errors, never a permission error, so it used to
+        # propagate out of _distro_roots and get caught by _discover_roots's
+        # per-distro `except OSError`, dropping the ENTIRE distro - including
+        # a perfectly good home candidate found moments earlier. Only the
+        # poisoned candidate must be skipped; its sibling must still be
+        # found. Exercised against the real is_dir() codepath (patched to
+        # raise for exactly one path) rather than mocking the helper, so this
+        # pins the actual failure mode, not just the helper's own contract.
+        with tempfile.TemporaryDirectory() as base:
+            claude = Path(base) / 'Ubuntu' / 'home' / 'dev' / '.claude'
+            claude.mkdir(parents=True)
+            poisoned = Path(base) / 'Ubuntu' / 'root' / '.claude'
+            real_is_dir = Path.is_dir
+
+            def flaky_is_dir(path):
+                if path == poisoned:
+                    raise PermissionError(5, 'Access is denied')
+                return real_is_dir(path)
+
+            with mock.patch.object(Path, 'is_dir', flaky_is_dir):
+                roots = wsl._discover_roots(['Ubuntu'], Path(base))
+
+            self.assertEqual(len(roots), 1)
+            self.assertEqual(roots[0].origin, 'wsl:Ubuntu')
+            self.assertEqual(roots[0].config_dir, claude)
+
+    def test_unreadable_home_subdir_is_skipped_root_claude_still_found(self):
+        # Mirror case: a permission error on one *user's* .claude (someone
+        # else's home directory, unreadable to this account) must not hide
+        # root/.claude, which this distro does expose.
+        with tempfile.TemporaryDirectory() as base:
+            (Path(base) / 'Ubuntu' / 'home' / 'otheruser').mkdir(parents=True)
+            poisoned = Path(base) / 'Ubuntu' / 'home' / 'otheruser' / '.claude'
+            root_claude = Path(base) / 'Ubuntu' / 'root' / '.claude'
+            root_claude.mkdir(parents=True)
+            real_is_dir = Path.is_dir
+
+            def flaky_is_dir(path):
+                if path == poisoned:
+                    raise PermissionError(5, 'Access is denied')
+                return real_is_dir(path)
+
+            with mock.patch.object(Path, 'is_dir', flaky_is_dir):
+                roots = wsl._discover_roots(['Ubuntu'], Path(base))
+
+            self.assertEqual(len(roots), 1)
+            self.assertEqual(roots[0].origin, 'wsl:Ubuntu')
+            self.assertEqual(roots[0].config_dir, root_claude)
+
+
+class IsReadableDirTests(unittest.TestCase):
+    """Pins _is_readable_dir's own contract directly, isolated from _discover_roots."""
+
+    def test_real_directory_is_true(self):
+        with tempfile.TemporaryDirectory() as base:
+            self.assertTrue(wsl._is_readable_dir(Path(base)))
+
+    def test_missing_path_is_false(self):
+        with tempfile.TemporaryDirectory() as base:
+            self.assertFalse(wsl._is_readable_dir(Path(base) / 'does-not-exist'))
+
+    def test_permission_error_is_false(self):
+        with mock.patch.object(Path, 'is_dir', side_effect=PermissionError(5, 'Access is denied')):
+            self.assertFalse(wsl._is_readable_dir(Path('irrelevant')))
+
 
 class WslRootsGateTests(unittest.TestCase):
     def setUp(self):

@@ -185,9 +185,18 @@ def _discover_roots(distros: list[str], unc_base: Path | str) -> list[SessionRoo
     running-only list: a name absent from it is never looked up here, however
     it happens to sit on disk - this is what keeps a stopped distro untouched.
     Distro names are processed in sorted order for a stable fingerprint across
-    polls.  Any ``OSError`` while probing one distro (a dropped UNC connection,
-    a permission error) drops that distro entirely rather than returning a
-    partial result for it; the other distros are unaffected.
+    polls.
+
+    Two layers of defense against a bad filesystem read, neither of which is
+    expected to raise out of here in practice: :func:`_distro_roots` itself
+    skips one unreadable *candidate* (a permission error on one user's
+    ``.claude``, or on ``root/.claude`` - routine, since ``/root`` is rarely
+    readable by the account the 9P share runs as) via :func:`_is_readable_dir`,
+    without affecting its siblings or the rest of the distro.  The
+    ``except OSError`` here is the outer net for a failure severe enough to
+    not be scoped to one candidate (the whole UNC connection to a distro
+    dropping mid-call) - it drops only that one distro; the other distros are
+    unaffected.
     """
     roots: list[SessionRoot] = []
     for distro in sorted(distros):
@@ -206,6 +215,17 @@ def _distro_roots(distro: str, unc_base: Path | str) -> list[SessionRoot]:
     further one - more than one user account with Claude Code configured -
     gets a disambiguating ``wsl:<distro>:<home>`` origin, so the common case
     of a single user still gets the stable, undecorated origin.
+
+    Every directory check here - including the ``home`` gate and each user's
+    listing - goes through :func:`_is_readable_dir` rather than a bare
+    ``Path.is_dir()``, which only swallows not-found-style errors and lets a
+    permission error through. ``root/.claude`` in particular is routinely
+    unreadable to the account the 9P share runs as (a real-machine bug: it
+    used to raise ``PermissionError``, which propagated out of this function
+    and dropped the *whole* distro via ``_discover_roots``'s outer guard,
+    even when a perfectly good ``home/*/.claude`` had already been found).
+    One unreadable candidate is now skipped on its own; its siblings and the
+    rest of the distro are unaffected.
     """
     # Joined as a string, not via Path.__truediv__: when unc_base is the bare
     # "\\wsl.localhost" host (see _UNC_BASE), this is the first time server
@@ -215,14 +235,19 @@ def _distro_roots(distro: str, unc_base: Path | str) -> list[SessionRoot]:
     candidates: list[tuple[str, Path]] = []
 
     home_dir = distro_base / 'home'
-    if home_dir.is_dir():
-        for user_dir in sorted(home_dir.iterdir(), key=lambda entry: entry.name):
+    if _is_readable_dir(home_dir):
+        try:
+            user_dirs = sorted(home_dir.iterdir(), key=lambda entry: entry.name)
+        except OSError:
+            user_dirs = []
+
+        for user_dir in user_dirs:
             claude_dir = user_dir / '.claude'
-            if claude_dir.is_dir():
+            if _is_readable_dir(claude_dir):
                 candidates.append((user_dir.name, claude_dir))
 
     root_claude = distro_base / 'root' / '.claude'
-    if root_claude.is_dir():
+    if _is_readable_dir(root_claude):
         candidates.append(('root', root_claude))
 
     roots: list[SessionRoot] = []
@@ -237,6 +262,25 @@ def _distro_roots(distro: str, unc_base: Path | str) -> list[SessionRoot]:
         ))
 
     return roots
+
+
+def _is_readable_dir(path: Path) -> bool:
+    """Return whether *path* is a directory this process can actually read.
+
+    ``Path.is_dir()`` on its own only swallows not-found-style errors (a
+    missing path, a broken symlink) - a permission error (``PermissionError``,
+    WinError 5) propagates instead.  That is routine here: a UNC 9P share
+    exposes every distro's filesystem including directories this process's
+    account cannot read (``/root``, another user's home), so every candidate
+    check in :func:`_distro_roots` goes through this helper instead of a bare
+    ``is_dir()`` call, catching ``OSError`` - permission errors included - and
+    reporting the candidate as simply not usable rather than letting the
+    error escape and take the whole distro down with it.
+    """
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
 
 
 # Linux clock ticks per second, used to interpret /proc/[pid]/stat's tick-based fields (starttime,
