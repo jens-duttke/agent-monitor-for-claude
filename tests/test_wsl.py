@@ -114,6 +114,26 @@ class DiscoverRootsTests(unittest.TestCase):
             self.assertEqual(roots[0].origin, 'wsl:Ubuntu')
             self.assertEqual(roots[0].config_dir, root_claude)
 
+    def test_multiple_homes_get_disambiguating_origins(self):
+        # _distro_roots orders candidates home users sorted by name first,
+        # then root/.claude last regardless of where it would sort
+        # alphabetically - only the first candidate overall keeps the plain
+        # wsl:<distro> origin; every later one is disambiguated with its home
+        # name, so this pins the exact candidate order the code produces
+        # rather than just that disambiguation happens.
+        with tempfile.TemporaryDirectory() as base:
+            alice = Path(base) / 'U' / 'home' / 'alice' / '.claude'
+            bob = Path(base) / 'U' / 'home' / 'bob' / '.claude'
+            root_claude = Path(base) / 'U' / 'root' / '.claude'
+            alice.mkdir(parents=True)
+            bob.mkdir(parents=True)
+            root_claude.mkdir(parents=True)
+
+            roots = wsl._discover_roots(['U'], Path(base))
+
+            self.assertEqual([root.origin for root in roots], ['wsl:U', 'wsl:U:bob', 'wsl:U:root'])
+            self.assertEqual([root.config_dir for root in roots], [alice, bob, root_claude])
+
 
 class IsReadableDirTests(unittest.TestCase):
     """Pins _is_readable_dir's own contract directly, isolated from _discover_roots."""

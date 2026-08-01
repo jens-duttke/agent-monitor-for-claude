@@ -268,6 +268,14 @@ def _distro_roots(distro: str, unc_base: Path | str) -> list[SessionRoot]:
 
     roots: list[SessionRoot] = []
     for index, (home_name, claude_dir) in enumerate(candidates):
+        # If the candidate that currently holds this plain origin later
+        # disappears or turns unreadable, the next poll's index-0 candidate
+        # shifts up and inherits it - a UI-held origin from before the shift
+        # then resolves to a different user's root. That is never a silent
+        # cross-user mix: every action re-derives its target from the session
+        # id (a UUID) and cwd, confined to that root's own projects/ tree, so
+        # a stale origin just fails to find its file and refuses, rather than
+        # reading or deleting the new user's session. Accepted for now.
         origin = f'wsl:{distro}' if index == 0 else f'wsl:{distro}:{home_name}'
         roots.append(SessionRoot(
             origin=origin,
