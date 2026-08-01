@@ -122,6 +122,16 @@ class ProbeWslSessionsTests(unittest.TestCase):
             self.assertFalse(wsl.probe_wsl_sessions(root, [(100, 4999)])[100].alive)   # recycled
             self.assertFalse(wsl.probe_wsl_sessions(root, [(200, None)])[200].alive)   # gone
 
+    def test_proc_start_ticks_zero_is_not_treated_as_absent(self):
+        # starttime 0 is a legal stat-field value (ticks since boot), not a sentinel for "unknown" -
+        # a falsy `if proc_start_ticks:` check would silently skip the recycled-pid comparison here.
+        with tempfile.TemporaryDirectory() as base:
+            root = self._root(base)
+            _write_stat(root.proc_dir, 100, 'claude', 1, 0)
+            self.assertTrue(wsl.probe_wsl_sessions(root, [(100, 0)])[100].alive)        # matches exactly
+            _write_stat(root.proc_dir, 200, 'claude', 1, 7000)
+            self.assertFalse(wsl.probe_wsl_sessions(root, [(200, 0)])[200].alive)       # recycled: 0 != 7000
+
     def test_descendants_and_helper_window(self):
         with tempfile.TemporaryDirectory() as base:
             root = self._root(base)

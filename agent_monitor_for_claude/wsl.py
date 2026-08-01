@@ -258,9 +258,11 @@ def probe_wsl_sessions(root: SessionRoot, requests: Iterable[tuple[int, int | No
     absent from the table is not alive; a pid present but whose recorded start time (stat field 22)
     does not match *proc_start_ticks* means Linux recycled the pid for an unrelated process, so it is
     reported not alive too - the same recycled-pid guard ``process_probe`` applies to the native
-    Windows process, adapted to procfs's own start-time field. ``host`` and ``via_cli`` are always
-    ``None``/``False``: a WSL session has no Windows-side ancestry to classify the way a native
-    session's GUI/shell chain does.
+    Windows process, adapted to procfs's own start-time field. The comparison only runs when
+    *proc_start_ticks* is not ``None``: ``0`` is a legitimate stat-field value (ticks since boot, not
+    since some epoch), never a sentinel for "unknown", so it is compared like any other recorded
+    start time rather than skipped. ``host`` and ``via_cli`` are always ``None``/``False``: a WSL
+    session has no Windows-side ancestry to classify the way a native session's GUI/shell chain does.
 
     Parameters
     ----------
@@ -268,7 +270,7 @@ def probe_wsl_sessions(root: SessionRoot, requests: Iterable[tuple[int, int | No
         A WSL root as returned by :func:`wsl_roots`; ``root.proc_dir`` is read.
     requests : iterable of (pid, proc_start_ticks)
         Session process ids to probe, each paired with the recorded start time (``/proc/[pid]/stat``
-        field 22) or ``None`` when not yet known.
+        field 22), or ``None`` when not yet known - absent, not ``0``, which is a real start time.
 
     Returns
     -------
@@ -290,7 +292,7 @@ def probe_wsl_sessions(root: SessionRoot, requests: Iterable[tuple[int, int | No
             continue
 
         _comm, _ppid, starttime = entry
-        if proc_start_ticks and proc_start_ticks != starttime:
+        if proc_start_ticks is not None and proc_start_ticks != starttime:
             result[pid] = ProcessInfo(alive=False, tool_running=False)
             continue
 
