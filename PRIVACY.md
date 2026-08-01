@@ -253,15 +253,28 @@ distribution that is already running. This is optional and on by default; the `w
 states the guarantee that a distribution which is not already running is never touched at all.
 
 One more thing is read that has no Windows counterpart: `\\wsl.localhost\<distro>\proc\`, the
-distribution's own Linux process table, exposed read-only over the same mount. It stands in for the
-Windows process-table scan described under [Processes and windows](#processes-and-windows), and is read
-just as narrowly - only process names, parent-process links, and start times, so a session's liveness and
-its running child processes can be determined. Nothing else: no command line, no environment variable, no
-open file handle, no memory content.
+distribution's own Linux process table, exposed read-only over the same mount. Every refresh it stands in
+for the Windows process-table scan described under [Processes and windows](#processes-and-windows) -
+process names and parent-process links, so a session's liveness and its running child processes can be
+determined, plus each process's recorded start time, compared the same way `procStart` is on Windows.
 
-The process panel and the background-task output console are a further exception: for a session running
-inside WSL, opening either currently shows nothing. That read surface does not exist yet for these
-sessions - it is a gap, not a redaction of a read that already happens elsewhere.
+Opening the process panel for a session running inside WSL reads that same mount further, on demand,
+exactly as the panel does for a Windows session: the memory size and accumulated CPU time of each of the
+session's own descendant processes, so the panel shows live CPU, memory, and uptime for a WSL session too.
+Nothing beyond those figures is ever taken from it: no command line, no environment variable, no open file
+handle, and no actual memory content - only the byte count and CPU-time figures the kernel reports for
+each process. Because this is the session's own Linux process tree rather than a Windows-side relay, the
+panel never adds the shared `vmmem*` row described above - these rows already are the session's real work,
+not a stand-in for work happening elsewhere.
+
+The background-task output console reads the same way for a WSL session, from the distribution's own
+temporary directory instead of the Windows one -
+`\\wsl.localhost\<distro>\tmp\claude\<project-slug>\<session-id>\tasks\<task-id>.output` - read only while
+that task's row is expanded, exactly as described under [Background-task
+output](#background-task-output-on-demand). A redirected task's output is followed under the identical
+rule, confined to that session's own scratchpad or project directory; both are resolved against the
+distribution's own filesystem, with a `/mnt/<drive>/...` path, or any other absolute path inside the
+distribution, translated to its Windows-readable form before that confinement check runs.
 
 ## What the application writes
 
@@ -433,10 +446,22 @@ node --test tests/js/logic.test.js     # interface logic
   from running on every poll; `test_stopped_distro_never_globbed` asserts the never-wake guarantee
   directly - a distribution absent from the running list is never looked at, even when its own `.claude`
   directory already exists on disk.
+- [tests/test_wsl.py](tests/test_wsl.py)'s `WslProcessStatsTests` guards the process panel's on-demand
+  procfs reads: `test_first_call_yields_no_cpu_with_correct_rss_and_uptime` asserts memory and uptime come
+  straight from the same scan while a first CPU reading has nothing to diff against yet;
+  `test_recycled_child_starttime_resets_cpu_to_none` asserts a recycled pid resets the CPU baseline instead
+  of diffing against an unrelated process's ticks; `test_prune_is_scoped_to_this_origin` asserts one
+  distribution's cached CPU baselines are never evicted by another distribution's panel refresh.
 - [tests/test_search.py](tests/test_search.py)'s `SearchOriginTest` extends the confinement guard to WSL:
   `test_wsl_confinement_refuses_escaping_cwd` asserts a crafted working directory cannot escape a WSL
   root's own `projects/` tree, and `test_unknown_origin_scans_nothing` asserts an origin naming no
   currently running distribution is refused outright rather than falling back to another root's files.
+- [tests/test_tasks.py](tests/test_tasks.py)'s `WslRootTasksTest` and `WslRootRedirectTest` extend the
+  task-output boundary to WSL: `test_lists_and_reads_a_task_from_the_wsl_root_own_tree` asserts a WSL
+  session's own task tree lists and reads exactly like a Windows one;
+  `test_follows_absolute_redirect_translated_via_wsl_path_to_windows` and
+  `test_redirect_outside_both_roots_is_refused` assert the same scratchpad/project confinement holds once
+  a POSIX redirect target is translated to its Windows-readable form.
 - [tests/test_session_delete.py](tests/test_session_delete.py)'s `DeleteOriginTest` extends the deletion
   guards to WSL: `test_refuses_unknown_origin`, `test_refuses_live_wsl_session`, and
   `test_treats_a_naming_roots_probe_error_as_live` (a root that cannot be probed is treated as live, never

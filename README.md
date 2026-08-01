@@ -17,7 +17,7 @@ If you run many Claude Code agents across several projects, you cannot tell from
 
 ### What you see every day
 - **Live agent overview** - every running Claude Code agent, grouped by the project it belongs to, refreshed every few seconds.
-- **WSL sessions too** - Claude Code agents running inside WSL distributions appear alongside your Windows agents, read over `\\wsl.localhost` with nothing ever executed inside the distro; the distro shows as the session's host.
+- **WSL sessions too** - Claude Code agents running inside WSL distributions appear alongside your Windows agents, read over `\\wsl.localhost` with nothing ever executed inside the distro; the distro shows as the session's host, and its background processes and task output are visible in the same panel as any other agent's (see below).
 - **Know who needs you** - a banner lists the agents blocked on a question, plan review, or permission prompt, with a one-click jump to each, so you never leave one hanging.
 - **Status at a glance** - each agent shows *working*, *waiting for you*, *permission needed*, *interrupted* (you stopped it mid-turn), *error* (the turn hit a usage/session limit or other API error and cannot continue), or *finished*, with the time since its last activity.
 - **Filter and sort to what matters** - the status chips (needs you, error, interrupted, new, idle, working, background, quiet, attention-first order) start all on, and you uncheck the ones you want to hide; each chip's colored dot doubles as the key to what the row dots mean, and hovering a chip explains what that status means and when it occurs; sort by activity, usage, model, host, or status. Your filter and sort choices are remembered across restarts.

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - The window's page now declares a Content-Security-Policy that forbids it from reaching the network at all: no requests, and no scripts, styles, or images from anywhere but the app's own bundled files. The app never made a network request in the first place - now the browser engine would refuse one even if asked. A new `PRIVACY.md` states what the app reads, keeps, shows, and writes, with the commands and tests to verify each claim yourself.
 - Claude Code sessions running inside a WSL distribution now appear alongside Windows sessions - status, cost, subagents, history, search, and deletion all work identically, and the distro is shown as the session's host. A new `wsl` setting (on by default) turns this off.
+- The background-process panel and task-output console now work for WSL sessions too: the live per-process CPU, memory, and uptime table is read straight from the distribution's own process list, and a background task's output - including one redirected to a file in its scratchpad or project folder - streams the same way it does for a Windows session.
 
 ## [0.5.0] - 2026-07-18
 
