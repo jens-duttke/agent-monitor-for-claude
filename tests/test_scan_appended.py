@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_monitor_for_claude import transcript
-from agent_monitor_for_claude.paths import cwd_to_slug, transcript_path
+from agent_monitor_for_claude.paths import cwd_to_slug, transcript_path, windows_root
 
 _TURN = '{"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":100,"output_tokens":0}}}\n'
 
@@ -103,7 +103,7 @@ class PruneScanCacheTest(unittest.TestCase):
         self._temp.cleanup()
 
     def _key(self, session_id: str, cwd: str) -> str:
-        return os.path.normcase(str(transcript_path(session_id, cwd)))
+        return os.path.normcase(str(transcript_path(windows_root(), session_id, cwd)))
 
     def test_prune_evicts_entries_not_in_the_active_registry_set(self) -> None:
         transcript._scan_cache[self._key('aaa', 'd:\\proj')] = transcript._ScanState()
@@ -121,8 +121,8 @@ class PruneScanCacheTest(unittest.TestCase):
         slug_dir.mkdir(parents=True)
         (slug_dir / 'aaaaaaaa.jsonl').write_text(_TURN, encoding='utf-8')
 
-        transcript._scan_appended(transcript_path('aaaaaaaa', 'd:\\proj'))
-        transcript._scan_appended(transcript_path('aaaaaaaa', 'D:\\Proj'))
+        transcript._scan_appended(transcript_path(windows_root(), 'aaaaaaaa', 'd:\\proj'))
+        transcript._scan_appended(transcript_path(windows_root(), 'aaaaaaaa', 'D:\\Proj'))
 
         self.assertEqual(len(transcript._scan_cache), 1)
 

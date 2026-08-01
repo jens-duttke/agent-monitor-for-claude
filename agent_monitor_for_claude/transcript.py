@@ -30,7 +30,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .paths import transcript_path
+from .paths import transcript_path, windows_root
 
 __all__ = ['TranscriptState', 'HistoryState', 'state_for', 'history_state_for', 'prune_scan_cache']
 
@@ -146,8 +146,9 @@ def prune_scan_cache(active: Iterable[tuple[str, str]]) -> None:
         Every current registry session; its cache key is computed exactly like
         :func:`_scan_appended` (path, case-normalized), so the two always agree.
     """
+    root = windows_root()
     keep = {
-        os.path.normcase(str(transcript_path(session_id, cwd)))
+        os.path.normcase(str(transcript_path(root, session_id, cwd)))
         for session_id, cwd in active
         if session_id and cwd
     }
@@ -200,7 +201,8 @@ def state_for(session_id: str, cwd: str) -> TranscriptState:
     if not session_id or not cwd:
         return TranscriptState(has_transcript=False)
 
-    path = transcript_path(session_id, cwd)
+    root = windows_root()
+    path = transcript_path(root, session_id, cwd)
     if not path.is_file():
         return TranscriptState(has_transcript=False)
 

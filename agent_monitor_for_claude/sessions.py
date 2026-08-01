@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .paths import sessions_dir
+from .paths import sessions_dir, windows_root
 
 __all__ = ['list_sessions']
 
@@ -28,7 +28,8 @@ def list_sessions() -> list[dict[str, Any]]:
     Each record has ``session_id``, ``pid``, ``cwd``, ``name``, ``kind``, and
     ``started_at``.  Records that cannot be parsed are omitted.
     """
-    directory = sessions_dir()
+    root = windows_root()
+    directory = sessions_dir(root)
     if not directory.is_dir():
         return []
 

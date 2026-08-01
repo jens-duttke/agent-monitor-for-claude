@@ -22,7 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .paths import cwd_to_slug, projects_dir
+from .paths import cwd_to_slug, projects_dir, windows_root
 from .sessions import list_sessions
 from .snapshot import live_or_recent_ids
 from .transcript import history_state_for
@@ -53,7 +53,7 @@ def list_history() -> list[dict[str, Any]]:
     slug and split off into a separate, slug-named panel instead of grouping
     with the rest of their project.
     """
-    root = projects_dir()
+    root = projects_dir(windows_root())
     if not root.is_dir():
         return []
 

@@ -47,7 +47,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
 
-from .paths import projects_dir, transcript_path
+from .paths import SessionRoot, projects_dir, transcript_path, windows_root
 
 __all__ = ['run_search']
 
@@ -193,14 +193,15 @@ def _ordered_transcripts(sessions: object) -> list[tuple[Path, str]]:
     if not refs:
         return []
 
+    session_root = windows_root()
     try:
-        root = projects_dir().resolve()
+        root = projects_dir(session_root).resolve()
     except OSError:
         return []
 
     items: list[tuple[float, Path, str]] = []
     for session_id, cwd in refs:
-        path = _confined_transcript(session_id, cwd, root)
+        path = _confined_transcript(session_root, session_id, cwd, root)
         if path is None:
             continue
         try:
@@ -237,7 +238,7 @@ def _valid_refs(sessions: object) -> list[tuple[str, str]]:
     return refs
 
 
-def _confined_transcript(session_id: str, cwd: str, root: Path) -> Path | None:
+def _confined_transcript(session_root: SessionRoot, session_id: str, cwd: str, root: Path) -> Path | None:
     """Resolve a session's transcript path, or ``None`` if it escapes ``projects/``.
 
     The path is confined the same way the deletion surface is: it is resolved and
@@ -245,7 +246,7 @@ def _confined_transcript(session_id: str, cwd: str, root: Path) -> Path | None:
     traversal can never point the read at a file outside the transcript tree.
     """
     try:
-        path = transcript_path(session_id, cwd).resolve()
+        path = transcript_path(session_root, session_id, cwd).resolve()
         path.relative_to(root)
     except (OSError, ValueError):
         return None

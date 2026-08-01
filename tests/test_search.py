@@ -13,7 +13,7 @@ import tempfile
 import unittest
 
 from agent_monitor_for_claude import search
-from agent_monitor_for_claude.paths import config_dir, transcript_path
+from agent_monitor_for_claude.paths import config_dir, transcript_path, windows_root
 
 _CWD = 'c:\\Temp\\search-proj'
 
@@ -32,7 +32,7 @@ class SearchEnvTest(unittest.TestCase):
         self._temp.cleanup()
 
     def _write(self, session_id: str, cwd: str, text: str, mtime: float | None = None) -> None:
-        path = transcript_path(session_id, cwd)
+        path = transcript_path(windows_root(), session_id, cwd)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding='utf-8')
         if mtime is not None:

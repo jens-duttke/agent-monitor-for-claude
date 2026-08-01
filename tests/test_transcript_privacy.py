@@ -16,7 +16,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from agent_monitor_for_claude.paths import transcript_path
+from agent_monitor_for_claude.paths import transcript_path, windows_root
 from agent_monitor_for_claude.snapshot import build_snapshot
 from agent_monitor_for_claude.transcript import history_state_for, state_for
 
@@ -78,7 +78,7 @@ class TranscriptEnvTest(unittest.TestCase):
         self._temp.cleanup()
 
     def _write_transcript(self, session_id: str, cwd: str, lines: list[str]) -> None:
-        path = transcript_path(session_id, cwd)
+        path = transcript_path(windows_root(), session_id, cwd)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('\n'.join(lines), encoding='utf-8')
 
@@ -232,7 +232,7 @@ class ParseTest(TranscriptEnvTest):
             'timestamp': '2026-07-11T10:55:00Z',
             'message': {'stop_reason': 'end_turn', 'usage': {'input_tokens': 7, 'output_tokens': 3}, 'content': []},
         })
-        path = transcript_path(_SESSION_ID, _CWD)
+        path = transcript_path(windows_root(), _SESSION_ID, _CWD)
         with path.open('a', encoding='utf-8') as handle:
             handle.write('\n' + extra)
 
@@ -516,7 +516,7 @@ class ActivityAgeTest(TranscriptEnvTest):
             json.dumps({'type': 'assistant', 'timestamp': stamp,
                         'message': {'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': 'done'}]}}),
         ])
-        os.utime(transcript_path(_SESSION_ID, _CWD), (now, now))
+        os.utime(transcript_path(windows_root(), _SESSION_ID, _CWD), (now, now))
 
         state = state_for(_SESSION_ID, _CWD)
 
@@ -532,7 +532,7 @@ class ActivityAgeTest(TranscriptEnvTest):
             json.dumps({'type': 'custom-title', 'customTitle': 'B title', 'sessionId': _SESSION_ID}),
         ])
         now = time.time()
-        os.utime(transcript_path(_SESSION_ID, _CWD), (now - 100, now - 100))
+        os.utime(transcript_path(windows_root(), _SESSION_ID, _CWD), (now - 100, now - 100))
 
         state = state_for(_SESSION_ID, _CWD)
 
@@ -597,7 +597,7 @@ class PrivacyTest(TranscriptEnvTest):
             }),
         ]
         self._write_transcript(_SESSION_ID, _CWD, lines)
-        state = history_state_for(transcript_path(_SESSION_ID, _CWD))
+        state = history_state_for(transcript_path(windows_root(), _SESSION_ID, _CWD))
 
         self.assertEqual(state.title, 'History title')
         self.assertEqual(state.cwd, _CWD)

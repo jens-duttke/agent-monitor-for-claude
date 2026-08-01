@@ -8,7 +8,7 @@ import time
 import unittest
 from pathlib import Path
 
-from agent_monitor_for_claude.paths import cwd_to_slug, projects_dir
+from agent_monitor_for_claude.paths import cwd_to_slug, projects_dir, windows_root
 from agent_monitor_for_claude.subagents import count_subagents
 
 _SESSION_ID = 'sub-session-id'
@@ -45,7 +45,7 @@ class SubagentsTest(unittest.TestCase):
         self._previous = os.environ.get('CLAUDE_CONFIG_DIR')
         self._temp = tempfile.TemporaryDirectory()
         os.environ['CLAUDE_CONFIG_DIR'] = self._temp.name
-        self._dir = projects_dir() / cwd_to_slug(_CWD) / _SESSION_ID / 'subagents'
+        self._dir = projects_dir(windows_root()) / cwd_to_slug(_CWD) / _SESSION_ID / 'subagents'
         self._dir.mkdir(parents=True)
 
     def tearDown(self) -> None:

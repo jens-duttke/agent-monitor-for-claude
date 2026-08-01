@@ -14,8 +14,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_monitor_for_claude.paths import cwd_to_slug
-from agent_monitor_for_claude.tasks import list_tasks, read_task_output, _parse_redirect_target, _wsl_to_windows
+from agent_monitor_for_claude.paths import cwd_to_slug, windows_root, wsl_path_to_windows
+from agent_monitor_for_claude.tasks import list_tasks, read_task_output, _parse_redirect_target
 
 _SESSION = '6e22e66f-6298-442a-9762-2a5b65052389'
 _CWD = r'D:\WebDev\vs-edge264'
@@ -202,9 +202,10 @@ class TasksTest(unittest.TestCase):
 
 class RedirectParsingTest(unittest.TestCase):
     def test_wsl_path_translation(self) -> None:
-        self.assertEqual(_wsl_to_windows('/mnt/c/Users/jens/x.log'), r'C:\Users\jens\x.log')
-        self.assertEqual(_wsl_to_windows('/mnt/d/build/out'), r'D:\build\out')
-        self.assertEqual(_wsl_to_windows(r'C:\already\windows'), r'C:\already\windows')
+        root = windows_root()
+        self.assertEqual(wsl_path_to_windows(root, '/mnt/c/Users/jens/x.log'), r'C:\Users\jens\x.log')
+        self.assertEqual(wsl_path_to_windows(root, '/mnt/d/build/out'), r'D:\build\out')
+        self.assertEqual(wsl_path_to_windows(root, r'C:\already\windows'), r'C:\already\windows')
 
     def test_parse_redirect_target(self) -> None:
         self.assertEqual(_parse_redirect_target('bash x.sh > out.log 2>&1'), 'out.log')

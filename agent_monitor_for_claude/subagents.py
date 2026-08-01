@@ -31,7 +31,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .paths import cwd_to_slug, projects_dir
+from .paths import SessionRoot, cwd_to_slug, projects_dir, windows_root
 from .settings import SUBAGENT_RECENT_SECONDS
 
 __all__ = ['SubagentInfo', 'WorkflowActivity', 'count_subagents']
@@ -81,7 +81,8 @@ class SubagentInfo:
 
 def count_subagents(session_id: str, cwd: str) -> SubagentInfo:
     """Return running/recently-finished subagent counts and running labels."""
-    directory = _subagents_dir(session_id, cwd)
+    root = windows_root()
+    directory = _subagents_dir(root, session_id, cwd)
     if directory is None:
         return SubagentInfo()
 
@@ -295,12 +296,12 @@ def _journal_counts(journal_path: Path) -> tuple[int, int]:
     return counts
 
 
-def _subagents_dir(session_id: str, cwd: str) -> Path | None:
-    """Return the session's subagents directory, or None if it does not exist."""
+def _subagents_dir(root: SessionRoot, session_id: str, cwd: str) -> Path | None:
+    """Return the session's subagents directory under root, or None if it does not exist."""
     if not session_id or not cwd:
         return None
 
-    directory = projects_dir() / cwd_to_slug(cwd) / session_id / 'subagents'
+    directory = projects_dir(root) / cwd_to_slug(cwd) / session_id / 'subagents'
     return directory if directory.is_dir() else None
 
 

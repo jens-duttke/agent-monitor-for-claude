@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_monitor_for_claude import snapshot as snapshot_mod
-from agent_monitor_for_claude.paths import transcript_path
+from agent_monitor_for_claude.paths import transcript_path, windows_root
 from agent_monitor_for_claude.snapshot import build_snapshot, registry_fingerprint
 
 _END_TURN = json.dumps({
@@ -72,7 +72,7 @@ class _RegistryFixture(unittest.TestCase):
             json.dumps({'pid': pid, 'sessionId': session_id, 'cwd': cwd, 'name': session_id, 'kind': 'interactive'}),
             encoding='utf-8',
         )
-        path = transcript_path(session_id, cwd)
+        path = transcript_path(windows_root(), session_id, cwd)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(transcript, encoding='utf-8')
 
@@ -111,7 +111,7 @@ class RawSnapshotTest(_RegistryFixture):
                         'kind': 'interactive', 'status': 'waiting', 'waitingFor': 'permission prompt'}),
             encoding='utf-8',
         )
-        path = transcript_path('w', 'd:\\x')
+        path = transcript_path(windows_root(), 'w', 'd:\\x')
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(_END_TURN, encoding='utf-8')
 
@@ -176,7 +176,7 @@ class SubagentRawTest(_RegistryFixture):
     def test_running_subagent_counted(self) -> None:
         self._add_session('s', 'd:\\WebDev\\proj')
 
-        subagents = transcript_path('s', 'd:\\WebDev\\proj').parent / 's' / 'subagents'
+        subagents = transcript_path(windows_root(), 's', 'd:\\WebDev\\proj').parent / 's' / 'subagents'
         subagents.mkdir(parents=True, exist_ok=True)
         (subagents / 'agent-1.jsonl').write_text(_SUBAGENT_RUNNING, encoding='utf-8')
 
@@ -194,7 +194,7 @@ class FingerprintTest(_RegistryFixture):
         self._add_session('a', 'd:\\WebDev\\one')
         before = registry_fingerprint()
 
-        path = transcript_path('a', 'd:\\WebDev\\one')
+        path = transcript_path(windows_root(), 'a', 'd:\\WebDev\\one')
         with path.open('a', encoding='utf-8') as handle:
             handle.write('\n' + _END_TURN)
 

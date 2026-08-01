@@ -17,7 +17,7 @@ import time
 from datetime import datetime
 from typing import Any
 
-from .paths import transcript_path
+from .paths import transcript_path, windows_root
 from .process_probe import probe_all
 from .sessions import list_sessions
 from .settings import ENDED_MAX_AGE, INCLUDE_COMPLETED
@@ -142,9 +142,10 @@ def registry_fingerprint() -> str:
     requests a full snapshot when the fingerprint changes, which keeps idle
     cost minimal while reacting to real changes within about a second.
     """
+    root = windows_root()
     parts: list[str] = []
     for record in list_sessions():
-        transcript = transcript_path(record['session_id'], record['cwd'])
+        transcript = transcript_path(root, record['session_id'], record['cwd'])
         try:
             stat_result = transcript.stat()
             transcript_mark = f'{stat_result.st_mtime_ns}:{stat_result.st_size}'

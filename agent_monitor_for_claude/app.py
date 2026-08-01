@@ -24,7 +24,7 @@ from . import __version__
 from .clipboard import copy_text as _copy_text
 from .history import list_history
 from .i18n import T
-from .paths import config_dir, scratchpad_dir
+from .paths import config_dir, scratchpad_dir, windows_root
 from .pricing import load_pricing
 from .process_probe import process_stats
 from .search import run_search
@@ -310,7 +310,7 @@ class _MonitorApi:
         if not isinstance(session_id, str) or not _SESSION_UUID.match(session_id) or not isinstance(cwd, str) or not cwd:
             return ''
 
-        directory = scratchpad_dir(session_id, cwd)
+        directory = scratchpad_dir(windows_root(), session_id, cwd)
         try:
             return str(directory) if directory.is_dir() else ''
         except OSError:

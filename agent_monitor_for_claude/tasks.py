@@ -33,7 +33,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .paths import scratchpad_dir, task_output_dir, task_output_path, transcript_path
+from .paths import SessionRoot, scratchpad_dir, task_output_dir, task_output_path, transcript_path, windows_root, wsl_path_to_windows
 
 __all__ = ['TaskInfo', 'list_tasks', 'read_task_output']
 
@@ -58,9 +58,6 @@ _STDOUT_FDS = frozenset({'', '1', '&'})
 # Longest label kept; a command line can be long, so it is trimmed (the UI also
 # ellipsizes).  A description is usually short and used as-is.
 _LABEL_MAX_LEN = 140
-
-# Windows drive letters WSL maps under /mnt, e.g. /mnt/c -> C:\.
-_WSL_MOUNT_PATTERN = re.compile(r'^/mnt/([A-Za-z])(/.*)?$')
 
 # Freshest N tasks shown; the rest are reported as a dropped count rather than
 # silently hidden.  Ordering by most-recent write keeps a running task (whose
@@ -116,7 +113,8 @@ def list_tasks(
     if not _valid_session(session_id) or not isinstance(cwd, str) or not cwd:
         return [], 0
 
-    directory = task_output_dir(session_id, cwd)
+    root = windows_root()
+    directory = task_output_dir(root, session_id, cwd)
     try:
         entries = list(directory.iterdir())
     except OSError:
@@ -126,7 +124,7 @@ def list_tasks(
     if not task_ids:
         return [], 0
 
-    meta = _task_meta(session_id, cwd)
+    meta = _task_meta(root, session_id, cwd)
     now = time.time()
     infos: list[TaskInfo] = []
     for task_id in task_ids:
@@ -135,7 +133,7 @@ def list_tasks(
         # when the capture file is empty, so the row does not read "0 B" while
         # its output lives elsewhere.  None means the capture path escaped its
         # directory (a symlink) and is refused, so the task is skipped.
-        path = _effective_output_path(session_id, cwd, task_id, command)
+        path = _effective_output_path(root, session_id, cwd, task_id, command)
         if path is None:
             continue
         try:
@@ -169,8 +167,9 @@ def read_task_output(session_id: str, cwd: str, task_id: str, *, max_bytes: int 
     if not isinstance(task_id, str) or not _TASK_ID_PATTERN.match(task_id):
         return None
 
-    command = _task_meta(session_id, cwd).get(task_id, {}).get('command', '')
-    path = _effective_output_path(session_id, cwd, task_id, command)
+    root = windows_root()
+    command = _task_meta(root, session_id, cwd).get(task_id, {}).get('command', '')
+    path = _effective_output_path(root, session_id, cwd, task_id, command)
     if path is None:
         return None
     return _read_tail(path, max_bytes)
@@ -197,7 +196,7 @@ def _read_tail(path: Path, max_bytes: int) -> str | None:
     return text
 
 
-def _effective_output_path(session_id: str, cwd: str, task_id: str, command: str) -> Path | None:
+def _effective_output_path(root: SessionRoot, session_id: str, cwd: str, task_id: str, command: str) -> Path | None:
     """Return the file to read for a task: its capture file, else the redirect target.
 
     The capture file wins whenever it has content.  Only when it is empty (the
@@ -207,10 +206,10 @@ def _effective_output_path(session_id: str, cwd: str, task_id: str, command: str
     symlinked ``<id>.output``) - a confinement failure must refuse, never read
     the escaped target.
     """
-    base = task_output_path(session_id, cwd, task_id)
+    base = task_output_path(root, session_id, cwd, task_id)
     try:
         base = base.resolve()
-        base.relative_to(task_output_dir(session_id, cwd).resolve())
+        base.relative_to(task_output_dir(root, session_id, cwd).resolve())
     except (OSError, ValueError):
         return None
 
@@ -220,11 +219,11 @@ def _effective_output_path(session_id: str, cwd: str, task_id: str, command: str
     except OSError:
         return base
 
-    redirect = _resolve_redirect(command, session_id, cwd)
+    redirect = _resolve_redirect(root, command, session_id, cwd)
     return redirect if redirect is not None else base
 
 
-def _resolve_redirect(command: str, session_id: str, cwd: str) -> Path | None:
+def _resolve_redirect(root: SessionRoot, command: str, session_id: str, cwd: str) -> Path | None:
     """Return the command's output-redirect file if it is a real, in-bounds file.
 
     The target is confined to the session's scratchpad or its project directory;
@@ -238,7 +237,7 @@ def _resolve_redirect(command: str, session_id: str, cwd: str) -> Path | None:
     # A relative target was written relative to the task's working directory;
     # resolve it against the session cwd (best effort - the confinement check
     # below still gates it) rather than the monitor's own cwd.
-    candidate = Path(_wsl_to_windows(target))
+    candidate = Path(wsl_path_to_windows(root, target))
     if not candidate.is_absolute():
         candidate = Path(cwd) / candidate
     try:
@@ -246,10 +245,10 @@ def _resolve_redirect(command: str, session_id: str, cwd: str) -> Path | None:
     except (OSError, ValueError):
         return None
 
-    roots = (scratchpad_dir(session_id, cwd), Path(cwd))
-    for root in roots:
+    confinement_roots = (scratchpad_dir(root, session_id, cwd), Path(cwd))
+    for confinement_root in confinement_roots:
         try:
-            resolved.relative_to(root.resolve())
+            resolved.relative_to(confinement_root.resolve())
         except (OSError, ValueError):
             continue
         if resolved.is_file():
@@ -279,17 +278,6 @@ def _parse_redirect_target(command: str) -> str | None:
     return target
 
 
-def _wsl_to_windows(path: str) -> str:
-    """Translate a WSL ``/mnt/<drive>/...`` path to Windows form; pass others through."""
-    match = _WSL_MOUNT_PATTERN.match(path)
-    if not match:
-        return path
-
-    drive = match.group(1).upper()
-    rest = (match.group(2) or '').replace('/', '\\')
-    return f'{drive}:{rest}' if rest else f'{drive}:\\'
-
-
 def _valid_session(session_id: str) -> bool:
     """Return True if *session_id* is a well-formed UUID."""
     return isinstance(session_id, str) and bool(_SESSION_ID_PATTERN.match(session_id))
@@ -302,7 +290,7 @@ _meta_cache: dict[str, tuple[int, int, dict[str, dict[str, str]]]] = {}
 _META_CACHE_MAX = 32
 
 
-def _task_meta(session_id: str, cwd: str) -> dict[str, dict[str, str]]:
+def _task_meta(root: SessionRoot, session_id: str, cwd: str) -> dict[str, dict[str, str]]:
     """Return ``{task_id: {'label', 'command'}}`` from the transcript's background calls.
 
     The label is the ``description`` (or, failing that, the ``command``) the
@@ -311,7 +299,7 @@ def _task_meta(session_id: str, cwd: str) -> dict[str, dict[str, str]]:
     registration line Claude Code writes as that call's result.  Only lines that
     could carry either are JSON-parsed, so even a large transcript is cheap.
     """
-    path = transcript_path(session_id, cwd)
+    path = transcript_path(root, session_id, cwd)
     try:
         stat_result = path.stat()
     except OSError:

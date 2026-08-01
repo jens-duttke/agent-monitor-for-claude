@@ -27,7 +27,7 @@ import re
 import shutil
 from pathlib import Path
 
-from .paths import cwd_to_slug, projects_dir
+from .paths import cwd_to_slug, projects_dir, windows_root
 from .process_probe import probe_all
 from .sessions import list_sessions
 
@@ -66,7 +66,7 @@ def delete_session(session_id: str, cwd: str) -> bool:
         return False
 
     try:
-        root = projects_dir().resolve()
+        root = projects_dir(windows_root()).resolve()
     except OSError:
         # A resolve failure (a reparse/symlink loop, an uncanonicalizable path)
         # must degrade to a graceful refusal, never crash the bridge call.
