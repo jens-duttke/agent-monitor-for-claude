@@ -88,12 +88,24 @@ class WslRootsGateTests(unittest.TestCase):
             self.assertEqual(listing.call_count, 1)
 
 
-def _write_stat(proc_dir: Path, pid: int, comm: str, ppid: int, starttime: int) -> None:
+def _write_stat(proc_dir: Path, pid: int, comm: str, ppid: int, starttime: int,
+                 utime: int = 50, stime: int = 10, rss_pages: int = 500) -> None:
     entry = proc_dir / str(pid)
     entry.mkdir(parents=True, exist_ok=True)
     fields3plus = ['S', str(ppid), '1', '1', '0', '-1', '4194304', '0', '0', '0', '0',
-                   '50', '10', '0', '0', '20', '0', '4', '0', str(starttime), '1000000', '500']
+                   str(utime), str(stime), '0', '0', '20', '0', '4', '0', str(starttime), '1000000', str(rss_pages)]
     (entry / 'stat').write_text(f'{pid} ({comm}) ' + ' '.join(fields3plus), encoding='utf-8')
+
+
+def _write_proc_stat(proc_dir: Path, btime: int) -> None:
+    """Write a fake ``/proc/stat`` at the proc_dir root, carrying a ``btime`` line among others."""
+    proc_dir.mkdir(parents=True, exist_ok=True)
+    (proc_dir / 'stat').write_text(f'cpu  100 0 200 300 0 0 0 0 0 0\nbtime {btime}\nprocesses 500\n', encoding='utf-8')
+
+
+def _wsl_root(base: str) -> wsl.SessionRoot:
+    return wsl.SessionRoot(origin='wsl:U', label='U', config_dir=Path(base) / 'cfg',
+                           proc_dir=Path(base) / 'proc', temp_dir=Path(base) / 'tmp')
 
 
 class ParseStatTests(unittest.TestCase):
@@ -110,13 +122,9 @@ class ParseStatTests(unittest.TestCase):
 
 
 class ProbeWslSessionsTests(unittest.TestCase):
-    def _root(self, base: str):
-        return wsl.SessionRoot(origin='wsl:U', label='U', config_dir=Path(base) / 'cfg',
-                               proc_dir=Path(base) / 'proc', temp_dir=Path(base) / 'tmp')
-
     def test_liveness_and_recycled_pid(self):
         with tempfile.TemporaryDirectory() as base:
-            root = self._root(base)
+            root = _wsl_root(base)
             _write_stat(root.proc_dir, 100, 'claude', 1, 5000)
             self.assertTrue(wsl.probe_wsl_sessions(root, [(100, 5000)])[100].alive)
             self.assertFalse(wsl.probe_wsl_sessions(root, [(100, 4999)])[100].alive)   # recycled
@@ -126,7 +134,7 @@ class ProbeWslSessionsTests(unittest.TestCase):
         # starttime 0 is a legal stat-field value (ticks since boot), not a sentinel for "unknown" -
         # a falsy `if proc_start_ticks:` check would silently skip the recycled-pid comparison here.
         with tempfile.TemporaryDirectory() as base:
-            root = self._root(base)
+            root = _wsl_root(base)
             _write_stat(root.proc_dir, 100, 'claude', 1, 0)
             self.assertTrue(wsl.probe_wsl_sessions(root, [(100, 0)])[100].alive)        # matches exactly
             _write_stat(root.proc_dir, 200, 'claude', 1, 7000)
@@ -134,7 +142,7 @@ class ProbeWslSessionsTests(unittest.TestCase):
 
     def test_descendants_and_helper_window(self):
         with tempfile.TemporaryDirectory() as base:
-            root = self._root(base)
+            root = _wsl_root(base)
             _write_stat(root.proc_dir, 100, 'claude', 1, 5000)
             _write_stat(root.proc_dir, 101, 'node', 100, 5000 + 500)     # helper: within 10 s * 100 ticks
             _write_stat(root.proc_dir, 102, 'cargo', 100, 5000 + 60000)  # real tool child
@@ -146,10 +154,111 @@ class ProbeWslSessionsTests(unittest.TestCase):
             self.assertIsNone(info.host)
 
     def test_unreadable_proc_dir(self):
-        root = self._root(tempfile.mkdtemp())
+        root = _wsl_root(tempfile.mkdtemp())
         root = wsl.SessionRoot(origin='wsl:U', label='U', config_dir=root.config_dir,
                                proc_dir=root.proc_dir / 'missing', temp_dir=root.temp_dir)
         self.assertFalse(wsl.probe_wsl_sessions(root, [(1, None)])[1].alive)
+
+
+class WslProcessStatsTests(unittest.TestCase):
+    """Covers wsl_process_stats: the same descendant/liveness rules as probe_wsl_sessions, plus
+    memory/uptime read straight from procfs and CPU sampled against a prior call."""
+
+    def setUp(self):
+        wsl._wsl_sample_cache.clear()
+        self.addCleanup(wsl._wsl_sample_cache.clear)
+
+    def test_first_call_yields_no_cpu_with_correct_rss_and_uptime(self):
+        with tempfile.TemporaryDirectory() as base:
+            root = _wsl_root(base)
+            btime = 1700000000
+            _write_proc_stat(root.proc_dir, btime)
+            _write_stat(root.proc_dir, 100, 'claude', 1, 5000)               # session process
+            _write_stat(root.proc_dir, 101, 'node', 100, 5000 + 60000)       # real tool child
+
+            now = 1700100000.0
+            with mock.patch.object(wsl.time, 'time', return_value=now):
+                stats = wsl.wsl_process_stats(root, 100, 5000)
+
+        self.assertEqual(len(stats), 1)
+        stat = stats[0]
+        self.assertEqual(stat.pid, 101)
+        self.assertEqual(stat.name, 'node')
+        self.assertIsNone(stat.cpu_percent)
+        self.assertEqual(stat.rss_bytes, 500 * 4096)
+        expected_uptime = now - (btime + (5000 + 60000) / wsl._CLK_TCK)
+        self.assertAlmostEqual(stat.uptime_seconds, expected_uptime, places=6)
+        self.assertEqual(stat.kind, 'process')
+
+    def test_second_call_reports_cpu_delta(self):
+        with tempfile.TemporaryDirectory() as base:
+            root = _wsl_root(base)
+            _write_proc_stat(root.proc_dir, 1700000000)
+            _write_stat(root.proc_dir, 100, 'claude', 1, 5000)
+            _write_stat(root.proc_dir, 101, 'node', 100, 5000 + 60000, utime=50, stime=10)
+
+            now = 1700100000.0
+            with mock.patch.object(wsl.time, 'time', return_value=now):
+                first = wsl.wsl_process_stats(root, 100, 5000)
+            self.assertIsNone(first[0].cpu_percent)
+
+            # Same starttime (not recycled), utime/stime bumped by 40+20 ticks, clock advanced 1 s.
+            _write_stat(root.proc_dir, 101, 'node', 100, 5000 + 60000, utime=90, stime=30)
+            with mock.patch.object(wsl.time, 'time', return_value=now + 1.0):
+                second = wsl.wsl_process_stats(root, 100, 5000)
+
+        self.assertEqual(len(second), 1)
+        expected_cpu = (60 / wsl._CLK_TCK) / 1.0 * 100.0
+        self.assertAlmostEqual(second[0].cpu_percent, expected_cpu, places=6)
+
+    def test_recycled_child_starttime_resets_cpu_to_none(self):
+        with tempfile.TemporaryDirectory() as base:
+            root = _wsl_root(base)
+            _write_proc_stat(root.proc_dir, 1700000000)
+            _write_stat(root.proc_dir, 100, 'claude', 1, 5000)
+            _write_stat(root.proc_dir, 101, 'node', 100, 5000 + 60000, utime=50, stime=10)
+
+            now = 1700100000.0
+            with mock.patch.object(wsl.time, 'time', return_value=now):
+                wsl.wsl_process_stats(root, 100, 5000)   # primes the baseline
+
+            with mock.patch.object(wsl.time, 'time', return_value=now + 1.0):
+                established = wsl.wsl_process_stats(root, 100, 5000)
+            self.assertIsInstance(established[0].cpu_percent, float)   # a real reading exists now
+
+            # Pid 101 recycled: same numeric pid, a new process with a later starttime.
+            _write_stat(root.proc_dir, 101, 'python', 100, 5000 + 61000, utime=1, stime=1)
+            with mock.patch.object(wsl.time, 'time', return_value=now + 2.0):
+                stats = wsl.wsl_process_stats(root, 100, 5000)
+
+        self.assertEqual(len(stats), 1)
+        self.assertEqual(stats[0].name, 'python')
+        self.assertIsNone(stats[0].cpu_percent)
+
+    def test_dead_or_stale_session_pid_returns_empty(self):
+        with tempfile.TemporaryDirectory() as base:
+            root = _wsl_root(base)
+            _write_proc_stat(root.proc_dir, 1700000000)
+            _write_stat(root.proc_dir, 100, 'claude', 1, 5000)
+
+            with mock.patch.object(wsl.time, 'time', return_value=1700100000.0):
+                self.assertEqual(wsl.wsl_process_stats(root, 999, None), [])    # absent pid
+                self.assertEqual(wsl.wsl_process_stats(root, 100, 4999), [])    # starttime mismatch
+
+    def test_prune_is_scoped_to_this_origin(self):
+        with tempfile.TemporaryDirectory() as base:
+            root = _wsl_root(base)   # origin 'wsl:U'
+            _write_proc_stat(root.proc_dir, 1700000000)
+            _write_stat(root.proc_dir, 100, 'claude', 1, 5000)
+            _write_stat(root.proc_dir, 101, 'node', 100, 5000 + 60000)
+
+            other_key = ('wsl:Other', 555)
+            wsl._wsl_sample_cache[other_key] = (123, 60, 1700000000.0)
+
+            with mock.patch.object(wsl.time, 'time', return_value=1700100000.0):
+                wsl.wsl_process_stats(root, 100, 5000)
+
+        self.assertIn(other_key, wsl._wsl_sample_cache)
 
 
 if __name__ == '__main__':

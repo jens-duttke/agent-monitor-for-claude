@@ -38,6 +38,7 @@ from .tasks import read_task_output as _read_task_output
 from .verbose import print_runtime_diagnostics
 from .window_background import apply_native_background, window_background_color
 from .window_focus import focus_session_window, focus_terminal_window, open_directory, open_vscode_session
+from .wsl import wsl_process_stats
 
 __all__ = ['run']
 
@@ -66,6 +67,19 @@ def _sanitize_log(message: object) -> str:
     if len(cleaned) > _LOG_MAX_LEN:
         cleaned = cleaned[:_LOG_MAX_LEN] + '...'
     return cleaned
+
+
+def _proc_start_ticks_for(records: list[dict[str, Any]], pid_value: int) -> int | None:
+    """Return the ``proc_start_ticks`` of the registry record whose ``pid`` matches *pid_value*.
+
+    ``None`` when no record matches - the caller then probes without a recorded start time to
+    compare against, rather than rejecting the pid outright.
+    """
+    for record in records:
+        if record.get('pid') == pid_value:
+            return record.get('proc_start_ticks')
+
+    return None
 
 
 class _MonitorApi:
@@ -138,10 +152,12 @@ class _MonitorApi:
 
         Called only while the process panel is open, on a per-second timer.  The
         session's recorded process start time is looked up from the registry so
-        a recycled PID is rejected (``process_stats``).  Reports only resource
-        numbers and process names - never a command line.  A WSL session's
-        descendants live inside the distro's own process tree, not the Windows
-        one, so ``origin`` naming a WSL root yields an empty list for now.
+        a recycled PID is rejected.  Reports only resource numbers and process
+        names - never a command line.  A WSL session's descendants live inside
+        the distro's own ``/proc``, not the Windows process table, so a WSL
+        origin is routed to ``wsl_process_stats`` instead, with the start-time
+        lookup read from that same WSL root's own registry records rather than
+        the Windows one.
         """
         if isinstance(pid, bool) or not isinstance(pid, (int, float, str)):
             return []
@@ -159,15 +175,12 @@ class _MonitorApi:
             return []
 
         if root.proc_dir is not None:
-            return []
+            proc_start_ticks = _proc_start_ticks_for(list_sessions(root), pid_value)
+            stats = wsl_process_stats(root, pid_value, proc_start_ticks)
+        else:
+            proc_start_ticks = _proc_start_ticks_for(list_sessions(windows_root()), pid_value)
+            stats = process_stats(pid_value, proc_start_ticks)
 
-        proc_start_ticks = None
-        for record in list_sessions(windows_root()):
-            if record.get('pid') == pid_value:
-                proc_start_ticks = record.get('proc_start_ticks')
-                break
-
-        stats = process_stats(pid_value, proc_start_ticks)
         return [
             {
                 'pid': stat.pid, 'name': stat.name, 'cpu': stat.cpu_percent,

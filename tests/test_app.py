@@ -250,11 +250,11 @@ class UnknownOriginRefusalTest(unittest.TestCase):
 
 
 class WslOriginInterimDegradationTest(unittest.TestCase):
-    """Until Task 14, a WSL origin's tasks/process-stats degrade to the tool's own empty shape.
+    """Until Task 14, a WSL origin's task queries degrade to the tool's own empty shape.
 
-    ``tasks.py`` and the Windows process table are both single-root today, so a WSL origin must never
-    be handed to them - it would silently read the Windows temp directory, or probe an unrelated
-    Windows pid that happens to share the same number.
+    ``tasks.py`` is still single-root today, so a WSL origin must never be handed to it - it would
+    silently read the Windows temp directory instead of the distro's own. Process stats no longer
+    degrade this way as of Task 13 - see WslOriginProcessStatsTest below.
     """
 
     _SESSION = '6e22e66f-6298-442a-9762-2a5b65052389'
@@ -279,16 +279,35 @@ class WslOriginInterimDegradationTest(unittest.TestCase):
         self.assertIsNone(result)
         read_mock.assert_not_called()
 
-    def test_get_process_stats_returns_empty_without_probing_windows_processes(self) -> None:
+
+class WslOriginProcessStatsTest(unittest.TestCase):
+    """As of Task 13, a WSL origin's get_process_stats routes to wsl_process_stats instead of degrading."""
+
+    def _wsl_root(self) -> SessionRoot:
+        return SessionRoot(origin='wsl:U', label='U', config_dir=Path('cfg'), proc_dir=Path('proc'), temp_dir=Path('tmp'))
+
+    def test_get_process_stats_calls_wsl_process_stats_with_registry_ticks(self) -> None:
         api = _MonitorApi()
-        with mock.patch.object(app, 'root_for_origin', return_value=self._wsl_root()), \
-             mock.patch.object(app, 'list_sessions') as list_sessions_mock, \
-             mock.patch.object(app, 'process_stats') as process_stats_mock:
+        wsl_root = self._wsl_root()
+        stat = ChildProcessStat(pid=99, name='node', cpu_percent=1.0, rss_bytes=2048, uptime_seconds=5.0)
+        with mock.patch.object(app, 'root_for_origin', return_value=wsl_root), \
+             mock.patch.object(app, 'list_sessions', return_value=[{'pid': 4242, 'proc_start_ticks': 5000}]) as list_sessions_mock, \
+             mock.patch.object(app, 'wsl_process_stats', return_value=[stat]) as wsl_stats_mock:
             result = api.get_process_stats(4242, origin='wsl:U')
 
-        self.assertEqual(result, [])
-        list_sessions_mock.assert_not_called()
-        process_stats_mock.assert_not_called()
+        self.assertEqual(result, [{'pid': 99, 'name': 'node', 'cpu': 1.0, 'rss': 2048, 'uptime': 5.0, 'kind': 'process'}])
+        list_sessions_mock.assert_called_once_with(wsl_root)
+        wsl_stats_mock.assert_called_once_with(wsl_root, 4242, 5000)
+
+    def test_get_process_stats_ignores_a_registry_record_for_a_different_pid(self) -> None:
+        api = _MonitorApi()
+        wsl_root = self._wsl_root()
+        with mock.patch.object(app, 'root_for_origin', return_value=wsl_root), \
+             mock.patch.object(app, 'list_sessions', return_value=[{'pid': 1, 'proc_start_ticks': 999}]), \
+             mock.patch.object(app, 'wsl_process_stats', return_value=[]) as wsl_stats_mock:
+            api.get_process_stats(4242, origin='wsl:U')
+
+        wsl_stats_mock.assert_called_once_with(wsl_root, 4242, None)
 
 
 class WindowsOriginPassthroughTest(unittest.TestCase):

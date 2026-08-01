@@ -34,10 +34,10 @@ from pathlib import Path
 from typing import Iterable
 
 from .paths import SessionRoot
-from .process_probe import ProcessInfo, SESSION_HELPER_WINDOW_SECONDS, vmmem_present as _vmmem_present
+from .process_probe import ChildProcessStat, ProcessInfo, SESSION_HELPER_WINDOW_SECONDS, vmmem_present as _vmmem_present
 from .settings import WSL_MONITORING
 
-__all__ = ['wsl_roots', 'probe_wsl_sessions', 'reset_caches']
+__all__ = ['wsl_roots', 'probe_wsl_sessions', 'wsl_process_stats', 'reset_caches']
 
 # Base UNC host WSL exposes every distro's filesystem under - the same host
 # paths.wsl_path_to_windows routes a distro's own reported paths through.
@@ -239,14 +239,19 @@ def _distro_roots(distro: str, unc_base: Path | str) -> list[SessionRoot]:
     return roots
 
 
-# Linux clock ticks per second, used to interpret /proc/[pid]/stat's tick-based fields (starttime
-# here; utime/stime feed later display math). Assumed at the Linux/WSL2 kernel's default of 100 Hz
-# rather than queried per distro - reading it (getconf CLK_TCK, or sysconf(_SC_CLK_TCK)) would mean
-# running a program inside the distribution, which this module never does (see the module
-# docstring). Only the session-helper window below depends on it; liveness compares starttime
-# values directly and never needs it, so a distro with a non-default tick rate only widens or
-# narrows that window - it can never make a live session read as dead or vice versa.
+# Linux clock ticks per second, used to interpret /proc/[pid]/stat's tick-based fields (starttime,
+# utime, stime here). Assumed at the Linux/WSL2 kernel's default of 100 Hz rather than queried per
+# distro - reading it (getconf CLK_TCK, or sysconf(_SC_CLK_TCK)) would mean running a program inside
+# the distribution, which this module never does (see the module docstring). Liveness compares
+# starttime values directly and never needs it, so a distro with a non-default tick rate only widens
+# or narrows the session-helper window and skews the CPU/uptime figures below - it can never make a
+# live session read as dead or vice versa.
 _CLK_TCK = 100
+
+# Linux's fixed page size (bytes), used to convert /proc/[pid]/stat's RSS field (pages) to bytes.
+# Assumed rather than queried for the same reason as _CLK_TCK above: querying it would mean running
+# a program inside the distribution.
+_PAGE_SIZE = 4096
 
 
 def probe_wsl_sessions(root: SessionRoot, requests: Iterable[tuple[int, int | None]]) -> dict[int, ProcessInfo]:
@@ -279,38 +284,94 @@ def probe_wsl_sessions(root: SessionRoot, requests: Iterable[tuple[int, int | No
         unreachable, the mount gone) degrades every request to not alive, rather than raising.
     """
     table = _read_proc_table(root.proc_dir)
-
-    children_index: dict[int, list[int]] = {}
-    for pid, (_comm, ppid, _starttime) in table.items():
-        children_index.setdefault(ppid, []).append(pid)
+    children_index = _children_index(table)
 
     result: dict[int, ProcessInfo] = {}
     for pid, proc_start_ticks in requests:
-        entry = table.get(pid)
-        if entry is None:
+        descendants = _live_descendants(pid, proc_start_ticks, table, children_index)
+        if descendants is None:
             result[pid] = ProcessInfo(alive=False, tool_running=False)
             continue
 
-        _comm, _ppid, starttime = entry
-        if proc_start_ticks is not None and proc_start_ticks != starttime:
-            result[pid] = ProcessInfo(alive=False, tool_running=False)
-            continue
-
-        descendants = _meaningful_descendants(pid, starttime, table, children_index)
         result[pid] = ProcessInfo(alive=True, tool_running=bool(descendants), host=None, via_cli=False, child_count=len(descendants))
 
     return result
 
 
-def _read_proc_table(proc_dir: Path) -> dict[int, tuple[str, int, int]]:
-    """Return ``{pid: (comm, ppid, starttime)}`` parsed from every numeric entry under *proc_dir*.
+def wsl_process_stats(root: SessionRoot, pid: int, proc_start_ticks: int | None) -> list[ChildProcessStat]:
+    """Return live CPU / memory / uptime for one WSL session's descendant processes.
+
+    The descendant set and liveness gate are exactly :func:`probe_wsl_sessions`'s - both share
+    :func:`_live_descendants` - so the panel lists precisely the processes the badge counts, and a
+    dead or stale session yields ``[]`` the same way. Memory and uptime are read straight from the one
+    procfs scan, no sampling needed: ``rss_bytes`` is stat field 24 (pages) times the page size, and
+    ``uptime_seconds`` is *now* minus the process's absolute start time, derived from the system boot
+    time (the ``btime`` line of ``<root.proc_dir>/stat``) plus its own ``starttime`` field converted
+    from ticks - ``None`` when ``btime`` cannot be read. CPU has no such absolute reading in procfs,
+    only cumulative ticks, so it is sampled the same way ``process_probe`` samples a Windows process:
+    the first reading of a freshly seen ``(origin, pid, starttime)`` is ``None``, and a real percentage
+    follows once a prior sample exists to diff against (see :func:`_sample_wsl_cpu`). Unlike
+    ``process_probe.process_stats``, no trailing ``wsl_vm`` context row is appended here - these rows
+    already are the session's real work, not a Windows-side relay standing in for it.
+
+    Parameters
+    ----------
+    root : SessionRoot
+        A WSL root as returned by :func:`wsl_roots`; ``root.proc_dir`` is read, and ``root.origin``
+        scopes the CPU sample cache so two distros' panels never share or evict each other's baseline.
+    pid : int
+        The session process id from the registry.
+    proc_start_ticks : int or None
+        The recorded process start time (``/proc/[pid]/stat`` field 22); when given, a mismatch means
+        the pid was recycled and an empty list is returned, exactly as :func:`probe_wsl_sessions`.
+
+    Returns
+    -------
+    list[ChildProcessStat]
+        One entry per descendant process, ordered by name then pid so the rows stay put across
+        refreshes. Empty when the session process is gone or stale.
+    """
+    table = _read_proc_table(root.proc_dir)
+    children_index = _children_index(table)
+
+    descendants = _live_descendants(pid, proc_start_ticks, table, children_index)
+    if descendants is None:
+        return []
+
+    now = time.time()
+    btime = _read_btime(root.proc_dir)
+
+    stats: list[ChildProcessStat] = []
+    live_pids: set[int] = set()
+    for child_pid, name in descendants:
+        entry = table.get(child_pid)
+        if entry is None:
+            continue
+        _comm, _ppid, child_start, rss_pages, cpu_ticks = entry
+
+        live_pids.add(child_pid)
+        rss_bytes = None if rss_pages is None else rss_pages * _PAGE_SIZE
+        uptime = None if btime is None else max(0.0, now - (btime + child_start / _CLK_TCK))
+        cpu = _sample_wsl_cpu(root.origin, child_pid, child_start, cpu_ticks, now)
+        stats.append(ChildProcessStat(pid=child_pid, name=name, cpu_percent=cpu, rss_bytes=rss_bytes, uptime_seconds=uptime))
+
+    stats.sort(key=lambda stat: (stat.name, stat.pid))
+    _prune_wsl_sample_cache(root.origin, live_pids)
+    return stats
+
+
+def _read_proc_table(proc_dir: Path) -> dict[int, tuple[str, int, int, int | None, int | None]]:
+    """Return ``{pid: (comm, ppid, starttime, rss_pages, cpu_ticks)}`` for every numeric entry under *proc_dir*.
 
     Any ``OSError`` while listing *proc_dir* (the distro unreachable, the share gone) yields an empty
     table rather than raising; likewise a pid whose own ``stat`` file cannot be read, or whose
-    contents do not parse (malformed, or a non-numeric ppid/starttime), is skipped rather than
-    aborting the whole scan - one unreadable process must never hide every other session.
+    ``comm``, ``ppid``, or ``starttime`` do not parse, is skipped rather than aborting the whole scan -
+    one unreadable process must never hide every other session. ``rss_pages`` (field 24) and
+    ``cpu_ticks`` (``utime`` + ``stime``, fields 14 and 15) feed :func:`wsl_process_stats` alone -
+    :func:`probe_wsl_sessions` never reads them - so either degrades to ``None`` on its own rather than
+    dropping the whole entry.
     """
-    table: dict[int, tuple[str, int, int]] = {}
+    table: dict[int, tuple[str, int, int, int | None, int | None]] = {}
 
     try:
         entries = list(proc_dir.iterdir())
@@ -337,9 +398,22 @@ def _read_proc_table(proc_dir: Path) -> dict[int, tuple[str, int, int]]:
         except (IndexError, ValueError):
             continue
 
-        table[int(entry.name)] = (comm, ppid, starttime)
+        rss_pages = _parse_optional_int(fields, 21)
+        utime = _parse_optional_int(fields, 11)
+        stime = _parse_optional_int(fields, 12)
+        cpu_ticks = None if utime is None or stime is None else utime + stime
+
+        table[int(entry.name)] = (comm, ppid, starttime, rss_pages, cpu_ticks)
 
     return table
+
+
+def _parse_optional_int(fields: list[str], index: int) -> int | None:
+    """Parse ``fields[index]`` to an int, or ``None`` when the index is out of range or not numeric."""
+    try:
+        return int(fields[index])
+    except (IndexError, ValueError):
+        return None
 
 
 def _parse_stat(text: str) -> tuple[str, list[str]] | None:
@@ -363,10 +437,43 @@ def _parse_stat(text: str) -> tuple[str, list[str]] | None:
     return comm, tail.split()
 
 
+def _children_index(table: dict[int, tuple[str, int, int, int | None, int | None]]) -> dict[int, list[int]]:
+    """Build ``{parent_pid: [child_pid, ...]}`` from a parsed procfs table."""
+    children_index: dict[int, list[int]] = {}
+    for pid, (_comm, ppid, _starttime, _rss_pages, _cpu_ticks) in table.items():
+        children_index.setdefault(ppid, []).append(pid)
+
+    return children_index
+
+
+def _live_descendants(
+    pid: int,
+    proc_start_ticks: int | None,
+    table: dict[int, tuple[str, int, int, int | None, int | None]],
+    children_index: dict[int, list[int]],
+) -> list[tuple[int, str]] | None:
+    """Return *pid*'s meaningful descendants (see :func:`_meaningful_descendants`), or ``None`` if not alive.
+
+    The liveness gate is shared verbatim by :func:`probe_wsl_sessions` and :func:`wsl_process_stats`: a
+    pid absent from *table*, or one whose recorded ``starttime`` does not match *proc_start_ticks*
+    (Linux recycled the pid), is not alive. The comparison only runs when *proc_start_ticks* is not
+    ``None`` - ``0`` is a legitimate start time, never a sentinel for "unknown".
+    """
+    entry = table.get(pid)
+    if entry is None:
+        return None
+
+    _comm, _ppid, starttime, _rss_pages, _cpu_ticks = entry
+    if proc_start_ticks is not None and proc_start_ticks != starttime:
+        return None
+
+    return _meaningful_descendants(pid, starttime, table, children_index)
+
+
 def _meaningful_descendants(
     pid: int,
     session_start: int,
-    table: dict[int, tuple[str, int, int]],
+    table: dict[int, tuple[str, int, int, int | None, int | None]],
     children_index: dict[int, list[int]],
 ) -> list[tuple[int, str]]:
     """Return the process tree below *pid* as ``(pid, comm)``, excluding session-lifetime helpers.
@@ -391,7 +498,7 @@ def _meaningful_descendants(
         entry = table.get(child_pid)
         if entry is None:
             continue
-        comm, _ppid, child_start = entry
+        comm, _ppid, child_start, _rss_pages, _cpu_ticks = entry
 
         if child_start - session_start > helper_window_ticks:
             descendants.append((child_pid, comm))
@@ -399,3 +506,79 @@ def _meaningful_descendants(
         pending.extend(children_index.get(child_pid, []))
 
     return descendants
+
+
+def _read_btime(proc_dir: Path) -> int | None:
+    """Return the system boot time (epoch seconds) from the ``btime`` line of ``<proc_dir>/stat``.
+
+    Defensive like every other procfs read in this module: a missing or unreadable file, or a response
+    with no parseable ``btime`` line, yields ``None`` rather than raising - callers degrade the uptime
+    figure to ``None`` rather than letting the whole probe fail.
+    """
+    try:
+        text = (proc_dir / 'stat').read_text(encoding='utf-8', errors='ignore')
+    except OSError:
+        return None
+
+    for line in text.splitlines():
+        if line.startswith('btime '):
+            return _parse_optional_int(line.split(), 1)
+
+    return None
+
+
+# Live CPU-tick baselines kept between calls so cpu_percent can report the delta since the previous
+# sample, mirroring process_probe's _sample_lock/_sample_cache pair. Keyed by (origin, pid) rather
+# than pid alone - two distros' proc namespaces reuse the same pid range independently, so the origin
+# disambiguates them the same way it disambiguates every other per-root lookup in this application.
+_wsl_sample_lock = threading.Lock()
+_wsl_sample_cache: dict[tuple[str, int], tuple[int, int, float]] = {}
+
+
+def _sample_wsl_cpu(origin: str, pid: int, starttime: int, cpu_ticks: int | None, now: float) -> float | None:
+    """Return one descendant's CPU percent, sampled against the previous call for the same (origin, pid).
+
+    ``cpu_ticks`` is the process's cumulative ``utime + stime`` at *now* - procfs has no instantaneous
+    CPU figure, only this running total, so a percentage needs two readings to diff. The first sighting
+    of a given ``(origin, pid, starttime)`` therefore has nothing to diff against and reads ``None``; a
+    later call within the same process's lifetime computes the ticks elapsed over the wall time elapsed
+    since the previous sample. A cached entry whose ``starttime`` no longer matches means the pid was
+    recycled by an unrelated process, so it is treated as an unseen first sighting rather than diffed
+    against the old process's ticks. ``cpu_ticks`` itself being ``None`` (the stat fields failed to
+    parse) reads as ``None`` and evicts any cached baseline for the key, so a later successful read
+    starts over as a clean first sighting rather than diffing across the unreadable gap.
+    """
+    key = (origin, pid)
+    if cpu_ticks is None:
+        with _wsl_sample_lock:
+            _wsl_sample_cache.pop(key, None)
+        return None
+
+    with _wsl_sample_lock:
+        cached = _wsl_sample_cache.get(key)
+        _wsl_sample_cache[key] = (starttime, cpu_ticks, now)
+
+    if cached is None or cached[0] != starttime:
+        return None
+
+    _prev_starttime, prev_ticks, prev_wall = cached
+    delta_wall = now - prev_wall
+    if delta_wall <= 0:
+        return None
+
+    delta_ticks = cpu_ticks - prev_ticks
+    return max(0.0, (delta_ticks / _CLK_TCK) / delta_wall * 100.0)
+
+
+def _prune_wsl_sample_cache(origin: str, live_pids: set[int]) -> None:
+    """Drop cached CPU baselines for *origin* whose pid fell out of the current descendant set.
+
+    Scoped to *origin* alone, mirroring ``process_probe._prune_sample_cache`` narrowed per root: two
+    distros' (or two disambiguated roots') process panels sample independently, so a pid missing from
+    *live_pids* here - simply because this call is for a different origin - must never evict that other
+    origin's cached baseline.
+    """
+    with _wsl_sample_lock:
+        for key in list(_wsl_sample_cache):
+            if key[0] == origin and key[1] not in live_pids:
+                _wsl_sample_cache.pop(key, None)
