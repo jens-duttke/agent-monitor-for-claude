@@ -31,12 +31,13 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from typing import Iterable
 
 from .paths import SessionRoot
-from .process_probe import vmmem_present as _vmmem_present
+from .process_probe import ProcessInfo, SESSION_HELPER_WINDOW_SECONDS, vmmem_present as _vmmem_present
 from .settings import WSL_MONITORING
 
-__all__ = ['wsl_roots', 'reset_caches']
+__all__ = ['wsl_roots', 'probe_wsl_sessions', 'reset_caches']
 
 # Base UNC host WSL exposes every distro's filesystem under - the same host
 # paths.wsl_path_to_windows routes a distro's own reported paths through.
@@ -236,3 +237,163 @@ def _distro_roots(distro: str, unc_base: Path | str) -> list[SessionRoot]:
         ))
 
     return roots
+
+
+# Linux clock ticks per second, used to interpret /proc/[pid]/stat's tick-based fields (starttime
+# here; utime/stime feed later display math). Assumed at the Linux/WSL2 kernel's default of 100 Hz
+# rather than queried per distro - reading it (getconf CLK_TCK, or sysconf(_SC_CLK_TCK)) would mean
+# running a program inside the distribution, which this module never does (see the module
+# docstring). Only the session-helper window below depends on it; liveness compares starttime
+# values directly and never needs it, so a distro with a non-default tick rate only widens or
+# narrows that window - it can never make a live session read as dead or vice versa.
+_CLK_TCK = 100
+
+
+def probe_wsl_sessions(root: SessionRoot, requests: Iterable[tuple[int, int | None]]) -> dict[int, ProcessInfo]:
+    """Probe WSL session liveness and running children from one procfs scan.
+
+    Reads ``root.proc_dir`` - the distro's own ``/proc`` shared over the 9P/UNC mount - directly, so
+    no subprocess is ever invoked here, matching the module's one-command guarantee (see the module
+    docstring). One scan of the numeric entries under ``root.proc_dir`` answers every request: a pid
+    absent from the table is not alive; a pid present but whose recorded start time (stat field 22)
+    does not match *proc_start_ticks* means Linux recycled the pid for an unrelated process, so it is
+    reported not alive too - the same recycled-pid guard ``process_probe`` applies to the native
+    Windows process, adapted to procfs's own start-time field. ``host`` and ``via_cli`` are always
+    ``None``/``False``: a WSL session has no Windows-side ancestry to classify the way a native
+    session's GUI/shell chain does.
+
+    Parameters
+    ----------
+    root : SessionRoot
+        A WSL root as returned by :func:`wsl_roots`; ``root.proc_dir`` is read.
+    requests : iterable of (pid, proc_start_ticks)
+        Session process ids to probe, each paired with the recorded start time (``/proc/[pid]/stat``
+        field 22) or ``None`` when not yet known.
+
+    Returns
+    -------
+    dict[int, ProcessInfo]
+        One entry per requested pid. Any ``OSError`` while listing *root.proc_dir* (the distro
+        unreachable, the mount gone) degrades every request to not alive, rather than raising.
+    """
+    table = _read_proc_table(root.proc_dir)
+
+    children_index: dict[int, list[int]] = {}
+    for pid, (_comm, ppid, _starttime) in table.items():
+        children_index.setdefault(ppid, []).append(pid)
+
+    result: dict[int, ProcessInfo] = {}
+    for pid, proc_start_ticks in requests:
+        entry = table.get(pid)
+        if entry is None:
+            result[pid] = ProcessInfo(alive=False, tool_running=False)
+            continue
+
+        _comm, _ppid, starttime = entry
+        if proc_start_ticks and proc_start_ticks != starttime:
+            result[pid] = ProcessInfo(alive=False, tool_running=False)
+            continue
+
+        descendants = _meaningful_descendants(pid, starttime, table, children_index)
+        result[pid] = ProcessInfo(alive=True, tool_running=bool(descendants), host=None, via_cli=False, child_count=len(descendants))
+
+    return result
+
+
+def _read_proc_table(proc_dir: Path) -> dict[int, tuple[str, int, int]]:
+    """Return ``{pid: (comm, ppid, starttime)}`` parsed from every numeric entry under *proc_dir*.
+
+    Any ``OSError`` while listing *proc_dir* (the distro unreachable, the share gone) yields an empty
+    table rather than raising; likewise a pid whose own ``stat`` file cannot be read, or whose
+    contents do not parse (malformed, or a non-numeric ppid/starttime), is skipped rather than
+    aborting the whole scan - one unreadable process must never hide every other session.
+    """
+    table: dict[int, tuple[str, int, int]] = {}
+
+    try:
+        entries = list(proc_dir.iterdir())
+    except OSError:
+        return table
+
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+
+        try:
+            text = (entry / 'stat').read_text(encoding='utf-8', errors='ignore')
+        except OSError:
+            continue
+
+        parsed = _parse_stat(text)
+        if parsed is None:
+            continue
+        comm, fields = parsed
+
+        try:
+            ppid = int(fields[1])
+            starttime = int(fields[19])
+        except (IndexError, ValueError):
+            continue
+
+        table[int(entry.name)] = (comm, ppid, starttime)
+
+    return table
+
+
+def _parse_stat(text: str) -> tuple[str, list[str]] | None:
+    """Parse one ``/proc/[pid]/stat`` line into ``(comm, fields)``.
+
+    ``comm`` (field 2) is process-settable (e.g. via ``prctl``/``/proc/self/comm``) and may itself
+    contain spaces or parentheses - e.g. ``tmux: server (x)`` - so it cannot be delimited by the
+    first ``)``. Every field after it is numeric or a single letter, so the *last* ``)`` in the line
+    is always the real close; everything between the first ``' ('`` and that closing paren is
+    ``comm``, and everything after it, split on whitespace, is *fields*, where ``fields[N - 3]``
+    holds stat field ``N`` (fields 1-2, pid and comm, are already consumed above, so field 3, the
+    state, lands at ``fields[0]``). Returns ``None`` when the line has no ``)`` at all, or nothing
+    shaped like ``' ('`` before it - either way too malformed to trust.
+    """
+    head, _, tail = text.rpartition(')')
+    start = head.find(' (')
+    if start == -1:
+        return None
+
+    comm = head[start + 2:]
+    return comm, tail.split()
+
+
+def _meaningful_descendants(
+    pid: int,
+    session_start: int,
+    table: dict[int, tuple[str, int, int]],
+    children_index: dict[int, list[int]],
+) -> list[tuple[int, str]]:
+    """Return the process tree below *pid* as ``(pid, comm)``, excluding session-lifetime helpers.
+
+    Mirrors ``process_probe._meaningful_children``: every descendant is visited and its own children
+    are always queued for the walk, cycle-guarded with a visited set, but a descendant that started
+    within ``SESSION_HELPER_WINDOW_SECONDS`` of *session_start* (a stdio MCP server, a watcher
+    started alongside the session) is excluded from the result - the walk continues through it
+    regardless, so a genuine tool child spawned later by that helper still counts.
+    """
+    descendants: list[tuple[int, str]] = []
+    visited = {pid}
+    pending = list(children_index.get(pid, []))
+    helper_window_ticks = SESSION_HELPER_WINDOW_SECONDS * _CLK_TCK
+
+    while pending:
+        child_pid = pending.pop()
+        if child_pid in visited:
+            continue
+        visited.add(child_pid)
+
+        entry = table.get(child_pid)
+        if entry is None:
+            continue
+        comm, _ppid, child_start = entry
+
+        if child_start - session_start > helper_window_ticks:
+            descendants.append((child_pid, comm))
+
+        pending.extend(children_index.get(child_pid, []))
+
+    return descendants

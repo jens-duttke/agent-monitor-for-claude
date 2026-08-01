@@ -88,5 +88,59 @@ class WslRootsGateTests(unittest.TestCase):
             self.assertEqual(listing.call_count, 1)
 
 
+def _write_stat(proc_dir: Path, pid: int, comm: str, ppid: int, starttime: int) -> None:
+    entry = proc_dir / str(pid)
+    entry.mkdir(parents=True, exist_ok=True)
+    fields3plus = ['S', str(ppid), '1', '1', '0', '-1', '4194304', '0', '0', '0', '0',
+                   '50', '10', '0', '0', '20', '0', '4', '0', str(starttime), '1000000', '500']
+    (entry / 'stat').write_text(f'{pid} ({comm}) ' + ' '.join(fields3plus), encoding='utf-8')
+
+
+class ParseStatTests(unittest.TestCase):
+    def test_comm_with_spaces_and_parens(self):
+        parsed = wsl._parse_stat('123 (tmux: server (x)) S 1 123 123 0 -1 4 0 0 0 0 5 6 0 0 20 0 1 0 83860 1 2')
+        self.assertIsNotNone(parsed)
+        comm, fields = parsed
+        self.assertEqual(comm, 'tmux: server (x)')
+        self.assertEqual(fields[1], '1')        # ppid (field 4)
+        self.assertEqual(fields[19], '83860')   # starttime (field 22)
+
+    def test_malformed(self):
+        self.assertIsNone(wsl._parse_stat('no parens here'))
+
+
+class ProbeWslSessionsTests(unittest.TestCase):
+    def _root(self, base: str):
+        return wsl.SessionRoot(origin='wsl:U', label='U', config_dir=Path(base) / 'cfg',
+                               proc_dir=Path(base) / 'proc', temp_dir=Path(base) / 'tmp')
+
+    def test_liveness_and_recycled_pid(self):
+        with tempfile.TemporaryDirectory() as base:
+            root = self._root(base)
+            _write_stat(root.proc_dir, 100, 'claude', 1, 5000)
+            self.assertTrue(wsl.probe_wsl_sessions(root, [(100, 5000)])[100].alive)
+            self.assertFalse(wsl.probe_wsl_sessions(root, [(100, 4999)])[100].alive)   # recycled
+            self.assertFalse(wsl.probe_wsl_sessions(root, [(200, None)])[200].alive)   # gone
+
+    def test_descendants_and_helper_window(self):
+        with tempfile.TemporaryDirectory() as base:
+            root = self._root(base)
+            _write_stat(root.proc_dir, 100, 'claude', 1, 5000)
+            _write_stat(root.proc_dir, 101, 'node', 100, 5000 + 500)     # helper: within 10 s * 100 ticks
+            _write_stat(root.proc_dir, 102, 'cargo', 100, 5000 + 60000)  # real tool child
+            _write_stat(root.proc_dir, 103, 'rustc', 102, 5000 + 60010)  # grandchild
+            info = wsl.probe_wsl_sessions(root, [(100, 5000)])[100]
+            self.assertTrue(info.alive)
+            self.assertEqual(info.child_count, 2)
+            self.assertTrue(info.tool_running)
+            self.assertIsNone(info.host)
+
+    def test_unreadable_proc_dir(self):
+        root = self._root(tempfile.mkdtemp())
+        root = wsl.SessionRoot(origin='wsl:U', label='U', config_dir=root.config_dir,
+                               proc_dir=root.proc_dir / 'missing', temp_dir=root.temp_dir)
+        self.assertFalse(wsl.probe_wsl_sessions(root, [(1, None)])[1].alive)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -35,7 +35,7 @@ from typing import Any, Iterable
 import psutil
 
 __all__ = [
-    'ChildProcessStat', 'ProcessInfo', 'TERMINAL_WINDOW_OWNERS',
+    'ChildProcessStat', 'ProcessInfo', 'SESSION_HELPER_WINDOW_SECONDS', 'TERMINAL_WINDOW_OWNERS',
     'ancestry', 'probe', 'probe_all', 'process_names', 'process_stats', 'vmmem_present',
 ]
 
@@ -57,7 +57,7 @@ _WSL_RELAY_NAMES = frozenset({'wsl.exe', 'wslhost.exe'})
 # for its entire lifetime.  The window only affects the first seconds of a
 # session's life; a tool run later reads normally, and the transcript-based
 # classification still reports a just-started turn as working regardless.
-_SESSION_HELPER_WINDOW_SECONDS = 10.0
+SESSION_HELPER_WINDOW_SECONDS = 10.0
 
 # Editors that host a session in their own window.
 _EDITOR_HOSTS = {
@@ -546,7 +546,7 @@ def _meaningful_children(
 
     Descendants that started together with the session itself are session-
     lifetime helpers (stdio MCP servers, watchers) rather than tool executions,
-    and are skipped - see ``_SESSION_HELPER_WINDOW_SECONDS``.
+    and are skipped - see ``SESSION_HELPER_WINDOW_SECONDS``.
     """
     children: list[tuple[int, str]] = []
     visited = {pid}
@@ -587,7 +587,7 @@ def _is_session_helper(child_pid: int, session_start: float | None, create_time_
     if child_start is None:
         return False
 
-    return child_start <= session_start + _SESSION_HELPER_WINDOW_SECONDS
+    return child_start <= session_start + SESSION_HELPER_WINDOW_SECONDS
 
 
 def _is_child_link_real(parent_pid: int, child_pid: int, create_time_cache: dict[int, float | None]) -> bool:
