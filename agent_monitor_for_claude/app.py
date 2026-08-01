@@ -149,7 +149,7 @@ class _MonitorApi:
             return []
 
         proc_start_ticks = None
-        for record in list_sessions():
+        for record in list_sessions(windows_root()):
             if record.get('pid') == pid_value:
                 proc_start_ticks = record.get('proc_start_ticks')
                 break

@@ -31,7 +31,7 @@ def build_snapshot() -> dict[str, Any]:
     """Return the raw session overview as a flat list of per-session records."""
     sessions: list[dict[str, Any]] = []
 
-    records = list_sessions()
+    records = list_sessions(windows_root())
     probe_map = probe_all([(record['pid'], record['proc_start_ticks']) for record in records])
 
     for record in records:
@@ -116,7 +116,7 @@ def live_or_recent_ids() -> set[str]:
     history listing instead of vanishing from both because a stale, un-pruned
     registry record still names it.
     """
-    records = list_sessions()
+    records = list_sessions(windows_root())
     probe_map = probe_all([(record['pid'], record['proc_start_ticks']) for record in records])
 
     ids: set[str] = set()
@@ -144,7 +144,7 @@ def registry_fingerprint() -> str:
     """
     root = windows_root()
     parts: list[str] = []
-    for record in list_sessions():
+    for record in list_sessions(root):
         transcript = transcript_path(root, record['session_id'], record['cwd'])
         try:
             stat_result = transcript.stat()

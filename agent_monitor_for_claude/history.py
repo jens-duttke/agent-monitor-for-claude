@@ -57,7 +57,7 @@ def list_history() -> list[dict[str, Any]]:
     if not root.is_dir():
         return []
 
-    live = list_sessions()
+    live = list_sessions(windows_root())
     live_ids = live_or_recent_ids()
 
     # The live registry is the authority on a project's exact cwd (it is what the

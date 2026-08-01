@@ -103,7 +103,7 @@ def _is_live(session_id: str) -> bool:
     here, immediately before deletion, closes the window between the UI listing
     a session and the user clicking delete.
     """
-    records = [record for record in list_sessions() if record['session_id'] == session_id]
+    records = [record for record in list_sessions(windows_root()) if record['session_id'] == session_id]
     if not records:
         return False
 
