@@ -198,9 +198,11 @@ class _MonitorApi:
         (``read_task_output``).  ``max_age`` (seconds, from the UI) drops tasks
         last written before the oldest running process started - those belong to
         an earlier run - so a value <= 0 or missing keeps them all.  ``origin``
-        is validated against the currently available session roots, but a WSL
-        session's own task files are not resolved yet, so it always yields the
-        empty result for now.
+        resolves to the session's root (the native Windows install or a WSL
+        distro); every task path is then derived from that root, so a WSL
+        session's own background tasks are read from its own UNC tree exactly
+        like a Windows session's.  An origin naming no currently available root
+        refuses with the empty result.
         """
         if not isinstance(session_id, str) or not isinstance(cwd, str):
             return {'tasks': [], 'total': 0}
@@ -212,14 +214,11 @@ class _MonitorApi:
         if root is None:
             return {'tasks': [], 'total': 0}
 
-        if root.proc_dir is not None:
-            return {'tasks': [], 'total': 0}
-
         recent = None
         if isinstance(max_age, (int, float)) and not isinstance(max_age, bool) and max_age > 0:
             recent = float(max_age)
 
-        infos, total = list_tasks(session_id, cwd, recent_seconds=recent)
+        infos, total = list_tasks(root, session_id, cwd, recent_seconds=recent)
         return {
             'tasks': [
                 {'id': info.task_id, 'size': info.size_bytes, 'age': info.age_seconds, 'label': info.label}
@@ -234,9 +233,9 @@ class _MonitorApi:
         The one bridge method that surfaces process output text.  Reached only
         when the user expands a task row; the read is confined to the session's
         task-output directory and both ids are validated (see ``tasks``).
-        ``origin`` is validated against the currently available session roots,
-        but a WSL session's own task files are not resolved yet, so it always
-        yields ``None`` for now.
+        ``origin`` resolves to the session's root the same way as ``get_tasks``,
+        so a WSL session's task output is read from its own root; an origin
+        naming no currently available root refuses with ``None``.
         """
         if not isinstance(session_id, str) or not isinstance(cwd, str) or not isinstance(task_id, str):
             return None
@@ -248,10 +247,7 @@ class _MonitorApi:
         if root is None:
             return None
 
-        if root.proc_dir is not None:
-            return None
-
-        return _read_task_output(session_id, cwd, task_id)
+        return _read_task_output(root, session_id, cwd, task_id)
 
     def start_search(self, query: object, sessions: object, options: object, seq: object) -> bool:
         """Start a streaming content search over the given in-view sessions.

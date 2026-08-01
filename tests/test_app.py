@@ -249,12 +249,13 @@ class UnknownOriginRefusalTest(unittest.TestCase):
         self.assertEqual(api.scratchpad_path(self._SESSION, self._CWD, origin=123), '')
 
 
-class WslOriginInterimDegradationTest(unittest.TestCase):
-    """Until Task 14, a WSL origin's task queries degrade to the tool's own empty shape.
+class WslOriginTasksTest(unittest.TestCase):
+    """As of Task 14, a WSL origin's task queries route through to ``tasks`` with the resolved root.
 
-    ``tasks.py`` is still single-root today, so a WSL origin must never be handed to it - it would
-    silently read the Windows temp directory instead of the distro's own. Process stats no longer
-    degrade this way as of Task 13 - see WslOriginProcessStatsTest below.
+    ``tasks.py`` is now per-root, so a WSL origin's background tasks are read from that root's own
+    UNC tree exactly like a Windows session's - see ``tests/test_tasks.py`` for the root-aware
+    confinement coverage. This mirrors WslOriginProcessStatsTest below, which made the same change
+    for process stats back in Task 13.
     """
 
     _SESSION = '6e22e66f-6298-442a-9762-2a5b65052389'
@@ -263,21 +264,26 @@ class WslOriginInterimDegradationTest(unittest.TestCase):
     def _wsl_root(self) -> SessionRoot:
         return SessionRoot(origin='wsl:U', label='U', config_dir=Path('cfg'), proc_dir=Path('proc'), temp_dir=Path('tmp'))
 
-    def test_get_tasks_returns_empty_without_calling_list_tasks(self) -> None:
+    def test_get_tasks_calls_list_tasks_with_the_resolved_root(self) -> None:
         api = _MonitorApi()
-        with mock.patch.object(app, 'root_for_origin', return_value=self._wsl_root()), mock.patch.object(app, 'list_tasks') as list_tasks_mock:
+        wsl_root = self._wsl_root()
+        info = TaskInfo(task_id='t1', size_bytes=10, age_seconds=1.5, label='build')
+        with mock.patch.object(app, 'root_for_origin', return_value=wsl_root), \
+             mock.patch.object(app, 'list_tasks', return_value=([info], 1)) as list_tasks_mock:
             result = api.get_tasks(self._SESSION, self._CWD, origin='wsl:U')
 
-        self.assertEqual(result, {'tasks': [], 'total': 0})
-        list_tasks_mock.assert_not_called()
+        self.assertEqual(result, {'tasks': [{'id': 't1', 'size': 10, 'age': 1.5, 'label': 'build'}], 'total': 1})
+        list_tasks_mock.assert_called_once_with(wsl_root, self._SESSION, self._CWD, recent_seconds=None)
 
-    def test_read_task_output_returns_none_without_calling_read_task_output(self) -> None:
+    def test_read_task_output_calls_read_task_output_with_the_resolved_root(self) -> None:
         api = _MonitorApi()
-        with mock.patch.object(app, 'root_for_origin', return_value=self._wsl_root()), mock.patch.object(app, '_read_task_output') as read_mock:
+        wsl_root = self._wsl_root()
+        with mock.patch.object(app, 'root_for_origin', return_value=wsl_root), \
+             mock.patch.object(app, '_read_task_output', return_value='hello') as read_mock:
             result = api.read_task_output(self._SESSION, self._CWD, 'task1', origin='wsl:U')
 
-        self.assertIsNone(result)
-        read_mock.assert_not_called()
+        self.assertEqual(result, 'hello')
+        read_mock.assert_called_once_with(wsl_root, self._SESSION, self._CWD, 'task1')
 
 
 class WslOriginProcessStatsTest(unittest.TestCase):
@@ -321,22 +327,24 @@ class WindowsOriginPassthroughTest(unittest.TestCase):
 
     def test_get_tasks_calls_list_tasks(self) -> None:
         api = _MonitorApi()
+        windows_root_value = self._windows_root()
         info = TaskInfo(task_id='t1', size_bytes=10, age_seconds=1.5, label='build')
-        with mock.patch.object(app, 'root_for_origin', return_value=self._windows_root()), \
+        with mock.patch.object(app, 'root_for_origin', return_value=windows_root_value), \
              mock.patch.object(app, 'list_tasks', return_value=([info], 1)) as list_tasks_mock:
             result = api.get_tasks(self._SESSION, self._CWD)
 
         self.assertEqual(result, {'tasks': [{'id': 't1', 'size': 10, 'age': 1.5, 'label': 'build'}], 'total': 1})
-        list_tasks_mock.assert_called_once_with(self._SESSION, self._CWD, recent_seconds=None)
+        list_tasks_mock.assert_called_once_with(windows_root_value, self._SESSION, self._CWD, recent_seconds=None)
 
     def test_read_task_output_calls_read_task_output(self) -> None:
         api = _MonitorApi()
-        with mock.patch.object(app, 'root_for_origin', return_value=self._windows_root()), \
+        windows_root_value = self._windows_root()
+        with mock.patch.object(app, 'root_for_origin', return_value=windows_root_value), \
              mock.patch.object(app, '_read_task_output', return_value='hello') as read_mock:
             result = api.read_task_output(self._SESSION, self._CWD, 'task1')
 
         self.assertEqual(result, 'hello')
-        read_mock.assert_called_once_with(self._SESSION, self._CWD, 'task1')
+        read_mock.assert_called_once_with(windows_root_value, self._SESSION, self._CWD, 'task1')
 
     def test_get_process_stats_uses_windows_root_for_the_registry_lookup(self) -> None:
         api = _MonitorApi()

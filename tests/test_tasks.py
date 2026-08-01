@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_monitor_for_claude.paths import cwd_to_slug, windows_root, wsl_path_to_windows
+from agent_monitor_for_claude.paths import SessionRoot, cwd_to_slug, task_output_dir, transcript_path, windows_root, wsl_path_to_windows
 from agent_monitor_for_claude.tasks import list_tasks, read_task_output, _parse_redirect_target
 
 _SESSION = '6e22e66f-6298-442a-9762-2a5b65052389'
@@ -38,6 +38,10 @@ class TasksTest(unittest.TestCase):
         self.addCleanup(env.stop)
         self._transcript = Path(self._config) / 'projects' / cwd_to_slug(_CWD) / f'{_SESSION}.jsonl'
         self._transcript.parent.mkdir(parents=True, exist_ok=True)
+
+        # Built after the tempdir/config patches above, so its temp_dir/config_dir
+        # match the fixture paths this class writes into.
+        self._root = windows_root()
 
     def _write_transcript(self, task_id: str, description: str, command: str = 'run it') -> None:
         use = {
@@ -70,7 +74,7 @@ class TasksTest(unittest.TestCase):
     def test_lists_recent_tasks_freshest_first(self) -> None:
         self._write('older.output', 'a', age_seconds=120)
         self._write('newer.output', 'bb', age_seconds=5)
-        tasks, total = list_tasks(_SESSION, _CWD)
+        tasks, total = list_tasks(self._root, _SESSION, _CWD)
         self.assertEqual([task.task_id for task in tasks], ['newer', 'older'])
         self.assertEqual(total, 2)
         self.assertEqual(tasks[0].size_bytes, 2)
@@ -78,7 +82,7 @@ class TasksTest(unittest.TestCase):
     def test_skips_stale_tasks(self) -> None:
         self._write('fresh.output', 'x', age_seconds=10)
         self._write('ancient.output', 'y', age_seconds=10000)
-        tasks, total = list_tasks(_SESSION, _CWD, recent_seconds=3600)
+        tasks, total = list_tasks(self._root, _SESSION, _CWD, recent_seconds=3600)
         self.assertEqual([task.task_id for task in tasks], ['fresh'])
         self.assertEqual(total, 1)
 
@@ -86,43 +90,43 @@ class TasksTest(unittest.TestCase):
         self._write('real.output', 'x', age_seconds=1)
         self._write('notes.txt', 'x', age_seconds=1)
         self._write('bad id.output', 'x', age_seconds=1)
-        tasks, _total = list_tasks(_SESSION, _CWD)
+        tasks, _total = list_tasks(self._root, _SESSION, _CWD)
         self.assertEqual([task.task_id for task in tasks], ['real'])
 
     def test_cap_reports_total(self) -> None:
         for index in range(30):
             self._write(f't{index:02d}.output', 'x', age_seconds=index)
-        tasks, total = list_tasks(_SESSION, _CWD, max_tasks=25)
+        tasks, total = list_tasks(self._root, _SESSION, _CWD, max_tasks=25)
         self.assertEqual(len(tasks), 25)
         self.assertEqual(total, 30)
 
     def test_labels_from_transcript(self) -> None:
         self._write('mytask1.output', 'x', age_seconds=3)
         self._write_transcript('mytask1', 'Run the big regression')
-        tasks, _total = list_tasks(_SESSION, _CWD)
+        tasks, _total = list_tasks(self._root, _SESSION, _CWD)
         self.assertEqual(tasks[0].task_id, 'mytask1')
         self.assertEqual(tasks[0].label, 'Run the big regression')
 
     def test_label_empty_without_transcript_entry(self) -> None:
         self._write('orphan9.output', 'x', age_seconds=3)
-        tasks, _total = list_tasks(_SESSION, _CWD)
+        tasks, _total = list_tasks(self._root, _SESSION, _CWD)
         self.assertEqual(tasks[0].label, '')
 
     def test_non_uuid_session_returns_empty(self) -> None:
-        self.assertEqual(list_tasks('not-a-uuid', _CWD), ([], 0))
+        self.assertEqual(list_tasks(self._root, 'not-a-uuid', _CWD), ([], 0))
 
     def test_missing_directory_returns_empty(self) -> None:
         other = '11111111-2222-3333-4444-555555555555'
-        self.assertEqual(list_tasks(other, _CWD), ([], 0))
+        self.assertEqual(list_tasks(self._root, other, _CWD), ([], 0))
 
     def test_reads_output_text(self) -> None:
         self._write('abc123.output', 'hello\nworld\n', age_seconds=1)
-        self.assertEqual(read_task_output(_SESSION, _CWD, 'abc123'), 'hello\nworld\n')
+        self.assertEqual(read_task_output(self._root, _SESSION, _CWD, 'abc123'), 'hello\nworld\n')
 
     def test_reads_only_tail_of_large_file(self) -> None:
         lines = [f'line-{index:06d}' for index in range(20000)]
         self._write('big.output', '\n'.join(lines) + '\n', age_seconds=1)
-        text = read_task_output(_SESSION, _CWD, 'big', max_bytes=4096)
+        text = read_task_output(self._root, _SESSION, _CWD, 'big', max_bytes=4096)
         self.assertTrue(text.startswith('…\n'))
         self.assertLessEqual(len(text.encode('utf-8')), 4096 + 4)
         self.assertIn('line-019999', text)
@@ -132,13 +136,13 @@ class TasksTest(unittest.TestCase):
         # A dot or separator is not in the allowed id set, so a crafted id can
         # never build a path outside the tasks directory.
         for crafted in ('../../secret', '..\\..\\secret', 'a/b', 'a.b'):
-            self.assertIsNone(read_task_output(_SESSION, _CWD, crafted))
+            self.assertIsNone(read_task_output(self._root, _SESSION, _CWD, crafted))
 
     def test_read_rejects_non_uuid_session(self) -> None:
-        self.assertIsNone(read_task_output('not-a-uuid', _CWD, 'abc123'))
+        self.assertIsNone(read_task_output(self._root, 'not-a-uuid', _CWD, 'abc123'))
 
     def test_read_missing_file_returns_none(self) -> None:
-        self.assertIsNone(read_task_output(_SESSION, _CWD, 'doesnotexist'))
+        self.assertIsNone(read_task_output(self._root, _SESSION, _CWD, 'doesnotexist'))
 
     def test_follows_redirect_into_scratchpad(self) -> None:
         # The capture file is empty because the command redirected its output to
@@ -150,8 +154,8 @@ class TasksTest(unittest.TestCase):
         log.write_text('progress 42/100\n', encoding='utf-8', newline='')
         self._write_transcript('redir01', 'Big run', command=f'bash job.sh > {log} 2>&1')
 
-        self.assertEqual(read_task_output(_SESSION, _CWD, 'redir01'), 'progress 42/100\n')
-        tasks, _total = list_tasks(_SESSION, _CWD)
+        self.assertEqual(read_task_output(self._root, _SESSION, _CWD, 'redir01'), 'progress 42/100\n')
+        tasks, _total = list_tasks(self._root, _SESSION, _CWD)
         self.assertEqual(tasks[0].size_bytes, len('progress 42/100\n'))
 
     def test_follows_relative_redirect_into_cwd(self) -> None:
@@ -176,7 +180,7 @@ class TasksTest(unittest.TestCase):
         }]}}
         transcript.write_text(json.dumps(use) + '\n' + json.dumps(result) + '\n', encoding='utf-8', newline='')
 
-        self.assertEqual(read_task_output(_SESSION, realcwd, 'relc01'), 'compiling...\n')
+        self.assertEqual(read_task_output(self._root, _SESSION, realcwd, 'relc01'), 'compiling...\n')
 
     def test_redirect_outside_roots_is_ignored(self) -> None:
         # A redirect target outside the scratchpad and project dir must never be
@@ -186,7 +190,7 @@ class TasksTest(unittest.TestCase):
         outside.write_text('secret\n', encoding='utf-8', newline='')
         self._write_transcript('redir02', 'Sneaky', command=f'bash job.sh > {outside} 2>&1')
 
-        self.assertNotEqual(read_task_output(_SESSION, _CWD, 'redir02'), 'secret\n')
+        self.assertNotEqual(read_task_output(self._root, _SESSION, _CWD, 'redir02'), 'secret\n')
 
     def test_capture_file_wins_when_nonempty(self) -> None:
         # If the task's own capture file has content, it is used - the redirect
@@ -197,7 +201,113 @@ class TasksTest(unittest.TestCase):
         (scratch / 'other.log').write_text('redirected\n', encoding='utf-8', newline='')
         self._write_transcript('redir03', 'Both', command=f'bash job.sh > {scratch / "other.log"} 2>&1')
 
-        self.assertEqual(read_task_output(_SESSION, _CWD, 'redir03'), 'captured\n')
+        self.assertEqual(read_task_output(self._root, _SESSION, _CWD, 'redir03'), 'captured\n')
+
+
+class WslRootTasksTest(unittest.TestCase):
+    """A WSL root's own background-task tree lists and reads exactly like the Windows one.
+
+    ``config_dir``/``proc_dir``/``temp_dir`` are plain temp directories standing in for the
+    ``\\\\wsl.localhost\\<distro>\\...`` UNC tree a real WSL root would use (see ``wsl.wsl_roots``);
+    every path below is derived from this fake root alone, never from ``windows_root()``.
+    """
+
+    _SESSION = 'a1b2c3d4-5e6f-4789-9abc-def012345678'
+    _CWD = '/home/dev/proj'
+
+    def setUp(self) -> None:
+        base = Path(tempfile.mkdtemp())
+        self._root = SessionRoot(
+            origin='wsl:U', label='U',
+            config_dir=base / 'home' / 'dev' / '.claude', proc_dir=base / 'proc', temp_dir=base / 'tmp',
+        )
+        self._dir = task_output_dir(self._root, self._SESSION, self._CWD)
+        self._dir.mkdir(parents=True, exist_ok=True)
+
+    def test_lists_and_reads_a_task_from_the_wsl_root_own_tree(self) -> None:
+        (self._dir / 'task01.output').write_text('building...\n', encoding='utf-8', newline='')
+
+        tasks, total = list_tasks(self._root, self._SESSION, self._CWD)
+        self.assertEqual([task.task_id for task in tasks], ['task01'])
+        self.assertEqual(total, 1)
+        self.assertEqual(read_task_output(self._root, self._SESSION, self._CWD, 'task01'), 'building...\n')
+
+
+class WslRootRedirectTest(unittest.TestCase):
+    """Redirect-following under a WSL root.
+
+    A real ``\\\\wsl.localhost\\...`` UNC path does not exist on the test machine, so - the same way
+    the rest of this suite solves confinement tests - only ``wsl_path_to_windows`` itself is faked
+    (mapping an absolute POSIX path onto a real temp directory); everything downstream, including the
+    confinement check, runs unmodified against that real tree.
+    """
+
+    _SESSION = 'a1b2c3d4-5e6f-4789-9abc-def012345678'
+    _CWD = '/home/dev/proj'
+
+    def setUp(self) -> None:
+        self._base = Path(tempfile.mkdtemp())
+        self._root = SessionRoot(
+            origin='wsl:U', label='U',
+            config_dir=self._base / 'home' / 'dev' / '.claude', proc_dir=self._base / 'proc', temp_dir=self._base / 'tmp',
+        )
+        self._dir = task_output_dir(self._root, self._SESSION, self._CWD)
+        self._dir.mkdir(parents=True, exist_ok=True)
+
+        def fake_translate(root: SessionRoot, text: str) -> str:
+            if isinstance(text, str) and text.startswith('/'):
+                return str(self._base.joinpath(*text.strip('/').split('/')))
+            return text
+
+        patcher = mock.patch('agent_monitor_for_claude.tasks.wsl_path_to_windows', side_effect=fake_translate)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _write_transcript(self, task_id: str, command: str) -> None:
+        use = {'type': 'assistant', 'message': {'content': [{
+            'type': 'tool_use', 'name': 'Bash', 'id': 'toolu_w',
+            'input': {'command': command, 'description': 'WSL run', 'run_in_background': True},
+        }]}}
+        result = {'type': 'user', 'message': {'content': [{
+            'type': 'tool_result', 'tool_use_id': 'toolu_w',
+            'content': f'Command running in background with ID: {task_id}. Output is being written to: x.output.',
+        }]}}
+        transcript = transcript_path(self._root, self._SESSION, self._CWD)
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        transcript.write_text(json.dumps(use) + '\n' + json.dumps(result) + '\n', encoding='utf-8', newline='')
+
+    def test_follows_absolute_redirect_translated_via_wsl_path_to_windows(self) -> None:
+        (self._dir / 'redirabs1.output').write_text('', encoding='utf-8', newline='')
+        target = self._base / 'home' / 'dev' / 'proj' / 'build.log'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('compiling 3/10\n', encoding='utf-8', newline='')
+        self._write_transcript('redirabs1', 'make > /home/dev/proj/build.log 2>&1')
+
+        self.assertEqual(read_task_output(self._root, self._SESSION, self._CWD, 'redirabs1'), 'compiling 3/10\n')
+        tasks, _total = list_tasks(self._root, self._SESSION, self._CWD)
+        self.assertEqual(tasks[0].size_bytes, len('compiling 3/10\n'))
+
+    def test_follows_relative_redirect_into_translated_cwd(self) -> None:
+        # A bareword target (no leading /) resolves against the session cwd as
+        # seen from Windows - i.e. through the same translation, not the raw
+        # POSIX cwd string.
+        (self._dir / 'redirrel1.output').write_text('', encoding='utf-8', newline='')
+        target = self._base / 'home' / 'dev' / 'proj' / 'build.log'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('compiling 7/10\n', encoding='utf-8', newline='')
+        self._write_transcript('redirrel1', 'make > build.log 2>&1')
+
+        self.assertEqual(read_task_output(self._root, self._SESSION, self._CWD, 'redirrel1'), 'compiling 7/10\n')
+
+    def test_redirect_outside_both_roots_is_refused(self) -> None:
+        (self._dir / 'redirout1.output').write_text('', encoding='utf-8', newline='')
+        outside = self._base / 'etc' / 'passwd'
+        outside.parent.mkdir(parents=True, exist_ok=True)
+        outside.write_text('root:x:0:0:root:/root:/bin/bash\n', encoding='utf-8', newline='')
+        self._write_transcript('redirout1', 'dump > /etc/passwd 2>&1')
+
+        # Confinement fails for both roots, so the (empty) capture file wins back.
+        self.assertEqual(read_task_output(self._root, self._SESSION, self._CWD, 'redirout1'), '')
 
 
 class RedirectParsingTest(unittest.TestCase):

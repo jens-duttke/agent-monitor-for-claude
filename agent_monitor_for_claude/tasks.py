@@ -33,7 +33,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .paths import SessionRoot, scratchpad_dir, task_output_dir, task_output_path, transcript_path, windows_root, wsl_path_to_windows
+from .paths import SessionRoot, scratchpad_dir, task_output_dir, task_output_path, transcript_path, wsl_path_to_windows
 
 __all__ = ['TaskInfo', 'list_tasks', 'read_task_output']
 
@@ -80,6 +80,7 @@ class TaskInfo:
 
 
 def list_tasks(
+    root: SessionRoot,
     session_id: str,
     cwd: str,
     *,
@@ -94,6 +95,9 @@ def list_tasks(
 
     Parameters
     ----------
+    root : SessionRoot
+        The session's root (the native Windows install or a WSL distro); every
+        path below is resolved under it.
     session_id : str
         The session UUID (validated; a non-UUID yields no tasks).
     cwd : str
@@ -113,7 +117,6 @@ def list_tasks(
     if not _valid_session(session_id) or not isinstance(cwd, str) or not cwd:
         return [], 0
 
-    root = windows_root()
     directory = task_output_dir(root, session_id, cwd)
     try:
         entries = list(directory.iterdir())
@@ -153,8 +156,8 @@ def list_tasks(
     return infos[:max_tasks], total
 
 
-def read_task_output(session_id: str, cwd: str, task_id: str, *, max_bytes: int = _OUTPUT_TAIL_BYTES) -> str | None:
-    """Return the tail of one background task's output, or ``None``.
+def read_task_output(root: SessionRoot, session_id: str, cwd: str, task_id: str, *, max_bytes: int = _OUTPUT_TAIL_BYTES) -> str | None:
+    """Return the tail of one background task's output under *root*, or ``None``.
 
     Reads the task's own capture file, or - when that is empty because the
     command redirected its output - the redirect target, but only if it resolves
@@ -167,7 +170,6 @@ def read_task_output(session_id: str, cwd: str, task_id: str, *, max_bytes: int 
     if not isinstance(task_id, str) or not _TASK_ID_PATTERN.match(task_id):
         return None
 
-    root = windows_root()
     command = _task_meta(root, session_id, cwd).get(task_id, {}).get('command', '')
     path = _effective_output_path(root, session_id, cwd, task_id, command)
     if path is None:
@@ -219,33 +221,35 @@ def _effective_output_path(root: SessionRoot, session_id: str, cwd: str, task_id
     except OSError:
         return base
 
-    redirect = _resolve_redirect(root, command, session_id, cwd)
+    redirect = _resolve_redirect(command, root, session_id, cwd)
     return redirect if redirect is not None else base
 
 
-def _resolve_redirect(root: SessionRoot, command: str, session_id: str, cwd: str) -> Path | None:
+def _resolve_redirect(command: str, root: SessionRoot, session_id: str, cwd: str) -> Path | None:
     """Return the command's output-redirect file if it is a real, in-bounds file.
 
-    The target is confined to the session's scratchpad or its project directory;
-    a WSL ``/mnt/<drive>/`` target is translated to its Windows path first.  Any
-    target outside both roots, or that is not an existing file, yields ``None``.
+    The target is confined to the session's scratchpad or its project directory, both resolved
+    under *root*; a WSL path (an ``/mnt/<drive>/`` mount, or - on a WSL root - any other absolute
+    POSIX path) is translated to its Windows-readable form first.  Any target outside both roots, or
+    that is not an existing file, yields ``None``.
     """
     target = _parse_redirect_target(command)
     if not target:
         return None
 
     # A relative target was written relative to the task's working directory;
-    # resolve it against the session cwd (best effort - the confinement check
-    # below still gates it) rather than the monitor's own cwd.
+    # resolve it against the session cwd as seen from Windows (best effort - the
+    # confinement check below still gates it) rather than the monitor's own cwd.
+    cwd_windows = Path(wsl_path_to_windows(root, cwd))
     candidate = Path(wsl_path_to_windows(root, target))
     if not candidate.is_absolute():
-        candidate = Path(cwd) / candidate
+        candidate = cwd_windows / candidate
     try:
         resolved = candidate.resolve()
     except (OSError, ValueError):
         return None
 
-    confinement_roots = (scratchpad_dir(root, session_id, cwd), Path(cwd))
+    confinement_roots = (scratchpad_dir(root, session_id, cwd), cwd_windows)
     for confinement_root in confinement_roots:
         try:
             resolved.relative_to(confinement_root.resolve())
