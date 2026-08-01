@@ -164,6 +164,21 @@ def read_task_output(root: SessionRoot, session_id: str, cwd: str, task_id: str,
     inside the session's scratchpad or project directory.  Reads at most the last
     ``max_bytes`` and drops the truncated leading line, marking the cut with an
     ellipsis.  Returns ``None`` when an id is invalid or the file cannot be read.
+
+    Parameters
+    ----------
+    root : SessionRoot
+        The session's root (the native Windows install or a WSL distro); every
+        path below is resolved under it.
+    session_id : str
+        The session UUID (validated; a non-UUID yields ``None``).
+    cwd : str
+        The session working directory, mapped to the project slug.
+    task_id : str
+        The background task id (validated; a malformed id yields ``None``).
+    max_bytes : int
+        How much of the file's tail to read; the truncated leading line is
+        dropped and marked with an ellipsis when the file is larger than this.
     """
     if not _valid_session(session_id) or not isinstance(cwd, str) or not cwd:
         return None

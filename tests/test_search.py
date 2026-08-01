@@ -247,8 +247,10 @@ class SearchOriginTest(SearchEnvTest):
     """Each ref's root is resolved by its own ``origin``, not assumed to be the Windows root."""
 
     def _wsl_root_with_transcript(self, base: str, text: str) -> SessionRoot:
-        root = SessionRoot(origin='wsl:U', label='U', config_dir=Path(base) / 'cfg',
-                            proc_dir=None, temp_dir=Path(base) / 'tmp')
+        root = SessionRoot(
+            origin='wsl:U', label='U', config_dir=Path(base) / 'cfg',
+            proc_dir=None, temp_dir=Path(base) / 'tmp',
+        )
         project = root.config_dir / 'projects' / '-home-dev-proj'
         project.mkdir(parents=True)
         (project / f'{WSL_SID}.jsonl').write_text(

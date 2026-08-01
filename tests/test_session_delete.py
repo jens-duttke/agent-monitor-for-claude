@@ -157,8 +157,10 @@ class DeleteOriginTest(DeleteEnvTest):
     """
 
     def _wsl_root_with_session(self, base: str, alive_pid: int | None) -> SessionRoot:
-        root = SessionRoot(origin='wsl:U', label='U', config_dir=Path(base) / 'cfg',
-                            proc_dir=Path(base) / 'proc', temp_dir=Path(base) / 'tmp')
+        root = SessionRoot(
+            origin='wsl:U', label='U', config_dir=Path(base) / 'cfg',
+            proc_dir=Path(base) / 'proc', temp_dir=Path(base) / 'tmp',
+        )
         project = root.config_dir / 'projects' / '-home-dev-proj'
         (project / WSL_SID).mkdir(parents=True)                      # subagent dir
         (project / f'{WSL_SID}.jsonl').write_text('{}\n', encoding='utf-8')

@@ -35,37 +35,39 @@ class SlugTest(unittest.TestCase):
 
 
 class SessionRootTests(unittest.TestCase):
-    def _wsl_root(self):
-        return SessionRoot(origin='wsl:Ubuntu', label='Ubuntu',
-                           config_dir=Path(r'\\wsl.localhost\Ubuntu\home\dev\.claude'),
-                           proc_dir=Path(r'\\wsl.localhost\Ubuntu\proc'),
-                           temp_dir=Path(r'\\wsl.localhost\Ubuntu\tmp'))
+    def _wsl_root(self) -> SessionRoot:
+        return SessionRoot(
+            origin='wsl:Ubuntu', label='Ubuntu',
+            config_dir=Path(r'\\wsl.localhost\Ubuntu\home\dev\.claude'),
+            proc_dir=Path(r'\\wsl.localhost\Ubuntu\proc'),
+            temp_dir=Path(r'\\wsl.localhost\Ubuntu\tmp'),
+        )
 
-    def test_windows_root_shape(self):
+    def test_windows_root_shape(self) -> None:
         root = windows_root()
         self.assertEqual(root.origin, 'windows')
         self.assertIsNone(root.label)
         self.assertIsNone(root.proc_dir)
         self.assertTrue(root.config_dir.name == '.claude' or 'CLAUDE_CONFIG_DIR' in os.environ)
 
-    def test_transcript_path_uses_root(self):
+    def test_transcript_path_uses_root(self) -> None:
         root = self._wsl_root()
         path = transcript_path(root, 'abc', '/home/dev/proj')
         self.assertEqual(path, root.config_dir / 'projects' / '-home-dev-proj' / 'abc.jsonl')
 
-    def test_task_output_dir_uses_root_temp(self):
+    def test_task_output_dir_uses_root_temp(self) -> None:
         root = self._wsl_root()
         self.assertEqual(task_output_dir(root, 'abc', '/home/dev/proj'),
                          root.temp_dir / 'claude' / '-home-dev-proj' / 'abc' / 'tasks')
 
-    def test_wsl_path_to_windows_mnt(self):
+    def test_wsl_path_to_windows_mnt(self) -> None:
         self.assertEqual(wsl_path_to_windows(self._wsl_root(), '/mnt/c/Users/dev/out.log'), 'C:\\Users\\dev\\out.log')
 
-    def test_wsl_path_to_windows_posix(self):
+    def test_wsl_path_to_windows_posix(self) -> None:
         self.assertEqual(wsl_path_to_windows(self._wsl_root(), '/home/dev/run.log'),
                          '\\\\wsl.localhost\\Ubuntu\\home\\dev\\run.log')
 
-    def test_wsl_path_to_windows_passthrough_on_windows_root(self):
+    def test_wsl_path_to_windows_passthrough_on_windows_root(self) -> None:
         self.assertEqual(wsl_path_to_windows(windows_root(), 'C:\\x\\y.log'), 'C:\\x\\y.log')
         self.assertEqual(wsl_path_to_windows(windows_root(), '/mnt/c/x/y.log'), 'C:\\x\\y.log')
 

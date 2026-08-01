@@ -236,12 +236,12 @@ def _distro_roots(distro: str, unc_base: Path | str) -> list[SessionRoot]:
     listing - goes through :func:`_is_readable_dir` rather than a bare
     ``Path.is_dir()``, which only swallows not-found-style errors and lets a
     permission error through. ``root/.claude`` in particular is routinely
-    unreadable to the account the 9P share runs as (a real-machine bug: it
-    used to raise ``PermissionError``, which propagated out of this function
-    and dropped the *whole* distro via ``_discover_roots``'s outer guard,
-    even when a perfectly good ``home/*/.claude`` had already been found).
-    One unreadable candidate is now skipped on its own; its siblings and the
-    rest of the distro are unaffected.
+    unreadable to the account the 9P share runs as; a bare ``is_dir()`` would
+    let that permission error propagate out of this function and drop the
+    *whole* distro via ``_discover_roots``'s outer guard, even when a
+    perfectly good ``home/*/.claude`` had already been found. One unreadable
+    candidate is skipped on its own instead; its siblings and the rest of the
+    distro are unaffected.
     """
     # Joined as a string, not via Path.__truediv__: when unc_base is the bare
     # "\\wsl.localhost" host (see _UNC_BASE), this is the first time server

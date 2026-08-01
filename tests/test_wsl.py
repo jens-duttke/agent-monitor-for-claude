@@ -10,17 +10,17 @@ from agent_monitor_for_claude import wsl
 
 
 class ParseDistroListTests(unittest.TestCase):
-    def test_utf16_output(self):
+    def test_utf16_output(self) -> None:
         raw = 'Ubuntu\r\ndocker-desktop\r\n'.encode('utf-16-le')
         self.assertEqual(wsl._parse_distro_list(raw), ['Ubuntu', 'docker-desktop'])
 
-    def test_empty_and_garbage(self):
+    def test_empty_and_garbage(self) -> None:
         self.assertEqual(wsl._parse_distro_list(b''), [])
         self.assertEqual(wsl._parse_distro_list('\r\n\r\n'.encode('utf-16-le')), [])
 
 
 class DiscoverRootsTests(unittest.TestCase):
-    def test_home_and_root_claude(self):
+    def test_home_and_root_claude(self) -> None:
         with tempfile.TemporaryDirectory() as base:
             claude = Path(base) / 'Ubuntu' / 'home' / 'dev' / '.claude'
             claude.mkdir(parents=True)
@@ -34,12 +34,12 @@ class DiscoverRootsTests(unittest.TestCase):
             self.assertEqual(roots[0].proc_dir, Path(base) / 'Ubuntu' / 'proc')
             self.assertEqual(roots[0].temp_dir, Path(base) / 'Ubuntu' / 'tmp')
 
-    def test_stopped_distro_never_globbed(self):
+    def test_stopped_distro_never_globbed(self) -> None:
         with tempfile.TemporaryDirectory() as base:
             (Path(base) / 'Stopped' / 'home' / 'dev' / '.claude').mkdir(parents=True)
             self.assertEqual(wsl._discover_roots([], Path(base)), [])
 
-    def test_real_unc_base_joins_to_a_double_backslash_root(self):
+    def test_real_unc_base_joins_to_a_double_backslash_root(self) -> None:
         # Regression guard: Path(r'\\wsl.localhost') alone collapses to a
         # single leading backslash the instant it is constructed (pathlib
         # only recognizes a UNC root when server and share appear together
@@ -62,7 +62,7 @@ class DiscoverRootsTests(unittest.TestCase):
         for path in checked:
             self.assertTrue(path.startswith('\\\\wsl.localhost\\Ubuntu'), path)
 
-    def test_unreadable_candidate_is_skipped_not_the_whole_distro(self):
+    def test_unreadable_candidate_is_skipped_not_the_whole_distro(self) -> None:
         # Real-machine bug: root/.claude is routinely unreadable (WinError 5,
         # PermissionError) over the 9P share - Path.is_dir() only swallows
         # not-found-style errors, never a permission error, so it used to
@@ -91,7 +91,7 @@ class DiscoverRootsTests(unittest.TestCase):
             self.assertEqual(roots[0].origin, 'wsl:Ubuntu')
             self.assertEqual(roots[0].config_dir, claude)
 
-    def test_unreadable_home_subdir_is_skipped_root_claude_still_found(self):
+    def test_unreadable_home_subdir_is_skipped_root_claude_still_found(self) -> None:
         # Mirror case: a permission error on one *user's* .claude (someone
         # else's home directory, unreadable to this account) must not hide
         # root/.claude, which this distro does expose.
@@ -114,7 +114,7 @@ class DiscoverRootsTests(unittest.TestCase):
             self.assertEqual(roots[0].origin, 'wsl:Ubuntu')
             self.assertEqual(roots[0].config_dir, root_claude)
 
-    def test_multiple_homes_get_disambiguating_origins(self):
+    def test_multiple_homes_get_disambiguating_origins(self) -> None:
         # _distro_roots orders candidates home users sorted by name first,
         # then root/.claude last regardless of where it would sort
         # alphabetically - only the first candidate overall keeps the plain
@@ -138,37 +138,37 @@ class DiscoverRootsTests(unittest.TestCase):
 class IsReadableDirTests(unittest.TestCase):
     """Pins _is_readable_dir's own contract directly, isolated from _discover_roots."""
 
-    def test_real_directory_is_true(self):
+    def test_real_directory_is_true(self) -> None:
         with tempfile.TemporaryDirectory() as base:
             self.assertTrue(wsl._is_readable_dir(Path(base)))
 
-    def test_missing_path_is_false(self):
+    def test_missing_path_is_false(self) -> None:
         with tempfile.TemporaryDirectory() as base:
             self.assertFalse(wsl._is_readable_dir(Path(base) / 'does-not-exist'))
 
-    def test_permission_error_is_false(self):
+    def test_permission_error_is_false(self) -> None:
         with mock.patch.object(Path, 'is_dir', side_effect=PermissionError(5, 'Access is denied')):
             self.assertFalse(wsl._is_readable_dir(Path('irrelevant')))
 
 
 class WslRootsGateTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         wsl.reset_caches()
         self.addCleanup(wsl.reset_caches)
 
-    def test_no_vmmem_short_circuits(self):
+    def test_no_vmmem_short_circuits(self) -> None:
         with mock.patch.object(wsl, '_vmmem_present', return_value=False), \
              mock.patch.object(wsl, '_list_running_distros') as listing:
             self.assertEqual(wsl.wsl_roots(), [])
             listing.assert_not_called()
 
-    def test_setting_off_short_circuits(self):
+    def test_setting_off_short_circuits(self) -> None:
         with mock.patch.object(wsl, 'WSL_MONITORING', False), \
              mock.patch.object(wsl, '_vmmem_present') as probe:
             self.assertEqual(wsl.wsl_roots(), [])
             probe.assert_not_called()
 
-    def test_discovery_cached_within_ttl(self):
+    def test_discovery_cached_within_ttl(self) -> None:
         # Pins the whole discovery step, not just the distro listing: a second
         # call within the TTL must not re-glob for .claude directories either
         # (_discover_roots costs several 9P round trips per distro), so both
@@ -205,7 +205,7 @@ def _wsl_root(base: str) -> wsl.SessionRoot:
 
 
 class ParseStatTests(unittest.TestCase):
-    def test_comm_with_spaces_and_parens(self):
+    def test_comm_with_spaces_and_parens(self) -> None:
         parsed = wsl._parse_stat('123 (tmux: server (x)) S 1 123 123 0 -1 4 0 0 0 0 5 6 0 0 20 0 1 0 83860 1 2')
         self.assertIsNotNone(parsed)
         comm, fields = parsed
@@ -213,12 +213,12 @@ class ParseStatTests(unittest.TestCase):
         self.assertEqual(fields[1], '1')        # ppid (field 4)
         self.assertEqual(fields[19], '83860')   # starttime (field 22)
 
-    def test_malformed(self):
+    def test_malformed(self) -> None:
         self.assertIsNone(wsl._parse_stat('no parens here'))
 
 
 class ProbeWslSessionsTests(unittest.TestCase):
-    def test_liveness_and_recycled_pid(self):
+    def test_liveness_and_recycled_pid(self) -> None:
         with tempfile.TemporaryDirectory() as base:
             root = _wsl_root(base)
             _write_stat(root.proc_dir, 100, 'claude', 1, 5000)
@@ -226,7 +226,7 @@ class ProbeWslSessionsTests(unittest.TestCase):
             self.assertFalse(wsl.probe_wsl_sessions(root, [(100, 4999)])[100].alive)   # recycled
             self.assertFalse(wsl.probe_wsl_sessions(root, [(200, None)])[200].alive)   # gone
 
-    def test_proc_start_ticks_zero_is_not_treated_as_absent(self):
+    def test_proc_start_ticks_zero_is_not_treated_as_absent(self) -> None:
         # starttime 0 is a legal stat-field value (ticks since boot), not a sentinel for "unknown" -
         # a falsy `if proc_start_ticks:` check would silently skip the recycled-pid comparison here.
         with tempfile.TemporaryDirectory() as base:
@@ -236,7 +236,7 @@ class ProbeWslSessionsTests(unittest.TestCase):
             _write_stat(root.proc_dir, 200, 'claude', 1, 7000)
             self.assertFalse(wsl.probe_wsl_sessions(root, [(200, 0)])[200].alive)       # recycled: 0 != 7000
 
-    def test_descendants_and_helper_window(self):
+    def test_descendants_and_helper_window(self) -> None:
         with tempfile.TemporaryDirectory() as base:
             root = _wsl_root(base)
             _write_stat(root.proc_dir, 100, 'claude', 1, 5000)
@@ -249,7 +249,7 @@ class ProbeWslSessionsTests(unittest.TestCase):
             self.assertTrue(info.tool_running)
             self.assertIsNone(info.host)
 
-    def test_unreadable_proc_dir(self):
+    def test_unreadable_proc_dir(self) -> None:
         root = _wsl_root(tempfile.mkdtemp())
         root = wsl.SessionRoot(origin='wsl:U', label='U', config_dir=root.config_dir,
                                proc_dir=root.proc_dir / 'missing', temp_dir=root.temp_dir)
@@ -260,11 +260,11 @@ class WslProcessStatsTests(unittest.TestCase):
     """Covers wsl_process_stats: the same descendant/liveness rules as probe_wsl_sessions, plus
     memory/uptime read straight from procfs and CPU sampled against a prior call."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         wsl._wsl_sample_cache.clear()
         self.addCleanup(wsl._wsl_sample_cache.clear)
 
-    def test_first_call_yields_no_cpu_with_correct_rss_and_uptime(self):
+    def test_first_call_yields_no_cpu_with_correct_rss_and_uptime(self) -> None:
         with tempfile.TemporaryDirectory() as base:
             root = _wsl_root(base)
             btime = 1700000000
@@ -286,7 +286,7 @@ class WslProcessStatsTests(unittest.TestCase):
         self.assertAlmostEqual(stat.uptime_seconds, expected_uptime, places=6)
         self.assertEqual(stat.kind, 'process')
 
-    def test_second_call_reports_cpu_delta(self):
+    def test_second_call_reports_cpu_delta(self) -> None:
         with tempfile.TemporaryDirectory() as base:
             root = _wsl_root(base)
             _write_proc_stat(root.proc_dir, 1700000000)
@@ -307,7 +307,7 @@ class WslProcessStatsTests(unittest.TestCase):
         expected_cpu = (60 / wsl._CLK_TCK) / 1.0 * 100.0
         self.assertAlmostEqual(second[0].cpu_percent, expected_cpu, places=6)
 
-    def test_recycled_child_starttime_resets_cpu_to_none(self):
+    def test_recycled_child_starttime_resets_cpu_to_none(self) -> None:
         with tempfile.TemporaryDirectory() as base:
             root = _wsl_root(base)
             _write_proc_stat(root.proc_dir, 1700000000)
@@ -331,7 +331,7 @@ class WslProcessStatsTests(unittest.TestCase):
         self.assertEqual(stats[0].name, 'python')
         self.assertIsNone(stats[0].cpu_percent)
 
-    def test_dead_or_stale_session_pid_returns_empty(self):
+    def test_dead_or_stale_session_pid_returns_empty(self) -> None:
         with tempfile.TemporaryDirectory() as base:
             root = _wsl_root(base)
             _write_proc_stat(root.proc_dir, 1700000000)
@@ -341,7 +341,7 @@ class WslProcessStatsTests(unittest.TestCase):
                 self.assertEqual(wsl.wsl_process_stats(root, 999, None), [])    # absent pid
                 self.assertEqual(wsl.wsl_process_stats(root, 100, 4999), [])    # starttime mismatch
 
-    def test_prune_is_scoped_to_this_origin(self):
+    def test_prune_is_scoped_to_this_origin(self) -> None:
         with tempfile.TemporaryDirectory() as base:
             root = _wsl_root(base)   # origin 'wsl:U'
             _write_proc_stat(root.proc_dir, 1700000000)

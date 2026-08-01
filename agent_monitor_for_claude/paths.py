@@ -11,8 +11,8 @@ Every layout function below takes a :class:`SessionRoot` as its first
 parameter: a session's registry, transcripts, background-task output, and
 scratchpad all live under that root's ``config_dir``/``temp_dir`` rather than
 a single implicit location.  :func:`windows_root` builds the root for the
-native Windows install; a WSL distro's root is built elsewhere (a later
-addition) but consumed identically by every function here.
+native Windows install; a WSL distro's root is built in ``wsl.py`` but
+consumed identically by every function here.
 """
 from __future__ import annotations
 

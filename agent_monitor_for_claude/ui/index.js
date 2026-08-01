@@ -2294,10 +2294,12 @@ function updatePanel(section, project) {
 
     const head = section.querySelector('.panel-head');
     head.dataset.cwd = project.cwd;
-    // A project group is keyed by cwd, but a cwd string is origin-specific in
-    // practice (a WSL path never collides with a Windows one), so the header's
-    // "open folder" click can safely use the first session's origin even when a
-    // panel happens to mix origins.
+    // A project group is keyed by cwd alone, with no origin component - a
+    // Windows and a WSL cwd practically never collide, but two WSL distros
+    // can both report the identical POSIX path, so a group can genuinely mix
+    // origins. When that happens the header's "open folder" click still uses
+    // only the first session's origin, which opens the wrong distro for the
+    // others.
     head.dataset.origin = (project.sessions[0] && project.sessions[0].origin) || 'windows';
     section.querySelector('h2').textContent = project.name;
     section.querySelector('.panel-count').textContent = project.sessions.length;
