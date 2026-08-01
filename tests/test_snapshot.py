@@ -10,8 +10,8 @@ from pathlib import Path
 from unittest import mock
 
 from agent_monitor_for_claude import snapshot as snapshot_mod
-from agent_monitor_for_claude.paths import transcript_path, windows_root
-from agent_monitor_for_claude.snapshot import build_snapshot, registry_fingerprint
+from agent_monitor_for_claude.paths import SessionRoot, transcript_path, windows_root
+from agent_monitor_for_claude.snapshot import build_snapshot, live_or_recent_ids, registry_fingerprint
 
 _END_TURN = json.dumps({
     'type': 'assistant',
@@ -47,13 +47,24 @@ _META_AFTER_END_TURN = '\n'.join([
 
 
 class _RegistryFixture(unittest.TestCase):
-    """Isolated CLAUDE_CONFIG_DIR with a helper to register fake sessions."""
+    """Isolated CLAUDE_CONFIG_DIR with a helper to register fake sessions.
+
+    Session roots are pinned to just the Windows fixture root for every test
+    in this class: without it, a real running WSL distro on the machine
+    running the suite would be discovered and probed for real, making these
+    Windows-only tests slow and dependent on that machine's WSL state. The
+    multi-root tests below override this pin explicitly for their own scope.
+    """
 
     def setUp(self) -> None:
         self._previous = os.environ.get('CLAUDE_CONFIG_DIR')
         self._temp = tempfile.TemporaryDirectory()
         os.environ['CLAUDE_CONFIG_DIR'] = self._temp.name
         (Path(self._temp.name) / 'sessions').mkdir()
+
+        roots_patcher = mock.patch.object(snapshot_mod, 'session_roots', return_value=[windows_root()])
+        roots_patcher.start()
+        self.addCleanup(roots_patcher.stop)
 
     def tearDown(self) -> None:
         if self._previous is None:
@@ -145,10 +156,10 @@ class PerRecordIsolationTest(_RegistryFixture):
 
         real_state_for = snapshot_mod.state_for
 
-        def flaky(session_id: str, cwd: str):
+        def flaky(root, session_id: str, cwd: str):
             if session_id == 'a':
                 raise RuntimeError('boom')
-            return real_state_for(session_id, cwd)
+            return real_state_for(root, session_id, cwd)
 
         with mock.patch.object(snapshot_mod, 'state_for', side_effect=flaky):
             ids = {session['session_id'] for session in build_snapshot()['sessions']}
@@ -219,6 +230,132 @@ class FingerprintTest(_RegistryFixture):
         registry.write_text(json.dumps({**base, 'waitingFor': 'plan review'}), encoding='utf-8')
 
         self.assertNotEqual(before, registry_fingerprint())
+
+
+def _write_stat(proc_dir: Path, pid: int, comm: str, ppid: int, starttime: int) -> None:
+    """Write a synthetic ``/proc/<pid>/stat`` entry (mirrors ``tests/test_wsl.py``'s helper)."""
+    entry = proc_dir / str(pid)
+    entry.mkdir(parents=True, exist_ok=True)
+    fields3plus = ['S', str(ppid), '1', '1', '0', '-1', '4194304', '0', '0', '0', '0',
+                   '50', '10', '0', '0', '20', '0', '4', '0', str(starttime), '1000000', '500']
+    (entry / 'stat').write_text(f'{pid} ({comm}) ' + ' '.join(fields3plus), encoding='utf-8')
+
+
+class MultiRootSnapshotTest(_RegistryFixture):
+    """Snapshot assembly across the Windows fixture root and a fake WSL root together.
+
+    The WSL side gets its own temp dir standing in for a distro's ``.claude``
+    (``config_dir``) and ``/proc`` (``proc_dir``), built the same way
+    ``tests/test_wsl.py`` builds one for ``probe_wsl_sessions`` directly - here
+    it runs through the full ``build_snapshot``/``registry_fingerprint``/
+    ``live_or_recent_ids`` pipeline instead, with ``session_roots`` patched
+    (overriding the single-root pin from ``_RegistryFixture.setUp``) to return
+    both roots together.
+    """
+
+    _WSL_PID = 100
+    _WSL_STARTTIME = 5000
+    _WSL_SESSION_ID = 'wsl-sid'
+    _WSL_CWD = '/home/dev/proj'
+
+    def setUp(self) -> None:
+        super().setUp()
+        wsl_temp = tempfile.TemporaryDirectory()
+        self.addCleanup(wsl_temp.cleanup)
+        self._wsl_root = SessionRoot(
+            origin='wsl:U', label='U',
+            config_dir=Path(wsl_temp.name) / 'cfg',
+            proc_dir=Path(wsl_temp.name) / 'proc',
+            temp_dir=Path(wsl_temp.name) / 'tmp',
+        )
+        (self._wsl_root.config_dir / 'sessions').mkdir(parents=True)
+
+    def _roots(self) -> list[SessionRoot]:
+        return [windows_root(), self._wsl_root]
+
+    def _add_wsl_session(self, session_id: str, cwd: str, pid: int, transcript: str = _END_TURN) -> None:
+        # procStart here is Linux ticks-since-boot (matching /proc/<pid>/stat
+        # field 22, see wsl.probe_wsl_sessions), not the .NET wall-clock ticks
+        # a native Windows registry record carries under the same field name -
+        # each root's own prober is what gives the raw integer its meaning.
+        sessions = self._wsl_root.config_dir / 'sessions'
+        (sessions / f'{session_id}.json').write_text(
+            json.dumps({'pid': pid, 'sessionId': session_id, 'cwd': cwd, 'name': session_id, 'kind': 'interactive',
+                        'procStart': self._WSL_STARTTIME}),
+            encoding='utf-8',
+        )
+        path = transcript_path(self._wsl_root, session_id, cwd)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(transcript, encoding='utf-8')
+        _write_stat(self._wsl_root.proc_dir, pid, 'claude', 1, self._WSL_STARTTIME)
+
+    def test_wsl_session_appears_with_origin_and_populated_transcript_state(self) -> None:
+        self._add_wsl_session(self._WSL_SESSION_ID, self._WSL_CWD, self._WSL_PID)
+
+        with mock.patch.object(snapshot_mod, 'session_roots', return_value=self._roots()):
+            snapshot = build_snapshot()
+
+        session = next(s for s in snapshot['sessions'] if s['session_id'] == self._WSL_SESSION_ID)
+        self.assertEqual(session['origin'], 'wsl:U')
+        self.assertEqual(session['origin_label'], 'U')
+        self.assertTrue(session['alive'])
+        self.assertTrue(session['has_transcript'])
+        self.assertEqual(session['last_entry_kind'], 'assistant')
+        self.assertEqual(session['last_stop_reason'], 'end_turn')
+        self.assertIsNotNone(session['age_seconds'])
+
+    def test_pid_collision_between_windows_and_wsl_roots_is_independent(self) -> None:
+        self._add_wsl_session(self._WSL_SESSION_ID, self._WSL_CWD, self._WSL_PID)
+
+        # A Windows-root record with the SAME raw pid number, forced not-alive
+        # via a deliberately mismatched procStart (the recycled-pid guard in
+        # process_probe) so the assertion never depends on whether pid 100
+        # happens to be a real live process on the machine running this test -
+        # only on whether the two roots' probes stay independent of each other.
+        sessions = Path(self._temp.name) / 'sessions'
+        (sessions / 'win-sid.json').write_text(
+            json.dumps({'pid': self._WSL_PID, 'sessionId': 'win-sid', 'cwd': 'd:\\WebDev\\collide',
+                        'kind': 'interactive', 'procStart': '1'}),
+            encoding='utf-8',
+        )
+
+        with mock.patch.object(snapshot_mod, 'session_roots', return_value=self._roots()):
+            snapshot = build_snapshot()
+
+        sessions_by_id = {s['session_id']: s for s in snapshot['sessions']}
+        self.assertTrue(sessions_by_id[self._WSL_SESSION_ID]['alive'])
+        # The Windows record either reads not-alive or is dropped entirely (it
+        # has no transcript, so it does not qualify for ended-session
+        # retention) - either way it must never inherit the WSL pid's liveness.
+        if 'win-sid' in sessions_by_id:
+            self.assertFalse(sessions_by_id['win-sid']['alive'])
+
+    def test_fingerprint_includes_both_origins_and_reacts_to_wsl_transcript_growth(self) -> None:
+        self._add_wsl_session(self._WSL_SESSION_ID, self._WSL_CWD, self._WSL_PID)
+        self._add_session('win-sid', 'd:\\WebDev\\two')
+
+        with mock.patch.object(snapshot_mod, 'session_roots', return_value=self._roots()):
+            before = registry_fingerprint()
+
+            parts = before.split('|')
+            self.assertTrue(any(part.startswith('windows:') for part in parts))
+            self.assertTrue(any(part.startswith('wsl:U:') for part in parts))
+
+            path = transcript_path(self._wsl_root, self._WSL_SESSION_ID, self._WSL_CWD)
+            with path.open('a', encoding='utf-8') as handle:
+                handle.write('\n' + _END_TURN)
+
+            after = registry_fingerprint()
+
+        self.assertNotEqual(before, after)
+
+    def test_live_or_recent_ids_includes_the_live_wsl_session(self) -> None:
+        self._add_wsl_session(self._WSL_SESSION_ID, self._WSL_CWD, self._WSL_PID)
+
+        with mock.patch.object(snapshot_mod, 'session_roots', return_value=self._roots()):
+            ids = live_or_recent_ids()
+
+        self.assertIn(self._WSL_SESSION_ID, ids)
 
 
 if __name__ == '__main__':

@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_monitor_for_claude import transcript as tmod
-from agent_monitor_for_claude.paths import cwd_to_slug
+from agent_monitor_for_claude.paths import cwd_to_slug, windows_root
 from agent_monitor_for_claude.transcript import (
     _absorb_line,
     _model_timeline,
@@ -235,7 +235,7 @@ class TailEscalationTest(unittest.TestCase):
                 return real_read_tail(path, *args)
 
             with mock.patch.object(tmod, '_read_tail', side_effect=spy):
-                tmod.state_for(session_id, cwd)
+                tmod.state_for(windows_root(), session_id, cwd)
 
             self.assertEqual(len(calls), 1, 'a parseable tail must not escalate the read window')
         finally:
