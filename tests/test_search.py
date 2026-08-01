@@ -8,14 +8,36 @@ id or cwd cannot escape it).
 """
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from agent_monitor_for_claude import search
-from agent_monitor_for_claude.paths import config_dir, transcript_path, windows_root
+from agent_monitor_for_claude.paths import SessionRoot, config_dir, transcript_path, windows_root
 
 _CWD = 'c:\\Temp\\search-proj'
+
+# A syntactically valid session id, standing in for a real Claude Code session
+# uuid on the fake WSL root the SearchOriginTest cases below build.
+WSL_SID = '8d49a52c-4ac7-43ec-a7e1-773be955bf59'
+
+
+def _windows_only_root(origin: object) -> SessionRoot | None:
+    """Stand in for ``roots.root_for_origin``, resolving only the ``'windows'`` origin.
+
+    Pinned onto ``search.root_for_origin`` for every ``SearchEnvTest`` case: a
+    plain ref with no explicit ``'origin'`` key defaults to ``'windows'`` (see
+    ``search._valid_refs``), which would otherwise resolve through the real
+    ``roots.root_for_origin`` - and its live WSL discovery via
+    ``roots.session_roots()`` - on every single search in this file. Origin
+    resolution itself, including a WSL origin and an unknown one, is covered by
+    the dedicated ``SearchOriginTest`` cases below, which patch
+    ``search.root_for_origin`` again for their own narrower scope.
+    """
+    return windows_root() if origin == 'windows' else None
 
 
 class SearchEnvTest(unittest.TestCase):
@@ -23,6 +45,10 @@ class SearchEnvTest(unittest.TestCase):
         self._previous = os.environ.get('CLAUDE_CONFIG_DIR')
         self._temp = tempfile.TemporaryDirectory()
         os.environ['CLAUDE_CONFIG_DIR'] = self._temp.name
+
+        roots_patcher = mock.patch.object(search, 'root_for_origin', side_effect=_windows_only_root)
+        roots_patcher.start()
+        self.addCleanup(roots_patcher.stop)
 
     def tearDown(self) -> None:
         if self._previous is None:
@@ -215,6 +241,73 @@ class SearchBoundaryTest(SearchEnvTest):
         refs = [self._ref('../../outside-secret')]
 
         self.assertEqual(self._matched_ids(self._run('match', refs)), [])
+
+
+class SearchOriginTest(SearchEnvTest):
+    """Each ref's root is resolved by its own ``origin``, not assumed to be the Windows root."""
+
+    def _wsl_root_with_transcript(self, base: str, text: str) -> SessionRoot:
+        root = SessionRoot(origin='wsl:U', label='U', config_dir=Path(base) / 'cfg',
+                            proc_dir=None, temp_dir=Path(base) / 'tmp')
+        project = root.config_dir / 'projects' / '-home-dev-proj'
+        project.mkdir(parents=True)
+        (project / f'{WSL_SID}.jsonl').write_text(
+            json.dumps({'type': 'user', 'message': {'content': text}}) + '\n', encoding='utf-8')
+        return root
+
+    def test_wsl_ref_matches_via_its_origin(self) -> None:
+        with tempfile.TemporaryDirectory() as base:
+            root = self._wsl_root_with_transcript(base, 'needle-in-wsl')
+            refs = [{'session_id': WSL_SID, 'cwd': '/home/dev/proj', 'origin': 'wsl:U'}]
+            with mock.patch.object(search, 'root_for_origin', side_effect=lambda o: root if o == 'wsl:U' else None):
+                updates = self._run('needle-in-wsl', refs)
+
+        self.assertIn(WSL_SID, self._matched_ids(updates))
+
+    def test_unknown_origin_scans_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as base:
+            # The file exists and its content matches - only the unresolved
+            # origin must be why nothing is found.
+            self._wsl_root_with_transcript(base, 'needle-in-wsl')
+            refs = [{'session_id': WSL_SID, 'cwd': '/home/dev/proj', 'origin': 'nope'}]
+            with mock.patch.object(search, 'root_for_origin', return_value=None):
+                updates = self._run('needle-in-wsl', refs)
+
+        self.assertEqual(self._matched_ids(updates), [])
+
+    def test_wsl_confinement_refuses_escaping_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as base:
+            root = self._wsl_root_with_transcript(base, 'needle-in-wsl')
+            secret = Path(base) / 'outside.jsonl'
+            secret.write_text('needle-in-wsl\n', encoding='utf-8')
+            # A cwd crafted so slug + id would escape projects/ must be refused per root,
+            # mirroring the existing Windows confinement case.
+            refs = [{'session_id': WSL_SID, 'cwd': '../../..', 'origin': 'wsl:U'}]
+            with mock.patch.object(search, 'root_for_origin', return_value=root):
+                updates = self._run('needle-in-wsl', refs)
+
+        self.assertEqual(self._matched_ids(updates), [])
+
+    def test_cross_root_results_stay_ordered_newest_first(self) -> None:
+        # An old Windows session and a fresh WSL one, scanned in the same call:
+        # the merged, sorted result must still put the newer one first, proving
+        # roots are combined into one ordering rather than scanned root-by-root.
+        self._write('win-id', _CWD, 'needle-in-wsl', mtime=1000)
+
+        with tempfile.TemporaryDirectory() as base:
+            root = self._wsl_root_with_transcript(base, 'needle-in-wsl')
+            refs = [
+                {'session_id': 'win-id', 'cwd': _CWD, 'origin': 'windows'},
+                {'session_id': WSL_SID, 'cwd': '/home/dev/proj', 'origin': 'wsl:U'},
+            ]
+
+            def resolve(origin: object) -> SessionRoot | None:
+                return root if origin == 'wsl:U' else _windows_only_root(origin)
+
+            with mock.patch.object(search, 'root_for_origin', side_effect=resolve):
+                updates = self._run('needle-in-wsl', refs)
+
+        self.assertEqual(self._matched_ids(updates), [WSL_SID, 'win-id'])
 
 
 if __name__ == '__main__':
