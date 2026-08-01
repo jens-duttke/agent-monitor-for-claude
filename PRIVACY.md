@@ -212,9 +212,11 @@ snapshot of the Windows process table. That snapshot is machine-wide by nature -
 id, parent process id, and executable name of every running process - and the application uses it to
 walk the ancestry and descendants of the session processes. Nothing else about a process is read: no
 command line, no environment, no open handles, no memory contents. For the sessions on screen it
-additionally samples CPU, memory, and start time; when you open the process panel for a WSL session,
-the shared WSL virtual machine's CPU and memory are sampled too, which the panel labels as
-machine-wide because that figure is not specific to your session.
+additionally samples CPU, memory, and start time; when you open the process panel for a **Windows**
+session whose tools run through the `wsl.exe`/`wslhost.exe` relay, the shared WSL virtual machine's CPU
+and memory are sampled too, which the panel labels as machine-wide because that figure is not specific to
+your session. (This is not the same as a session running natively inside a WSL distribution - see
+[Sessions running inside WSL](#sessions-running-inside-wsl) below.)
 
 When you click a session, the titles of all visible top-level windows are enumerated in memory to find
 the right window to raise. Those titles are compared and discarded - never stored, logged, or shown.
@@ -256,6 +258,10 @@ Windows process-table scan described under [Processes and windows](#processes-an
 just as narrowly - only process names, parent-process links, and start times, so a session's liveness and
 its running child processes can be determined. Nothing else: no command line, no environment variable, no
 open file handle, no memory content.
+
+The process panel and the background-task output console are a further exception: for a session running
+inside WSL, opening either currently shows nothing. That read surface does not exist yet for these
+sessions - it is a gap, not a redaction of a read that already happens elsewhere.
 
 ## What the application writes
 
