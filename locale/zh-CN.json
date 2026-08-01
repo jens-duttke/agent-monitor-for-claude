@@ -19,6 +19,7 @@
     "sort_usage": "用量",
     "sort_model": "模型",
     "sort_host": "主机",
+    "host_wsl_tip": "此智能体运行在 WSL 发行版“{distro}”内部。它的文件通过 \\\\wsl.localhost 读取；发行版内部永远不会执行任何操作。",
     "sort_status": "状态",
     "refreshing": "正在刷新...",
     "empty_state": "没有活动的 Claude Code 智能体。",

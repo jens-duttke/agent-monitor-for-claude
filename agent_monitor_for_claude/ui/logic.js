@@ -358,7 +358,7 @@ function searchScopeRefs(sessions, history, filterKeys, includeHistory) {
             const key = raw.session_id + '|' + raw.cwd;
             if (!seen.has(key)) {
                 seen.add(key);
-                refs.push({ session_id: raw.session_id, cwd: raw.cwd });
+                refs.push({ session_id: raw.session_id, cwd: raw.cwd, origin: sessionOrigin(raw) });
             }
         }
     };
@@ -793,6 +793,28 @@ function hostLabel(detected, entrypoint) {
     return null;
 }
 
+// The record's origin: 'windows' (the default - a native session, or an older
+// record with no origin field at all) or 'wsl:<distro>' for a session whose
+// process runs inside that WSL distribution. Defaulting a non-string value
+// here keeps every caller - buildSession, searchScopeRefs - origin-safe
+// without its own null check.
+function sessionOrigin(raw) {
+    return typeof raw.origin === 'string' ? raw.origin : 'windows';
+}
+
+function isWslOrigin(origin) {
+    return origin.startsWith('wsl:');
+}
+
+// A WSL session's host names its distribution instead of the (Windows-only)
+// detected/entrypoint host: the resolved origin_label (e.g. "Ubuntu") suffixed
+// "(WSL)" so the origin reads at a glance, or the bare "WSL" when the backend
+// could not resolve a label - never the redundant "WSL (WSL)".
+function wslHostLabel(originLabel) {
+    const label = originLabel || 'WSL';
+    return label === 'WSL' ? 'WSL' : label + ' (WSL)';
+}
+
 function isViaCli(raw) {
     return Boolean(raw.via_cli) || raw.entrypoint === 'cli';
 }
@@ -855,6 +877,9 @@ function buildSession(raw, labels, prices) {
     const toolRunning = (raw.child_count || 0) > 0;
     const usage = raw.usage || {};
     const models = modelHistory(raw.model_timeline);
+    const origin = sessionOrigin(raw);
+    const wsl = isWslOrigin(origin);
+    const originLabel = (typeof raw.origin_label === 'string' && raw.origin_label) ? raw.origin_label : null;
 
     // In-process subagents and workflows die when the turn is force-stopped - by
     // an interrupt or an API error (a usage limit stops the whole CLI) - so any
@@ -917,7 +942,10 @@ function buildSession(raw, labels, prices) {
         workflow_done: workflowDone,
         processes: raw.child_count || 0,
         tool_running: toolRunning,
-        host: hostLabel(raw.host, raw.entrypoint),
+        origin: origin,
+        wsl: wsl,
+        origin_label: originLabel,
+        host: wsl ? wslHostLabel(originLabel) : hostLabel(raw.host, raw.entrypoint),
         via_cli: isViaCli(raw),
         mode: modeLabel(raw.permission_mode),
         vscode_deeplink: isVscodeDeeplink(raw),

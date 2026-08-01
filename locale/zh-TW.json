@@ -19,6 +19,7 @@
     "sort_usage": "用量",
     "sort_model": "模型",
     "sort_host": "主機",
+    "host_wsl_tip": "此代理在 WSL 發行版「{distro}」內部執行。它的檔案透過 \\\\wsl.localhost 讀取；發行版內部永遠不會執行任何東西。",
     "sort_status": "狀態",
     "refreshing": "正在重新整理...",
     "empty_state": "沒有作用中的 Claude Code 代理。",

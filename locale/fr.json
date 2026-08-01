@@ -19,6 +19,7 @@
     "sort_usage": "Utilisation",
     "sort_model": "Modèle",
     "sort_host": "Hôte",
+    "host_wsl_tip": "Cet agent s'exécute dans la distribution WSL « {distro} ». Ses fichiers sont lus via \\\\wsl.localhost ; rien n'est jamais exécuté dans la distribution.",
     "sort_status": "Statut",
     "refreshing": "Actualisation...",
     "empty_state": "Aucun agent Claude Code actif.",

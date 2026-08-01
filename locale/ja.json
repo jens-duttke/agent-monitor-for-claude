@@ -19,6 +19,7 @@
     "sort_usage": "使用量",
     "sort_model": "モデル",
     "sort_host": "ホスト",
+    "host_wsl_tip": "このエージェントは WSL ディストリビューション「{distro}」内で実行されています。そのファイルは \\\\wsl.localhost 経由で読み込まれます。ディストリビューション内で何かが実行されることは一切ありません。",
     "sort_status": "ステータス",
     "refreshing": "更新中...",
     "empty_state": "アクティブな Claude Code エージェントはありません。",

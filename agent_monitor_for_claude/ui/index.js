@@ -129,6 +129,7 @@ const DEFAULT_LABELS = {
     sort_usage: 'Usage',
     sort_model: 'Model',
     sort_host: 'Host',
+    host_wsl_tip: 'This agent runs inside the WSL distribution “{distro}”. Its files are read over \\\\wsl.localhost; nothing is ever executed inside the distribution.',
     sort_status: 'Status',
     priority_order: 'Priority order',
     priority_order_hint: 'Sort projects by attention - the ones that need you first',
@@ -883,6 +884,7 @@ function openProcPanel(anchor) {
         pid: Number(anchor.dataset.procPid),
         sessionId: anchor.dataset.procSession || '',
         cwd: anchor.dataset.procCwd || '',
+        origin: anchor.dataset.procOrigin || 'windows',
         expanded: new Set(),
         tick: 0,
         timer: null,
@@ -942,7 +944,7 @@ async function procPanelLoop(panel) {
 async function refreshProcPanel(panel) {
     panel.tick += 1;
 
-    const stats = await callProcessStats(panel.pid);
+    const stats = await callProcessStats(panel.pid, panel.origin);
     if (procPanel !== panel) {
         return;
     }
@@ -956,7 +958,7 @@ async function refreshProcPanel(panel) {
         // to an earlier run and is irrelevant, so it is dropped (small grace to
         // keep a just-started task that has not written yet).
         const cutoff = panel.maxProcUptime > 0 ? panel.maxProcUptime + TASK_AGE_GRACE_SECONDS : 0;
-        const result = await callTasks(panel.sessionId, panel.cwd, cutoff);
+        const result = await callTasks(panel.sessionId, panel.cwd, cutoff, panel.origin);
         if (procPanel !== panel) {
             return;
         }
@@ -964,7 +966,7 @@ async function refreshProcPanel(panel) {
     }
 
     for (const taskId of Array.from(panel.expanded)) {
-        const text = await callTaskOutput(panel.sessionId, panel.cwd, taskId);
+        const text = await callTaskOutput(panel.sessionId, panel.cwd, taskId, panel.origin);
         if (procPanel !== panel) {
             return;
         }
@@ -1121,7 +1123,7 @@ function toggleTask(panel, row, taskId) {
         row.classList.add('is-open');
         out.textContent = state.labels.task_output_loading || '…';
         out.__rawText = null;
-        callTaskOutput(panel.sessionId, panel.cwd, taskId).then((text) => {
+        callTaskOutput(panel.sessionId, panel.cwd, taskId, panel.origin).then((text) => {
             if (procPanel === panel && panel.expanded.has(taskId)) {
                 setTaskOutput(panel, taskId, text);
             }
@@ -1222,11 +1224,11 @@ function findProcBadge(rowKey) {
 
 /* Bridge calls for the panel. Each degrades to the browser-preview mocks (or an
    empty result) when there is no pywebview bridge, so ?mock still demos it. */
-async function callProcessStats(pid) {
+async function callProcessStats(pid, origin) {
     const bridge = apiBridge();
     if (bridge && typeof bridge.get_process_stats === 'function') {
         try {
-            return (await bridge.get_process_stats(pid)) || [];
+            return (await bridge.get_process_stats(pid, origin || 'windows')) || [];
         } catch (e) {
             return [];
         }
@@ -1234,11 +1236,11 @@ async function callProcessStats(pid) {
     return resolveMock(window.__MOCK_PROC_STATS__, pid) || [];
 }
 
-async function callTasks(sessionId, cwd, maxAge) {
+async function callTasks(sessionId, cwd, maxAge, origin) {
     const bridge = apiBridge();
     if (bridge && typeof bridge.get_tasks === 'function') {
         try {
-            return (await bridge.get_tasks(sessionId, cwd, maxAge || 0)) || { tasks: [], total: 0 };
+            return (await bridge.get_tasks(sessionId, cwd, maxAge || 0, origin || 'windows')) || { tasks: [], total: 0 };
         } catch (e) {
             return { tasks: [], total: 0 };
         }
@@ -1247,11 +1249,11 @@ async function callTasks(sessionId, cwd, maxAge) {
     return { tasks: tasks, total: tasks.length };
 }
 
-async function callTaskOutput(sessionId, cwd, taskId) {
+async function callTaskOutput(sessionId, cwd, taskId, origin) {
     const bridge = apiBridge();
     if (bridge && typeof bridge.read_task_output === 'function') {
         try {
-            return await bridge.read_task_output(sessionId, cwd, taskId);
+            return await bridge.read_task_output(sessionId, cwd, taskId, origin || 'windows');
         } catch (e) {
             return null;
         }
@@ -1409,7 +1411,7 @@ function toast(message) {
 // Ask before deleting, then call the bridge. On success the session is dropped
 // from the cached history and the view re-renders; the deletion itself runs on
 // a worker thread, so awaiting it never blocks the window.
-function confirmDeleteSession(sessionId, cwd, name, age) {
+function confirmDeleteSession(sessionId, cwd, name, age, origin) {
     if (!sessionId) {
         return;
     }
@@ -1427,7 +1429,7 @@ function confirmDeleteSession(sessionId, cwd, name, age) {
 
         let ok = false;
         try {
-            ok = await bridge.delete_session(sessionId, cwd);
+            ok = await bridge.delete_session(sessionId, cwd, origin || 'windows');
         } catch (e) {
             ok = false;
         }
@@ -2141,6 +2143,7 @@ function nameCellHtml(session) {
             + attr('data-proc-pid', session.pid)
             + attr('data-proc-session', session.session_id)
             + attr('data-proc-cwd', session.cwd)
+            + attr('data-proc-origin', session.origin || 'windows')
             + attr('data-tip', labels.proc_open_hint || '')
             + '>⚙ ' + esc(session.processes) + '</span>';
     }
@@ -2192,6 +2195,10 @@ function updateRow(row, session, projectName) {
     row.dataset.project = projectName || '';
     row.dataset.session = session.session_id || '';
     row.dataset.title = session.title || '';
+    // buildSession always resolves an origin ('windows' by default), so every
+    // row - live or history - carries it: focusSession and the row menu's
+    // scratchpad/delete actions all need it to route their bridge call.
+    row.dataset.origin = session.origin || 'windows';
     // A history session has no live process, so it is not a focus target (no
     // data-pid); the click-to-focus handler keys on .row[data-pid].
     if (session.is_history) {
@@ -2217,7 +2224,16 @@ function updateRow(row, session, projectName) {
     row.querySelector('.usage-compact').textContent = session.usage_compact || '';
     row.querySelector('.usage-detail').textContent = session.usage_detail || '';
     row.querySelector('.model-cell').innerHTML = modelCellHtml(session);
-    row.querySelector('.host-cell').textContent = hostText(session);
+    const hostCell = row.querySelector('.host-cell');
+    hostCell.textContent = hostText(session);
+    // A WSL session's host names its distribution; the tooltip explains what
+    // that means (files read over the UNC path, nothing executed there) so the
+    // unfamiliar host name is never a dead end.
+    if (session.wsl) {
+        hostCell.dataset.tip = fmt(labels.host_wsl_tip, { distro: session.origin_label || 'WSL' });
+    } else {
+        delete hostCell.dataset.tip;
+    }
 
     // A live row's age was captured at the latest snapshot (receivedAt); a
     // history row's at the one-time history fetch (historyReceivedAt). Storing
@@ -2238,6 +2254,7 @@ function updateRow(row, session, projectName) {
     const menuBtn = row.querySelector('.row-menu-btn');
     menuBtn.dataset.session = session.session_id || '';
     menuBtn.dataset.cwd = session.cwd || '';
+    menuBtn.dataset.origin = session.origin || 'windows';
     // Only a history row (a past, non-live session with no registry record) may
     // be deleted; the menu adds its delete item off this flag.
     if (session.is_history) {
@@ -2277,6 +2294,11 @@ function updatePanel(section, project) {
 
     const head = section.querySelector('.panel-head');
     head.dataset.cwd = project.cwd;
+    // A project group is keyed by cwd, but a cwd string is origin-specific in
+    // practice (a WSL path never collides with a Windows one), so the header's
+    // "open folder" click can safely use the first session's origin even when a
+    // panel happens to mix origins.
+    head.dataset.origin = (project.sessions[0] && project.sessions[0].origin) || 'windows';
     section.querySelector('h2').textContent = project.name;
     section.querySelector('.panel-count').textContent = project.sessions.length;
 
@@ -2357,6 +2379,7 @@ function setHero(blocked) {
         + attr('data-project', projectName)
         + attr('data-session', session.session_id || '')
         + attr('data-title', session.title || '')
+        + attr('data-origin', session.origin || 'windows')
         + (session.vscode_deeplink ? attr('data-deeplink', '1') : '')
         + attr('data-tip', session.status_label)
         + '>'
@@ -2389,14 +2412,14 @@ function toggleCollapse(cwd) {
     }
 }
 
-function openPath(cwd) {
+function openPath(cwd, origin) {
     if (!cwd) {
         return;
     }
     const bridge = apiBridge();
     if (bridge && typeof bridge.open_path === 'function') {
         // Fire-and-forget: a Win32-side rejection must not wipe the content area.
-        logic.settleCall(() => bridge.open_path(cwd));
+        logic.settleCall(() => bridge.open_path(cwd, origin || 'windows'));
     }
 }
 
@@ -2409,7 +2432,8 @@ function focusSession(el) {
             el.dataset.project || '',
             el.dataset.session || '',
             el.dataset.deeplink === '1',
-            el.dataset.title || ''
+            el.dataset.title || '',
+            el.dataset.origin || 'windows'
         ));
     }
 }
@@ -2420,10 +2444,11 @@ function focusSession(el) {
 async function openRowMenu(menuBtn) {
     const sessionId = menuBtn.dataset.session || '';
     const cwd = menuBtn.dataset.cwd || '';
+    const origin = menuBtn.dataset.origin || 'windows';
     const rowEl = menuBtn.closest('.row');
     const menuRowKey = rowEl ? rowEl.dataset.key : '';
 
-    const scratchpad = await scratchpadPath(sessionId, cwd);
+    const scratchpad = await scratchpadPath(sessionId, cwd, origin);
 
     // The row could have been reconciled away while the check was in flight.
     if (!menuBtn.isConnected) {
@@ -2442,9 +2467,9 @@ async function openRowMenu(menuBtn) {
         if (key === 'copy-id') {
             copyToClipboard(sessionId);
         } else if (key === 'scratchpad') {
-            openPath(scratchpad);
+            openPath(scratchpad, origin);
         } else if (key === 'delete') {
-            confirmDeleteSession(sessionId, cwd, rowCellText(rowEl, '.name'), rowCellText(rowEl, '.age'));
+            confirmDeleteSession(sessionId, cwd, rowCellText(rowEl, '.name'), rowCellText(rowEl, '.age'), origin);
         }
     }, { type: 'row', rowKey: menuRowKey });
 }
@@ -2457,11 +2482,11 @@ function rowCellText(rowEl, selector) {
 }
 
 // Return the session's scratchpad path when one exists, else '' (no entry).
-async function scratchpadPath(sessionId, cwd) {
+async function scratchpadPath(sessionId, cwd, origin) {
     const bridge = apiBridge();
     if (bridge && typeof bridge.scratchpad_path === 'function') {
         try {
-            return (await bridge.scratchpad_path(sessionId, cwd)) || '';
+            return (await bridge.scratchpad_path(sessionId, cwd, origin || 'windows')) || '';
         } catch (e) {
             return '';
         }
@@ -2487,7 +2512,7 @@ function onContentClick(event) {
     if (pathOpen) {
         event.stopPropagation();
         const pathHead = pathOpen.closest('.panel-head');
-        openPath(pathHead ? pathHead.dataset.cwd : '');
+        openPath(pathHead ? pathHead.dataset.cwd : '', pathHead ? pathHead.dataset.origin : 'windows');
         return;
     }
 
