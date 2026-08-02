@@ -144,6 +144,28 @@ class TitleLooksPastAClearCommandTest(unittest.TestCase):
         }).encode('utf-8'), state)
         self.assertEqual(state.title(), '/pr-review')
 
+    def test_a_command_title_carries_its_arguments(self) -> None:
+        # "/work-on-issue #123" names the session; the bare command name only
+        # says which workflow ran, not on what.
+        state = _ScanState()
+        _absorb_line(json.dumps({
+            'type': 'user',
+            'message': {'content': '<command-name>/work-on-issue</command-name><command-args>#123</command-args>'},
+        }).encode('utf-8'), state)
+        self.assertEqual(state.title(), '/work-on-issue #123')
+
+    def test_long_command_arguments_are_clipped_like_any_title(self) -> None:
+        state = _ScanState()
+        _absorb_line(json.dumps({
+            'type': 'user',
+            'message': {'content': '<command-name>/work-on-issue</command-name><command-args>'
+                                   + 'x' * 200 + '</command-args>'},
+        }).encode('utf-8'), state)
+        title = state.title()
+        self.assertTrue(title.startswith('/work-on-issue x'))
+        self.assertLessEqual(len(title), 80)
+        self.assertTrue(title.endswith('…'))
+
     def test_a_clear_only_session_still_falls_back_to_the_command_name(self) -> None:
         # With nothing after /clear anywhere, its name is still better than an
         # id-derived name - the old behaviour remains the last resort.

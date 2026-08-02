@@ -85,9 +85,10 @@ _WRAPPER_TAGS = (
 )
 _WRAPPER_PATTERN = re.compile('|'.join(f'<{tag}>.*?</{tag}>' for tag in _WRAPPER_TAGS), re.S)
 
-# A slash command is stored as a structured block; Claude Code's tab shows
-# just the command name from it.
+# A slash command is stored as structured blocks; the name plus its arguments
+# ("/work-on-issue #123") is what names the session, so both are read.
 _COMMAND_NAME_PATTERN = re.compile(r'<command-name>(.*?)</command-name>', re.S)
+_COMMAND_ARGS_PATTERN = re.compile(r'<command-args>(.*?)</command-args>', re.S)
 
 # Housekeeping commands the fallback title looks past: every post-/clear
 # session opens with the /clear entry itself, so it can never say what the
@@ -748,12 +749,17 @@ def _prompt_display_parts(entry: dict) -> tuple[str | None, bool]:
     if not isinstance(text, str):
         return None, False
 
-    # A slash-command prompt: show only its name, exactly like Claude Code.
+    # A slash-command prompt: its name plus arguments, clipped like any title.
     command_match = _COMMAND_NAME_PATTERN.search(text)
     if command_match:
         command_name = command_match.group(1).strip()
         if command_name:
-            return command_name, command_name in _HOUSEKEEPING_TITLE_COMMANDS
+            args_match = _COMMAND_ARGS_PATTERN.search(text)
+            args = args_match.group(1).strip() if args_match else ''
+            display = f'{command_name} {args}' if args else command_name
+            if len(display) > _TITLE_MAX_CHARS:
+                display = display[:_TITLE_MAX_CHARS - 1] + '…'
+            return display, command_name in _HOUSEKEEPING_TITLE_COMMANDS
 
     cleaned = ' '.join(_WRAPPER_PATTERN.sub('', text).split())
     if not cleaned:
