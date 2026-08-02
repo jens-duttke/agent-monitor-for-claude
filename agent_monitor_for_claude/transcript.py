@@ -89,6 +89,12 @@ _WRAPPER_PATTERN = re.compile('|'.join(f'<{tag}>.*?</{tag}>' for tag in _WRAPPER
 # just the command name from it.
 _COMMAND_NAME_PATTERN = re.compile(r'<command-name>(.*?)</command-name>', re.S)
 
+# Housekeeping commands the fallback title looks past: every post-/clear
+# session opens with the /clear entry itself, so it can never say what the
+# session is about.  A meaningful opening command (/pr-review, a project's own
+# slash command) stays the title, exactly like any other first prompt.
+_HOUSEKEEPING_TITLE_COMMANDS = frozenset({'/clear'})
+
 @dataclass
 class _ScanState:
     """Accumulated state of a full incremental scan of one transcript.
@@ -106,10 +112,13 @@ class _ScanState:
     ai_title: str | None = None
     custom_title: str | None = None
     first_prompt: str | None = None
+    first_command_prompt: str | None = None
     permission_mode: str | None = None
 
     def title(self) -> str | None:
-        return self.custom_title or self.ai_title or self.first_prompt
+        # The housekeeping-command name is the last resort: anything later that
+        # can actually name the session (a prompt, a meaningful command) wins.
+        return self.custom_title or self.ai_title or self.first_prompt or self.first_command_prompt
 
     def copy(self) -> '_ScanState':
         return _ScanState(
@@ -117,7 +126,7 @@ class _ScanState:
             dict(self.totals),
             {model: dict(usage) for model, usage in self.by_model.items()},
             list(self.model_events),
-            self.ai_title, self.custom_title, self.first_prompt, self.permission_mode,
+            self.ai_title, self.custom_title, self.first_prompt, self.first_command_prompt, self.permission_mode,
         )
 
 
@@ -311,7 +320,12 @@ def _scan_title_cwd(path: Path) -> tuple[str | None, str | None]:
                 and entry.get('isSidechain') is not True and entry.get('isMeta') is not True):
             # Skip injected isMeta entries (a continuation summary) here too, so a
             # history row's title is the first real prompt, not the machine digest.
-            state.first_prompt = _prompt_display_text(entry)
+            text, is_housekeeping = _prompt_display_parts(entry)
+            if is_housekeeping:
+                if state.first_command_prompt is None:
+                    state.first_command_prompt = text
+            else:
+                state.first_prompt = text
 
     return state.title(), cwd
 
@@ -693,16 +707,28 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
         # Skip injected isMeta entries (a continuation summary), mirroring _parse:
         # the machine digest must not become the title, and it is a wider read
         # than the title path intends.
-        state.first_prompt = _prompt_display_text(entry)
+        text, is_housekeeping = _prompt_display_parts(entry)
+        if is_housekeeping:
+            if state.first_command_prompt is None:
+                state.first_command_prompt = text
+        else:
+            state.first_prompt = text
 
 
-def _prompt_display_text(entry: dict) -> str | None:
+def _prompt_display_parts(entry: dict) -> tuple[str | None, bool]:
     """Extract the display text of a prompt entry, as Claude Code's UI shows it.
 
     This is the one sanctioned read of prompt text (used solely as the
     fallback session title): wrapper blocks are stripped, whitespace is
     collapsed, and the result is truncated.  Entries carrying tool results
-    or only wrapper content yield None.
+    or only wrapper content yield ``(None, False)``.
+
+    Returns
+    -------
+    tuple[str or None, bool]
+        The display text, and whether that text is a housekeeping command
+        (``_HOUSEKEEPING_TITLE_COMMANDS``) the title fallback should look
+        past when a later prompt can name the session better.
     """
     message = entry.get('message')
     content = message.get('content') if isinstance(message, dict) else None
@@ -715,28 +741,28 @@ def _prompt_display_text(entry: dict) -> str | None:
             if not isinstance(block, dict):
                 continue
             if block.get('type') == 'tool_result':
-                return None
+                return None, False
             if text is None and block.get('type') == 'text':
                 text = block.get('text')
 
     if not isinstance(text, str):
-        return None
+        return None, False
 
     # A slash-command prompt: show only its name, exactly like Claude Code.
     command_match = _COMMAND_NAME_PATTERN.search(text)
     if command_match:
         command_name = command_match.group(1).strip()
         if command_name:
-            return command_name
+            return command_name, command_name in _HOUSEKEEPING_TITLE_COMMANDS
 
     cleaned = ' '.join(_WRAPPER_PATTERN.sub('', text).split())
     if not cleaned:
-        return None
+        return None, False
 
     if len(cleaned) > _TITLE_MAX_CHARS:
         cleaned = cleaned[:_TITLE_MAX_CHARS - 1] + '…'
 
-    return cleaned
+    return cleaned, False
 
 
 def _load(line: str) -> dict | None:
