@@ -299,9 +299,16 @@ async function callSnapshot() {
    through one of the two, numbers included; the single exception is
    reportUiError above, which escapes inline so it still works when logic.js is
    the thing that failed to load. See the contract in logic.js. */
-const esc = logic.esc;
-const attr = logic.attr;
-const ansiToHtml = logic.ansiToHtml;
+/* `var`, not `const`: both files load as classic scripts sharing one global
+   scope, where logic.js's top-level function declarations already created
+   non-configurable `esc`/`attr`/`ansiToHtml` globals. A lexical declaration
+   of the same name is a SyntaxError at script instantiation - index.js would
+   never execute a single statement (empty UI, nothing logged, since the error
+   bridge lives in this very file). A `var` redeclaration of a function-backed
+   global is permitted; tests/js/global-scope.test.js guards this. */
+var esc = logic.esc;
+var attr = logic.attr;
+var ansiToHtml = logic.ansiToHtml;
 
 function fmt(template, values) {
     return String(template || '').replace(/\{(\w+)\}/g, (_, key) => (values[key] != null ? values[key] : ''));
