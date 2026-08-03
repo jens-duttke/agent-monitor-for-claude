@@ -358,7 +358,7 @@ function searchScopeRefs(sessions, history, filterKeys, includeHistory) {
             const key = raw.session_id + '|' + raw.cwd;
             if (!seen.has(key)) {
                 seen.add(key);
-                refs.push({ session_id: raw.session_id, cwd: raw.cwd });
+                refs.push({ session_id: raw.session_id, cwd: raw.cwd, origin: sessionOrigin(raw) });
             }
         }
     };
@@ -793,6 +793,28 @@ function hostLabel(detected, entrypoint) {
     return null;
 }
 
+// The record's origin: 'windows' (the default - a native session, or an older
+// record with no origin field at all) or 'wsl:<distro>' for a session whose
+// process runs inside that WSL distribution. Defaulting a non-string value
+// here keeps every caller - buildSession, searchScopeRefs - origin-safe
+// without its own null check.
+function sessionOrigin(raw) {
+    return typeof raw.origin === 'string' ? raw.origin : 'windows';
+}
+
+function isWslOrigin(origin) {
+    return origin.startsWith('wsl:');
+}
+
+// A WSL session's host names its distribution instead of the (Windows-only)
+// detected/entrypoint host: the resolved origin_label (e.g. "Ubuntu") suffixed
+// "(WSL)" so the origin reads at a glance, or the bare "WSL" when the backend
+// could not resolve a label - never the redundant "WSL (WSL)".
+function wslHostLabel(originLabel) {
+    const label = originLabel || 'WSL';
+    return label === 'WSL' ? 'WSL' : label + ' (WSL)';
+}
+
 function isViaCli(raw) {
     return Boolean(raw.via_cli) || raw.entrypoint === 'cli';
 }
@@ -803,8 +825,12 @@ function isVscodeDeeplink(raw) {
 
 /* --- project grouping (ported from snapshot.py) --- */
 
-function groupKey(cwd) {
-    return String(cwd).replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+// Case-insensitive like Windows paths, and per origin: two distros can report
+// the identical POSIX cwd, and those are genuinely different folders that
+// must not share a panel - nor its open-folder target or collapse state.
+function groupKey(cwd, origin) {
+    const path = String(cwd).replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+    return (typeof origin === 'string' && origin ? origin : 'windows') + '|' + path;
 }
 
 function displayCwd(cwd) {
@@ -855,6 +881,9 @@ function buildSession(raw, labels, prices) {
     const toolRunning = (raw.child_count || 0) > 0;
     const usage = raw.usage || {};
     const models = modelHistory(raw.model_timeline);
+    const origin = sessionOrigin(raw);
+    const wsl = isWslOrigin(origin);
+    const originLabel = (typeof raw.origin_label === 'string' && raw.origin_label) ? raw.origin_label : null;
 
     // In-process subagents and workflows die when the turn is force-stopped - by
     // an interrupt or an API error (a usage limit stops the whole CLI) - so any
@@ -917,7 +946,10 @@ function buildSession(raw, labels, prices) {
         workflow_done: workflowDone,
         processes: raw.child_count || 0,
         tool_running: toolRunning,
-        host: hostLabel(raw.host, raw.entrypoint),
+        origin: origin,
+        wsl: wsl,
+        origin_label: originLabel,
+        host: wsl ? wslHostLabel(originLabel) : hostLabel(raw.host, raw.entrypoint),
         via_cli: isViaCli(raw),
         mode: modeLabel(raw.permission_mode),
         vscode_deeplink: isVscodeDeeplink(raw),
@@ -1001,14 +1033,25 @@ function sortProjects(projects, byPriority) {
     });
 }
 
-// Group raw records into projects (case-insensitively, like Windows paths).
+// Group raw records into projects, per origin and case-insensitive path (see
+// groupKey). The group carries its key (the UI's stable panel identity) and,
+// for a WSL group, the distro label the panel header shows - a header text
+// alone cannot tell two distros' identical paths apart.
 function groupProjects(rawSessions, labels, prices) {
     const groups = new Map();
     for (const raw of rawSessions || []) {
-        const key = groupKey(raw.cwd);
+        const key = groupKey(raw.cwd, raw.origin);
         let group = groups.get(key);
         if (!group) {
-            group = { cwd: displayCwd(raw.cwd), name: projectName(raw.cwd), sessions: [] };
+            const origin = sessionOrigin(raw);
+            group = {
+                key: key,
+                cwd: displayCwd(raw.cwd),
+                name: projectName(raw.cwd),
+                origin: origin,
+                origin_display: isWslOrigin(origin) ? wslHostLabel(raw.origin_label) : '',
+                sessions: [],
+            };
             groups.set(key, group);
         }
         group.sessions.push(buildSession(raw, labels, prices));

@@ -19,6 +19,7 @@
     "sort_usage": "Penggunaan",
     "sort_model": "Model",
     "sort_host": "Host",
+    "host_wsl_tip": "Agen ini berjalan di dalam distribusi WSL “{distro}”. Berkasnya dibaca melalui \\\\wsl.localhost; tidak ada apa pun yang pernah dijalankan di dalam distribusi tersebut.",
     "sort_status": "Status",
     "refreshing": "Menyegarkan...",
     "empty_state": "Tidak ada agen Claude Code yang aktif.",

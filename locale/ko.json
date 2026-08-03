@@ -19,6 +19,7 @@
     "sort_usage": "사용량",
     "sort_model": "모델",
     "sort_host": "호스트",
+    "host_wsl_tip": "이 에이전트는 WSL 배포판 “{distro}” 안에서 실행됩니다. 해당 파일은 \\\\wsl.localhost를 통해 읽히며, 배포판 내부에서는 어떤 것도 절대 실행되지 않습니다.",
     "sort_status": "상태",
     "refreshing": "새로 고치는 중...",
     "empty_state": "활성 Claude Code 에이전트가 없습니다.",

@@ -19,6 +19,7 @@
     "sort_usage": "Verbrauch",
     "sort_model": "Modell",
     "sort_host": "Host",
+    "host_wsl_tip": "Dieser Agent läuft innerhalb der WSL-Distribution „{distro}“. Seine Dateien werden über \\\\wsl.localhost gelesen - innerhalb der Distribution wird nie etwas ausgeführt.",
     "sort_status": "Status",
     "refreshing": "Aktualisiere...",
     "empty_state": "Keine aktiven Claude-Code-Agenten.",

@@ -24,9 +24,10 @@ from . import __version__
 from .clipboard import copy_text as _copy_text
 from .history import list_history
 from .i18n import T
-from .paths import config_dir, scratchpad_dir
+from .paths import config_dir, scratchpad_dir, windows_root, wsl_path_to_windows
 from .pricing import load_pricing
 from .process_probe import process_stats
+from .roots import root_for_origin
 from .search import run_search
 from .session_delete import delete_session as _delete_session
 from .sessions import list_sessions
@@ -36,7 +37,8 @@ from .tasks import list_tasks
 from .tasks import read_task_output as _read_task_output
 from .verbose import print_runtime_diagnostics
 from .window_background import apply_native_background, window_background_color
-from .window_focus import focus_session_window, open_directory, open_vscode_session
+from .window_focus import focus_session_window, focus_terminal_window, open_directory, open_vscode_session
+from .wsl import wsl_process_stats
 
 __all__ = ['run']
 
@@ -65,6 +67,19 @@ def _sanitize_log(message: object) -> str:
     if len(cleaned) > _LOG_MAX_LEN:
         cleaned = cleaned[:_LOG_MAX_LEN] + '...'
     return cleaned
+
+
+def _proc_start_ticks_for(records: list[dict[str, Any]], pid_value: int) -> int | None:
+    """Return the ``proc_start_ticks`` of the registry record whose ``pid`` matches *pid_value*.
+
+    ``None`` when no record matches - the caller then probes without a recorded start time to
+    compare against, rather than rejecting the pid outright.
+    """
+    for record in records:
+        if record.get('pid') == pid_value:
+            return record.get('proc_start_ticks')
+
+    return None
 
 
 class _MonitorApi:
@@ -132,15 +147,22 @@ class _MonitorApi:
         """
         return list_history()
 
-    def get_process_stats(self, pid: object) -> list[dict[str, Any]]:
+    def get_process_stats(self, pid: object, origin: object = 'windows') -> list[dict[str, Any]]:
         """Return live CPU / memory / uptime for one session's descendant processes.
 
         Called only while the process panel is open, on a per-second timer.  The
         session's recorded process start time is looked up from the registry so
-        a recycled PID is rejected (``process_stats``).  Reports only resource
-        numbers and process names - never a command line.
+        a recycled PID is rejected.  Reports only resource numbers and process
+        names - never a command line.  A WSL session's descendants live inside
+        the distro's own ``/proc``, not the Windows process table, so a WSL
+        origin is routed to ``wsl_process_stats`` instead, with the start-time
+        lookup read from that same WSL root's own registry records rather than
+        the Windows one.
         """
         if isinstance(pid, bool) or not isinstance(pid, (int, float, str)):
+            return []
+
+        if not isinstance(origin, str):
             return []
 
         try:
@@ -148,13 +170,17 @@ class _MonitorApi:
         except (TypeError, ValueError, OverflowError):
             return []
 
-        proc_start_ticks = None
-        for record in list_sessions():
-            if record.get('pid') == pid_value:
-                proc_start_ticks = record.get('proc_start_ticks')
-                break
+        root = root_for_origin(origin)
+        if root is None:
+            return []
 
-        stats = process_stats(pid_value, proc_start_ticks)
+        if root.proc_dir is not None:
+            proc_start_ticks = _proc_start_ticks_for(list_sessions(root), pid_value)
+            stats = wsl_process_stats(root, pid_value, proc_start_ticks)
+        else:
+            proc_start_ticks = _proc_start_ticks_for(list_sessions(windows_root()), pid_value)
+            stats = process_stats(pid_value, proc_start_ticks)
+
         return [
             {
                 'pid': stat.pid, 'name': stat.name, 'cpu': stat.cpu_percent,
@@ -163,7 +189,7 @@ class _MonitorApi:
             for stat in stats
         ]
 
-    def get_tasks(self, session_id: object, cwd: object, max_age: object = None) -> dict[str, Any]:
+    def get_tasks(self, session_id: object, cwd: object, max_age: object = None, origin: object = 'windows') -> dict[str, Any]:
         """Return the session's recent background tasks (metadata, plus labels).
 
         Enumeration reads no output content - only each file's name, size, and
@@ -171,16 +197,28 @@ class _MonitorApi:
         text is fetched separately, and only when the user expands a task
         (``read_task_output``).  ``max_age`` (seconds, from the UI) drops tasks
         last written before the oldest running process started - those belong to
-        an earlier run - so a value <= 0 or missing keeps them all.
+        an earlier run - so a value <= 0 or missing keeps them all.  ``origin``
+        resolves to the session's root (the native Windows install or a WSL
+        distro); every task path is then derived from that root, so a WSL
+        session's own background tasks are read from its own UNC tree exactly
+        like a Windows session's.  An origin naming no currently available root
+        refuses with the empty result.
         """
         if not isinstance(session_id, str) or not isinstance(cwd, str):
+            return {'tasks': [], 'total': 0}
+
+        if not isinstance(origin, str):
+            return {'tasks': [], 'total': 0}
+
+        root = root_for_origin(origin)
+        if root is None:
             return {'tasks': [], 'total': 0}
 
         recent = None
         if isinstance(max_age, (int, float)) and not isinstance(max_age, bool) and max_age > 0:
             recent = float(max_age)
 
-        infos, total = list_tasks(session_id, cwd, recent_seconds=recent)
+        infos, total = list_tasks(root, session_id, cwd, recent_seconds=recent)
         return {
             'tasks': [
                 {'id': info.task_id, 'size': info.size_bytes, 'age': info.age_seconds, 'label': info.label}
@@ -189,17 +227,27 @@ class _MonitorApi:
             'total': total,
         }
 
-    def read_task_output(self, session_id: object, cwd: object, task_id: object) -> str | None:
+    def read_task_output(self, session_id: object, cwd: object, task_id: object, origin: object = 'windows') -> str | None:
         """Return the tail of one background task's live output (user-initiated).
 
         The one bridge method that surfaces process output text.  Reached only
         when the user expands a task row; the read is confined to the session's
         task-output directory and both ids are validated (see ``tasks``).
+        ``origin`` resolves to the session's root the same way as ``get_tasks``,
+        so a WSL session's task output is read from its own root; an origin
+        naming no currently available root refuses with ``None``.
         """
         if not isinstance(session_id, str) or not isinstance(cwd, str) or not isinstance(task_id, str):
             return None
 
-        return _read_task_output(session_id, cwd, task_id)
+        if not isinstance(origin, str):
+            return None
+
+        root = root_for_origin(origin)
+        if root is None:
+            return None
+
+        return _read_task_output(root, session_id, cwd, task_id)
 
     def start_search(self, query: object, sessions: object, options: object, seq: object) -> bool:
         """Start a streaming content search over the given in-view sessions.
@@ -272,18 +320,24 @@ class _MonitorApi:
             # dropped progress update is harmless.
             pass
 
-    def delete_session(self, session_id: object, cwd: object) -> bool:
+    def delete_session(self, session_id: object, cwd: object, origin: object = 'windows') -> bool:
         """Delete a past session's transcript and subagent folder (user-initiated).
 
         Only ever invoked from the history listing's per-row action, after an
         in-UI confirmation.  All safety guards live in ``session_delete``: a UUID
         check, a refusal for any session with a live process, and path
-        confinement to ``projects/``.
+        confinement to ``projects/``.  ``origin`` names the session root the row
+        was tagged with (``'windows'`` or ``'wsl:<distro>'``) and is passed
+        straight through to ``session_delete.delete_session``, which resolves it
+        and refuses an origin that no longer names a currently available root.
         """
         if not isinstance(session_id, str) or not isinstance(cwd, str):
             return False
 
-        return _delete_session(session_id, cwd)
+        if not isinstance(origin, str):
+            return False
+
+        return _delete_session(session_id, cwd, origin)
 
     def copy_text(self, text: object) -> bool:
         """Copy the given text to the clipboard (user-initiated)."""
@@ -292,32 +346,56 @@ class _MonitorApi:
 
         return _copy_text(text)
 
-    def open_path(self, path: object) -> bool:
-        """Open a session's project directory in Windows Explorer (user-initiated)."""
+    def open_path(self, path: object, origin: object = 'windows') -> bool:
+        """Open a session's project directory in Windows Explorer (user-initiated).
+
+        ``origin`` resolves to the session's root; the path is translated
+        through it first (``paths.wsl_path_to_windows``) - a WSL session may
+        report a POSIX path, which is translated to its Windows-readable UNC
+        form before it ever reaches the shell.  An origin naming no currently
+        available root refuses with False.
+        """
         if not isinstance(path, str) or not path:
             return False
 
-        return open_directory(path)
+        if not isinstance(origin, str):
+            return False
 
-    def scratchpad_path(self, session_id: object, cwd: object) -> str:
+        root = root_for_origin(origin)
+        if root is None:
+            return False
+
+        return open_directory(wsl_path_to_windows(root, path))
+
+    def scratchpad_path(self, session_id: object, cwd: object, origin: object = 'windows') -> str:
         """Return the session's scratchpad directory if it exists, else ''.
 
         Checked on demand when the row menu opens (so no per-poll cost), so the
         UI can offer an "open scratchpad" entry only when there is one.  The
         returned path is validated again by ``open_path`` before the shell sees
-        it.
+        it.  ``origin`` resolves to the session's root; for a WSL root the
+        directory is already a Windows-readable UNC path (built from that
+        root's own ``temp_dir``), so no further translation is needed.  An
+        origin naming no currently available root refuses with ''.
         """
         if not isinstance(session_id, str) or not _SESSION_UUID.match(session_id) or not isinstance(cwd, str) or not cwd:
             return ''
 
-        directory = scratchpad_dir(session_id, cwd)
+        if not isinstance(origin, str):
+            return ''
+
+        root = root_for_origin(origin)
+        if root is None:
+            return ''
+
+        directory = scratchpad_dir(root, session_id, cwd)
         try:
             return str(directory) if directory.is_dir() else ''
         except OSError:
             return ''
 
     def focus_session(self, pid: object, project_name: object = '', session_id: object = '', vscode_deeplink: object = False,
-                      session_title: object = '') -> bool:
+                      session_title: object = '', origin: object = 'windows') -> bool:
         """Jump to a session: raise its hosting window, then focus its tab if possible.
 
         For sessions of the VS Code extension the official deep link
@@ -325,21 +403,31 @@ class _MonitorApi:
         session tab.  The right window is raised first, because VS Code routes
         the deep link to the currently focused window.  For a session running in
         an external terminal, *session_title* lets its terminal window be found
-        when no window sits on the process chain.
+        when no window sits on the process chain.  A session running inside a
+        WSL distribution (*origin* starting with ``'wsl:'``) has no Windows
+        process at all, so *pid* is never even inspected for one: the window is
+        found purely by *session_title* (``focus_terminal_window``), never
+        through the pid-based search - a Linux pid must never reach a Windows
+        process API, since Windows could have reused that same number for an
+        unrelated process.
         """
-        if isinstance(pid, bool) or not isinstance(pid, (int, float, str)):
-            return False
-
-        try:
-            pid_value = int(pid)
-        except (TypeError, ValueError, OverflowError):
-            # OverflowError covers a non-finite float (int(float('inf'))); NaN is
-            # a ValueError. Either way, degrade to a graceful refusal.
-            return False
-
-        name = project_name if isinstance(project_name, str) else ''
         title = session_title if isinstance(session_title, str) else ''
-        focused = focus_session_window(pid_value, name, title)
+
+        if isinstance(origin, str) and origin.startswith('wsl:'):
+            focused = focus_terminal_window(title)
+        else:
+            if isinstance(pid, bool) or not isinstance(pid, (int, float, str)):
+                return False
+
+            try:
+                pid_value = int(pid)
+            except (TypeError, ValueError, OverflowError):
+                # OverflowError covers a non-finite float (int(float('inf'))); NaN is
+                # a ValueError. Either way, degrade to a graceful refusal.
+                return False
+
+            name = project_name if isinstance(project_name, str) else ''
+            focused = focus_session_window(pid_value, name, title)
 
         if vscode_deeplink is True and isinstance(session_id, str) and session_id:
             if focused:

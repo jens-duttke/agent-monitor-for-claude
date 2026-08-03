@@ -9,6 +9,13 @@ label formatting, grouping or sorting - all of that derivation lives in the UI
 (``agent_monitor_for_claude/ui/logic.js``).  Python's role is purely to provide
 data and to keep conversation content out of it.
 
+Every session root (the native Windows install, plus one per running WSL
+distro - see ``roots.session_roots``) is assembled here: each record carries
+its root's ``origin``/``origin_label`` through untouched, and liveness is
+probed per root kind - ``process_probe.probe_all`` for the Windows root,
+``wsl.probe_wsl_sessions`` for a WSL root - so a pid from one root is never
+looked up against another root's process table.
+
 Everything returned is JSON-serializable and free of conversation content.
 """
 from __future__ import annotations
@@ -17,26 +24,28 @@ import time
 from datetime import datetime
 from typing import Any
 
-from .paths import transcript_path
-from .process_probe import probe_all
+from .paths import SessionRoot, transcript_path
+from .process_probe import ProcessInfo, probe_all
+from .roots import session_roots
 from .sessions import list_sessions
 from .settings import ENDED_MAX_AGE, INCLUDE_COMPLETED
 from .subagents import count_subagents
 from .transcript import prune_scan_cache, state_for
+from .wsl import probe_wsl_sessions
 
 __all__ = ['build_snapshot', 'live_or_recent_ids', 'registry_fingerprint']
 
 
 def build_snapshot() -> dict[str, Any]:
-    """Return the raw session overview as a flat list of per-session records."""
+    """Return the raw session overview as a flat list of per-session records, across every session root."""
     sessions: list[dict[str, Any]] = []
 
-    records = list_sessions()
-    probe_map = probe_all([(record['pid'], record['proc_start_ticks']) for record in records])
+    pairs = _collect_pairs()
+    probe_map = _probe_map(pairs)
 
-    for record in records:
+    for root, record in pairs:
         try:
-            session = _build_session_record(record, probe_map)
+            session = _build_session_record(root, record, probe_map)
         except Exception:
             # Last-resort per-record isolation: the individual readers already
             # degrade gracefully, but an unforeseen failure on one record must
@@ -48,7 +57,7 @@ def build_snapshot() -> dict[str, Any]:
 
     # Evict scan-cache entries for sessions no longer in the registry so the
     # cache does not grow unbounded over a long-running monitor.
-    prune_scan_cache((record['session_id'], record['cwd']) for record in records)
+    prune_scan_cache((root, record['session_id'], record['cwd']) for root, record in pairs)
 
     return {
         'generated_at': datetime.now().astimezone().isoformat(timespec='seconds'),
@@ -56,17 +65,25 @@ def build_snapshot() -> dict[str, Any]:
     }
 
 
-def _build_session_record(record: dict[str, Any], probe_map: dict[int, Any]) -> dict[str, Any] | None:
-    """Assemble one raw session record, or None when an ended session is dropped."""
-    info = probe_map[record['pid']]
-    transcript_state = state_for(record['session_id'], record['cwd'])
+def _build_session_record(
+    root: SessionRoot, record: dict[str, Any], probe_map: dict[tuple[str, int], ProcessInfo],
+) -> dict[str, Any] | None:
+    """Assemble one raw session record, or None when an ended session is dropped.
+
+    A record whose root failed to probe (see ``_probe_map``) has no entry in
+    *probe_map*; the resulting ``KeyError`` is caught by ``build_snapshot``'s
+    own per-record guard, which drops just this record - the same outcome as
+    a session whose process turned out not alive.
+    """
+    info = probe_map[(record['origin'], record['pid'])]
+    transcript_state = state_for(root, record['session_id'], record['cwd'])
 
     # A process that ended long ago has nothing worth showing; drop it here
     # so the UI never has to know about the retention policy.
     if not info.alive and not _include_ended(transcript_state.age_seconds):
         return None
 
-    subagents = count_subagents(record['session_id'], record['cwd'])
+    subagents = count_subagents(root, record['session_id'], record['cwd'])
 
     return {
         'pid': record['pid'],
@@ -77,6 +94,8 @@ def _build_session_record(record: dict[str, Any], probe_map: dict[int, Any]) -> 
         'entrypoint': record.get('entrypoint'),
         'native_status': record['native_status'],
         'waiting_for': record['waiting_for'],
+        'origin': record['origin'],
+        'origin_label': record['origin_label'],
         'alive': info.alive,
         'child_count': info.child_count,
         'host': info.host,
@@ -106,7 +125,7 @@ def _build_session_record(record: dict[str, Any], probe_map: dict[int, Any]) -> 
 
 
 def live_or_recent_ids() -> set[str]:
-    """Return the session ids the live snapshot currently retains.
+    """Return the session ids the live snapshot currently retains, across every session root.
 
     A session is retained when its process is alive, or when it ended recently
     enough to still be shown - the same liveness-and-retention rule
@@ -116,17 +135,17 @@ def live_or_recent_ids() -> set[str]:
     history listing instead of vanishing from both because a stale, un-pruned
     registry record still names it.
     """
-    records = list_sessions()
-    probe_map = probe_all([(record['pid'], record['proc_start_ticks']) for record in records])
+    pairs = _collect_pairs()
+    probe_map = _probe_map(pairs)
 
     ids: set[str] = set()
-    for record in records:
-        info = probe_map.get(record['pid'])
+    for root, record in pairs:
+        info = probe_map.get((record['origin'], record['pid']))
         if info is not None and info.alive:
             ids.add(record['session_id'])
             continue
 
-        age = state_for(record['session_id'], record['cwd']).age_seconds
+        age = state_for(root, record['session_id'], record['cwd']).age_seconds
         if _include_ended(age):
             ids.add(record['session_id'])
 
@@ -134,25 +153,84 @@ def live_or_recent_ids() -> set[str]:
 
 
 def registry_fingerprint() -> str:
-    """Return a cheap change fingerprint of the session registry and transcripts.
+    """Return a cheap change fingerprint of the session registry and transcripts, across every session root.
 
-    Built from registry records (pid, session, native status) and each
+    Built from registry records (origin, pid, session, native status) and each
     transcript's mtime and size - a handful of ``stat()`` calls, no transcript
     parsing and no process probing.  The UI polls this every second and only
     requests a full snapshot when the fingerprint changes, which keeps idle
-    cost minimal while reacting to real changes within about a second.
+    cost minimal while reacting to real changes within about a second.  Each
+    part is prefixed with its root's ``origin`` so the same pid or session id
+    reused across two roots (a Windows process and an unrelated WSL one) never
+    collapses two different parts into one, and roots are visited in
+    ``session_roots()`` order (Windows first, WSL distros sorted) for a
+    fingerprint that is stable across polls when nothing changed.
     """
     parts: list[str] = []
-    for record in list_sessions():
-        transcript = transcript_path(record['session_id'], record['cwd'])
+    for root, record in _collect_pairs():
+        transcript = transcript_path(root, record['session_id'], record['cwd'])
         try:
             stat_result = transcript.stat()
             transcript_mark = f'{stat_result.st_mtime_ns}:{stat_result.st_size}'
         except OSError:
             transcript_mark = '-'
-        parts.append(f"{record['pid']}:{record['session_id']}:{record['native_status']}:{record['waiting_for']}:{transcript_mark}")
+        parts.append(
+            f"{root.origin}:{record['pid']}:{record['session_id']}:{record['native_status']}:"
+            f"{record['waiting_for']}:{transcript_mark}"
+        )
 
     return '|'.join(parts)
+
+
+def _collect_pairs() -> list[tuple[SessionRoot, dict[str, Any]]]:
+    """Return (root, record) for every session across every currently available root.
+
+    A root whose registry listing raises an unexpected error is skipped
+    entirely - its sessions are simply absent from this poll, never blanking
+    the other roots' sessions (the same last-resort isolation ``build_snapshot``
+    applies per record, one level up).
+    """
+    pairs: list[tuple[SessionRoot, dict[str, Any]]] = []
+    for root in session_roots():
+        try:
+            records = list_sessions(root)
+        except Exception:
+            continue
+
+        pairs.extend((root, record) for record in records)
+
+    return pairs
+
+
+def _probe_map(pairs: list[tuple[SessionRoot, dict[str, Any]]]) -> dict[tuple[str, int], ProcessInfo]:
+    """Probe every session's liveness, one process-table scan per root.
+
+    Windows sessions share one ``probe_all`` scan of the native process table,
+    exactly as before WSL support existed; each WSL root gets its own
+    ``probe_wsl_sessions`` scan of its own ``/proc``, so a Linux pid is never
+    looked up against the Windows table. The result is keyed by
+    ``(root.origin, pid)``, so two roots that happen to report the same raw
+    pid number - a native Windows process and an unrelated Linux one inside a
+    WSL distro - can never collide or read each other's liveness. A root whose
+    probe itself raises an unexpected error is skipped entirely: none of its
+    sessions get an entry here, so the per-record lookup drops them rather
+    than blanking every other root's sessions.
+    """
+    requests_by_root: dict[SessionRoot, list[tuple[int, int | None]]] = {}
+    for root, record in pairs:
+        requests_by_root.setdefault(root, []).append((record['pid'], record['proc_start_ticks']))
+
+    probe_map: dict[tuple[str, int], ProcessInfo] = {}
+    for root, requests in requests_by_root.items():
+        try:
+            info_by_pid = probe_all(requests) if root.proc_dir is None else probe_wsl_sessions(root, requests)
+        except Exception:
+            continue
+
+        for pid, info in info_by_pid.items():
+            probe_map[(root.origin, pid)] = info
+
+    return probe_map
 
 
 def _display_age(transcript_age: float | None, started_at_ms: float | None) -> float | None:

@@ -30,7 +30,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .paths import transcript_path
+from .paths import SessionRoot, transcript_path
 
 __all__ = ['TranscriptState', 'HistoryState', 'state_for', 'history_state_for', 'prune_scan_cache']
 
@@ -141,24 +141,28 @@ _scan_cache: dict[str, _ScanState] = {}
 _scan_lock = threading.Lock()
 
 
-def prune_scan_cache(active: Iterable[tuple[str, str]]) -> None:
+def prune_scan_cache(active: Iterable[tuple[SessionRoot, str, str]]) -> None:
     """Drop scan-cache entries for sessions no longer in the registry.
 
     The cache holds one ``_ScanState`` per transcript ever scanned - per-model
     totals, the title, the full model-event list - and is otherwise never
     evicted, so a long-running monitor's memory grows with every session ever
-    observed.  ``build_snapshot`` calls this each poll with the ``(session_id,
-    cwd)`` of every current registry record, so only live sessions are retained.
+    observed.  ``build_snapshot`` calls this each poll with the ``(root,
+    session_id, cwd)`` of every current registry record across every session
+    root, so only live sessions are retained.
 
     Parameters
     ----------
-    active : iterable of (session_id, cwd)
-        Every current registry session; its cache key is computed exactly like
-        :func:`_scan_appended` (path, case-normalized), so the two always agree.
+    active : iterable of (root, session_id, cwd)
+        Every current registry session, paired with the root it came from; its
+        cache key is computed exactly like :func:`_scan_appended` (path,
+        case-normalized), so the two always agree - and including the root
+        keeps two roots' transcripts apart even when a session_id/cwd pair
+        happens to repeat across them.
     """
     keep = {
-        os.path.normcase(str(transcript_path(session_id, cwd)))
-        for session_id, cwd in active
+        os.path.normcase(str(transcript_path(root, session_id, cwd)))
+        for root, session_id, cwd in active
         if session_id and cwd
     }
 
@@ -205,12 +209,12 @@ class HistoryState:
     age_seconds: float | None = None
 
 
-def state_for(session_id: str, cwd: str) -> TranscriptState:
-    """Return the transcript state for a session, or an empty state if none exists."""
+def state_for(root: SessionRoot, session_id: str, cwd: str) -> TranscriptState:
+    """Return the transcript state for a session under *root*, or an empty state if none exists."""
     if not session_id or not cwd:
         return TranscriptState(has_transcript=False)
 
-    path = transcript_path(session_id, cwd)
+    path = transcript_path(root, session_id, cwd)
     if not path.is_file():
         return TranscriptState(has_transcript=False)
 

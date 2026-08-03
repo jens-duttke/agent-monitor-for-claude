@@ -5,13 +5,14 @@ sessions running on your own machine. To do that it reads Claude Code's local se
 include your conversation transcripts. This document states exactly what it reads, what it keeps, what
 it shows, what it writes, and what it never does.
 
-Last reviewed: 2026-07-28
+Last reviewed: 2026-08-01
 
 ## At a glance
 
 | Question | Answer |
 | --- | --- |
 | Does the application connect to the internet? | No. It has no HTTP client, no remote address, and no network client import in any of its own modules. The embedded Microsoft browser engine it renders in is a separate matter, stated under [Network Communication](#network-communication). |
+| Does it run any other program? | Yes, exactly one, and only to list which WSL distributions are currently running: `wsl.exe --list --running --quiet`, invoked by its absolute `System32` path so no same-named file elsewhere can ever be run in its place. Nothing is ever run *inside* a distribution. See [Programs it runs](#programs-it-runs). |
 | Does it read your credentials? | No. It never opens `.credentials.json` and never reads a token, key, or cookie. |
 | Does it send telemetry, analytics, or crash reports? | No. None, of any kind. |
 | Does it send your data anywhere? | No. It never transmits anything it reads, and the page it renders declares a Content-Security-Policy that forbids network requests outright, so the browser engine would refuse one even if the code asked. |
@@ -73,6 +74,41 @@ directory. To be precise about what that means - the file is parsed as JSON in m
 must - exactly one value is then taken out of it, the global `effortLevel`, so the window can show
 which effort level your sessions default to. Nothing else from that file is extracted, kept, or
 displayed.
+
+## Programs it runs
+
+Everything described so far is about reading files and probing the process table - not running other
+software. Exactly one external program is ever run, and only when a WSL distribution might be involved:
+
+`wsl.exe --list --running --quiet` - Windows' own command, invoked by its absolute path
+(`%SystemRoot%\System32\wsl.exe`, so nothing planted next to the application or in its working
+directory can stand in for it) for listing which WSL distributions are
+currently running right now. Always these three fixed arguments and nothing else: no text you typed and
+nothing from your session data is ever placed on its command line. It runs in a hidden window with a
+five-second timeout; only its output - a list of distribution names - is read, and nothing else happens
+with it. This is enumeration only: no code is ever executed *inside* a WSL distribution, by this
+application or through it, and it is the only external program the application ever runs. This differs
+from the shell actions under [Actions performed on your behalf](#actions-performed-on-your-behalf) -
+those hand a path or a URI to Windows and let it decide what opens; this is the one place the
+application itself starts a process, waits for it, and reads what it printed.
+
+It runs rarely, not on every refresh. A dedicated pass over the process table - separate from the one
+[Processes and windows](#processes-and-windows) describes, and cached for five seconds - checks for a
+`vmmem*` process, the shared WSL2 utility VM, and `wsl.exe` is skipped entirely when that is absent,
+which it is on any machine with no WSL distribution currently running. When `vmmem` is present, the
+distribution list is still cached for about ten seconds, so a normal poll cadence does not re-run it
+every cycle. Turn the `wsl` setting off (see [docs/configuration.md](docs/configuration.md)) and none of
+this - the extra process check, the cache, or the command itself - ever runs.
+
+**A stopped distribution is never touched.** Reading a file under `\\wsl.localhost\<distro>\` starts
+that distribution if it was not already running, so every WSL read described below only ever targets a
+distribution this command just reported as running; one absent from that list is never opened, listed,
+or globbed into - see [Sessions running inside WSL](#sessions-running-inside-wsl). One narrow, documented
+exception: if a distribution is stopped while another keeps the shared WSL2 VM alive, a check that lands
+inside that ten-second cache window can still show the stopped one as running and read it once, which
+restarts it. It settles back down on its own: nothing here keeps re-reading a distribution once it drops
+off the running list, so it idles itself out again shortly after - the same as if this application did
+not exist.
 
 ## What the application reads
 
@@ -178,9 +214,11 @@ snapshot of the Windows process table. That snapshot is machine-wide by nature -
 id, parent process id, and executable name of every running process - and the application uses it to
 walk the ancestry and descendants of the session processes. Nothing else about a process is read: no
 command line, no environment, no open handles, no memory contents. For the sessions on screen it
-additionally samples CPU, memory, and start time; when you open the process panel for a WSL session,
-the shared WSL virtual machine's CPU and memory are sampled too, which the panel labels as
-machine-wide because that figure is not specific to your session.
+additionally samples CPU, memory, and start time; when you open the process panel for a **Windows**
+session whose tools run through the `wsl.exe`/`wslhost.exe` relay, the shared WSL virtual machine's CPU
+and memory are sampled too, which the panel labels as machine-wide because that figure is not specific to
+your session. (This is not the same as a session running natively inside a WSL distribution - see
+[Sessions running inside WSL](#sessions-running-inside-wsl) below.)
 
 When you click a session, the titles of all visible top-level windows are enumerated in memory to find
 the right window to raise. Those titles are compared and discarded - never stored, logged, or shown.
@@ -204,6 +242,45 @@ Enabling the *History* filter lists finished sessions by scanning the `projects/
 transcript is read once in full, but only three things are taken from it: the title fields, the first
 prompt (as the fallback title described above), and the session's working directory, which is needed
 to group it under its project.
+
+### Sessions running inside WSL
+
+Everything above applies just the same to a Claude Code session whose own process runs inside a running
+WSL distribution - the session registry, the transcripts (and every field taken from them, with the same
+exceptions), the subagent and workflow files, the content search, and the history listing. Only the
+location differs: instead of `~/.claude/`, it is read at `\\wsl.localhost\<distro>\home\<user>\.claude\`
+(or `\...\root\.claude\` for the root account) - the same UNC path Windows itself exposes for a
+distribution that is already running. This is optional and on by default; the `wsl` setting (see
+[docs/configuration.md](docs/configuration.md)) turns it off, and [Programs it runs](#programs-it-runs)
+states the guarantee that a distribution which is not already running is never touched at all.
+
+One consequence of watching a distribution that *is* running is worth stating plainly: these periodic
+reads count as activity against it and can keep it from idling out on its own; turning the `wsl` setting
+off stops that too, along with everything else in this section.
+
+One more thing is read that has no Windows counterpart: `\\wsl.localhost\<distro>\proc\`, the
+distribution's own Linux process table, exposed read-only over the same mount. Every refresh it stands in
+for the Windows process-table scan described under [Processes and windows](#processes-and-windows) -
+process names and parent-process links, so a session's liveness and its running child processes can be
+determined, plus each process's recorded start time, compared the same way `procStart` is on Windows.
+
+Opening the process panel for a session running inside WSL reads that same mount further, on demand,
+exactly as the panel does for a Windows session: the memory size and accumulated CPU time of each of the
+session's own descendant processes, so the panel shows live CPU, memory, and uptime for a WSL session too.
+Nothing beyond those figures is ever taken from it: no command line, no environment variable, no open file
+handle, and no actual memory content - only the byte count and CPU-time figures the kernel reports for
+each process. Because this is the session's own Linux process tree rather than a Windows-side relay, the
+panel never adds the shared `vmmem*` row described above - these rows already are the session's real work,
+not a stand-in for work happening elsewhere.
+
+The background-task output console reads the same way for a WSL session, from the distribution's own
+temporary directory instead of the Windows one -
+`\\wsl.localhost\<distro>\tmp\claude\<project-slug>\<session-id>\tasks\<task-id>.output` - read only while
+that task's row is expanded, exactly as described under [Background-task
+output](#background-task-output-on-demand). A redirected task's output is followed under the identical
+rule, confined to that session's own scratchpad or project directory; both are resolved against the
+distribution's own filesystem, with a `/mnt/<drive>/...` path, or any other absolute path inside the
+distribution, translated to its Windows-readable form before that confinement check runs.
 
 ## What the application writes
 
@@ -327,11 +404,35 @@ looks like a hidden exception:
   ids during a search. That one statement is a fixed function call whose only interpolated value is a
   `json.dumps` payload of session ids; no user-supplied text is ever placed into it.
 
+One more guarantee is worth checking directly: that the one external program this application ever runs
+is invoked from exactly one place, and that the module owning it never spawns a process any other way.
+
+```sh
+# Where wsl.exe is actually invoked, across the whole application
+grep -rn "_WSL_EXE" agent_monitor_for_claude/ --include=*.py
+
+# Proof that wsl.py itself never spawns a process any other way
+grep -nE "subprocess\.[A-Za-z_]*\(|os\.system|os\.popen|Popen\(|ShellExecute|CreateProcess|os\.exec" agent_monitor_for_claude/wsl.py
+```
+
+The first command prints exactly two lines, both in `wsl.py`: line 55, where the absolute path is built
+(`_WSL_EXE = str(Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32' / 'wsl.exe')`), and
+line 179, the `[_WSL_EXE, '--list', '--running', '--quiet']` argument list - the single place in the
+entire codebase where that command line is used. The absolute path matters: a relative `wsl.exe` would
+resolve through the Win32 process-creation search order, which checks the application's own directory
+and the current directory before System32, so a same-named file planted next to the executable could
+otherwise be run in its place. The second command prints exactly one line, `wsl.py:178`,
+`result = subprocess.run(` - the only process-spawning call anywhere in the file. (`process_probe.py`
+separately holds the string `'wsl.exe'` too, but only as a name to *recognize* an already-running
+Windows process as a WSL relay child, never to invoke anything - a broader
+`grep -rn "wsl.exe" agent_monitor_for_claude/ --include=*.py` finds that mention alongside several
+docstring sentences describing this exact guarantee, none of them a second invocation.)
+
 The boundaries are also enforced by tests, which run without any network access:
 
 ```sh
 python -m unittest discover -s tests   # backend, including the privacy tests
-node --test tests/js/logic.test.js     # interface logic
+node --test tests/js/logic.test.js tests/js/global-scope.test.js     # interface logic + the shared-global-scope guard
 ```
 
 - [tests/test_transcript_privacy.py](tests/test_transcript_privacy.py) plants marker strings in the
@@ -349,6 +450,32 @@ node --test tests/js/logic.test.js     # interface logic
   group: that escaping covers every character able to leave a text or attribute position, that an
   attribute value cannot break out of its attribute, and that background-task output containing markup
   stays text and yields only class names from the fixed internal list.
+- [tests/test_wsl.py](tests/test_wsl.py) guards WSL discovery: `test_no_vmmem_short_circuits` and
+  `test_setting_off_short_circuits` assert that `wsl.exe` is never invoked when no WSL2 VM is running or
+  when the `wsl` setting is off; `test_discovery_cached_within_ttl` asserts the ten-second cache keeps it
+  from running on every poll; `test_stopped_distro_never_globbed` asserts the never-wake guarantee
+  directly - a distribution absent from the running list is never looked at, even when its own `.claude`
+  directory already exists on disk.
+- [tests/test_wsl.py](tests/test_wsl.py)'s `WslProcessStatsTests` guards the process panel's on-demand
+  procfs reads: `test_first_call_yields_no_cpu_with_correct_rss_and_uptime` asserts memory and uptime come
+  straight from the same scan while a first CPU reading has nothing to diff against yet;
+  `test_recycled_child_starttime_resets_cpu_to_none` asserts a recycled pid resets the CPU baseline instead
+  of diffing against an unrelated process's ticks; `test_prune_is_scoped_to_this_origin` asserts one
+  distribution's cached CPU baselines are never evicted by another distribution's panel refresh.
+- [tests/test_search.py](tests/test_search.py)'s `SearchOriginTest` extends the confinement guard to WSL:
+  `test_wsl_confinement_refuses_escaping_cwd` asserts a crafted working directory cannot escape a WSL
+  root's own `projects/` tree, and `test_unknown_origin_scans_nothing` asserts an origin naming no
+  currently running distribution is refused outright rather than falling back to another root's files.
+- [tests/test_tasks.py](tests/test_tasks.py)'s `WslRootTasksTest` and `WslRootRedirectTest` extend the
+  task-output boundary to WSL: `test_lists_and_reads_a_task_from_the_wsl_root_own_tree` asserts a WSL
+  session's own task tree lists and reads exactly like a Windows one;
+  `test_follows_absolute_redirect_translated_via_wsl_path_to_windows` and
+  `test_redirect_outside_both_roots_is_refused` assert the same scratchpad/project confinement holds once
+  a POSIX redirect target is translated to its Windows-readable form.
+- [tests/test_session_delete.py](tests/test_session_delete.py)'s `DeleteOriginTest` extends the deletion
+  guards to WSL: `test_refuses_unknown_origin`, `test_refuses_live_wsl_session`, and
+  `test_treats_a_naming_roots_probe_error_as_live` (a root that cannot be probed is treated as live, never
+  as a silent "safe to delete").
 
 If you find any statement in this document that the code does not support, please report it as an
 issue - that is a bug in the same sense as any other.

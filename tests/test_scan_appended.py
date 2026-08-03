@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_monitor_for_claude import transcript
-from agent_monitor_for_claude.paths import cwd_to_slug, transcript_path
+from agent_monitor_for_claude.paths import SessionRoot, cwd_to_slug, transcript_path, windows_root
 
 _TURN = '{"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":100,"output_tokens":0}}}\n'
 
@@ -103,16 +103,36 @@ class PruneScanCacheTest(unittest.TestCase):
         self._temp.cleanup()
 
     def _key(self, session_id: str, cwd: str) -> str:
-        return os.path.normcase(str(transcript_path(session_id, cwd)))
+        return os.path.normcase(str(transcript_path(windows_root(), session_id, cwd)))
 
     def test_prune_evicts_entries_not_in_the_active_registry_set(self) -> None:
         transcript._scan_cache[self._key('aaa', 'd:\\proj')] = transcript._ScanState()
         transcript._scan_cache[self._key('bbb', 'd:\\other')] = transcript._ScanState()
 
-        transcript.prune_scan_cache([('aaa', 'd:\\proj')])
+        transcript.prune_scan_cache([(windows_root(), 'aaa', 'd:\\proj')])
 
         self.assertIn(self._key('aaa', 'd:\\proj'), transcript._scan_cache)
         self.assertNotIn(self._key('bbb', 'd:\\other'), transcript._scan_cache)
+
+    def test_wsl_and_windows_roots_do_not_collide_on_the_same_session_id_and_cwd(self) -> None:
+        # transcript_path resolves under each root's own config_dir, so the same
+        # (session_id, cwd) string pair under two different roots names two
+        # different files - prune_scan_cache must key on the resolved path
+        # (root included), not the bare (session_id, cwd) pair, or evicting one
+        # root's stale entry could also evict the other root's live one.
+        with tempfile.TemporaryDirectory() as wsl_base:
+            wsl_root = SessionRoot(origin='wsl:U', label='U', config_dir=Path(wsl_base), proc_dir=None, temp_dir=Path(wsl_base))
+            win_key = self._key('same-id', 'd:\\proj')
+            wsl_key = os.path.normcase(str(transcript_path(wsl_root, 'same-id', 'd:\\proj')))
+            self.assertNotEqual(win_key, wsl_key)
+
+            transcript._scan_cache[win_key] = transcript._ScanState()
+            transcript._scan_cache[wsl_key] = transcript._ScanState()
+
+            transcript.prune_scan_cache([(wsl_root, 'same-id', 'd:\\proj')])
+
+            self.assertNotIn(win_key, transcript._scan_cache)
+            self.assertIn(wsl_key, transcript._scan_cache)
 
     def test_case_variant_cwds_share_one_cache_entry(self) -> None:
         # The two cwds differ only in case and resolve to the same file on a
@@ -121,8 +141,8 @@ class PruneScanCacheTest(unittest.TestCase):
         slug_dir.mkdir(parents=True)
         (slug_dir / 'aaaaaaaa.jsonl').write_text(_TURN, encoding='utf-8')
 
-        transcript._scan_appended(transcript_path('aaaaaaaa', 'd:\\proj'))
-        transcript._scan_appended(transcript_path('aaaaaaaa', 'D:\\Proj'))
+        transcript._scan_appended(transcript_path(windows_root(), 'aaaaaaaa', 'd:\\proj'))
+        transcript._scan_appended(transcript_path(windows_root(), 'aaaaaaaa', 'D:\\Proj'))
 
         self.assertEqual(len(transcript._scan_cache), 1)
 

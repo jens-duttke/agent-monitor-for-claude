@@ -5,7 +5,9 @@ Tests for the session-history listing.
 ``projects/`` transcripts, deduping against the live registry, and resolving
 each session's correct title and working directory.  These tests cover the
 enumeration, the dedup, the title precedence for a rename buried deep in a
-file, the cwd recovery (and its slug fallback), and graceful degradation.
+file, the cwd recovery (and its slug fallback), graceful degradation, and (in
+``MultiRootHistoryTest``) that the same scan runs per session root with each
+root's cwd resolution kept strictly isolated from every other root's.
 """
 from __future__ import annotations
 
@@ -14,17 +16,34 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from agent_monitor_for_claude import history
 from agent_monitor_for_claude.history import list_history
+from agent_monitor_for_claude.paths import SessionRoot, windows_root
 
 _LIVE_PID = 424242
 
 
 class HistoryEnvTest(unittest.TestCase):
+    """Isolated CLAUDE_CONFIG_DIR, with session roots pinned to the Windows fixture root.
+
+    Mirrors ``test_snapshot.py``'s ``_RegistryFixture``: without this pin, a
+    real running WSL distro on the machine running the suite would be
+    discovered for real by ``session_roots()``, making these Windows-only
+    tests slow and dependent on that machine's WSL state.  ``MultiRootHistoryTest``
+    below overrides the pin explicitly for its own scope.
+    """
+
     def setUp(self) -> None:
         self._previous = os.environ.get('CLAUDE_CONFIG_DIR')
         self._temp = tempfile.TemporaryDirectory()
         os.environ['CLAUDE_CONFIG_DIR'] = self._temp.name
+
+        self.windows_root = windows_root()
+        roots_patcher = mock.patch.object(history, 'session_roots', return_value=[self.windows_root])
+        roots_patcher.start()
+        self.addCleanup(roots_patcher.stop)
 
     def tearDown(self) -> None:
         if self._previous is None:
@@ -201,6 +220,74 @@ class ListHistoryTest(HistoryEnvTest):
         self.assertIsNotNone(record['age_seconds'])
         self.assertEqual(record['usage'], {})
         self.assertEqual(record['subagents_running'], 0)
+
+
+class MultiRootHistoryTest(HistoryEnvTest):
+    """History scanning across the Windows fixture root and a fake WSL root together.
+
+    The WSL side gets its own temp dir standing in for a distro's ``.claude``
+    (``config_dir``), built the same way ``test_snapshot.py``'s
+    ``MultiRootSnapshotTest`` builds one - here with ``history.session_roots``
+    patched (overriding the single-root pin from ``HistoryEnvTest.setUp``) to
+    return both roots together, and ``history.live_or_recent_ids`` stubbed so
+    these tests never depend on real process-liveness state.
+    """
+
+    def test_history_lists_wsl_root_with_own_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as base:
+            wsl_root = SessionRoot(
+                origin='wsl:U', label='U', config_dir=Path(base) / 'cfg',
+                proc_dir=Path(base) / 'proc', temp_dir=Path(base) / 'tmp',
+            )
+            project = wsl_root.config_dir / 'projects' / '-home-dev-proj'
+            project.mkdir(parents=True)
+            (project / 'aaaaaaaa-1111-2222-3333-444444444444.jsonl').write_text(
+                json.dumps({'type': 'user', 'cwd': '/home/dev/proj', 'timestamp': '2026-07-01T10:00:00Z',
+                            'message': {'content': 'hello wsl'}}) + '\n', encoding='utf-8')
+
+            with mock.patch.object(history, 'session_roots', return_value=[self.windows_root, wsl_root]), \
+                 mock.patch.object(history, 'live_or_recent_ids', return_value=set()):
+                records = history.list_history()
+
+        wsl_records = [r for r in records if r['origin'] == 'wsl:U']
+        self.assertEqual(len(wsl_records), 1)
+        self.assertEqual(wsl_records[0]['cwd'], '/home/dev/proj')
+        self.assertEqual(wsl_records[0]['origin_label'], 'U')
+
+    def test_same_slug_does_not_leak_cwd_across_roots(self) -> None:
+        # A Windows project and a WSL project can land on the identical slug
+        # string (the slug scheme is a lossy character substitution, blind to
+        # which root produced it), but each root's slug-to-cwd resolution must
+        # come only from that root's own registry: a Windows live cwd must
+        # never canonicalize a WSL project, or vice versa.
+        slug = '-home-dev-proj'
+        windows_cwd = '\\home\\dev\\proj'
+        self._write_session('bbbbbbbb-1111-2222-3333-444444444444', windows_cwd, _LIVE_PID)
+        self._write_history_transcript(slug, 'aaaaaaaa-1111-2222-3333-444444444444', [
+            json.dumps({'type': 'summary', 'operation': 'compact', 'sessionId': 'x'}),
+        ])
+
+        with tempfile.TemporaryDirectory() as base:
+            wsl_root = SessionRoot(
+                origin='wsl:U', label='U', config_dir=Path(base) / 'cfg',
+                proc_dir=Path(base) / 'proc', temp_dir=Path(base) / 'tmp',
+            )
+            project = wsl_root.config_dir / 'projects' / slug
+            project.mkdir(parents=True)
+            (project / 'cccccccc-1111-2222-3333-444444444444.jsonl').write_text(
+                json.dumps({'type': 'summary', 'operation': 'compact', 'sessionId': 'x'}) + '\n', encoding='utf-8')
+
+            with mock.patch.object(history, 'session_roots', return_value=[self.windows_root, wsl_root]), \
+                 mock.patch.object(history, 'live_or_recent_ids', return_value=set()):
+                records = history.list_history()
+
+        by_id = {record['session_id']: record for record in records}
+        # The Windows-side cwd-less session correctly inherits the Windows registry's cwd...
+        self.assertEqual(by_id['aaaaaaaa-1111-2222-3333-444444444444']['cwd'], windows_cwd)
+        # ...but the WSL-side session sharing the same slug must not: with no WSL
+        # registry entry of its own, it falls back to the raw slug, never the
+        # Windows cwd that happens to canonicalize to the identical slug string.
+        self.assertEqual(by_id['cccccccc-1111-2222-3333-444444444444']['cwd'], slug)
 
 
 if __name__ == '__main__':

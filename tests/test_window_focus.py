@@ -4,10 +4,13 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
+from agent_monitor_for_claude import window_focus
 from agent_monitor_for_claude.app import _MonitorApi
-from agent_monitor_for_claude.window_focus import open_directory, select_terminal_window, select_window, vscode_session_url
+from agent_monitor_for_claude.paths import SessionRoot, windows_root
+from agent_monitor_for_claude.window_focus import focus_terminal_window, open_directory, select_terminal_window, select_window, vscode_session_url
 
 # (hwnd, pid, title)
 _WINDOWS = [
@@ -140,9 +143,69 @@ class OpenPathBridgeTest(unittest.TestCase):
 
     def test_forwards_valid_string(self) -> None:
         api = _MonitorApi()
-        with mock.patch('agent_monitor_for_claude.app.open_directory', return_value=True) as opener:
+        # root_for_origin('windows') is pinned to the real windows_root(): open_path now
+        # resolves origin before translating the path, so this must keep succeeding
+        # regardless of whether the machine running the suite has WSL installed.
+        with mock.patch('agent_monitor_for_claude.app.root_for_origin', return_value=windows_root()), \
+             mock.patch('agent_monitor_for_claude.app.open_directory', return_value=True) as opener:
             self.assertTrue(api.open_path('D:\\Projects\\aurora-realtime'))
             opener.assert_called_once_with('D:\\Projects\\aurora-realtime')
+
+
+class OpenPathOriginTest(unittest.TestCase):
+    """``open_path`` resolves *origin* to a root and translates a WSL-reported path through it."""
+
+    def test_wsl_origin_translates_to_unc_path(self) -> None:
+        wsl_root = SessionRoot(origin='wsl:U', label='U', config_dir=Path('cfg'), proc_dir=Path('proc'), temp_dir=Path('tmp'))
+        api = _MonitorApi()
+        with mock.patch('agent_monitor_for_claude.app.root_for_origin', return_value=wsl_root) as root_for_origin, \
+             mock.patch('agent_monitor_for_claude.app.open_directory', return_value=True) as opener:
+            self.assertTrue(api.open_path('/home/dev/proj', origin='wsl:U'))
+
+        root_for_origin.assert_called_once_with('wsl:U')
+        opener.assert_called_once_with(r'\\wsl.localhost\U\home\dev\proj')
+
+    def test_unknown_origin_is_refused_without_calling_open_directory(self) -> None:
+        api = _MonitorApi()
+        with mock.patch('agent_monitor_for_claude.app.root_for_origin', return_value=None), \
+             mock.patch('agent_monitor_for_claude.app.open_directory') as opener:
+            self.assertFalse(api.open_path('/home/dev/proj', origin='gone:X'))
+
+        opener.assert_not_called()
+
+    def test_non_str_origin_is_refused_without_calling_open_directory(self) -> None:
+        api = _MonitorApi()
+        with mock.patch('agent_monitor_for_claude.app.open_directory') as opener:
+            self.assertFalse(api.open_path('D:\\Projects\\aurora-realtime', origin=123))
+
+        opener.assert_not_called()
+
+
+class FocusTerminalWindowTest(unittest.TestCase):
+    """``focus_terminal_window`` is the pid-free route ``focus_session`` uses for WSL sessions.
+
+    A session running inside a WSL distribution has no Windows process at all, so there is no pid to
+    walk an ancestor chain from - the only way to find its terminal is the same title match
+    ``focus_session_window`` already falls back to for a native external-terminal session.
+    """
+
+    def test_finds_and_activates_terminal_window_by_title(self) -> None:
+        windows = [(900, 42, '✳ Implement AskUser dialog interaction')]
+        with mock.patch.object(window_focus, '_enum_windows', return_value=windows), \
+             mock.patch.object(window_focus, 'process_names', return_value={42: 'windowsterminal.exe'}), \
+             mock.patch.object(window_focus, '_activate', return_value=True) as activate:
+            self.assertTrue(focus_terminal_window('Implement AskUser dialog interaction'))
+
+        activate.assert_called_once_with(900)
+
+    def test_returns_false_when_no_title_match(self) -> None:
+        windows = [(900, 42, 'Unrelated window title')]
+        with mock.patch.object(window_focus, '_enum_windows', return_value=windows), \
+             mock.patch.object(window_focus, 'process_names', return_value={42: 'windowsterminal.exe'}), \
+             mock.patch.object(window_focus, '_activate') as activate:
+            self.assertFalse(focus_terminal_window('Implement AskUser dialog interaction'))
+
+        activate.assert_not_called()
 
 
 if __name__ == '__main__':

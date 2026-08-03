@@ -19,6 +19,7 @@ Invalid JSON or invalid values are reported in a dialog; invalid individual entr
 | `poll_interval` | integer (>= 1) | `5` | Seconds between full refreshes of the overview. Independently of this, a cheap change probe runs every second and triggers an immediate refresh when a session or transcript changes. |
 | `ended_max_age` | integer (>= 0) | `3600` | How long (seconds) a finished agent stays visible after its process exits. |
 | `include_completed` | boolean | `false` | Show finished agents regardless of `ended_max_age`. |
+| `wsl` | boolean | `true` | Discover and monitor Claude Code sessions running inside WSL distributions, alongside native Windows sessions. Set to `false` to turn this off entirely - no `wsl.exe` call and no `\\wsl.localhost` read ever happens. |
 | `subagent_recent_seconds` | integer (>= 1) | `900` | How long (seconds) a subagent transcript is still considered part of the current run - within this window it counts as running (until it ends) or recently finished; older ones are ignored. |
 | `window_width` | integer (>= 320) | `920` | Initial window width in logical pixels. |
 | `window_height` | integer (>= 240) | `680` | Initial window height in logical pixels. |

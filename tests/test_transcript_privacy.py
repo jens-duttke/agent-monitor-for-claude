@@ -16,7 +16,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from agent_monitor_for_claude.paths import transcript_path
+from agent_monitor_for_claude.paths import transcript_path, windows_root
 from agent_monitor_for_claude.snapshot import build_snapshot
 from agent_monitor_for_claude.transcript import history_state_for, state_for
 
@@ -78,7 +78,7 @@ class TranscriptEnvTest(unittest.TestCase):
         self._temp.cleanup()
 
     def _write_transcript(self, session_id: str, cwd: str, lines: list[str]) -> None:
-        path = transcript_path(session_id, cwd)
+        path = transcript_path(windows_root(), session_id, cwd)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('\n'.join(lines), encoding='utf-8')
 
@@ -94,7 +94,7 @@ class TranscriptEnvTest(unittest.TestCase):
 class ParseTest(TranscriptEnvTest):
     def test_extracts_control_metadata(self) -> None:
         self._write_transcript(_SESSION_ID, _CWD, _transcript_lines())
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertTrue(state.has_transcript)
         self.assertEqual(state.last_stop_reason, 'end_turn')
@@ -103,7 +103,7 @@ class ParseTest(TranscriptEnvTest):
 
     def test_extracts_model_and_usage(self) -> None:
         self._write_transcript(_SESSION_ID, _CWD, _transcript_lines())
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.model, 'claude-opus-4-8[1m]')
         self.assertEqual(state.usage['input_tokens'], 110)
@@ -139,7 +139,7 @@ class ParseTest(TranscriptEnvTest):
             }),
         ]
         self._write_transcript(_SESSION_ID, _CWD, lines)
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.usage['cache_creation_5m_input_tokens'], 1500)
         self.assertEqual(state.usage['cache_creation_1h_input_tokens'], 32000)
@@ -159,7 +159,7 @@ class ParseTest(TranscriptEnvTest):
             }),
         ]
         self._write_transcript(_SESSION_ID, _CWD, lines)
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         # Overall totals sum every turn (subagents included).
         self.assertEqual(state.usage['input_tokens'], 108)
@@ -190,7 +190,7 @@ class ParseTest(TranscriptEnvTest):
             assistant('claude-opus-4-8', '2026-07-11T09:30:00Z'),                   # same run - collapses
         ]
         self._write_transcript(_SESSION_ID, _CWD, lines)
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.model_timeline, [
             {'time': '2026-07-11T09:00:00Z', 'model': 'claude-opus-4-8'},
@@ -210,7 +210,7 @@ class ParseTest(TranscriptEnvTest):
                                     'usage': {'input_tokens': 0, 'output_tokens': 0}, 'content': []}}),
         ]
         self._write_transcript(_SESSION_ID, _CWD, lines)
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         timeline_models = [entry['model'] for entry in state.model_timeline]
         # The synthetic sentinel must not appear as a model anywhere...
@@ -225,18 +225,18 @@ class ParseTest(TranscriptEnvTest):
 
     def test_usage_accumulates_incrementally(self) -> None:
         self._write_transcript(_SESSION_ID, _CWD, _transcript_lines())
-        first = state_for(_SESSION_ID, _CWD)
+        first = state_for(windows_root(), _SESSION_ID, _CWD)
 
         extra = json.dumps({
             'type': 'assistant',
             'timestamp': '2026-07-11T10:55:00Z',
             'message': {'stop_reason': 'end_turn', 'usage': {'input_tokens': 7, 'output_tokens': 3}, 'content': []},
         })
-        path = transcript_path(_SESSION_ID, _CWD)
+        path = transcript_path(windows_root(), _SESSION_ID, _CWD)
         with path.open('a', encoding='utf-8') as handle:
             handle.write('\n' + extra)
 
-        second = state_for(_SESSION_ID, _CWD)
+        second = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(second.usage['input_tokens'], first.usage['input_tokens'] + 7)
         self.assertEqual(second.usage['output_tokens'], first.usage['output_tokens'] + 3)
@@ -249,7 +249,7 @@ class ParseTest(TranscriptEnvTest):
             json.dumps({'type': 'user', 'timestamp': '2026-07-11T09:00:02Z', 'message': {'content': 'later message'}}),
         ]
         self._write_transcript(_SESSION_ID, _CWD, lines)
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.title, '/commit')
 
@@ -261,7 +261,7 @@ class ParseTest(TranscriptEnvTest):
             json.dumps({'type': 'user', 'timestamp': '2026-07-11T09:00:01Z', 'message': {'content': command}}),
         ]
         self._write_transcript(_SESSION_ID, _CWD, lines)
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.title, '/wm-tipps')
 
@@ -270,7 +270,7 @@ class ParseTest(TranscriptEnvTest):
         self._write_transcript(_SESSION_ID, _CWD, [
             json.dumps({'type': 'user', 'timestamp': '2026-07-11T09:00:00Z', 'message': {'content': content}}),
         ])
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.title, 'Was bedeutet das Panel?')
 
@@ -280,7 +280,7 @@ class ParseTest(TranscriptEnvTest):
             json.dumps({'type': 'ai-title', 'aiTitle': 'Generated title', 'sessionId': _SESSION_ID}),
         ]
         self._write_transcript(_SESSION_ID, _CWD, lines)
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.title, 'Generated title')
 
@@ -289,7 +289,7 @@ class ParseTest(TranscriptEnvTest):
         self._write_transcript(_SESSION_ID, _CWD, [
             json.dumps({'type': 'user', 'timestamp': '2026-07-11T09:00:00Z', 'message': {'content': long_prompt}}),
         ])
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(len(state.title), 80)
         self.assertTrue(state.title.endswith('…'))
@@ -301,7 +301,7 @@ class ParseTest(TranscriptEnvTest):
             json.dumps({'type': 'ai-title', 'aiTitle': 'Newer auto title', 'sessionId': _SESSION_ID}),
         ]
         self._write_transcript(_SESSION_ID, _CWD, lines)
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.title, 'Manual title')
 
@@ -324,7 +324,7 @@ class ParseTest(TranscriptEnvTest):
             }),
         ]
         self._write_transcript(_SESSION_ID, _CWD, lines)
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertFalse(state.pending_tool)
         self.assertEqual(state.last_entry_kind, 'user_interrupt')
@@ -338,7 +338,7 @@ class ParseTest(TranscriptEnvTest):
                 'message': {'content': [{'type': 'text', 'text': 'do the thing'}]},
             }),
         ])
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.last_entry_kind, 'user_text')
 
@@ -356,7 +356,7 @@ class ParseTest(TranscriptEnvTest):
                 'error': 'rate_limit', 'isApiErrorMessage': True, 'apiErrorStatus': 429,
             }),
         ])
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.last_entry_kind, 'api_error')
         self.assertTrue(state.usage_limited)
@@ -372,7 +372,7 @@ class ParseTest(TranscriptEnvTest):
                 'error': 'rate_limit', 'isApiErrorMessage': True,
             }),
         ])
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.last_entry_kind, 'api_error')
         self.assertTrue(state.usage_limited)
@@ -389,7 +389,7 @@ class ParseTest(TranscriptEnvTest):
                 'error': 'overloaded_error', 'isApiErrorMessage': True, 'apiErrorStatus': 529,
             }),
         ])
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.last_entry_kind, 'api_error')
         self.assertFalse(state.usage_limited)
@@ -411,7 +411,7 @@ class ParseTest(TranscriptEnvTest):
                             'usage': {'input_tokens': 12, 'output_tokens': 8}, 'content': [{'type': 'text', 'text': 'ok'}]},
             }),
         ])
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.last_entry_kind, 'assistant')
         self.assertFalse(state.usage_limited)
@@ -425,13 +425,13 @@ class ParseTest(TranscriptEnvTest):
             json.dumps({'type': 'permission-mode', 'permissionMode': 'auto', 'sessionId': _SESSION_ID}),
         ]
         self._write_transcript(_SESSION_ID, _CWD, lines)
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.permission_mode, 'auto')
 
     def test_extracts_session_title(self) -> None:
         self._write_transcript(_SESSION_ID, _CWD, _transcript_lines())
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.title, 'Session title label')
 
@@ -447,13 +447,13 @@ class ParseTest(TranscriptEnvTest):
         lines.extend([filler_entry] * 2000)
 
         self._write_transcript(_SESSION_ID, _CWD, lines)
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.title, 'Early deep title')
 
     def test_unresolved_tool_is_pending(self) -> None:
         self._write_transcript(_SESSION_ID, _CWD, _transcript_lines()[:2])
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertTrue(state.pending_tool)
         self.assertEqual(state.last_stop_reason, 'tool_use')
@@ -472,7 +472,7 @@ class ParseTest(TranscriptEnvTest):
                                     {'type': 'tool_use', 'id': 't1', 'name': 'Bash', 'input': {}}]},
         }, ensure_ascii=False)
         self._write_transcript(_SESSION_ID, _CWD, [older, newest])
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.last_stop_reason, 'tool_use')
         self.assertEqual(state.last_tool_name, 'Bash')
@@ -493,14 +493,14 @@ class ParseTest(TranscriptEnvTest):
             giant,
         ]
         self._write_transcript(_SESSION_ID, _CWD, lines)
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertIsNotNone(state.last_timestamp)
         self.assertEqual(state.last_entry_kind, 'tool_result')
         self.assertEqual(state.last_stop_reason, 'end_turn')
 
     def test_missing_transcript(self) -> None:
-        state = state_for('no-such-id', _CWD)
+        state = state_for(windows_root(), 'no-such-id', _CWD)
         self.assertFalse(state.has_transcript)
 
 
@@ -516,9 +516,9 @@ class ActivityAgeTest(TranscriptEnvTest):
             json.dumps({'type': 'assistant', 'timestamp': stamp,
                         'message': {'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': 'done'}]}}),
         ])
-        os.utime(transcript_path(_SESSION_ID, _CWD), (now, now))
+        os.utime(transcript_path(windows_root(), _SESSION_ID, _CWD), (now, now))
 
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertIsNotNone(state.age_seconds)
         self.assertGreater(state.age_seconds, 250)
@@ -532,9 +532,9 @@ class ActivityAgeTest(TranscriptEnvTest):
             json.dumps({'type': 'custom-title', 'customTitle': 'B title', 'sessionId': _SESSION_ID}),
         ])
         now = time.time()
-        os.utime(transcript_path(_SESSION_ID, _CWD), (now - 100, now - 100))
+        os.utime(transcript_path(windows_root(), _SESSION_ID, _CWD), (now - 100, now - 100))
 
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertIsNone(state.last_timestamp)
         self.assertIsNotNone(state.age_seconds)
@@ -545,7 +545,7 @@ class ActivityAgeTest(TranscriptEnvTest):
 class PrivacyTest(TranscriptEnvTest):
     def test_parsed_state_leaks_no_content(self) -> None:
         self._write_transcript(_SESSION_ID, _CWD, _transcript_lines())
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         serialized = json.dumps(asdict(state))
         for secret in _SECRETS:
@@ -564,7 +564,7 @@ class PrivacyTest(TranscriptEnvTest):
                 'error': 'rate_limit', 'isApiErrorMessage': True, 'apiErrorStatus': 429,
             }),
         ])
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.last_entry_kind, 'api_error')
         self.assertTrue(state.usage_limited)
@@ -578,7 +578,7 @@ class PrivacyTest(TranscriptEnvTest):
             json.dumps({'type': 'user', 'timestamp': '2026-07-11T09:00:01Z', 'message': {'content': 'SECRET_LATER_MESSAGE'}}),
         ]
         self._write_transcript(_SESSION_ID, _CWD, lines)
-        state = state_for(_SESSION_ID, _CWD)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.title, 'Benign question')
         self.assertNotIn('SECRET_LATER_MESSAGE', json.dumps(asdict(state)))
@@ -597,7 +597,7 @@ class PrivacyTest(TranscriptEnvTest):
             }),
         ]
         self._write_transcript(_SESSION_ID, _CWD, lines)
-        state = history_state_for(transcript_path(_SESSION_ID, _CWD))
+        state = history_state_for(transcript_path(windows_root(), _SESSION_ID, _CWD))
 
         self.assertEqual(state.title, 'History title')
         self.assertEqual(state.cwd, _CWD)

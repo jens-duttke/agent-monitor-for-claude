@@ -26,8 +26,15 @@ per-second poll:
 - The caller passes the exact set of sessions in view, so only those transcripts
   are read - a handful when the history filter is off, more when it is on.  The
   ``projects/`` tree is never walked here.
-- Transcripts are scanned **newest file first** (by modification time), so the
-  most recently active sessions - the ones most likely wanted - surface first.
+- Each session ref carries the ``origin`` of the root it lives on (the native
+  Windows install, or one running WSL distro); it is resolved with
+  ``roots.root_for_origin``, a refusal rather than a fallback, so a ref whose
+  origin no longer names a currently discovered root - most often a WSL distro
+  that has since stopped - is silently dropped, never substituted with another
+  root's transcript tree.
+- Transcripts are scanned **newest file first** (by modification time) across
+  every root combined, so the most recently active sessions - the ones most
+  likely wanted - surface first regardless of which root they live on.
 - Each transcript is read line by line and abandoned at the first hit; files are
   scanned concurrently on a thread pool, and matches are emitted strictly in
   newest-first order.
@@ -35,9 +42,10 @@ per-second poll:
   search - the user typed another character - stops promptly.
 
 Parsing degrades gracefully like every other reader here: an unreadable or
-missing transcript is skipped, never raised.  Every path is confined to
-``projects/`` (resolved and checked), so a crafted id or cwd can never point the
-read outside the transcript tree.
+missing transcript is skipped, never raised.  Every path is confined to its own
+root's ``projects/`` (resolved and checked against that same root), so a
+crafted id or cwd can never point the read outside its root's transcript tree -
+and never at another root's tree either.
 """
 from __future__ import annotations
 
@@ -47,7 +55,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
 
-from .paths import projects_dir, transcript_path
+from .paths import SessionRoot, projects_dir, transcript_path
+from .roots import root_for_origin
 
 __all__ = ['run_search']
 
@@ -84,9 +93,12 @@ def run_search(
         The search string.  A blank, non-string, or over-long value matches
         nothing (only a final, complete update is reported, without error).
     sessions
-        The sessions currently in view, each a mapping with ``session_id`` and
-        ``cwd``.  Only these transcripts are read, so the scope and cost are
-        exactly what the user can see.
+        The sessions currently in view, each a mapping with ``session_id``,
+        ``cwd`` and (when known) ``origin`` - the session root it lives on.  An
+        absent or non-string ``origin`` defaults to the native Windows root,
+        matching every caller from before origin-tagging existed.  Only these
+        transcripts are read, so the scope and cost are exactly what the user
+        can see.
     options
         A mapping with the boolean search options ``match_case``, ``whole_word``
         and ``use_regex`` (mirroring the editor toggles).  Absent keys are false.
@@ -184,23 +196,31 @@ def _compile_matcher(query: object, options: object) -> tuple[re.Pattern[str] | 
 
 
 def _ordered_transcripts(sessions: object) -> list[tuple[Path, str]]:
-    """Return ``(path, session_id)`` for each in-view transcript, newest first.
+    """Return ``(path, session_id)`` for each in-view transcript, newest first, across every root.
 
     Sorted by file modification time, most recent first, so the freshest
-    sessions are scanned - and their matches reported - before older ones.
+    sessions are scanned - and their matches reported - before older ones,
+    regardless of which root they came from.  Each ref's root is resolved by
+    its own ``origin`` (see :func:`_valid_refs`); that resolution, and the
+    root's own ``projects/`` directory, are each looked up only once per
+    distinct origin seen in *sessions* (see :func:`_resolve_roots`), never once
+    per ref.  An origin that resolves to no currently discovered root drops
+    every ref that named it - a refusal, never a fallback to another root.
     """
     refs = _valid_refs(sessions)
     if not refs:
         return []
 
-    try:
-        root = projects_dir().resolve()
-    except OSError:
-        return []
+    roots_by_origin = _resolve_roots([origin for _session_id, _cwd, origin in refs])
 
     items: list[tuple[float, Path, str]] = []
-    for session_id, cwd in refs:
-        path = _confined_transcript(session_id, cwd, root)
+    for session_id, cwd, origin in refs:
+        resolved = roots_by_origin[origin]
+        if resolved is None:
+            continue
+        root, projects_root = resolved
+
+        path = _confined_transcript(session_id, cwd, root, projects_root)
         if path is None:
             continue
         try:
@@ -213,13 +233,19 @@ def _ordered_transcripts(sessions: object) -> list[tuple[Path, str]]:
     return [(path, session_id) for _mtime, path, session_id in items]
 
 
-def _valid_refs(sessions: object) -> list[tuple[str, str]]:
-    """Extract distinct ``(session_id, cwd)`` pairs from the caller's list."""
+def _valid_refs(sessions: object) -> list[tuple[str, str, str]]:
+    """Extract distinct ``(session_id, cwd, origin)`` triples from the caller's list.
+
+    ``origin`` defaults to ``'windows'`` when absent or not a string, so a
+    caller that does not yet tag its sessions with an origin - every ref shape
+    from before origin-tagging existed - is treated as the native Windows root,
+    same as before.
+    """
     if not isinstance(sessions, list):
         return []
 
-    refs: list[tuple[str, str]] = []
-    seen: set[tuple[str, str]] = set()
+    refs: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
     for item in sessions:
         if not isinstance(item, dict):
             continue
@@ -229,24 +255,58 @@ def _valid_refs(sessions: object) -> list[tuple[str, str]]:
         if not (isinstance(session_id, str) and session_id and isinstance(cwd, str) and cwd):
             continue
 
-        pair = (session_id, cwd)
-        if pair not in seen:
-            seen.add(pair)
-            refs.append(pair)
+        origin = item.get('origin')
+        if not isinstance(origin, str):
+            origin = 'windows'
+
+        triple = (session_id, cwd, origin)
+        if triple not in seen:
+            seen.add(triple)
+            refs.append(triple)
 
     return refs
 
 
-def _confined_transcript(session_id: str, cwd: str, root: Path) -> Path | None:
-    """Resolve a session's transcript path, or ``None`` if it escapes ``projects/``.
+def _resolve_roots(origins: list[str]) -> dict[str, tuple[SessionRoot, Path] | None]:
+    """Resolve each distinct origin's root and its resolved ``projects/`` directory, once per call.
 
-    The path is confined the same way the deletion surface is: it is resolved and
-    checked to sit under ``projects/``, so a crafted id or cwd carrying path
-    traversal can never point the read at a file outside the transcript tree.
+    An origin :func:`roots.root_for_origin` does not currently recognize - most
+    often a WSL distro that has since stopped running - resolves to ``None``,
+    same as one whose ``projects/`` directory cannot be resolved (an unreadable
+    root); either way, every ref naming that origin is dropped by the caller.
+    One origin failing to resolve never affects another's entry.
+    """
+    resolved: dict[str, tuple[SessionRoot, Path] | None] = {}
+    for origin in origins:
+        if origin in resolved:
+            continue
+
+        root = root_for_origin(origin)
+        if root is None:
+            resolved[origin] = None
+            continue
+
+        try:
+            resolved[origin] = (root, projects_dir(root).resolve())
+        except OSError:
+            resolved[origin] = None
+
+    return resolved
+
+
+def _confined_transcript(session_id: str, cwd: str, root: SessionRoot, projects_root: Path) -> Path | None:
+    """Resolve a session's transcript path under *root*, or ``None`` if it escapes *projects_root*.
+
+    The path is confined the same way the deletion surface is: it is resolved
+    and checked to sit under *projects_root* - that root's own resolved
+    ``projects/`` directory - so a crafted id or cwd carrying path traversal can
+    never point the read at a file outside that root's transcript tree, nor at
+    another root's tree, since each ref is always checked against its own
+    root's *projects_root*.
     """
     try:
-        path = transcript_path(session_id, cwd).resolve()
-        path.relative_to(root)
+        path = transcript_path(root, session_id, cwd).resolve()
+        path.relative_to(projects_root)
     except (OSError, ValueError):
         return None
 

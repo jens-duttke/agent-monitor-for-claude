@@ -372,6 +372,19 @@ test('searchScopeRefs: history is only in scope for the full search with its chi
     assert.deepEqual(chipOff, ['a']);
 });
 
+test('searchScopeRefs: refs carry the session origin, defaulting to windows', () => {
+    // The scoped refs are what the origin-aware start_search bridge call
+    // receives, so each ref needs to know which root to search.
+    const winSession = { session_id: 'a', cwd: 'd:\\a', alive: true, has_transcript: true, has_activity: true, last_entry_kind: 'user_text' };
+    const wslSession = {
+        session_id: 'b', cwd: '/home/dev/b', alive: true, has_transcript: true, has_activity: true,
+        last_entry_kind: 'user_text', origin: 'wsl:Ubuntu',
+    };
+    const refs = logic.searchScopeRefs([winSession, wslSession], null, new Set(['working']), true);
+    assert.equal(refs.find((r) => r.session_id === 'a').origin, 'windows');
+    assert.equal(refs.find((r) => r.session_id === 'b').origin, 'wsl:Ubuntu');
+});
+
 test('defaultFilterKeys: excludes off-by-default chips (the history scan opt-out)', () => {
     const defs = [
         { key: 'needs' },
@@ -721,6 +734,42 @@ test('buildSession: a genuinely pending dialog tool keeps its specific label', (
     assert.equal(session.status_label, 'Question for you');
 });
 
+/* --- WSL origin (host, flags) ---
+
+   A raw record's origin ('windows' | 'wsl:<distro>') shapes the display host
+   and the wsl/origin_label flags buildSession exposes. Fixture shared across
+   this group (mirrors the file's existing pattern of a base raw object spread
+   with per-test overrides, e.g. the compact-cost test above); wslLabels is
+   empty because none of these assertions read a formatted label string. */
+const wslBaseRaw = raw({
+    session_id: 's', pid: 1, cwd: '/home/dev/proj', short_name: 's',
+    last_entry_kind: 'assistant', last_stop_reason: 'end_turn', usage: {}, child_count: 0,
+});
+const wslLabels = {};
+
+test('buildSession: WSL origin shapes host and flags', () => {
+    const session = logic.buildSession({ ...wslBaseRaw, origin: 'wsl:Ubuntu', origin_label: 'Ubuntu', entrypoint: 'cli' }, wslLabels, null);
+    assert.equal(session.origin, 'wsl:Ubuntu');
+    assert.equal(session.wsl, true);
+    assert.equal(session.host, 'Ubuntu (WSL)');
+    assert.equal(session.via_cli, true);
+});
+
+test('buildSession: absent origin defaults to windows', () => {
+    const session = logic.buildSession(wslBaseRaw, wslLabels, null);
+    assert.equal(session.origin, 'windows');
+    assert.equal(session.wsl, false);
+});
+
+test('buildSession: a WSL session with no resolved distro label hosts as plain "WSL"', () => {
+    // origin_label null (the backend could not resolve a distro name): the host
+    // must read the bare "WSL", never the redundant "WSL (WSL)".
+    const session = logic.buildSession({ ...wslBaseRaw, origin: 'wsl:Ubuntu', origin_label: null }, wslLabels, null);
+    assert.equal(session.origin_label, null);
+    assert.equal(session.wsl, true);
+    assert.equal(session.host, 'WSL');
+});
+
 test('modelHistory preserves the backend order and formats labels', () => {
     // A switch back to a prior model is a distinct run, so it appears again as
     // the last entry - the timeline is already ordered, modelHistory must not
@@ -805,6 +854,25 @@ test('groupProjects groups case-insensitively', () => {
     assert.equal(projects.length, 1);
     assert.equal(projects[0].sessions.length, 2);
     assert.equal(projects[0].sessions[0].status_label, 'Idle');
+    assert.equal(projects[0].key, 'windows|d:\\webdev\\proj');
+    assert.equal(projects[0].origin_display, '');
+});
+
+test('groupProjects keeps two distros with the identical POSIX cwd apart', () => {
+    // The same /home path in two distributions names two different folders:
+    // they must not share a panel, its collapse state, or its open-folder
+    // target - and the header carries the distro so the two stay tellable.
+    const projects = logic.groupProjects([
+        raw({ cwd: '/home/dev/x', session_id: 'a', origin: 'wsl:Ubuntu', origin_label: 'Ubuntu' }),
+        raw({ cwd: '/home/dev/x', session_id: 'b', origin: 'wsl:Debian', origin_label: 'Debian' }),
+        raw({ cwd: '/home/dev/x', session_id: 'c', origin: 'wsl:Ubuntu', origin_label: 'Ubuntu' }),
+    ], {});
+    assert.equal(projects.length, 2);
+    const byOrigin = new Map(projects.map((p) => [p.origin, p]));
+    assert.equal(byOrigin.get('wsl:Ubuntu').sessions.length, 2);
+    assert.equal(byOrigin.get('wsl:Ubuntu').origin_display, 'Ubuntu (WSL)');
+    assert.equal(byOrigin.get('wsl:Debian').origin_display, 'Debian (WSL)');
+    assert.notEqual(byOrigin.get('wsl:Ubuntu').key, byOrigin.get('wsl:Debian').key);
 });
 
 function project(name, statuses) {

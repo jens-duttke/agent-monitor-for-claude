@@ -8,7 +8,7 @@ import time
 import unittest
 from pathlib import Path
 
-from agent_monitor_for_claude.paths import cwd_to_slug, projects_dir
+from agent_monitor_for_claude.paths import cwd_to_slug, projects_dir, windows_root
 from agent_monitor_for_claude.subagents import count_subagents
 
 _SESSION_ID = 'sub-session-id'
@@ -45,7 +45,7 @@ class SubagentsTest(unittest.TestCase):
         self._previous = os.environ.get('CLAUDE_CONFIG_DIR')
         self._temp = tempfile.TemporaryDirectory()
         os.environ['CLAUDE_CONFIG_DIR'] = self._temp.name
-        self._dir = projects_dir() / cwd_to_slug(_CWD) / _SESSION_ID / 'subagents'
+        self._dir = projects_dir(windows_root()) / cwd_to_slug(_CWD) / _SESSION_ID / 'subagents'
         self._dir.mkdir(parents=True)
 
     def tearDown(self) -> None:
@@ -68,7 +68,7 @@ class SubagentsTest(unittest.TestCase):
         os.utime(agent, (mtime, mtime))
 
     def test_no_directory_is_empty(self) -> None:
-        self.assertEqual(count_subagents('other-id', _CWD).running, 0)
+        self.assertEqual(count_subagents(windows_root(), 'other-id', _CWD).running, 0)
 
     def test_executing_tool_is_running(self) -> None:
         # Last entry is an unanswered tool_use -> executing -> running, however
@@ -76,7 +76,7 @@ class SubagentsTest(unittest.TestCase):
         self._add_agent('a', 5, 'Task A', body=_assistant_tool_use())
         self._add_agent('b', 400, 'Task B', body=_assistant_tool_use())
 
-        info = count_subagents(_SESSION_ID, _CWD)
+        info = count_subagents(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(info.running, 2)
         self.assertEqual(info.recent_done, 0)
@@ -85,7 +85,7 @@ class SubagentsTest(unittest.TestCase):
     def test_end_turn_is_finished(self) -> None:
         self._add_agent('c', 5, 'Task C', body=_assistant_end_turn())
 
-        info = count_subagents(_SESSION_ID, _CWD)
+        info = count_subagents(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(info.running, 0)
         self.assertEqual(info.recent_done, 1)
@@ -96,7 +96,7 @@ class SubagentsTest(unittest.TestCase):
         # not stuck as running until the recent window expires.
         self._add_agent('wf', 120, 'WF done', body=_WORKFLOW_DONE_BODY)
 
-        info = count_subagents(_SESSION_ID, _CWD)
+        info = count_subagents(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(info.running, 0)
         self.assertEqual(info.recent_done, 1)
@@ -107,7 +107,7 @@ class SubagentsTest(unittest.TestCase):
         # misread as done (no flicker while it is still working).
         self._add_agent('think', 3, 'Thinking', body=_WORKFLOW_DONE_BODY)
 
-        info = count_subagents(_SESSION_ID, _CWD)
+        info = count_subagents(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(info.running, 1)
         self.assertEqual(info.labels, ('Thinking',))
@@ -115,7 +115,7 @@ class SubagentsTest(unittest.TestCase):
     def test_finds_nested_workflow_agents(self) -> None:
         self._add_agent('w', 3, 'Workflow agent', body=_assistant_tool_use(), nested=True)
 
-        info = count_subagents(_SESSION_ID, _CWD)
+        info = count_subagents(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(info.running, 1)
         self.assertEqual(info.labels, ('Workflow agent',))
@@ -123,7 +123,7 @@ class SubagentsTest(unittest.TestCase):
     def test_older_than_window_is_ignored(self) -> None:
         self._add_agent('old', 99999, 'Task Old', body=_assistant_tool_use())
 
-        info = count_subagents(_SESSION_ID, _CWD)
+        info = count_subagents(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(info.running, 0)
         self.assertEqual(info.recent_done, 0)
@@ -132,7 +132,7 @@ class SubagentsTest(unittest.TestCase):
         body = _assistant_tool_use('Read', extra_input={'note': 'SECRET_SUBAGENT_BODY'})
         self._add_agent('s', 2, 'Benign label', body=body)
 
-        info = count_subagents(_SESSION_ID, _CWD)
+        info = count_subagents(windows_root(), _SESSION_ID, _CWD)
 
         serialized = json.dumps(info.labels)
         self.assertIn('Benign label', serialized)
@@ -156,7 +156,7 @@ class SubagentsTest(unittest.TestCase):
         ids = [f'a{index}' for index in range(12)]
         self._add_journal('wf_1', started=ids, done=ids[:4], age_seconds=5)
 
-        info = count_subagents(_SESSION_ID, _CWD)
+        info = count_subagents(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(len(info.workflows), 1)
         workflow = info.workflows[0]
@@ -172,7 +172,7 @@ class SubagentsTest(unittest.TestCase):
         ids = ['a', 'b', 'c']
         self._add_journal('wf_1', started=ids, done=ids, age_seconds=5)
 
-        self.assertTrue(count_subagents(_SESSION_ID, _CWD).workflows[0].active)
+        self.assertTrue(count_subagents(windows_root(), _SESSION_ID, _CWD).workflows[0].active)
 
     def test_workflow_all_done_and_settled_is_inactive(self) -> None:
         # Same balance, but the journal has been quiet past the grace window - the
@@ -180,7 +180,7 @@ class SubagentsTest(unittest.TestCase):
         ids = ['a', 'b', 'c']
         self._add_journal('wf_1', started=ids, done=ids, age_seconds=120)
 
-        self.assertFalse(count_subagents(_SESSION_ID, _CWD).workflows[0].active)
+        self.assertFalse(count_subagents(windows_root(), _SESSION_ID, _CWD).workflows[0].active)
 
     def test_workflow_with_open_agent_stays_active_despite_quiet_journal(self) -> None:
         # An agent is still open (started, no result) during a long silent think,
@@ -189,17 +189,17 @@ class SubagentsTest(unittest.TestCase):
         # flip the session to "your turn", the same trap the main status rule avoids.
         self._add_journal('wf_1', started=['a', 'b'], done=['a'], age_seconds=300)
 
-        self.assertTrue(count_subagents(_SESSION_ID, _CWD).workflows[0].active)
+        self.assertTrue(count_subagents(windows_root(), _SESSION_ID, _CWD).workflows[0].active)
 
     def test_workflow_older_than_window_is_dropped(self) -> None:
         self._add_journal('wf_1', started=['a'], done=['a'], age_seconds=99999)
 
-        self.assertEqual(count_subagents(_SESSION_ID, _CWD).workflows, ())
+        self.assertEqual(count_subagents(windows_root(), _SESSION_ID, _CWD).workflows, ())
 
     def test_workflow_journal_never_surfaces_result_content(self) -> None:
         self._add_journal('wf_1', started=['a'], done=['a'], age_seconds=5)
 
-        info = count_subagents(_SESSION_ID, _CWD)
+        info = count_subagents(windows_root(), _SESSION_ID, _CWD)
 
         serialized = json.dumps([(w.run_id, w.total, w.done, w.active) for w in info.workflows])
         self.assertNotIn('SECRET_WORKFLOW_RESULT', serialized)

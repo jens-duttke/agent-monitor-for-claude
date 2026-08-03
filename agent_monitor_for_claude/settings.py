@@ -28,7 +28,7 @@ __all__ = [
     'POLL_INTERVAL', 'ENDED_MAX_AGE',
     'SUBAGENT_RECENT_SECONDS',
     'INCLUDE_COMPLETED', 'WINDOW_WIDTH', 'WINDOW_HEIGHT',
-    'LANGUAGE',
+    'LANGUAGE', 'WSL_MONITORING',
 ]
 
 SETTINGS_FILENAME = 'agent-monitor-settings.json'
@@ -40,7 +40,7 @@ _NUMERIC_BOUNDS: dict[str, int] = {
     'window_width': 320,
     'window_height': 240,
 }
-_BOOL_KEYS = frozenset({'include_completed'})
+_BOOL_KEYS = frozenset({'include_completed', 'wsl'})
 _STRING_KEYS = frozenset({'language'})
 
 
@@ -152,3 +152,6 @@ WINDOW_HEIGHT: int = _S.get('window_height', 680)
 
 # Language override (empty = auto-detect from system locale)
 LANGUAGE: str = _S.get('language', '')
+
+# Discover and monitor WSL distro sessions (set false to disable WSL entirely)
+WSL_MONITORING: bool = _S.get('wsl', True)

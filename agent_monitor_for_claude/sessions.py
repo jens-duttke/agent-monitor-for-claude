@@ -2,10 +2,16 @@
 Session Inventory
 =================
 
-Reads the Claude Code session registry (``~/.claude/sessions/*.json``) - the
-same set of records the ``claude agents --json`` command surfaces - directly
-from disk.  Reading the files avoids spawning the CLI on every poll; liveness
-of each PID is determined separately via the process probe.
+Reads one session root's registry (``<config_dir>/sessions/*.json``, see
+:class:`paths.SessionRoot`) - the same set of records the ``claude agents
+--json`` command surfaces - directly from disk.  Reading the files avoids
+spawning the CLI on every poll; liveness of each PID is determined separately
+via the process probe.
+
+Every returned record is stamped with the root it came from (``origin``,
+``origin_label``), so a caller merging records from several roots - the
+native Windows install plus any running WSL distro - can always tell which
+root each one belongs to.
 
 Parsing is defensive: the registry schema is an unversioned Claude Code
 internal, so a record missing its required fields is skipped rather than
@@ -17,26 +23,37 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .paths import sessions_dir
+from .paths import SessionRoot, sessions_dir
 
 __all__ = ['list_sessions']
 
 
-def list_sessions() -> list[dict[str, Any]]:
-    """Return normalized session records from the on-disk registry.
+def list_sessions(root: SessionRoot) -> list[dict[str, Any]]:
+    """Return normalized session records from *root*'s on-disk registry.
 
-    Each record has ``session_id``, ``pid``, ``cwd``, ``name``, ``kind``, and
-    ``started_at``.  Records that cannot be parsed are omitted.
+    Each record has ``session_id``, ``pid``, ``cwd``, ``name``, ``kind``,
+    ``started_at``, ``origin``, and ``origin_label``.  Records that cannot be
+    parsed are omitted.
+
+    Parameters
+    ----------
+    root : SessionRoot
+        The session root to read the registry from; also the source of the
+        ``origin``/``origin_label`` stamped onto every returned record.
     """
-    directory = sessions_dir()
+    directory = sessions_dir(root)
     if not directory.is_dir():
         return []
 
     records: list[dict[str, Any]] = []
     for path in sorted(directory.glob('*.json')):
         record = _normalize(_read_json(path))
-        if record is not None:
-            records.append(record)
+        if record is None:
+            continue
+
+        record['origin'] = root.origin
+        record['origin_label'] = root.label
+        records.append(record)
 
     return records
 

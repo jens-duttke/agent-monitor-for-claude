@@ -250,6 +250,25 @@ window.__MOCK_SNAPSHOT__ = {
                 cache_creation_input_tokens: 480000, cache_creation_5m_input_tokens: 480000, cache_creation_1h_input_tokens: 0,
             }),
         }),
+
+        // --- Orbital Sim - N-body orbital mechanics sim (running inside WSL) ---
+        // A WSL session: its process lives inside the Ubuntu distribution, not on
+        // Windows, so the host column names the distro instead of a detected
+        // terminal - shows as "Ubuntu (WSL) › CLI" with a tooltip explaining that
+        // its files are read over \\wsl.localhost and nothing is ever executed
+        // inside the distribution.
+        rawSession({
+            session_id: '6f2b9a3c-1d4e-4a8f-9c2b-7e1f5a0d3b6c', short_name: 'orbital-sim-4c', pid: 4242,
+            cwd: '/home/dev/projects/orbital-sim', origin: 'wsl:Ubuntu', origin_label: 'Ubuntu',
+            entrypoint: 'cli', via_cli: true,
+            title: 'Parallelize the N-body force solver across cores', permission_mode: 'default',
+            last_entry_kind: 'assistant', last_stop_reason: 'end_turn',
+            age_seconds: 96,
+            ...priced('claude-sonnet-5', {
+                input_tokens: 14200, output_tokens: 3100, cache_read_input_tokens: 9800000,
+                cache_creation_input_tokens: 420000, cache_creation_5m_input_tokens: 420000, cache_creation_1h_input_tokens: 0,
+            }),
+        }),
     ],
 };
 
