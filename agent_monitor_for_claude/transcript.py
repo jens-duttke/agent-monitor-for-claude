@@ -754,8 +754,10 @@ def _prompt_display_parts(entry: dict) -> tuple[str | None, bool]:
     if command_match:
         command_name = command_match.group(1).strip()
         if command_name:
+            # Collapsed, not just edge-stripped: the args block matches across
+            # newlines (re.S), and a raw newline must never reach a title.
             args_match = _COMMAND_ARGS_PATTERN.search(text)
-            args = args_match.group(1).strip() if args_match else ''
+            args = ' '.join(args_match.group(1).split()) if args_match else ''
             display = f'{command_name} {args}' if args else command_name
             if len(display) > _TITLE_MAX_CHARS:
                 display = display[:_TITLE_MAX_CHARS - 1] + '…'

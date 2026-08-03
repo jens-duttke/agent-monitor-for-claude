@@ -154,6 +154,18 @@ class TitleLooksPastAClearCommandTest(unittest.TestCase):
         }).encode('utf-8'), state)
         self.assertEqual(state.title(), '/work-on-issue #123')
 
+    def test_multi_line_command_arguments_are_collapsed(self) -> None:
+        # <command-args> matches across newlines (re.S); raw newlines must never
+        # reach a title - it lands in data-tip attributes, where a newline
+        # renders as a line break. Collapsed exactly like every other title.
+        state = _ScanState()
+        _absorb_line(json.dumps({
+            'type': 'user',
+            'message': {'content': '<command-name>/work-on-issue</command-name>'
+                                   '<command-args>#123\nextra   context</command-args>'},
+        }).encode('utf-8'), state)
+        self.assertEqual(state.title(), '/work-on-issue #123 extra context')
+
     def test_long_command_arguments_are_clipped_like_any_title(self) -> None:
         state = _ScanState()
         _absorb_line(json.dumps({
