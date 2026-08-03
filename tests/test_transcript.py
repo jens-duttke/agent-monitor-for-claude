@@ -105,6 +105,105 @@ class TitleSkipsInjectedMetaTest(unittest.TestCase):
             self.assertEqual(cwd, 'd:\\proj')
 
 
+class TitleLooksPastAClearCommandTest(unittest.TestCase):
+    def test_absorb_line_keeps_looking_past_a_leading_clear(self) -> None:
+        # Every post-/clear session opens with the /clear entry itself, so
+        # titling the session after it says nothing about what the session is
+        # about - the next real prompt must win.
+        state = _ScanState()
+        _absorb_line(json.dumps({
+            'type': 'user',
+            'message': {'content': '<command-name>/clear</command-name><command-message>clear</command-message>'},
+        }).encode('utf-8'), state)
+        self.assertIsNone(state.first_prompt)
+
+        _absorb_line(json.dumps({
+            'type': 'user', 'message': {'content': 'the real first prompt'},
+        }).encode('utf-8'), state)
+        self.assertEqual(state.title(), 'the real first prompt')
+
+    def test_a_meaningful_command_after_clear_becomes_the_title(self) -> None:
+        # A session driven by a slash command (/work-on-issue, /pr-review, ...)
+        # is best titled after that command - only /clear is housekeeping.
+        state = _ScanState()
+        for content in ('<command-name>/clear</command-name>', '<command-name>/work-on-issue</command-name>'):
+            _absorb_line(json.dumps({
+                'type': 'user', 'message': {'content': content},
+            }).encode('utf-8'), state)
+        self.assertEqual(state.title(), '/work-on-issue')
+
+    def test_a_leading_meaningful_command_keeps_the_title(self) -> None:
+        # A meaningful opening command is not displaced by a later prompt -
+        # the first-prompt rule is unchanged for everything but /clear.
+        state = _ScanState()
+        _absorb_line(json.dumps({
+            'type': 'user', 'message': {'content': '<command-name>/pr-review</command-name>'},
+        }).encode('utf-8'), state)
+        _absorb_line(json.dumps({
+            'type': 'user', 'message': {'content': 'here is more detail'},
+        }).encode('utf-8'), state)
+        self.assertEqual(state.title(), '/pr-review')
+
+    def test_a_command_title_carries_its_arguments(self) -> None:
+        # "/work-on-issue #123" names the session; the bare command name only
+        # says which workflow ran, not on what.
+        state = _ScanState()
+        _absorb_line(json.dumps({
+            'type': 'user',
+            'message': {'content': '<command-name>/work-on-issue</command-name><command-args>#123</command-args>'},
+        }).encode('utf-8'), state)
+        self.assertEqual(state.title(), '/work-on-issue #123')
+
+    def test_multi_line_command_arguments_are_collapsed(self) -> None:
+        # <command-args> matches across newlines (re.S); raw newlines must never
+        # reach a title - it lands in data-tip attributes, where a newline
+        # renders as a line break. Collapsed exactly like every other title.
+        state = _ScanState()
+        _absorb_line(json.dumps({
+            'type': 'user',
+            'message': {'content': '<command-name>/work-on-issue</command-name>'
+                                   '<command-args>#123\nextra   context</command-args>'},
+        }).encode('utf-8'), state)
+        self.assertEqual(state.title(), '/work-on-issue #123 extra context')
+
+    def test_long_command_arguments_are_clipped_like_any_title(self) -> None:
+        state = _ScanState()
+        _absorb_line(json.dumps({
+            'type': 'user',
+            'message': {'content': '<command-name>/work-on-issue</command-name><command-args>'
+                                   + 'x' * 200 + '</command-args>'},
+        }).encode('utf-8'), state)
+        title = state.title()
+        self.assertTrue(title.startswith('/work-on-issue x'))
+        self.assertLessEqual(len(title), 80)
+        self.assertTrue(title.endswith('…'))
+
+    def test_a_clear_only_session_still_falls_back_to_the_command_name(self) -> None:
+        # With nothing after /clear anywhere, its name is still better than an
+        # id-derived name - the old behaviour remains the last resort.
+        state = _ScanState()
+        _absorb_line(json.dumps({
+            'type': 'user',
+            'message': {'content': '<command-name>/clear</command-name>'},
+        }).encode('utf-8'), state)
+        self.assertEqual(state.title(), '/clear')
+
+    def test_scan_title_cwd_skips_a_leading_clear(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session.jsonl'
+            path.write_text('\n'.join([
+                json.dumps({'type': 'user', 'cwd': 'd:\\proj',
+                            'message': {'content': '<command-name>/clear</command-name>'}}),
+                json.dumps({'type': 'user', 'cwd': 'd:\\proj',
+                            'message': {'content': 'the real first prompt'}}),
+            ]), encoding='utf-8')
+
+            title, cwd = _scan_title_cwd(path)
+
+            self.assertEqual(title, 'the real first prompt')
+            self.assertEqual(cwd, 'd:\\proj')
+
+
 _LIMIT_ERROR = {
     'type': 'assistant', 'timestamp': '2026-07-11T10:00:00Z', 'isApiErrorMessage': True,
     'apiErrorStatus': 429, 'message': {'stop_reason': 'error', 'model': 'claude-opus-4-8', 'usage': {}},

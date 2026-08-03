@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - The confirmation before deleting a past session now names the session it is about to delete - its title and how long ago it was last active, quoted from the row you opened the menu on. The keyboard focus also starts on "Cancel" instead of "Delete", so pressing Enter or Space to dismiss the dialog can no longer delete anything. Deletion is still permanent, but confirming it is no longer a generic prompt that looks the same for every session.
+- A session that opens with `/clear` is no longer titled "/clear": the fallback title now looks past that housekeeping entry to the first thing that can actually name the session - the next real prompt, or a meaningful opening command like `/pr-review` (which keeps the title, exactly as before). Only a session containing nothing but `/clear` still shows it. A command title now also carries its arguments ("/work-on-issue #123" instead of just "/work-on-issue"), clipped like any other title.
 
 ### Added
 - The window's page now declares a Content-Security-Policy that forbids it from reaching the network at all: no requests, and no scripts, styles, or images from anywhere but the app's own bundled files. The app never made a network request in the first place - now the browser engine would refuse one even if asked. A new `PRIVACY.md` states what the app reads, keeps, shows, and writes, with the commands and tests to verify each claim yourself.
