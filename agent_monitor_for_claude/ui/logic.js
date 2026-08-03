@@ -825,8 +825,12 @@ function isVscodeDeeplink(raw) {
 
 /* --- project grouping (ported from snapshot.py) --- */
 
-function groupKey(cwd) {
-    return String(cwd).replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+// Case-insensitive like Windows paths, and per origin: two distros can report
+// the identical POSIX cwd, and those are genuinely different folders that
+// must not share a panel - nor its open-folder target or collapse state.
+function groupKey(cwd, origin) {
+    const path = String(cwd).replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+    return (typeof origin === 'string' && origin ? origin : 'windows') + '|' + path;
 }
 
 function displayCwd(cwd) {
@@ -1029,14 +1033,25 @@ function sortProjects(projects, byPriority) {
     });
 }
 
-// Group raw records into projects (case-insensitively, like Windows paths).
+// Group raw records into projects, per origin and case-insensitive path (see
+// groupKey). The group carries its key (the UI's stable panel identity) and,
+// for a WSL group, the distro label the panel header shows - a header text
+// alone cannot tell two distros' identical paths apart.
 function groupProjects(rawSessions, labels, prices) {
     const groups = new Map();
     for (const raw of rawSessions || []) {
-        const key = groupKey(raw.cwd);
+        const key = groupKey(raw.cwd, raw.origin);
         let group = groups.get(key);
         if (!group) {
-            group = { cwd: displayCwd(raw.cwd), name: projectName(raw.cwd), sessions: [] };
+            const origin = sessionOrigin(raw);
+            group = {
+                key: key,
+                cwd: displayCwd(raw.cwd),
+                name: projectName(raw.cwd),
+                origin: origin,
+                origin_display: isWslOrigin(origin) ? wslHostLabel(raw.origin_label) : '',
+                sessions: [],
+            };
             groups.set(key, group);
         }
         group.sessions.push(buildSession(raw, labels, prices));

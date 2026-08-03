@@ -854,6 +854,25 @@ test('groupProjects groups case-insensitively', () => {
     assert.equal(projects.length, 1);
     assert.equal(projects[0].sessions.length, 2);
     assert.equal(projects[0].sessions[0].status_label, 'Idle');
+    assert.equal(projects[0].key, 'windows|d:\\webdev\\proj');
+    assert.equal(projects[0].origin_display, '');
+});
+
+test('groupProjects keeps two distros with the identical POSIX cwd apart', () => {
+    // The same /home path in two distributions names two different folders:
+    // they must not share a panel, its collapse state, or its open-folder
+    // target - and the header carries the distro so the two stay tellable.
+    const projects = logic.groupProjects([
+        raw({ cwd: '/home/dev/x', session_id: 'a', origin: 'wsl:Ubuntu', origin_label: 'Ubuntu' }),
+        raw({ cwd: '/home/dev/x', session_id: 'b', origin: 'wsl:Debian', origin_label: 'Debian' }),
+        raw({ cwd: '/home/dev/x', session_id: 'c', origin: 'wsl:Ubuntu', origin_label: 'Ubuntu' }),
+    ], {});
+    assert.equal(projects.length, 2);
+    const byOrigin = new Map(projects.map((p) => [p.origin, p]));
+    assert.equal(byOrigin.get('wsl:Ubuntu').sessions.length, 2);
+    assert.equal(byOrigin.get('wsl:Ubuntu').origin_display, 'Ubuntu (WSL)');
+    assert.equal(byOrigin.get('wsl:Debian').origin_display, 'Debian (WSL)');
+    assert.notEqual(byOrigin.get('wsl:Ubuntu').key, byOrigin.get('wsl:Debian').key);
 });
 
 function project(name, statuses) {

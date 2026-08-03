@@ -2286,28 +2286,29 @@ function createPanel() {
     const section = document.createElement('section');
     section.className = 'panel';
     section.innerHTML = '<div class="panel-head">'
-        + '<h2></h2><span class="panel-path"><span class="path-open"></span></span><span class="head-status"></span>'
+        + '<h2></h2><span class="panel-path"><span class="path-open"></span></span>'
+        + '<span class="panel-origin"></span><span class="head-status"></span>'
         + '<span class="panel-count"></span><span class="chevron"></span>'
         + '</div><div class="rows"></div>';
     return section;
 }
 
 function updatePanel(section, project) {
-    const collapsed = state.collapsed.has(project.cwd);
+    const collapsed = state.collapsed.has(project.key);
     const anyNeeds = project.sessions.some((session) => session.needs_attention);
 
     section.classList.toggle('needs', anyNeeds);
     section.classList.toggle('collapsed', collapsed);
 
     const head = section.querySelector('.panel-head');
+    // Groups are keyed per origin (logic.groupKey), so every session in this
+    // panel shares one origin and the header's open-folder click can never
+    // land in another root - two distros' identical POSIX paths form two
+    // panels. The key is the panel's stable identity (collapse state,
+    // reconciliation); the cwd stays the real path the click opens.
+    head.dataset.key = project.key;
     head.dataset.cwd = project.cwd;
-    // A project group is keyed by cwd alone, with no origin component - a
-    // Windows and a WSL cwd practically never collide, but two WSL distros
-    // can both report the identical POSIX path, so a group can genuinely mix
-    // origins. When that happens the header's "open folder" click still uses
-    // only the first session's origin, which opens the wrong distro for the
-    // others.
-    head.dataset.origin = (project.sessions[0] && project.sessions[0].origin) || 'windows';
+    head.dataset.origin = project.origin || 'windows';
     section.querySelector('h2').textContent = project.name;
     section.querySelector('.panel-count').textContent = project.sessions.length;
 
@@ -2316,6 +2317,10 @@ function updatePanel(section, project) {
     const pathOpen = section.querySelector('.path-open');
     pathOpen.textContent = project.cwd;
     pathOpen.dataset.tip = state.labels.open_in_explorer || 'Open in Explorer';
+
+    // Names the distro when the panel belongs to a WSL root, so two panels
+    // with the same path text stay tellable apart at a glance.
+    section.querySelector('.panel-origin').textContent = project.origin_display || '';
 
     const headStatus = section.querySelector('.head-status');
     if (collapsed) {
@@ -2406,14 +2411,14 @@ function persistCollapsed() {
     } catch (e) { /* storage unavailable */ }
 }
 
-function toggleCollapse(cwd) {
-    if (!cwd) {
+function toggleCollapse(key) {
+    if (!key) {
         return;
     }
-    if (state.collapsed.has(cwd)) {
-        state.collapsed.delete(cwd);
+    if (state.collapsed.has(key)) {
+        state.collapsed.delete(key);
     } else {
-        state.collapsed.add(cwd);
+        state.collapsed.add(key);
     }
     persistCollapsed();
     if (state.last) {
@@ -2527,7 +2532,7 @@ function onContentClick(event) {
 
     const head = event.target.closest('.panel-head');
     if (head) {
-        toggleCollapse(head.dataset.cwd);
+        toggleCollapse(head.dataset.key);
         return;
     }
 
@@ -2683,7 +2688,7 @@ function render(snapshot) {
 
     const ordered = logic.sortProjects(visible, state.priorityOrder);
 
-    reconcile(panelsSlot, ordered, (project) => project.cwd, createPanel, updatePanel);
+    reconcile(panelsSlot, ordered, (project) => project.key, createPanel, updatePanel);
     // A live scan shows its own note (results keep filling in beneath it); then
     // the history-loading note; then, once settled, the empty-filter note when
     // nothing matched.
