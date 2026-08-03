@@ -2364,8 +2364,20 @@ function reconcile(container, items, keyOf, create, update) {
     }
 
     const ordered = [];
+    const seen = new Map();
     for (const item of items) {
-        const key = String(keyOf(item));
+        // Duplicate keys would otherwise leak nodes forever: two children end
+        // up sharing one data-key, the lookup map keeps only one of them, and
+        // the other is never matched NOR removed - one orphan per render,
+        // without bound. Suffixing the duplicate degrades that to a harmless
+        // re-created node instead.
+        let key = String(keyOf(item));
+        const dupes = seen.get(key) || 0;
+        seen.set(key, dupes + 1);
+        if (dupes > 0) {
+            key += '#dup' + dupes;
+        }
+
         let el = existing.get(key);
         if (el) {
             existing.delete(key);
@@ -2683,7 +2695,11 @@ function render(snapshot) {
         if (sessions.length === 0) {
             continue;
         }
-        visible.push({ cwd: project.cwd, name: project.name, sessions });
+        // Spread, not a hand-picked subset: the panel's stable identity
+        // (key) and its origin fields must survive this projection - losing
+        // `key` once gave every panel the reconcile key "undefined", which is
+        // the duplicate-key case where unmatched panels accumulate forever.
+        visible.push({ ...project, sessions });
     }
 
     const ordered = logic.sortProjects(visible, state.priorityOrder);
