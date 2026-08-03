@@ -15,9 +15,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude Code sessions running inside a WSL distribution now appear alongside Windows sessions - status, cost, subagents, history, search, and deletion all work identically, and the distro is shown as the session's host. A new `wsl` setting (on by default) turns this off.
 - The background-process panel and task-output console now work for WSL sessions too: the live per-process CPU, memory, and uptime table is read straight from the distribution's own process list, and a background task's output - including one redirected to a file in its scratchpad or project folder - streams the same way it does for a Windows session.
 
-### Fixed
-- The window opened as an empty shell - no sessions, ever - in any build made after the 0.5.0 release: the escaping refactor left `index.js` redeclaring `esc`/`attr`/`ansiToHtml` with `const` while `logic.js`'s function declarations already own those names in the page's shared global scope, which is a script-instantiation error that silently stopped `index.js` from running at all. A new test now loads both files the way the browser does, so this class of failure cannot pass the suite again.
-
 ## [0.5.0] - 2026-07-18
 
 ### Added
