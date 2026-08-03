@@ -18,6 +18,27 @@ class ParseDistroListTests(unittest.TestCase):
         self.assertEqual(wsl._parse_distro_list(b''), [])
         self.assertEqual(wsl._parse_distro_list('\r\n\r\n'.encode('utf-16-le')), [])
 
+    def test_utf8_output_from_wsl_utf8_env(self) -> None:
+        # With the documented WSL_UTF8=1 set, wsl.exe writes UTF-8 instead of
+        # UTF-16-LE; the NUL sniff must pick the right decoding for both.
+        raw = 'Ubuntu\ndocker-desktop\n'.encode('utf-8')
+        self.assertEqual(wsl._parse_distro_list(raw), ['Ubuntu', 'docker-desktop'])
+
+
+class WslExePathTests(unittest.TestCase):
+    def test_wsl_exe_is_invoked_by_absolute_system32_path(self) -> None:
+        # A relative "wsl.exe" resolves through CreateProcess's search order,
+        # which checks the application's own directory and the current
+        # directory before System32 - a planted binary would run silently.
+        self.assertTrue(Path(wsl._WSL_EXE).is_absolute())
+        self.assertTrue(wsl._WSL_EXE.lower().endswith('\\system32\\wsl.exe'))
+
+        completed = mock.Mock(returncode=0, stdout='Ubuntu\r\n'.encode('utf-16-le'))
+        with mock.patch.object(wsl.subprocess, 'run', return_value=completed) as run:
+            self.assertEqual(wsl._list_running_distros(), ['Ubuntu'])
+
+        self.assertEqual(run.call_args.args[0][0], wsl._WSL_EXE)
+
 
 class DiscoverRootsTests(unittest.TestCase):
     def test_home_and_root_claude(self) -> None:

@@ -12,7 +12,7 @@ Last reviewed: 2026-08-01
 | Question | Answer |
 | --- | --- |
 | Does the application connect to the internet? | No. It has no HTTP client, no remote address, and no network client import in any of its own modules. The embedded Microsoft browser engine it renders in is a separate matter, stated under [Network Communication](#network-communication). |
-| Does it run any other program? | Yes, exactly one, and only to list which WSL distributions are currently running: `wsl.exe --list --running --quiet`. Nothing is ever run *inside* a distribution. See [Programs it runs](#programs-it-runs). |
+| Does it run any other program? | Yes, exactly one, and only to list which WSL distributions are currently running: `wsl.exe --list --running --quiet`, invoked by its absolute `System32` path so no same-named file elsewhere can ever be run in its place. Nothing is ever run *inside* a distribution. See [Programs it runs](#programs-it-runs). |
 | Does it read your credentials? | No. It never opens `.credentials.json` and never reads a token, key, or cookie. |
 | Does it send telemetry, analytics, or crash reports? | No. None, of any kind. |
 | Does it send your data anywhere? | No. It never transmits anything it reads, and the page it renders declares a Content-Security-Policy that forbids network requests outright, so the browser engine would refuse one even if the code asked. |
@@ -80,7 +80,9 @@ displayed.
 Everything described so far is about reading files and probing the process table - not running other
 software. Exactly one external program is ever run, and only when a WSL distribution might be involved:
 
-`wsl.exe --list --running --quiet` - Windows' own command for listing which WSL distributions are
+`wsl.exe --list --running --quiet` - Windows' own command, invoked by its absolute path
+(`%SystemRoot%\System32\wsl.exe`, so nothing planted next to the application or in its working
+directory can stand in for it) for listing which WSL distributions are
 currently running right now. Always these three fixed arguments and nothing else: no text you typed and
 nothing from your session data is ever placed on its command line. It runs in a hidden window with a
 five-second timeout; only its output - a list of distribution names - is read, and nothing else happens
@@ -407,26 +409,30 @@ is invoked from exactly one place, and that the module owning it never spawns a 
 
 ```sh
 # Where wsl.exe is actually invoked, across the whole application
-grep -rn "'wsl.exe', '--list'" agent_monitor_for_claude/ --include=*.py
+grep -rn "_WSL_EXE" agent_monitor_for_claude/ --include=*.py
 
 # Proof that wsl.py itself never spawns a process any other way
 grep -nE "subprocess\.[A-Za-z_]*\(|os\.system|os\.popen|Popen\(|ShellExecute|CreateProcess|os\.exec" agent_monitor_for_claude/wsl.py
 ```
 
-Both commands print exactly one line each: the first is `agent_monitor_for_claude/wsl.py:171`, the
-`['wsl.exe', '--list', '--running', '--quiet']` argument list - the single place in the entire codebase
-where that command line is built; the second is `wsl.py:170`, `result = subprocess.run(...)` - the only
-process-spawning call anywhere in the file. (`process_probe.py` separately holds the string `'wsl.exe'`
-too, but only as a name to *recognize* an already-running Windows process as a WSL relay child, never to
-invoke anything - a broader `grep -rn "wsl.exe" agent_monitor_for_claude/ --include=*.py` finds that
-mention alongside several docstring sentences describing this exact guarantee, none of them a second
-invocation.)
+The first command prints exactly two lines, both in `wsl.py`: line 55, where the absolute path is built
+(`_WSL_EXE = str(Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32' / 'wsl.exe')`), and
+line 179, the `[_WSL_EXE, '--list', '--running', '--quiet']` argument list - the single place in the
+entire codebase where that command line is used. The absolute path matters: a relative `wsl.exe` would
+resolve through the Win32 process-creation search order, which checks the application's own directory
+and the current directory before System32, so a same-named file planted next to the executable could
+otherwise be run in its place. The second command prints exactly one line, `wsl.py:178`,
+`result = subprocess.run(` - the only process-spawning call anywhere in the file. (`process_probe.py`
+separately holds the string `'wsl.exe'` too, but only as a name to *recognize* an already-running
+Windows process as a WSL relay child, never to invoke anything - a broader
+`grep -rn "wsl.exe" agent_monitor_for_claude/ --include=*.py` finds that mention alongside several
+docstring sentences describing this exact guarantee, none of them a second invocation.)
 
 The boundaries are also enforced by tests, which run without any network access:
 
 ```sh
 python -m unittest discover -s tests   # backend, including the privacy tests
-node --test tests/js/logic.test.js     # interface logic
+node --test tests/js/logic.test.js tests/js/global-scope.test.js     # interface logic + the shared-global-scope guard
 ```
 
 - [tests/test_transcript_privacy.py](tests/test_transcript_privacy.py) plants marker strings in the

@@ -34,6 +34,7 @@ discovery cache window.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import threading
 import time
@@ -45,6 +46,13 @@ from .process_probe import ChildProcessStat, ProcessInfo, SESSION_HELPER_WINDOW_
 from .settings import WSL_MONITORING
 
 __all__ = ['wsl_roots', 'probe_wsl_sessions', 'wsl_process_stats', 'reset_caches']
+
+# Absolute path to wsl.exe. A relative name would resolve through the Win32
+# process-creation search order, which checks the application's own directory
+# and the process's current directory BEFORE System32 - so a wsl.exe planted
+# next to the downloaded executable would be run silently. SystemRoot always
+# names the Windows directory; the fallback covers a stripped environment.
+_WSL_EXE = str(Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32' / 'wsl.exe')
 
 # Base UNC host WSL exposes every distro's filesystem under - the same host
 # paths.wsl_path_to_windows routes a distro's own reported paths through.
@@ -168,7 +176,7 @@ def _list_running_distros() -> list[str]:
         # even though this app has none of its own; check=False - the
         # returncode is inspected explicitly below instead of raising.
         result = subprocess.run(
-            ['wsl.exe', '--list', '--running', '--quiet'],
+            [_WSL_EXE, '--list', '--running', '--quiet'],
             capture_output=True, timeout=5, creationflags=0x08000000, check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -183,12 +191,16 @@ def _list_running_distros() -> list[str]:
 def _parse_distro_list(raw: bytes) -> list[str]:
     """Decode ``wsl.exe``'s output into a list of distro names.
 
-    ``wsl.exe`` writes UTF-16-LE regardless of the console code page; stray
-    bytes that do not decode cleanly are dropped rather than raised, and blank
-    lines (a trailing newline, or the whole output when nothing is running)
-    are dropped too.
+    ``wsl.exe`` writes UTF-16-LE by default, but honors the documented
+    ``WSL_UTF8=1`` environment variable (WSL >= 0.64.0) and writes UTF-8
+    then - and the monitor inherits whatever the user set.  UTF-16-LE text
+    always interleaves NUL bytes; UTF-8 never contains one, so a NUL sniff
+    picks the right decoding either way.  Stray bytes that do not decode
+    cleanly are dropped rather than raised, and blank lines (a trailing
+    newline, or the whole output when nothing is running) are dropped too.
     """
-    text = raw.decode('utf-16-le', errors='ignore')
+    encoding = 'utf-16-le' if b'\x00' in raw else 'utf-8'
+    text = raw.decode(encoding, errors='ignore')
     return [line.strip() for line in text.splitlines() if line.strip()]
 
 
