@@ -46,7 +46,7 @@ If you run many Claude Code agents across several projects, you cannot tell from
 ## Getting started
 
 ### Prebuilt executable
-Download `AgentMonitorForClaude.exe` from the [latest release](https://github.com/jens-duttke/agent-monitor-for-claude/releases) and run it. No installation.
+Download `AgentMonitorForClaude.exe` from the [latest release](https://github.com/jens-duttke/agent-monitor-for-claude/releases) and run it. No installation. The executable is code signed - see [Code signing policy](#code-signing-policy) below.
 
 ### From source
 ```sh
@@ -54,6 +54,16 @@ python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 .venv\Scripts\python -m agent_monitor_for_claude
 ```
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+Every released executable is built by the [release workflow](.github/workflows/release.yml) on a GitHub-hosted runner, straight from the tagged source in this repository - never from a local machine - and each signing request is approved by hand before the certificate is applied.
+
+**Committers, reviewers, and approvers:** [Jens Duttke](https://github.com/jens-duttke), owner of this repository and its sole member with write access. Contributions arrive as pull requests and are reviewed and merged by the owner, who is also the only person who can approve a signing request.
+
+**Privacy:** this program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. [PRIVACY.md](PRIVACY.md) states in full what it reads, keeps, shows, and writes.
 
 ## Configuration
 
