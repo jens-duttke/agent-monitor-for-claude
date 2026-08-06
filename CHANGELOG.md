@@ -7,14 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-06
+
 ### Changed
 - The confirmation before deleting a past session now names the session it is about to delete - its title and how long ago it was last active, quoted from the row you opened the menu on. The keyboard focus also starts on "Cancel" instead of "Delete", so pressing Enter or Space to dismiss the dialog can no longer delete anything. Deletion is still permanent, but confirming it is no longer a generic prompt that looks the same for every session.
 - A session that opens with `/clear` is no longer titled "/clear": the fallback title now looks past that housekeeping entry to the first thing that can actually name the session - the next real prompt, or a meaningful opening command like `/pr-review` (which keeps the title, exactly as before). Only a session containing nothing but `/clear` still shows it. A command title now also carries its arguments ("/work-on-issue #123" instead of just "/work-on-issue"), clipped like any other title. (thanks to [@jeroenbu](https://github.com/jeroenbu) for the contribution)
 
 ### Added
+- The released `AgentMonitorForClaude.exe` is now code signed, so Windows can name its publisher instead of reporting an unknown one. Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Every release is now built by a GitHub Actions workflow from the tagged source in this repository - never on a developer machine - and signed only after a manual approval; see the code signing policy in the README.
 - The window's page now declares a Content-Security-Policy that forbids it from reaching the network at all: no requests, and no scripts, styles, or images from anywhere but the app's own bundled files. The app never made a network request in the first place - now the browser engine would refuse one even if asked. A new `PRIVACY.md` states what the app reads, keeps, shows, and writes, with the commands and tests to verify each claim yourself.
 - [WSL sessions](https://github.com/jens-duttke/agent-monitor-for-claude/issues/6) - Claude Code sessions running inside a WSL distribution now appear alongside Windows sessions - status, cost, subagents, history, search, and deletion all work identically, and the distro is shown as the session's host. A new `wsl` setting (on by default) turns this off. (thanks to [@jeroenbu](https://github.com/jeroenbu) for the contribution)
 - The background-process panel and task-output console now work for WSL sessions too: the live per-process CPU, memory, and uptime table is read straight from the distribution's own process list, and a background task's output - including one redirected to a file in its scratchpad or project folder - streams the same way it does for a Windows session.
+
+### Fixed
+- Project panels no longer pile up while the window is open: every refresh left an orphaned panel behind instead of reusing the existing one, so the list grew without bound and the window slowly took more and more memory.
 
 ## [0.5.0] - 2026-07-18
 
@@ -120,7 +126,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 13 languages, auto-detected from the system locale.
 - Optional settings file to tune the poll interval and window size.
 
-[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.2.0...v0.3.0
