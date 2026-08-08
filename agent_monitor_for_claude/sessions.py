@@ -106,7 +106,7 @@ def _normalize(data: Any) -> dict[str, Any] | None:
 
 
 def _parse_proc_start(value: Any) -> int | None:
-    """Parse the ``procStart`` field (.NET ticks as a digit string) to an int."""
+    """Parse the ``procStart`` field (a 100 ns tick count as a digit string) to an int."""
     if isinstance(value, bool) or not isinstance(value, (str, int)):
         return None
 

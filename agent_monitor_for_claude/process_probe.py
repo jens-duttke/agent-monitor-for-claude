@@ -18,9 +18,10 @@ while the user has the process panel open.  It opens a handle per descendant
 snapshot scan above.  It still reads no command line or argument.
 
 When the registry record carries the original process start time (``procStart``,
-.NET ticks of the local wall clock), it is compared against the live process:
-a mismatch means Windows recycled the PID for an unrelated process and the
-registry entry is stale, so the session is reported as not alive.
+a 100 ns tick count - see ``_ticks_match_epoch`` for the two zero points Claude
+Code has used), it is compared against the live process: a mismatch means
+Windows recycled the PID for an unrelated process and the registry entry is
+stale, so the session is reported as not alive.
 """
 from __future__ import annotations
 
@@ -112,6 +113,11 @@ _SHELL_HOSTS = {
 }
 
 _MAX_ANCESTOR_DEPTH = 15
+
+# Registry ``procStart`` units: 100 ns ticks, and the seconds between the
+# Windows FILETIME zero point (1601-01-01 UTC) and the Unix epoch.
+_TICKS_PER_SECOND = 10_000_000
+_FILETIME_UNIX_OFFSET_SECONDS = 11_644_473_600
 
 
 @dataclass(frozen=True)
@@ -607,14 +613,22 @@ def _is_child_link_real(parent_pid: int, child_pid: int, create_time_cache: dict
 
 
 def _ticks_match_epoch(ticks: int, epoch_seconds: float, tolerance_seconds: float = 10.0) -> bool:
-    """Compare .NET local-time ticks against a Unix timestamp.
+    """Compare a registry ``procStart`` tick count against a Unix timestamp.
 
-    ``procStart`` holds the local wall-clock time as .NET ticks (100 ns units
-    since year 1); ``epoch_seconds`` is converted to the same local wall clock
-    for the comparison.  A corrupted registry value can push the tick count past
-    the representable date range, so the conversion degrades to a mismatch (the
-    session is then reported as not alive) instead of crashing the snapshot.
+    ``procStart`` is a 100 ns tick count, but its zero point depends on the
+    Claude Code version that wrote it: current versions record a Windows
+    FILETIME (since 1601-01-01 UTC), earlier ones recorded .NET ticks of the
+    local wall clock (since year 1).  Both readings are tried and either one
+    within *tolerance_seconds* of the live process start counts as a match.
+    Accepting either cannot weaken the recycled-PID guard: the two zero points
+    lie about 1600 years apart, so one value can never satisfy both.  A
+    corrupted value can push a reading past the representable date range, so
+    each conversion degrades to a mismatch (the session is then reported as not
+    alive) instead of crashing the snapshot.
     """
+    if _filetime_matches(ticks, epoch_seconds, tolerance_seconds):
+        return True
+
     try:
         recorded = datetime(1, 1, 1) + timedelta(microseconds=ticks / 10)
         actual = datetime.fromtimestamp(epoch_seconds)
@@ -622,3 +636,13 @@ def _ticks_match_epoch(ticks: int, epoch_seconds: float, tolerance_seconds: floa
         return False
 
     return abs((recorded - actual).total_seconds()) <= tolerance_seconds
+
+
+def _filetime_matches(ticks: int, epoch_seconds: float, tolerance_seconds: float) -> bool:
+    """Return True if *ticks* read as a Windows FILETIME matches *epoch_seconds*."""
+    try:
+        recorded = ticks / _TICKS_PER_SECOND - _FILETIME_UNIX_OFFSET_SECONDS
+    except OverflowError:
+        return False
+
+    return abs(recorded - epoch_seconds) <= tolerance_seconds

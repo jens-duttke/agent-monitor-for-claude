@@ -25,27 +25,58 @@ def _to_ticks(moment: datetime) -> int:
     return int((moment - datetime(1, 1, 1)).total_seconds() * 10_000_000)
 
 
+def _to_filetime(epoch_seconds: float) -> int:
+    """Convert a Unix timestamp to a Windows FILETIME (100 ns since 1601-01-01 UTC)."""
+    return int((epoch_seconds + 11_644_473_600) * 10_000_000)
+
+
 class TicksMatchTest(unittest.TestCase):
+    """Both procStart formats Claude Code writes must be recognized.
+
+    Current versions record a Windows FILETIME, earlier ones .NET ticks of the
+    local wall clock.  Read against the wrong zero point a FILETIME lands in the
+    year 426, so a probe that assumes a single format reports every live session
+    as not alive.
+    """
+
     def test_matching_times(self) -> None:
         epoch = time.time()
         ticks = _to_ticks(datetime.fromtimestamp(epoch))
         self.assertTrue(_ticks_match_epoch(ticks, epoch))
+
+    def test_matching_filetime(self) -> None:
+        epoch = time.time()
+        self.assertTrue(_ticks_match_epoch(_to_filetime(epoch), epoch))
 
     def test_small_clock_skew_tolerated(self) -> None:
         epoch = time.time()
         ticks = _to_ticks(datetime.fromtimestamp(epoch) + timedelta(seconds=5))
         self.assertTrue(_ticks_match_epoch(ticks, epoch))
 
+    def test_small_clock_skew_tolerated_for_filetime(self) -> None:
+        epoch = time.time()
+        self.assertTrue(_ticks_match_epoch(_to_filetime(epoch + 5), epoch))
+
     def test_recycled_pid_mismatch(self) -> None:
         epoch = time.time()
         ticks = _to_ticks(datetime.fromtimestamp(epoch) - timedelta(hours=1))
         self.assertFalse(_ticks_match_epoch(ticks, epoch))
 
+    def test_recycled_pid_mismatch_for_filetime(self) -> None:
+        # Accepting either zero point must not blunt the recycled-PID guard: a
+        # FILETIME from an hour ago is still a mismatch, and cannot accidentally
+        # pass as a .NET tick count either.
+        epoch = time.time()
+        self.assertFalse(_ticks_match_epoch(_to_filetime(epoch - 3600), epoch))
+
     def test_oversized_ticks_degrade_to_mismatch(self) -> None:
         # A corrupted registry procStart can exceed the representable date range;
         # the comparison must degrade to a mismatch, never raise OverflowError
-        # (which would crash the whole snapshot).
+        # (which would crash the whole snapshot).  The larger value is past the
+        # float range, so it overflows the FILETIME reading too, not just the
+        # date arithmetic of the .NET one.
         self.assertFalse(_ticks_match_epoch(10 ** 20, time.time()))
+        self.assertFalse(_ticks_match_epoch(10 ** 400, time.time()))
 
 
 class ClassifyAncestryTest(unittest.TestCase):
@@ -189,12 +220,24 @@ class ProbeRecyclingTest(unittest.TestCase):
 
         self.assertTrue(probe(pid, ticks).alive)
 
+    def test_probe_accepts_matching_filetime(self) -> None:
+        pid = os.getpid()
+        create_time = psutil.Process(pid).create_time()
+
+        self.assertTrue(probe(pid, _to_filetime(create_time)).alive)
+
     def test_probe_detects_recycled_pid(self) -> None:
         pid = os.getpid()
         create_time = psutil.Process(pid).create_time()
         stale_ticks = _to_ticks(datetime.fromtimestamp(create_time) - timedelta(hours=2))
 
         self.assertFalse(probe(pid, stale_ticks).alive)
+
+    def test_probe_detects_recycled_pid_from_filetime(self) -> None:
+        pid = os.getpid()
+        create_time = psutil.Process(pid).create_time()
+
+        self.assertFalse(probe(pid, _to_filetime(create_time - 7200)).alive)
 
     def test_probe_without_ticks_keeps_previous_behavior(self) -> None:
         self.assertTrue(probe(os.getpid()).alive)

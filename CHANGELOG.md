@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Every session showed up as "Quiet" and no longer reacted to what its agent was doing: recent Claude Code versions record a session's process start time in a different format, which the check for recycled process IDs read as a date in the year 426 - so every running session was mistaken for a stale registry entry and reported as ended. Statuses, the "busy"/"idle" signal, and the promotion to "Background" while subagents or workflows run are all live again, and sessions no longer disappear from the list once their last activity is a few minutes old. Both formats are accepted, so older Claude Code versions keep working.
+
 ## [0.6.0] - 2026-08-06
 
 ### Changed
