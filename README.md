@@ -55,6 +55,9 @@ python -m venv .venv
 .venv\Scripts\python -m agent_monitor_for_claude
 ```
 
+### Uninstalling
+Delete the executable - there is nothing else to remove. To also drop the stored interface preferences (theme, filters, collapsed panels), delete `%LOCALAPPDATA%\AgentMonitorForClaude`. Nothing else is written anywhere; see [PRIVACY.md](PRIVACY.md).
+
 ## Code signing policy
 
 Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
