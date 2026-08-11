@@ -56,7 +56,7 @@ python -m venv .venv
 ```
 
 ### Uninstalling
-Delete the executable - there is nothing else to remove. To also drop the stored interface preferences (theme, filters, collapsed panels), delete `%LOCALAPPDATA%\AgentMonitorForClaude`. Nothing else is written anywhere; see [PRIVACY.md](PRIVACY.md).
+Delete the executable. The one thing it leaves behind is your interface preferences (theme, filters, collapsed panels) in `%LOCALAPPDATA%\AgentMonitorForClaude` - delete that folder to remove those too. There is nothing else: no installer, no registry entries, no service. See [PRIVACY.md](PRIVACY.md).
 
 ## Code signing policy
 
