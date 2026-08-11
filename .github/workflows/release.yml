@@ -106,6 +106,10 @@ jobs:
           artifact-configuration-slug: ${{ env.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
           github-artifact-id: ${{ steps.unsigned-artifact.outputs.artifact-id }}
           wait-for-completion: true
+          # The release policy requires a manual approval in the SignPath UI, and
+          # the action's default of 10 minutes is too short to walk over and give
+          # it. A timeout fails the run before anything is published.
+          wait-for-completion-timeout-in-seconds: 3600
           output-artifact-directory: signed
 
       - name: Locate and verify the signed EXE
