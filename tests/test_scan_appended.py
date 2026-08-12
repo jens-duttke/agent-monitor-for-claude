@@ -36,8 +36,7 @@ class ScanAppendedConcurrencyTest(unittest.TestCase):
 
             # Prime the cache with one turn so both threads later share one state.
             path.write_text(_TURN, encoding='utf-8')
-            totals, *_ = transcript._scan_appended(path)
-            self.assertEqual(totals['input_tokens'], 100)
+            self.assertEqual(transcript._scan_appended(path).usage['input_tokens'], 100)
 
             # Append a second turn: this delta is what a race would double-count.
             with path.open('a', encoding='utf-8') as handle:
@@ -81,8 +80,77 @@ class ScanAppendedConcurrencyTest(unittest.TestCase):
             self.assertEqual(errors, [])
 
             # Two turns of 100 input tokens = 200; a double-counted delta gives 300.
-            totals, *_ = transcript._scan_appended(path)
-            self.assertEqual(totals['input_tokens'], 200)
+            self.assertEqual(transcript._scan_appended(path).usage['input_tokens'], 200)
+
+
+class TimelineMemoizationTest(unittest.TestCase):
+    """A timeline is rebuilt only when new events arrived, and never handed out shared.
+
+    ``_scan_result`` runs on every poll, while a transcript has usually not grown
+    since the last one.  Building a timeline sorts every event and parses each
+    timestamp for the sort key, so rebuilding it per poll costs tens of
+    milliseconds for a session with thousands of turns - per session, every
+    second.  Events are only ever appended, so the event count decides.
+    """
+
+    def setUp(self) -> None:
+        transcript._scan_cache.clear()
+
+    def tearDown(self) -> None:
+        transcript._scan_cache.clear()
+
+    @staticmethod
+    def _turn(timestamp: str, model: str, version: str) -> str:
+        return (
+            '{"type":"assistant","timestamp":"' + timestamp + '","version":"' + version + '",'
+            '"message":{"model":"' + model + '","usage":{"input_tokens":1,"output_tokens":0}}}\n'
+        )
+
+    def test_unchanged_file_reuses_the_timelines(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session.jsonl'
+            path.write_text(self._turn('2026-07-11T09:00:00Z', 'claude-opus-4-8', '2.1.224'), encoding='utf-8')
+
+            first = transcript._scan_appended(path)
+
+            with mock.patch.object(transcript, '_run_timeline', side_effect=AssertionError('rebuilt')) as never:
+                second = transcript._scan_appended(path)
+
+            never.assert_not_called()
+            self.assertEqual(second.model_timeline, first.model_timeline)
+            self.assertEqual(second.cli_timeline, first.cli_timeline)
+
+    def test_appended_turn_invalidates_the_timelines(self) -> None:
+        # The stale-cache case: a switch in the appended bytes must show up, not
+        # be hidden behind a timeline built before it existed.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session.jsonl'
+            path.write_text(self._turn('2026-07-11T09:00:00Z', 'claude-opus-4-8', '2.1.224'), encoding='utf-8')
+            transcript._scan_appended(path)
+
+            with path.open('a', encoding='utf-8') as handle:
+                handle.write(self._turn('2026-07-11T11:00:00Z', 'claude-sonnet-5', '2.1.228'))
+
+            result = transcript._scan_appended(path)
+
+            self.assertEqual([entry['model'] for entry in result.model_timeline], ['claude-opus-4-8', 'claude-sonnet-5'])
+            self.assertEqual([entry['version'] for entry in result.cli_timeline], ['2.1.224', '2.1.228'])
+
+    def test_returned_timeline_is_not_the_cached_one(self) -> None:
+        # The result crosses into the snapshot, so a caller mutating it must not
+        # corrupt what the next poll reports.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session.jsonl'
+            path.write_text(self._turn('2026-07-11T09:00:00Z', 'claude-opus-4-8', '2.1.224'), encoding='utf-8')
+
+            first = transcript._scan_appended(path)
+            first.model_timeline.clear()
+            first.cli_timeline[0]['version'] = 'tampered'
+
+            second = transcript._scan_appended(path)
+
+            self.assertEqual([entry['model'] for entry in second.model_timeline], ['claude-opus-4-8'])
+            self.assertEqual([entry['version'] for entry in second.cli_timeline], ['2.1.224'])
 
 
 class PruneScanCacheTest(unittest.TestCase):

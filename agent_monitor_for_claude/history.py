@@ -200,9 +200,14 @@ def _build_history_record(path: Path) -> dict[str, Any] | None:
         'last_tool_name': None,
         'permission_mode': None,
         'model_id': state.model,
+        'cli_version': state.cli_version,
         'usage': {},
         'usage_by_model': {},
         'model_timeline': [],
+        # The version each turn was written by needs the full incremental scan a
+        # live session gets; a history entry reads only its tail, so the current
+        # version above is known but its upgrade history is not.
+        'cli_timeline': [],
         'title': state.title,
         'subagents_running': 0,
         'subagents_done': 0,

@@ -20,6 +20,7 @@
     "sort_model": "Модель",
     "sort_host": "Хост",
     "host_wsl_tip": "Цей агент працює всередині дистрибутива WSL «{distro}». Його файли читаються через \\\\wsl.localhost - усередині дистрибутива ніколи нічого не виконується.",
+    "cli_changelog_tip": "Claude Code {version} - відкриває журнал змін цієї версії у вашому браузері",
     "sort_status": "Статус",
     "refreshing": "Оновлення...",
     "empty_state": "Немає активних агентів Claude Code.",

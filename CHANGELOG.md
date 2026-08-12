@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- The Claude Code version a session runs on is now shown - but only when it says something: the column appears as soon as the sessions in view are not all on the same version, so an agent still running last week's CLI stands out, while an all-current list stays exactly as it was. A session that outlived a CLI update carries a "+N" badge listing every version it spanned and the time each took over, which dates a mid-session change in the agent's behaviour. Clicking a version number opens that release's changelog entry in your browser - the app itself still requests nothing (see `PRIVACY.md`).
+
 ### Fixed
 - Every session showed up as "Quiet" and no longer reacted to what its agent was doing: recent Claude Code versions record a session's process start time in a different format, which the check for recycled process IDs read as a date in the year 426 - so every running session was mistaken for a stale registry entry and reported as ended. Statuses, the "busy"/"idle" signal, and the promotion to "Background" while subagents or workflows run are all live again, and sessions no longer disappear from the list once their last activity is a few minutes old. Both formats are accepted, so older Claude Code versions keep working.
 

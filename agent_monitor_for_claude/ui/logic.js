@@ -874,6 +874,70 @@ function modelHistory(timeline) {
     return entries.map((entry) => ({ time: entry.time, label: formatModel(entry.model) }));
 }
 
+// The Claude Code version timeline, same shape and ordering as modelHistory: one
+// entry per contiguous run of a version, the last one being the version in use.
+// A long session resumed after an upgrade spans more than one, which is what
+// dates a mid-session change in the agent's behaviour.
+function cliHistory(timeline) {
+    const entries = Array.isArray(timeline) ? timeline : [];
+    const history = [];
+    for (const entry of entries) {
+        if (entry && typeof entry.version === 'string' && entry.version) {
+            history.push({ time: entry.time, version: entry.version });
+        }
+    }
+
+    return history;
+}
+
+// Claude Code's public changelog. The only remote address in this application:
+// nothing is ever requested from it - the URL is handed to a link the user has
+// to click, which the host opens in the system browser (see PRIVACY.md).
+const CHANGELOG_URL = 'https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md';
+
+// A released version is three dot-separated numbers, which is also exactly what
+// may reach the href below. Anything else (a dev build, a renamed field, a
+// crafted value) fails this and is shown as plain text instead, so the URL can
+// never carry anything but digits and dots.
+const CLI_VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
+
+// Deep link to a version's changelog section, or null when the version is not a
+// plain release number. GitHub's heading anchor for "## 2.1.224" drops the dots,
+// giving "#21224".
+function changelogUrl(version) {
+    if (typeof version !== 'string' || !CLI_VERSION_PATTERN.test(version)) {
+        return null;
+    }
+
+    return CHANGELOG_URL + '#' + version.split('.').join('');
+}
+
+// Whether the CLI-version column carries information for the sessions currently
+// in view - the condition for showing it at all. True once the versions differ
+// across sessions, or one session itself spans more than one: with every session
+// on the same single version the column would repeat one value per row, which is
+// why it is left out entirely instead.
+function cliColumnRelevant(sessions) {
+    const list = Array.isArray(sessions) ? sessions : [];
+    const seen = new Set();
+    for (const session of list) {
+        if (!session) {
+            continue;
+        }
+        if (session.cli_switched) {
+            return true;
+        }
+        if (session.cli_version) {
+            seen.add(session.cli_version);
+            if (seen.size > 1) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 // Turn one raw backend record into the display object the renderer consumes.
 // Everything here is derived; age is kept numeric so the UI can tick it live.
 function buildSession(raw, labels, prices) {
@@ -881,6 +945,7 @@ function buildSession(raw, labels, prices) {
     const toolRunning = (raw.child_count || 0) > 0;
     const usage = raw.usage || {};
     const models = modelHistory(raw.model_timeline);
+    const cliVersions = cliHistory(raw.cli_timeline);
     const origin = sessionOrigin(raw);
     const wsl = isWslOrigin(origin);
     const originLabel = (typeof raw.origin_label === 'string' && raw.origin_label) ? raw.origin_label : null;
@@ -935,6 +1000,12 @@ function buildSession(raw, labels, prices) {
         model: formatModel(raw.model_id),
         model_switched: models.length > 1,
         model_history: models,
+        // The version in use comes from the tail (cli_version), so a history
+        // session - which is never fully scanned - still shows one, it just has
+        // no upgrade history to go with it.
+        cli_version: typeof raw.cli_version === 'string' ? raw.cli_version : '',
+        cli_switched: cliVersions.length > 1,
+        cli_history: cliVersions,
         usage_compact: usageCompact,
         usage_detail: usageDetail,
         usage_total: usageTotalTokens(usage),
@@ -1094,6 +1165,9 @@ const AMC_LOGIC = {
     formatCost,
     usageTotalTokens,
     modelHistory,
+    cliHistory,
+    changelogUrl,
+    cliColumnRelevant,
     hostLabel,
     isViaCli,
     isVscodeDeeplink,

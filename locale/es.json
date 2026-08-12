@@ -20,6 +20,7 @@
     "sort_model": "Modelo",
     "sort_host": "Host",
     "host_wsl_tip": "Este agente se ejecuta dentro de la distribución WSL «{distro}». Sus archivos se leen a través de \\\\wsl.localhost; nunca se ejecuta nada dentro de la distribución.",
+    "cli_changelog_tip": "Claude Code {version} - abre el registro de cambios de esta versión en tu navegador",
     "sort_status": "Estado",
     "refreshing": "Actualizando...",
     "empty_state": "No hay agentes de Claude Code activos.",

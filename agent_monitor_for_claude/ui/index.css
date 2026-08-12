@@ -918,7 +918,7 @@ body {
     }
 }
 
-/* Columns: dot | title+usage | model | host | age | menu.
+/* Columns: dot | title+usage | model | (cli) | host | age | menu.
    The status column is gone - the dot carries the status (label on hover) and
    the top-bar filter chips teach the colors. Title and usage share the single
    flexible column (title left, usage right); because they flex against each
@@ -927,7 +927,15 @@ body {
    column, spread apart by space-between (name left, badge right) so both line
    up across rows without a wide grid gutter between them. The --col-* variables
    are set by the UI after each render to the widest cell content across ALL
-   panels, so those columns align globally while never being wider than needed. */
+   panels, so those columns align globally while never being wider than needed.
+
+   The CLI-version column is the one conditional track: normally every session
+   runs the same Claude Code version, where the column would repeat one value
+   down every row, so index.js adds .show-cli to <body> only once the versions
+   differ (or one session spans several). It is a whole track rather than a
+   zero-width one because a 0px column still pays the 13px gap. The track itself
+   is added by the responsive block at the end of this file, which is also where
+   the columns drop as the window narrows. */
 .row {
     display: grid;
     grid-template-columns: 10px minmax(0, 1fr)
@@ -1054,10 +1062,11 @@ body {
         white-space: nowrap;
     }
 
-    /* "+N" chip after the model when the session used more than one - styled
-       like the mode chip. Hovering it (data-tip) lists every model with the
-       time it was first used. */
-    .model-more {
+    /* "+N" chip after the model, or after the CLI version, when the session used
+       more than one - styled like the mode chip. Hovering it (data-tip) lists
+       each run with the time it took over. */
+    .model-more,
+    .cli-more {
         flex: none;
         font-size: 10.5px;
         font-weight: 600;
@@ -1068,6 +1077,36 @@ body {
         padding: 1px 7px;
         white-space: nowrap;
         cursor: help;
+    }
+
+    /* Version (left) and its "+N" badge (right) share one column, exactly like
+       the model cell next to it - and literally the same chip, styled with
+       .model-more above. Hidden by default: the cell must add nothing while its
+       grid track is absent, so the responsive block below reveals it together
+       with the track. */
+    .cli-cell {
+        display: none;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 11.5px;
+        color: var(--fg-dim);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+
+    /* The version doubles as the link to its changelog entry. Underlined only on
+       hover so a column of links does not read as busier than the plain text
+       columns around it. */
+    .cli-link {
+        color: inherit;
+        text-decoration: none;
+        cursor: pointer;
+
+        &:hover {
+            color: var(--fg-heading);
+            text-decoration: underline;
+        }
     }
 
     .host-cell {
@@ -1500,6 +1539,25 @@ body {
     &.show {
         opacity: 1;
         transform: translateX(-50%) translateY(0);
+    }
+}
+
+/* The conditional CLI-version column, added between model and host. Bound to a
+   min-width rather than written next to .row: `body.show-cli .row` outranks the
+   plain `.row` of the narrower breakpoints below (a media query adds no
+   specificity), so an unconditional rule would keep the five-column layout alive
+   past the point where the model column already gave up its space. Cut off at
+   the same 900px, where the model column - the neighbour it belongs with -
+   goes. */
+@media (min-width: 901px) {
+    body.show-cli .row {
+        grid-template-columns: 10px minmax(0, 1fr)
+            var(--col-model, max-content)
+            var(--col-cli, max-content)
+            var(--col-host, max-content)
+            58px 26px;
+
+        .cli-cell { display: flex; }
     }
 }
 

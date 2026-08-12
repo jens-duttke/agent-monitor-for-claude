@@ -44,6 +44,9 @@ function rawSession(overrides) {
         has_transcript: true, has_activity: true, last_entry_kind: 'assistant', last_stop_reason: 'end_turn',
         pending_tool: false, last_tool_name: null, usage_limited: false, permission_mode: null,
         model_id: null, usage: {}, usage_by_model: {}, model_timeline: [], title: null,
+        // Every session runs the current CLI unless it says otherwise; the two
+        // that do are what makes the conditional version column appear at all.
+        cli_version: '2.1.228', cli_timeline: [{ time: '2026-07-11T09:25:21Z', version: '2.1.228' }],
         subagents_running: 0, subagents_done: 0, subagents_labels: [], workflows: [], age_seconds: 0,
     }, overrides);
 }
@@ -140,6 +143,14 @@ window.__MOCK_SNAPSHOT__ = {
                 { time: '2026-07-11T14:58:11Z', model: 'claude-sonnet-5' },
                 { time: '2026-07-11T16:30:42Z', model: 'claude-opus-4-8[1m]' },
             ],
+            // A session long enough to have outlived two CLI updates: its own
+            // "+N" badge dates each version, next to the model's.
+            cli_version: '2.1.228',
+            cli_timeline: [
+                { time: '2026-07-11T09:25:21Z', version: '2.1.224' },
+                { time: '2026-07-11T13:41:02Z', version: '2.1.226' },
+                { time: '2026-07-11T17:12:35Z', version: '2.1.228' },
+            ],
         }),
 
         // A turn the user stopped: its own yellow "Interrupted" status. The two
@@ -220,6 +231,11 @@ window.__MOCK_SNAPSHOT__ = {
             last_entry_kind: 'user_text', last_stop_reason: 'end_turn',
             native_status: 'waiting', waiting_for: 'permission prompt',
             age_seconds: 11,
+            // Open since before the last CLI update, so it is still running the
+            // older version while everything else has moved on - the case the
+            // version column exists for. No badge: it never switched, it stayed.
+            cli_version: '2.1.223',
+            cli_timeline: [{ time: '2026-07-11T08:12:44Z', version: '2.1.223' }],
             ...priced('claude-opus-4-8[1m]', {
                 input_tokens: 9800, output_tokens: 1900, cache_read_input_tokens: 4200000,
                 cache_creation_input_tokens: 310000, cache_creation_5m_input_tokens: 310000, cache_creation_1h_input_tokens: 0,
@@ -355,6 +371,9 @@ function historySession(overrides) {
         alive: false, is_history: true, pid: null, host: null, entrypoint: null,
         last_entry_kind: null, last_stop_reason: null, permission_mode: null,
         usage: {}, usage_by_model: {},
+        // A history record is read from its tail only, so the version it ended on
+        // is known but its upgrade history is not - matching history.py.
+        cli_timeline: [],
     }, overrides));
 }
 
@@ -373,6 +392,9 @@ window.__MOCK_HISTORY__ = [
         session_id: 'cccccccc-1111-2222-3333-444444444444', short_name: 'cccccccc',
         cwd: 'D:\\Projects\\atlas-cli', title: 'Scaffold the argument parser',
         model_id: 'claude-haiku-4-5', age_seconds: 1209600,
+        // Two weeks old, so it ran on a CLI several releases back - the case the
+        // version column is actually worth its width for.
+        cli_version: '2.1.207',
     }),
     historySession({
         session_id: 'dddddddd-1111-2222-3333-444444444444', short_name: 'dddddddd',

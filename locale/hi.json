@@ -20,6 +20,7 @@
     "sort_model": "मॉडल",
     "sort_host": "होस्ट",
     "host_wsl_tip": "यह एजेंट WSL डिस्ट्रीब्यूशन “{distro}” के अंदर चलता है। इसकी फ़ाइलें \\\\wsl.localhost के ज़रिए पढ़ी जाती हैं; डिस्ट्रीब्यूशन के अंदर कभी कुछ भी निष्पादित नहीं होता।",
+    "cli_changelog_tip": "Claude Code {version} - इस संस्करण की चेंजलॉग आपके ब्राउज़र में खोलता है",
     "sort_status": "स्थिति",
     "refreshing": "रिफ्रेश हो रहा है...",
     "empty_state": "कोई सक्रिय Claude Code एजेंट नहीं।",

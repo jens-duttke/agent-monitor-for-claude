@@ -7,9 +7,10 @@ entry type, the last assistant turn's ``stop_reason``, tool-request/result
 IDs (to detect an unanswered request), the last tool's name, whether the newest
 user turn is Claude Code's interrupt marker, whether a trailing turn is an API
 error (and whether that error is a usage/session limit), timestamps, the model
-name, aggregated token-usage numbers, and the session title (the ``aiTitle`` Claude
-Code generates for its own session list, or the ``customTitle`` the user set by
-renaming the session - display metadata, not conversation content).
+name, the Claude Code version that wrote each turn, aggregated token-usage
+numbers, and the session title (the ``aiTitle`` Claude Code generates for its own
+session list, or the ``customTitle`` the user set by renaming the session -
+display metadata, not conversation content).
 
 This module is the privacy boundary of the application.  It must never read,
 return, store, or expose conversation content - message ``text``, ``thinking``
@@ -57,6 +58,20 @@ _USAGE_TOTAL_KEYS = _USAGE_KEYS + tuple(_CACHE_TTL_KEYS.values())
 # a real model, so it must not appear in the per-model split or the model-switch
 # history.
 _SYNTHETIC_MODEL = '<synthetic>'
+
+# The two switch logs the scan keeps, named by the field each entry reports its
+# value under.  Both are wire format - the UI reads `entry.model` / `entry.version`
+# off the snapshot - and both double as the timeline cache's key.
+#
+# The model log answers "which model was answering, when": a model used, left,
+# and returned to appears once per run, so the last entry is the current model
+# with the time it was switched back to.  The version log answers the same for
+# the Claude Code build that wrote each turn - a long session resumed after an
+# upgrade spans several, which dates a mid-session change in behaviour.  Nothing
+# assumes a version only moves forward; runs are reported as the timestamps order
+# them.
+_MODEL_KEY = 'model'
+_CLI_VERSION_KEY = 'version'
 
 # Fixed marker Claude Code writes as a user turn when the user interrupts a
 # running turn.  On disk it is indistinguishable from a fresh prompt, yet it
@@ -110,16 +125,47 @@ class _ScanState:
     totals: dict[str, int] = field(default_factory=lambda: {key: 0 for key in _USAGE_TOTAL_KEYS})
     by_model: dict[str, dict[str, int]] = field(default_factory=dict)
     model_events: list[tuple[str, str]] = field(default_factory=list)
+    cli_events: list[tuple[str, str]] = field(default_factory=list)
     ai_title: str | None = None
     custom_title: str | None = None
     first_prompt: str | None = None
     first_command_prompt: str | None = None
     permission_mode: str | None = None
+    # Memoized run-compressed timelines, one per value field, each kept with the
+    # event count it was built from.  Deliberately the last field, so the
+    # positional ``copy()`` below stays correct without carrying it over - a copy
+    # exists to absorb one more line, so its timelines have to be rebuilt anyway.
+    timeline_cache: dict[str, tuple[int, list[dict[str, str]]]] = field(default_factory=dict)
 
     def title(self) -> str | None:
         # The housekeeping-command name is the last resort: anything later that
         # can actually name the session (a prompt, a meaningful command) wins.
         return self.custom_title or self.ai_title or self.first_prompt or self.first_command_prompt
+
+    def timeline(self, value_key: str, events: list[tuple[str, str]]) -> list[dict[str, str]]:
+        """Return the run-compressed timeline for *events*, rebuilt only when they have grown.
+
+        ``_scan_result`` runs on every poll, but a transcript has usually not
+        grown since the last one - and building a timeline sorts every event,
+        parsing each timestamp for the sort key, which dominates the cost of an
+        otherwise no-op scan (tens of milliseconds per second for a session with
+        thousands of turns).  Events are only ever appended, so an unchanged
+        count means an unchanged timeline.  A fresh list of fresh dicts is handed
+        out, keeping the cached one unreachable from the caller.
+
+        Parameters
+        ----------
+        value_key : str
+            Name the value is reported under in each entry, and the cache key.
+        events : list of (str, str)
+            The ``(timestamp, value)`` events accumulated so far.
+        """
+        cached = self.timeline_cache.get(value_key)
+        if cached is None or cached[0] != len(events):
+            cached = (len(events), _run_timeline(events, value_key))
+            self.timeline_cache[value_key] = cached
+
+        return [dict(entry) for entry in cached[1]]
 
     def copy(self) -> '_ScanState':
         return _ScanState(
@@ -127,8 +173,21 @@ class _ScanState:
             dict(self.totals),
             {model: dict(usage) for model, usage in self.by_model.items()},
             list(self.model_events),
+            list(self.cli_events),
             self.ai_title, self.custom_title, self.first_prompt, self.first_command_prompt, self.permission_mode,
         )
+
+
+@dataclass(frozen=True)
+class _ScanResult:
+    """One incremental scan's plain, JSON-serializable outcome."""
+
+    usage: dict[str, int]
+    usage_by_model: dict[str, dict[str, int]]
+    model_timeline: list[dict[str, str]]
+    cli_timeline: list[dict[str, str]]
+    title: str | None
+    permission_mode: str | None
 
 
 # The first poll reads the whole file once; afterwards only newly appended
@@ -192,9 +251,11 @@ class TranscriptState:
     age_seconds: float | None = None
     title: str | None = None
     model: str | None = None
+    cli_version: str | None = None
     usage: dict[str, int] | None = None
     usage_by_model: dict[str, dict[str, int]] | None = None
     model_timeline: list[dict[str, str]] | None = None
+    cli_timeline: list[dict[str, str]] | None = None
     permission_mode: str | None = None
 
 
@@ -206,6 +267,7 @@ class HistoryState:
     cwd: str | None = None
     title: str | None = None
     model: str | None = None
+    cli_version: str | None = None
     age_seconds: float | None = None
 
 
@@ -229,10 +291,11 @@ def state_for(root: SessionRoot, session_id: str, cwd: str) -> TranscriptState:
             break
         state = _parse(_read_tail(path, window))
 
-    usage, usage_by_model, model_timeline, title, permission_mode = _scan_appended(path)
+    scan = _scan_appended(path)
     age_seconds = _activity_age(state.last_timestamp, mtime)
-    return replace(state, age_seconds=age_seconds, usage=usage, usage_by_model=usage_by_model,
-                   model_timeline=model_timeline, title=title, permission_mode=permission_mode)
+    return replace(state, age_seconds=age_seconds, usage=scan.usage, usage_by_model=scan.usage_by_model,
+                   model_timeline=scan.model_timeline, cli_timeline=scan.cli_timeline,
+                   title=scan.title, permission_mode=scan.permission_mode)
 
 
 def history_state_for(path: Path) -> HistoryState:
@@ -274,7 +337,7 @@ def history_state_for(path: Path) -> HistoryState:
         tail = _parse(_read_tail(path, window))
     age_seconds = _activity_age(tail.last_timestamp, mtime)
 
-    return HistoryState(session_id=session_id, cwd=cwd, title=title, model=tail.model, age_seconds=age_seconds)
+    return HistoryState(session_id=session_id, cwd=cwd, title=title, model=tail.model, cli_version=tail.cli_version, age_seconds=age_seconds)
 
 
 def _scan_title_cwd(path: Path) -> tuple[str | None, str | None]:
@@ -429,6 +492,7 @@ def _parse(lines: list[str]) -> TranscriptState:
     last_entry_kind: str | None = None
     usage_limited: bool = False
     model: str | None = None
+    cli_version: str | None = None
     any_parsed: bool = False
 
     for line in lines:
@@ -455,6 +519,14 @@ def _parse(lines: list[str]) -> TranscriptState:
         timestamp = entry.get('timestamp')
         if isinstance(timestamp, str):
             last_timestamp = timestamp
+
+        # The Claude Code version is stamped on every entry, not just assistant
+        # turns, so the newest one of any kind is the version currently in use -
+        # the counterpart of the model below, which only an assistant turn can
+        # report.
+        entry_version = entry.get('version')
+        if isinstance(entry_version, str) and entry_version:
+            cli_version = entry_version
 
         entry_type = entry.get('type')
         message = entry.get('message')
@@ -531,6 +603,7 @@ def _parse(lines: list[str]) -> TranscriptState:
         any_parsed=any_parsed,
         usage_limited=usage_limited,
         model=model,
+        cli_version=cli_version,
     )
 
 
@@ -548,14 +621,14 @@ def _is_usage_limit(entry: dict) -> bool:
     return entry.get('error') == 'rate_limit'
 
 
-def _scan_appended(path: Path) -> tuple[dict[str, int], dict[str, dict[str, int]], list[dict[str, str]], str | None, str | None]:
-    """Return (token totals, per-model totals, model timeline, title, permission mode), reading incrementally.
+def _scan_appended(path: Path) -> _ScanResult:
+    """Return the incremental scan's accumulated result for *path*.
 
     The first call reads the whole file; subsequent calls parse only newly
     appended bytes.  Tracks summed usage (overall and per model - subagents
     often run on a cheaper model, so a valid cost needs the split), the ordered
-    model-switch timeline of the main conversation (for the model-switch
-    history), the display title, and the latest permission mode.
+    model-switch and CLI-version timelines of the main conversation, the display
+    title, and the latest permission mode.
     """
     # Normalize case so two registry cwds that differ only in case (they resolve
     # to the same case-insensitive file) share one cache entry instead of each
@@ -593,27 +666,47 @@ def _scan_appended(path: Path) -> tuple[dict[str, int], dict[str, dict[str, int]
             state.consumed = size - len(trailing)
             _scan_cache[cache_key] = state
 
-            result = state.copy()
-            _absorb_line(trailing, result)
+            # Only an actual partial line needs the throwaway copy. A transcript
+            # normally ends on a newline, leaving nothing trailing - and reporting
+            # off the cached state directly is what lets its memoized timelines
+            # survive this poll, instead of being built on a copy that is
+            # discarded and rebuilt on the next one.
+            if trailing:
+                result = state.copy()
+                _absorb_line(trailing, result)
 
         return _scan_result(result)
 
 
-def _scan_result(state: _ScanState) -> tuple[dict[str, int], dict[str, dict[str, int]], list[dict[str, str]], str | None, str | None]:
+def _scan_result(state: _ScanState) -> _ScanResult:
     """Snapshot a scan state into plain, JSON-serializable return values."""
     by_model = {model: dict(usage) for model, usage in state.by_model.items()}
-    return dict(state.totals), by_model, _model_timeline(state.model_events), state.title(), state.permission_mode
+    return _ScanResult(
+        usage=dict(state.totals),
+        usage_by_model=by_model,
+        model_timeline=state.timeline(_MODEL_KEY, state.model_events),
+        cli_timeline=state.timeline(_CLI_VERSION_KEY, state.cli_events),
+        title=state.title(),
+        permission_mode=state.permission_mode,
+    )
 
 
-def _model_timeline(events: list[tuple[str, str]]) -> list[dict[str, str]]:
-    """Compress the main-conversation model events into an ordered switch log.
+def _run_timeline(events: list[tuple[str, str]], value_key: str) -> list[dict[str, str]]:
+    """Sort ``(timestamp, value)`` events by time and collapse equal-value runs.
 
-    Transcript entries are not strictly ordered on disk, so the raw ``(timestamp,
-    model)`` events are sorted by time first, then runs of the same model are
-    collapsed to a single entry carrying the moment that run began.  The result
-    is the chronological switch history: one entry per model *run*, so a model
-    used, left, and returned to appears more than once - the final entry is the
-    currently active model with the time it was last switched to.
+    Transcript entries are not strictly ordered on disk, so the events are sorted
+    by time first, then runs of the same value are collapsed to a single entry
+    carrying the moment that run began.  The result is a chronological switch
+    log: one entry per *run*, so a value used, left, and returned to appears more
+    than once - and the final entry is the value in use, with the time it was
+    last switched to.
+
+    Parameters
+    ----------
+    events : list of (str, str)
+        Raw events in on-disk order, which is not necessarily chronological.
+    value_key : str
+        Name the value is reported under in each resulting entry.
     """
     # Sort by parsed epoch, not the raw string: lexicographic order matches
     # chronological order only while every timestamp has an identical shape, but
@@ -621,9 +714,9 @@ def _model_timeline(events: list[tuple[str, str]]) -> list[dict[str, str]]:
     # ('...07Z') though it is later, and an explicit offset mis-sorts against 'Z'.
     # The raw string is kept for display; it breaks ties for equal epochs.
     timeline: list[dict[str, str]] = []
-    for timestamp, model in sorted(events, key=lambda event: (_timestamp_epoch(event[0]) or 0.0, event[0])):
-        if not timeline or timeline[-1]['model'] != model:
-            timeline.append({'time': timestamp, 'model': model})
+    for timestamp, value in sorted(events, key=lambda event: (_timestamp_epoch(event[0]) or 0.0, event[0])):
+        if not timeline or timeline[-1][value_key] != value:
+            timeline.append({'time': timestamp, value_key: value})
 
     return timeline
 
@@ -682,15 +775,23 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
                     if bucket is not None:
                         _add_usage(bucket, total_key, value)
 
-            # Record each real assistant turn in the MAIN conversation
-            # (sidechain/subagent turns and the synthetic sentinel excluded) as a
-            # (timestamp, model) event. These feed the model-switch timeline,
-            # which is sorted and run-compressed in _model_timeline - order is
-            # resolved there because transcript entries are not strictly ordered.
+            # Record each assistant turn in the MAIN conversation as an event for
+            # the two switch logs (see _MODEL_KEY / _CLI_VERSION_KEY). Ordering is
+            # resolved in _run_timeline, not here, because transcript entries are
+            # not strictly ordered on disk. The model excludes the synthetic
+            # sentinel; the version does not.
             timestamp = entry.get('timestamp')
-            if (isinstance(model, str) and model and model != _SYNTHETIC_MODEL and entry.get('isSidechain') is not True
-                    and isinstance(timestamp, str) and timestamp):
+            main_turn = entry.get('isSidechain') is not True and isinstance(timestamp, str) and bool(timestamp)
+            if main_turn and isinstance(model, str) and model and model != _SYNTHETIC_MODEL:
                 state.model_events.append((timestamp, model))
+
+            # Deliberately not gated on the synthetic sentinel like the model
+            # above: that sentinel means "no real model", but a locally-generated
+            # turn still comes from a real CLI version, so its version is valid
+            # evidence.
+            version = entry.get('version')
+            if main_turn and isinstance(version, str) and version:
+                state.cli_events.append((timestamp, version))
 
     elif entry_type == 'ai-title':
         value = entry.get('aiTitle')

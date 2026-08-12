@@ -5,13 +5,13 @@ sessions running on your own machine. To do that it reads Claude Code's local se
 include your conversation transcripts. This document states exactly what it reads, what it keeps, what
 it shows, what it writes, and what it never does.
 
-Last reviewed: 2026-08-01
+Last reviewed: 2026-08-12
 
 ## At a glance
 
 | Question | Answer |
 | --- | --- |
-| Does the application connect to the internet? | No. It has no HTTP client, no remote address, and no network client import in any of its own modules. The embedded Microsoft browser engine it renders in is a separate matter, stated under [Network Communication](#network-communication). |
+| Does the application connect to the internet? | No. It has no HTTP client and no network client import in any of its own modules. It carries exactly one remote address - a link to Claude Code's public changelog - which it never requests itself; clicking it opens your normal browser. See [Network Communication](#network-communication). The embedded Microsoft browser engine it renders in is a separate matter, stated there too. |
 | Does it run any other program? | Yes, exactly one, and only to list which WSL distributions are currently running: `wsl.exe --list --running --quiet`, invoked by its absolute `System32` path so no same-named file elsewhere can ever be run in its place. Nothing is ever run *inside* a distribution. See [Programs it runs](#programs-it-runs). |
 | Does it read your credentials? | No. It never opens `.credentials.json` and never reads a token, key, or cookie. |
 | Does it send telemetry, analytics, or crash reports? | No. None, of any kind. |
@@ -31,12 +31,25 @@ writes](#what-the-application-writes).
 
 ## Network Communication
 
-The **application** makes no outbound network connections. Its own code contains no HTTP client, no
-remote host name, and no URL to any server: no `requests`, no `urllib`, no `socket`, no `http.client`
-import anywhere in its modules. There is no code path that could transmit anything it reads.
+The **application** makes no outbound network connections. Its own code contains no HTTP client: no
+`requests`, no `urllib`, no `socket`, no `http.client` import anywhere in its modules. There is no code
+path that could transmit anything it reads.
 
-Two things about the running process are worth stating plainly, because anyone inspecting it will
-find them:
+Its code does contain exactly **one** remote address, and it is worth being precise about what that
+address does and does not mean:
+
+- **The changelog link.** Each session's row can show which Claude Code version wrote it, and that
+  version number is a link to its section of Claude Code's public changelog on GitHub
+  (`https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md`, the only URL in the code). The
+  application never requests it. Clicking it hands the address to Windows, which opens it in your
+  normal browser, in a new tab of its own - the same thing that happens when you click a link in any
+  document. Nothing about your sessions travels with it: the address is a fixed page plus a `#`
+  fragment naming the version, and a fragment is resolved by the browser and never sent to the server,
+  so not even which version you looked up leaves your machine. If you never click it, nothing is ever
+  contacted.
+
+Two further things about the running process are worth stating plainly, because anyone inspecting it
+will find them:
 
 - **A loopback HTTP server.** The user interface is a bundled set of local HTML, CSS, and JavaScript
   files. pywebview serves those files to the application's own window over a small HTTP server bound
@@ -134,8 +147,9 @@ first sees it, and from then on only what has been appended since. Every line pa
 parser.
 
 What it **takes** from that scan is control-flow metadata: entry types, stop reasons, tool ids and
-tool names, timestamps, the model id, token-usage numbers, the permission mode, and the flags that
-distinguish a real turn from a sidechain, an injected notice, or an API error. Message text, thinking
+tool names, timestamps, the model id, the Claude Code version stamped on each entry, token-usage
+numbers, the permission mode, and the flags that distinguish a real turn from a sidechain, an injected
+notice, or an API error. Message text, thinking
 blocks, tool inputs, and tool results are not taken, with these deliberate exceptions - three that are
 displayed to you, and two that are reduced to a flag or an id and never shown:
 
@@ -336,7 +350,12 @@ something you did:
   yours is ever observed or recorded.
 - **Focusing a session tab.** Launching the Claude Code VS Code extension's official deep link,
   `vscode://anthropic.claude-code/open?session=<uuid>`. The session id is validated as a UUID first,
-  and this is the only URI the application will ever launch.
+  and this is the only URI the application itself launches.
+- **Opening the changelog.** Clicking a version number in the CLI-version column follows an ordinary
+  link, which the window host passes to your default browser (see [Network
+  Communication](#network-communication)). The link is only built when the version reads as a plain
+  release number - three groups of digits separated by dots - so the address can never hold anything
+  but digits and dots, whatever a transcript claims its version is.
 - **Opening a folder.** Opening a session's project folder or its scratchpad in Windows Explorer. The
   path is verified to be an existing directory before the shell sees it, so nothing else can be
   launched through it.
@@ -365,9 +384,13 @@ theme). Rendering is done by the Microsoft Edge WebView2 runtime that Windows pr
 These guarantees are meant to be checked, not taken on faith. In a clone of the repository:
 
 ```sh
-# No network client and no remote address anywhere in the application code
+# No network client anywhere in the application code
 grep -rnE "^\s*(import|from)\s+(requests|urllib|http|socket|ssl)\b" agent_monitor_for_claude/
-grep -rn "https\?://" agent_monitor_for_claude/ --include=*.py
+
+# Every remote address in the application code - interface files included, not
+# just Python. Exactly one hit, the changelog link described above:
+#   ui/logic.js: const CHANGELOG_URL = 'https://github.com/anthropics/claude-code/...'
+grep -rn "https\?://" agent_monitor_for_claude/ --include=*.py --include=*.js --include=*.html --include=*.css
 
 # No credential access
 grep -rni "credential" agent_monitor_for_claude/ --exclude-dir=__pycache__

@@ -810,6 +810,66 @@ test('buildSession flags a model switch and builds the history', () => {
     assert.equal(single.model_switched, false);
 });
 
+test('cliHistory keeps the backend order and drops unusable entries', () => {
+    const timeline = [
+        { time: '2026-07-11T09:00:00Z', version: '2.1.224' },
+        { time: '2026-07-11T13:00:00Z', version: '2.1.228' },
+    ];
+    assert.deepEqual(logic.cliHistory(timeline), timeline);
+    // A renamed or mistyped field must not reach the renderer as an entry.
+    assert.deepEqual(logic.cliHistory([{ time: 'x', version: 7 }, { time: 'y' }, null]), []);
+    assert.deepEqual(logic.cliHistory([]), []);
+    assert.deepEqual(logic.cliHistory(null), []);
+});
+
+test('cliColumnRelevant only when the version says something', () => {
+    // Every session on one version: the column would repeat that value per row.
+    assert.equal(logic.cliColumnRelevant([
+        { cli_version: '2.1.228' }, { cli_version: '2.1.228' },
+    ]), false);
+    // Two versions side by side - one session is running an outdated CLI.
+    assert.equal(logic.cliColumnRelevant([
+        { cli_version: '2.1.228' }, { cli_version: '2.1.223' },
+    ]), true);
+    // One session that outlived an update, everything else current: its "+N" is
+    // the information, so the column is shown even though the current versions match.
+    assert.equal(logic.cliColumnRelevant([
+        { cli_version: '2.1.228' }, { cli_version: '2.1.228', cli_switched: true },
+    ]), true);
+    // Nothing to say, and nothing to crash on either.
+    assert.equal(logic.cliColumnRelevant([{ cli_version: '' }, null, {}]), false);
+    assert.equal(logic.cliColumnRelevant([]), false);
+    assert.equal(logic.cliColumnRelevant(null), false);
+});
+
+test('buildSession carries the CLI version and its switch history', () => {
+    const base = {
+        session_id: 's', pid: 1, cwd: 'd:\\x', short_name: 's', alive: true, has_transcript: true,
+        last_entry_kind: 'assistant', last_stop_reason: 'end_turn', usage: {}, model_id: 'claude-opus-4-8',
+    };
+    const upgraded = logic.buildSession({ ...base,
+        cli_version: '2.1.228',
+        cli_timeline: [
+            { time: '2026-07-11T09:00:00Z', version: '2.1.224' },
+            { time: '2026-07-11T15:00:00Z', version: '2.1.228' },
+        ],
+    }, {}, {});
+    assert.equal(upgraded.cli_version, '2.1.228');
+    assert.equal(upgraded.cli_switched, true);
+    assert.deepEqual(upgraded.cli_history.map((e) => e.version), ['2.1.224', '2.1.228']);
+
+    // A history record has a version from its tail but no timeline to go with it,
+    // which must read as "not switched", not as a switch to nothing.
+    const past = logic.buildSession({ ...base, cli_version: '2.1.207', cli_timeline: [] }, {}, {});
+    assert.equal(past.cli_version, '2.1.207');
+    assert.equal(past.cli_switched, false);
+    assert.deepEqual(past.cli_history, []);
+
+    // A backend that reports no version at all leaves an empty string, never
+    // "undefined" rendered into the column.
+    assert.equal(logic.buildSession(base, {}, {}).cli_version, '');
+});
+
 test('grouping helpers', () => {
     assert.equal(logic.groupKey('d:\\WebDev\\proj'), logic.groupKey('D:\\WebDev\\proj'));
     assert.equal(logic.displayCwd('d:\\WebDev\\proj'), 'D:\\WebDev\\proj');
@@ -946,7 +1006,12 @@ test('sortProjects: does not mutate its input', () => {
    These are the guard tests for the markup layer: index.js concatenates HTML
    strings, so `esc` (text position) and `attr` (a whole attribute) are the only
    two things standing between a session title, a project path or a background
-   task's output and the page. Do not weaken them. */
+   task's output and the page. Do not weaken them.
+
+   `changelogUrl` is guarded here too, because a URL-bearing attribute is the one
+   place where escaping is not enough: `javascript:alert(1)` needs no metacharacter
+   at all, so `attr('href', ...)` would happily quote it. What keeps the href safe
+   is that the value is rebuilt from a strict pattern, never passed through. */
 
 test('esc: escapes every character that can break out of text or a quoted attribute', () => {
     assert.equal(logic.esc('&<>"\''), '&amp;&lt;&gt;&quot;&#39;');
@@ -1004,6 +1069,30 @@ test('attr: a computed attribute name is a programming error, not silent markup'
     assert.throws(() => logic.attr('', 'v'), TypeError);
     assert.throws(() => logic.attr('2fast', 'v'), TypeError);
     assert.doesNotThrow(() => logic.attr('aria-pressed', 'true'));
+});
+
+test('changelogUrl: a release number links, and nothing else does', () => {
+    // GitHub's anchor for the "## 2.1.224" heading drops the dots.
+    assert.equal(
+        logic.changelogUrl('2.1.224'),
+        'https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21224',
+    );
+    assert.equal(logic.changelogUrl('10.0.1'), 'https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#1001');
+});
+
+test('changelogUrl: the version reaches the href only as digits and dots', () => {
+    // The version comes off disk, so anything that is not exactly three
+    // dot-separated numbers must yield no URL at all - no scheme of its own, no
+    // attribute break-out, no path traversal, and no partial URL either.
+    for (const bad of [
+        '2.1', '2.1.224.1', '2.1.224-beta', ' 2.1.224', '2.1.224 ',
+        'javascript:alert(1)', 'JavaScript:alert(1)', 'data:text/html,<script>alert(1)</script>',
+        '2.1.224" onmouseover="alert(1)', "2.1.224' onmouseover='alert(1)", '2.1.2#a',
+        '../../etc', '2.1.2/../../x', '2.1.2 ', '2.1.2\n',
+        '', null, undefined, 21224, {}, [],
+    ]) {
+        assert.equal(logic.changelogUrl(bad), null, 'must not link: ' + String(bad));
+    }
 });
 
 test('ansiToHtml: markup in process output stays text', () => {

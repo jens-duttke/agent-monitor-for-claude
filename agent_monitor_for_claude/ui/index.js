@@ -130,6 +130,7 @@ const DEFAULT_LABELS = {
     sort_model: 'Model',
     sort_host: 'Host',
     host_wsl_tip: 'This agent runs inside the WSL distribution “{distro}”. Its files are read over \\\\wsl.localhost; nothing is ever executed inside the distribution.',
+    cli_changelog_tip: 'Claude Code {version} - opens the changelog for this version in your browser',
     sort_status: 'Status',
     priority_order: 'Priority order',
     priority_order_hint: 'Sort projects by attention - the ones that need you first',
@@ -2109,6 +2110,39 @@ function modelCellHtml(session) {
     return name + '<span class="model-more"' + attr('data-tip', lines.join('\n')) + '>+' + esc(history.length - 1) + '</span>';
 }
 
+// The Claude Code version column, shown only while more than one version is in
+// view (see cliColumnRelevant). The version text links to its own changelog
+// section, and a "+N" badge - the model column's, one column over - lists the
+// versions a session spanned when it outlived a CLI update.
+function cliCellHtml(session) {
+    const version = session.cli_version || '';
+    if (!version) {
+        return '';
+    }
+
+    // The application requests nothing from this URL; the click hands it to the
+    // host, which opens it in the system browser. target="_blank" is what routes
+    // it there - a same-window navigation would replace the app's own page
+    // instead. A version that is not a plain release number yields no URL and is
+    // rendered as text, so the href can only ever hold digits and dots.
+    const url = logic.changelogUrl(version);
+    let html;
+    if (url) {
+        html = '<a class="cli-link"' + attr('href', url) + ' target="_blank" rel="noreferrer"'
+            + attr('data-tip', fmt(state.labels.cli_changelog_tip, { version: version })) + '>' + esc(version) + '</a>';
+    } else {
+        html = '<span class="cli-name">' + esc(version) + '</span>';
+    }
+
+    if (!session.cli_switched) {
+        return html;
+    }
+
+    const history = session.cli_history || [];
+    const lines = history.map((entry) => fmtDateTime(entry.time) + '  ' + entry.version);
+    return html + '<span class="cli-more"' + attr('data-tip', lines.join('\n')) + '>+' + esc(history.length - 1) + '</span>';
+}
+
 function nameCellHtml(session) {
     const labels = state.labels;
     let html = '<span class="name">' + esc(session.name) + '</span>';
@@ -2172,6 +2206,7 @@ function createRow() {
         +     '</span>'
         + '</div>'
         + '<span class="model-cell"></span>'
+        + '<span class="cli-cell"></span>'
         + '<span class="host-cell"></span>'
         + '<span class="age"></span>'
         + '<button class="row-menu-btn" type="button">&#8943;</button>';
@@ -2231,6 +2266,7 @@ function updateRow(row, session, projectName) {
     row.querySelector('.usage-compact').textContent = session.usage_compact || '';
     row.querySelector('.usage-detail').textContent = session.usage_detail || '';
     row.querySelector('.model-cell').innerHTML = modelCellHtml(session);
+    row.querySelector('.cli-cell').innerHTML = cliCellHtml(session);
     const hostCell = row.querySelector('.host-cell');
     hostCell.textContent = hostText(session);
     // A WSL session's host names its distribution; the tooltip explains what
@@ -2557,10 +2593,12 @@ function onContentClick(event) {
         return;
     }
 
-    // The hover-only info pills (the model "(+N)" history, the running-subagent
-    // badge) are tooltip triggers with a help cursor, not navigation targets -
-    // a click on one must not fall through to focusing the session's window.
-    if (event.target.closest('.model-more, .agents-badge')) {
+    // The hover-only info pills (the model and CLI-version "+N" histories, the
+    // running-subagent badge) are tooltip triggers with a help cursor, not
+    // navigation targets - a click on one must not fall through to focusing the
+    // session's window. The changelog link is a target of its own: it opens in
+    // the browser, so it must not also raise the agent's window.
+    if (event.target.closest('.model-more, .cli-more, .cli-link, .agents-badge')) {
         return;
     }
 
@@ -2579,6 +2617,7 @@ function emptyBlock(message) {
 // every row shares identical column widths without wasting space.
 const COLUMN_CELLS = [
     ['--col-model', '.row .model-cell'],
+    ['--col-cli', '.row .cli-cell'],
     ['--col-host', '.row .host-cell'],
 ];
 
@@ -2715,6 +2754,13 @@ function render(snapshot) {
     } else {
         stateSlot.innerHTML = visible.length === 0 ? emptyBlock(state.labels.empty_filter || state.labels.empty_state) : '';
     }
+
+    // The CLI-version column is only worth its width when more than one version
+    // is in view - the class is what adds its grid track, so with every session
+    // on the same version the column is absent rather than repetitive. Set before
+    // measuring, so alignColumns sees the layout it is measuring for.
+    const shownSessions = visible.flatMap((project) => project.sessions);
+    document.body.classList.toggle('show-cli', logic.cliColumnRelevant(shownSessions));
 
     alignColumns();
     syncOpenMenu();

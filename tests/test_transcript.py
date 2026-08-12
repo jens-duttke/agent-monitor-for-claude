@@ -12,8 +12,8 @@ from agent_monitor_for_claude import transcript as tmod
 from agent_monitor_for_claude.paths import cwd_to_slug, windows_root
 from agent_monitor_for_claude.transcript import (
     _absorb_line,
-    _model_timeline,
     _parse,
+    _run_timeline,
     _scan_title_cwd,
     _ScanState,
     history_state_for,
@@ -261,16 +261,106 @@ class ModelTimelineOrderTest(unittest.TestCase):
         # '...07.500Z' is chronologically LATER than '...07Z' but sorts BEFORE it
         # as a raw string ('.' < 'Z'), so a lexicographic sort would name the
         # wrong model as current.
-        timeline = _model_timeline([
+        timeline = _run_timeline([
             ('2026-07-11T10:53:07Z', 'opus'),
             ('2026-07-11T10:53:07.500Z', 'sonnet'),
-        ])
+        ], 'model')
         self.assertEqual([entry['model'] for entry in timeline], ['opus', 'sonnet'])
         self.assertEqual(timeline[-1]['time'], '2026-07-11T10:53:07.500Z')
 
     def test_unparseable_timestamps_do_not_crash(self) -> None:
-        timeline = _model_timeline([('not-a-timestamp', 'opus'), ('2026-07-11T10:00:00Z', 'sonnet')])
+        timeline = _run_timeline([('not-a-timestamp', 'opus'), ('2026-07-11T10:00:00Z', 'sonnet')], 'model')
         self.assertEqual({entry['model'] for entry in timeline}, {'opus', 'sonnet'})
+
+
+class CliVersionTest(unittest.TestCase):
+    """The Claude Code version each turn was written by."""
+
+    def test_tail_reports_the_newest_version_of_any_entry_kind(self) -> None:
+        # The version is stamped on every entry, not just assistant turns, so a
+        # session whose newest entry is a user prompt still reports a version.
+        state = _parse(_lines(
+            {'type': 'assistant', 'timestamp': '2026-07-11T09:00:00Z', 'version': '2.1.224',
+             'message': {'stop_reason': 'end_turn', 'model': 'claude-opus-4-8', 'usage': {}}},
+            {'type': 'user', 'timestamp': '2026-07-11T09:05:00Z', 'version': '2.1.228',
+             'message': {'content': 'carry on'}},
+        ))
+        self.assertEqual(state.cli_version, '2.1.228')
+
+    def test_missing_or_mistyped_version_leaves_it_unset(self) -> None:
+        state = _parse(_lines(
+            {'type': 'assistant', 'timestamp': '2026-07-11T09:00:00Z', 'version': 21224,
+             'message': {'stop_reason': 'end_turn', 'model': 'claude-opus-4-8', 'usage': {}}},
+            {'type': 'user', 'timestamp': '2026-07-11T09:05:00Z', 'message': {'content': 'carry on'}},
+        ))
+        self.assertIsNone(state.cli_version)
+
+    def test_events_are_recorded_for_main_conversation_turns_only(self) -> None:
+        state = _ScanState()
+        for entry in (
+            {'type': 'assistant', 'timestamp': '2026-07-11T10:00:00Z', 'version': '2.1.224',
+             'message': {'stop_reason': 'end_turn', 'model': 'claude-opus-4-8', 'usage': {'input_tokens': 5}}},
+            # A subagent's turn runs in the same CLI, so it adds nothing - and must
+            # not date a switch the main conversation never made.
+            {'type': 'assistant', 'timestamp': '2026-07-11T10:01:00Z', 'version': '2.1.999', 'isSidechain': True,
+             'message': {'stop_reason': 'end_turn', 'model': 'claude-haiku-4-5', 'usage': {'input_tokens': 5}}},
+            # A mistyped version must never reach the timeline, which crosses the
+            # bridge and is matched against a release-number pattern there.
+            {'type': 'assistant', 'timestamp': '2026-07-11T10:02:00Z', 'version': 21226,
+             'message': {'stop_reason': 'end_turn', 'model': 'claude-opus-4-8', 'usage': {'input_tokens': 5}}},
+        ):
+            _absorb_line(json.dumps(entry).encode('utf-8'), state)
+
+        self.assertEqual(state.cli_events, [('2026-07-11T10:00:00Z', '2.1.224')])
+
+    def test_synthetic_model_turn_still_reports_its_version(self) -> None:
+        # The synthetic sentinel means "no real model", not "no real CLI": the
+        # turn was still written by a version, so it is valid evidence even
+        # though it is excluded from the model timeline.
+        state = _ScanState()
+        _absorb_line(json.dumps({
+            'type': 'assistant', 'timestamp': '2026-07-11T10:00:00Z', 'version': '2.1.228',
+            'message': {'stop_reason': 'end_turn', 'model': '<synthetic>', 'usage': {}},
+        }).encode('utf-8'), state)
+        self.assertEqual(state.model_events, [])
+        self.assertEqual(state.cli_events, [('2026-07-11T10:00:00Z', '2.1.228')])
+
+    def test_timeline_compresses_runs_and_keeps_a_returned_version(self) -> None:
+        # Same run-length compression as the model timeline: consecutive equal
+        # versions collapse, and a downgrade back to an earlier version appears
+        # again rather than being folded into its first run.
+        timeline = _run_timeline([
+            ('2026-07-11T09:00:00Z', '2.1.224'),
+            ('2026-07-11T09:30:00Z', '2.1.224'),
+            ('2026-07-11T11:00:00Z', '2.1.228'),
+            ('2026-07-11T13:00:00Z', '2.1.224'),
+        ], 'version')
+        self.assertEqual(timeline, [
+            {'time': '2026-07-11T09:00:00Z', 'version': '2.1.224'},
+            {'time': '2026-07-11T11:00:00Z', 'version': '2.1.228'},
+            {'time': '2026-07-11T13:00:00Z', 'version': '2.1.224'},
+        ])
+
+    def test_timeline_sorts_chronologically(self) -> None:
+        # Transcript entries are not strictly ordered on disk, and a fractional
+        # second sorts before a whole one as a raw string though it is later.
+        timeline = _run_timeline([
+            ('2026-07-11T10:53:07.500Z', '2.1.228'),
+            ('2026-07-11T10:53:07Z', '2.1.224'),
+        ], 'version')
+        self.assertEqual([entry['version'] for entry in timeline], ['2.1.224', '2.1.228'])
+
+    def test_history_state_reports_the_version_from_the_tail(self) -> None:
+        entries = [
+            {'type': 'assistant', 'timestamp': '2026-07-11T09:00:00Z', 'version': '2.1.207',
+             'message': {'stop_reason': 'end_turn', 'model': 'claude-haiku-4-5', 'usage': {'input_tokens': 5}}},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session.jsonl'
+            path.write_text('\n'.join(json.dumps(entry) for entry in entries) + '\n', encoding='utf-8')
+            state = history_state_for(path)
+
+        self.assertEqual(state.cli_version, '2.1.207')
 
 
 class HistoryStateEscalationTest(unittest.TestCase):
