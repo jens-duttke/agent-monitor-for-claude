@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Project panels are now ordered by their most recent activity within each urgency band, instead of alphabetically. A panel you were just watching no longer disappears into the middle of a long list the moment its work finishes - it slides down to just below the projects still working, where you left it. The urgency bands themselves are unchanged (blocked on you, then working, then idle and finished), and the "Priority order" toggle still gives you the plain A-Z layout.
+
 ### Added
 - The Claude Code version a session runs on is now shown - but only when it says something: the column appears as soon as the sessions in view are not all on the same version, so an agent still running last week's CLI stands out, while an all-current list stays exactly as it was. A session that outlived a CLI update carries a "+N" badge listing every version it spanned and the time each took over, which dates a mid-session change in the agent's behaviour. Clicking a version number opens that release's changelog entry in your browser - the app itself still requests nothing (see `PRIVACY.md`).
 

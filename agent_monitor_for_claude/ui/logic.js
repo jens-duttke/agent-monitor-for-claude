@@ -1030,11 +1030,19 @@ function buildSession(raw, labels, prices) {
 
 /* --- project ordering (cross-project attention bands) --- */
 
-// Projects are ordered by attention band, not by fine-grained status. Within a
-// band the order is a stable alphabetical sort, so a panel only moves when it
-// crosses a boundary that actually changes its relevance to you: blocked first,
-// then busy, then quiet. Fine-grained churn inside a band (working <->
+// Projects are ordered by attention band, not by fine-grained status: blocked
+// first, then busy, then quiet. Fine-grained churn inside a band (working <->
 // processing, a ticking token count) never reorders the panels.
+//
+// Within a band the order is by newest activity (the freshest session's age),
+// with the name only as a tie-break. That is what keeps a panel findable when it
+// changes band: age grows at the same rate for every panel, so the order shifts
+// only when a panel genuinely gains activity (its age drops to ~0 and it rises
+// to the top of its band) or crosses a boundary - and a panel that finishes its
+// work then slides one position down into the quiet band instead of jumping into
+// the middle of a long alphabetical list, where it is effectively lost. An
+// alphabetical order inside the band looks stable only until the band changes,
+// which is exactly the moment the panel matters most.
 //
 // Only a session actually blocked on you (awaiting_permission - a question,
 // plan review, or permission prompt that cannot proceed without an answer) sits
@@ -1070,6 +1078,22 @@ function projectBand(sessions) {
     return band;
 }
 
+// A project is as fresh as its most recently active session. An age that is
+// missing or did not parse (buildSession floors a non-numeric value to NaN)
+// never wins the comparison - a NaN reaching the comparator would make it return
+// NaN and leave the whole order undefined - so a project made up of them falls
+// back to the alphabetical tie-break.
+function projectActivityAge(sessions) {
+    let age = Infinity;
+    for (const session of sessions || []) {
+        const value = session.age_seconds;
+        if (Number.isFinite(value) && value < age) {
+            age = value;
+        }
+    }
+    return age;
+}
+
 function compareProjectsByName(a, b) {
     const nameA = String(a.name || '').toLowerCase();
     const nameB = String(b.name || '').toLowerCase();
@@ -1085,10 +1109,11 @@ function compareProjectsByName(a, b) {
 }
 
 // Order projects for display. With byPriority, projects are grouped into
-// attention bands (needs-you, busy, quiet) and sorted alphabetically within
-// each; otherwise the list is a plain alphabetical one. Both are stable - the
-// order changes only when a project crosses a band boundary, never on token or
-// fine-grained status churn.
+// attention bands (needs-you, busy, quiet) and ordered by newest activity within
+// each, the name breaking ties; otherwise the list is a plain alphabetical one.
+// Both are stable against token and fine-grained status churn - the order
+// changes only when a project crosses a band boundary or actually gains
+// activity.
 function sortProjects(projects, byPriority) {
     const ordered = [...(projects || [])];
     if (!byPriority) {
@@ -1099,6 +1124,14 @@ function sortProjects(projects, byPriority) {
         const bandB = projectBand(b.sessions);
         if (bandA !== bandB) {
             return bandA - bandB;
+        }
+        const ageA = projectActivityAge(a.sessions);
+        const ageB = projectActivityAge(b.sessions);
+        // The equality guard is load-bearing, not just symmetry with the band
+        // above: two projects with no known age are both Infinity, and the
+        // subtraction alone would hand the sort a NaN.
+        if (ageA !== ageB) {
+            return ageA - ageB;
         }
         return compareProjectsByName(a, b);
     });
@@ -1178,6 +1211,7 @@ const AMC_LOGIC = {
     buildSession,
     groupProjects,
     projectBand,
+    projectActivityAge,
     sortProjects,
     STATUS_ORDER,
     STATUS_BAND,

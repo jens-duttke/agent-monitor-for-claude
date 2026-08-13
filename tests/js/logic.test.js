@@ -935,8 +935,9 @@ test('groupProjects keeps two distros with the identical POSIX cwd apart', () =>
     assert.notEqual(byOrigin.get('wsl:Ubuntu').key, byOrigin.get('wsl:Debian').key);
 });
 
-function project(name, statuses) {
-    return { name, cwd: 'd:\\repos\\' + name, sessions: statuses.map((status) => ({ status })) };
+function project(name, statuses, ages) {
+    const sessions = statuses.map((status, index) => ({ status, age_seconds: ages ? ages[index] : null }));
+    return { name, cwd: 'd:\\repos\\' + name, sessions };
 }
 
 test('projectBand: most urgent session wins, unknown/empty falls to the quiet band', () => {
@@ -969,7 +970,7 @@ test('projectBand: an errored session is quiet, not top', () => {
     assert.equal(logic.projectBand([{ status: 'errored' }, { status: 'working' }]), 1);
 });
 
-test('sortProjects: priority order groups by band, then alphabetically within a band', () => {
+test('sortProjects: priority order groups by band, then alphabetically when no age is known', () => {
     const projects = [
         project('zeta', ['working']),
         project('alpha', ['completed']),
@@ -978,20 +979,87 @@ test('sortProjects: priority order groups by band, then alphabetically within a 
     ];
     const names = logic.sortProjects(projects, true).map((p) => p.name);
     // band 0 (gamma, blocked), then band 1 (zeta, working), then band 2 (alpha,
-    // beta - finished/idle) alphabetically.
+    // beta - finished/idle); with no age to compare, the name breaks the tie.
     assert.deepEqual(names, ['gamma', 'zeta', 'alpha', 'beta']);
 });
 
+test('projectActivityAge: the freshest session wins, an unknown age never does', () => {
+    assert.equal(logic.projectActivityAge([{ age_seconds: 900 }, { age_seconds: 60 }]), 60);
+    assert.equal(logic.projectActivityAge([{ age_seconds: null }, { age_seconds: 42 }]), 42);
+    assert.equal(logic.projectActivityAge([{ age_seconds: null }]), Infinity);
+    assert.equal(logic.projectActivityAge([{}]), Infinity);
+    assert.equal(logic.projectActivityAge([]), Infinity);
+    assert.equal(logic.projectActivityAge(), Infinity);
+    // A mistyped age arrives as NaN (buildSession floors whatever the snapshot
+    // carried); letting it through would make the comparator return NaN and leave
+    // the panel order undefined.
+    assert.equal(logic.projectActivityAge([{ age_seconds: NaN }]), Infinity);
+    assert.equal(logic.projectActivityAge([{ age_seconds: NaN }, { age_seconds: 7 }]), 7);
+});
+
+test('sortProjects: a project whose age did not parse sorts behind one with a real age', () => {
+    const projects = [project('alpha', ['completed'], [NaN]), project('zeta', ['completed'], [86400])];
+    assert.deepEqual(logic.sortProjects(projects, true).map((p) => p.name), ['zeta', 'alpha']);
+    // Two ageless projects compare equal (Infinity), so the name decides - the
+    // comparator must never subtract them into a NaN.
+    const ageless = [project('zeta', ['completed'], [NaN]), project('alpha', ['completed'])];
+    assert.deepEqual(logic.sortProjects(ageless, true).map((p) => p.name), ['alpha', 'zeta']);
+});
+
+test('sortProjects: within a band the freshest project comes first, not the first alphabetically', () => {
+    const projects = [
+        project('alpha', ['completed'], [86400]),
+        project('repo', ['completed'], [60]),
+        project('knowledge', ['awaiting_input'], [3600]),
+    ];
+    assert.deepEqual(logic.sortProjects(projects, true).map((p) => p.name), ['repo', 'knowledge', 'alpha']);
+});
+
+test('sortProjects: a panel leaving the busy band lands next to its old spot, not mid-list', () => {
+    // The panel that was just working (age 5s) finishes: it drops from the busy
+    // band into the quiet one, but as the freshest project there it lands right
+    // below the remaining busy panels - one position down, still in view. Under an
+    // alphabetical order inside the band it would have jumped to the end.
+    const busy = [
+        project('zeta', ['working'], [5]),
+        project('yard', ['working'], [30]),
+        project('alpha', ['completed'], [86400]),
+        project('beta', ['awaiting_input'], [7200]),
+    ];
+    assert.deepEqual(logic.sortProjects(busy, true).map((p) => p.name), ['zeta', 'yard', 'beta', 'alpha']);
+
+    const done = [
+        project('zeta', ['awaiting_input'], [5]),
+        project('yard', ['working'], [30]),
+        project('alpha', ['completed'], [86400]),
+        project('beta', ['awaiting_input'], [7200]),
+    ];
+    assert.deepEqual(logic.sortProjects(done, true).map((p) => p.name), ['yard', 'zeta', 'beta', 'alpha']);
+});
+
+test('sortProjects: a uniformly ticking age does not reorder panels', () => {
+    // Every panel ages at the same rate, so the relative order is unchanged until
+    // a panel actually gains activity.
+    const now = [project('alpha', ['completed'], [120]), project('repo', ['completed'], [30])];
+    assert.deepEqual(logic.sortProjects(now, true).map((p) => p.name), ['repo', 'alpha']);
+    const later = [project('alpha', ['completed'], [420]), project('repo', ['completed'], [330])];
+    assert.deepEqual(logic.sortProjects(later, true).map((p) => p.name), ['repo', 'alpha']);
+});
+
 test('sortProjects: fine-grained churn inside a band does not reorder panels', () => {
-    const before = logic.sortProjects([project('build', ['working']), project('app', ['processing'])], true);
-    assert.deepEqual(before.map((p) => p.name), ['app', 'build']);
-    // app flips working <-> processing (same busy band): order must be unchanged.
-    const after = logic.sortProjects([project('build', ['working']), project('app', ['working'])], true);
-    assert.deepEqual(after.map((p) => p.name), ['app', 'build']);
+    // build is the fresher of the two, so it leads the busy band regardless of the
+    // alphabet.
+    const before = logic.sortProjects([project('build', ['working'], [10]), project('app', ['processing'], [90])], true);
+    assert.deepEqual(before.map((p) => p.name), ['build', 'app']);
+    // app flips processing <-> working (same busy band): order must be unchanged.
+    const after = logic.sortProjects([project('build', ['working'], [10]), project('app', ['working'], [90])], true);
+    assert.deepEqual(after.map((p) => p.name), ['build', 'app']);
 });
 
 test('sortProjects: without priority it is a plain alphabetical list', () => {
-    const projects = [project('zeta', ['awaiting_permission']), project('alpha', ['completed'])];
+    // Neither the band nor the activity age has any say here - that is the point
+    // of the toggle being off.
+    const projects = [project('zeta', ['awaiting_permission'], [5]), project('alpha', ['completed'], [86400])];
     assert.deepEqual(logic.sortProjects(projects, false).map((p) => p.name), ['alpha', 'zeta']);
 });
 
