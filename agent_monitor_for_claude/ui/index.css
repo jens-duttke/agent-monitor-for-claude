@@ -856,7 +856,7 @@ body {
     &.status-unknown { --s: var(--c-unknown); }
 
     /* The "Idle" (finished, your turn) state is deliberately quiet: its label in
-       the collapsed-panel summary and the legend is a calmer grey-green so a
+       the panel-header summary and the legend is a calmer grey-green so a
        resting session does not shout as loudly as an active or blocked one. */
     &.status-awaiting_input {
         color: var(--c-awaiting_input-text);

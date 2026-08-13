@@ -2358,15 +2358,13 @@ function updatePanel(section, project) {
     // with the same path text stay tellable apart at a glance.
     section.querySelector('.panel-origin').textContent = project.origin_display || '';
 
+    // The group's headline status, shown in both states: collapsed it stands in
+    // for the hidden rows, open it names at a glance what the panel as a whole
+    // is doing - which is what the header is read for either way.
     const headStatus = section.querySelector('.head-status');
-    if (collapsed) {
-        const top = topStatus(project.sessions);
-        headStatus.className = 'head-status' + (top ? ' status-' + top.status : '');
-        headStatus.textContent = top ? top.status_label : '';
-    } else {
-        headStatus.className = 'head-status';
-        headStatus.textContent = '';
-    }
+    const top = topStatus(project.sessions);
+    headStatus.className = 'head-status' + (top ? ' status-' + top.status : '');
+    headStatus.textContent = top ? top.status_label : '';
 
     const rows = section.querySelector('.rows');
     if (collapsed) {
