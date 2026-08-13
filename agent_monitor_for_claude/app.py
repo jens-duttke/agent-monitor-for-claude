@@ -136,7 +136,7 @@ class _MonitorApi:
         """Return the cheap registry/transcript change fingerprint."""
         return registry_fingerprint()
 
-    def get_history(self) -> list[dict[str, Any]]:
+    def get_history(self, max_age_seconds: object = None) -> list[dict[str, Any]]:
         """Return past, non-live sessions for the history listing (on demand).
 
         The UI calls this only while its history filter is enabled, so the
@@ -144,8 +144,18 @@ class _MonitorApi:
         dispatches it on a worker thread, so the potentially second-long scan
         does not block the WebView; the JS side awaits the returned promise and
         shows a loading state meanwhile.
+
+        ``max_age_seconds`` is the history window the UI has selected; it also
+        bounds the scan itself, so a short window skips out-of-window
+        transcripts on their ``stat()`` alone.  A missing or unusable value
+        lists every past session - the listing is then merely larger, never
+        wrongly empty.
         """
-        return list_history()
+        window = None
+        if isinstance(max_age_seconds, (int, float)) and not isinstance(max_age_seconds, bool) and max_age_seconds > 0:
+            window = float(max_age_seconds)
+
+        return list_history(window)
 
     def get_process_stats(self, pid: object, origin: object = 'windows') -> list[dict[str, Any]]:
         """Return live CPU / memory / uptime for one session's descendant processes.

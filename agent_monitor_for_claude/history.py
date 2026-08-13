@@ -13,6 +13,12 @@ history filter is enabled, so the potentially large ``projects/`` scan (reading
 each transcript once to resolve its correct title) never runs on the per-second
 poll and never costs anything while the filter is off.
 
+The listing is additionally bounded by the UI's selected time window
+(*max_age_seconds*).  A transcript whose file has not been written within that
+window cannot hold activity inside it, so it is skipped on its ``stat()`` alone
+and never opened - which is what keeps the scan proportional to the window
+rather than to the number of sessions ever run.
+
 Every session root (the native Windows install, plus one per running WSL distro
 - see ``roots.session_roots``) is scanned here, one at a time and in isolation:
 a root whose scan raises an unexpected error is skipped entirely, never
@@ -28,6 +34,8 @@ JSON-serializable and free of conversation content.
 """
 from __future__ import annotations
 
+import math
+import time
 from pathlib import Path
 from typing import Any
 
@@ -40,8 +48,8 @@ from .transcript import history_state_for
 __all__ = ['list_history']
 
 
-def list_history() -> list[dict[str, Any]]:
-    """Return raw records for every past (non-live) session transcript, across every session root.
+def list_history(max_age_seconds: float | None = None) -> list[dict[str, Any]]:
+    """Return raw records for past (non-live) session transcripts, across every session root.
 
     Sessions the live snapshot still retains are omitted: those are the live (or
     just-ended, within the retention window) sessions the regular snapshot
@@ -57,21 +65,30 @@ def list_history() -> list[dict[str, Any]]:
     one root is caught here and skips just that root, so one broken root - a
     WSL distro that stopped mid-scan, say - never blanks another root's
     history (see :func:`_list_root_history`).
+
+    Parameters
+    ----------
+    max_age_seconds : float or None, optional
+        Only list sessions whose last activity is within this many seconds.
+        None (the default) lists every past session.  A value that is not a
+        finite positive number is treated as None, so a malformed value from
+        the bridge widens the listing rather than emptying it.
     """
+    window = _valid_window(max_age_seconds)
     live_ids = live_or_recent_ids()
 
     records: list[dict[str, Any]] = []
     for root in session_roots():
         try:
-            records.extend(_list_root_history(root, live_ids))
+            records.extend(_list_root_history(root, live_ids, window))
         except Exception:
             continue
 
     return records
 
 
-def _list_root_history(root: SessionRoot, live_ids: set[str]) -> list[dict[str, Any]]:
-    """Return history records for every past session transcript under one root.
+def _list_root_history(root: SessionRoot, live_ids: set[str], window: float | None) -> list[dict[str, Any]]:
+    """Return history records for past session transcripts under one root.
 
     The working directory that groups a session under its project is resolved
     **per project folder**, not per transcript: a minimal or aborted transcript
@@ -95,10 +112,22 @@ def _list_root_history(root: SessionRoot, live_ids: set[str]) -> list[dict[str, 
         Session ids the live snapshot currently retains, across every root
         (see :func:`list_history`); a transcript whose id is in this set is
         skipped here, since the live overview already shows it.
+    window : float or None
+        The selected time window in seconds, already validated, or None for
+        the whole history.  It is applied twice: as a cheap ``stat()``-only
+        prefilter that keeps out-of-window transcripts from being opened at
+        all, and - once a record is built - against the record's real activity
+        age, which is what the row displays.  The prefilter is deliberately the
+        looser of the two: a file's mtime is never *older* than its newest
+        entry (an in-place metadata rewrite can even bump it without appending
+        a turn), so it can admit a session the exact filter then drops, but it
+        can never hide one that belongs in the window.
     """
     projects_root = projects_dir(root)
     if not projects_root.is_dir():
         return []
+
+    cutoff = None if window is None else time.time() - window
 
     # The live registry is the authority on a project's exact cwd (it is what the
     # live snapshot groups by), so prefer it; first writer wins per slug. Keyed
@@ -126,6 +155,9 @@ def _list_root_history(root: SessionRoot, live_ids: set[str]) -> list[dict[str, 
             if path.stem in live_ids:
                 continue
 
+            if not _touched_since(path, cutoff):
+                continue
+
             record = _build_history_record(path)
             if record is not None:
                 record['origin'] = root.origin
@@ -135,14 +167,65 @@ def _list_root_history(root: SessionRoot, live_ids: set[str]) -> list[dict[str, 
         if not folder_records:
             continue
 
+        # The cwd is resolved over every record read from this folder, before
+        # the window drops any of them: a sibling the prefilter admitted but the
+        # exact age filter rejects can still be the only one carrying the
+        # folder's real path.
         canonical_cwd = _resolve_folder_cwd(project_dir.name, folder_records, slug_to_cwd)
         for record in folder_records:
             if not record['cwd']:
                 record['cwd'] = canonical_cwd
-
-        records.extend(folder_records)
+            if _within_window(record['age_seconds'], window):
+                records.append(record)
 
     return records
+
+
+def _touched_since(path: Path, cutoff: float | None) -> bool:
+    """Return True if the transcript may hold activity at or after *cutoff*.
+
+    A file whose mtime predates the cutoff cannot: entries are only ever
+    appended, so its newest entry is older still.  An unreadable ``stat()``
+    answers True, leaving the decision to the regular read (which has its own
+    guard) rather than silently hiding a session.
+    """
+    if cutoff is None:
+        return True
+
+    try:
+        return path.stat().st_mtime >= cutoff
+    except OSError:
+        return True
+
+
+def _within_window(age_seconds: float | None, window: float | None) -> bool:
+    """Return True if a record's activity age falls inside the selected window.
+
+    An unknown age (no parseable timestamp and no readable mtime) is kept: the
+    listing errs towards showing a session it cannot date rather than hiding it.
+    """
+    if window is None or age_seconds is None:
+        return True
+
+    return age_seconds <= window
+
+
+def _valid_window(max_age_seconds: float | None) -> float | None:
+    """Return the requested window, or None when it is absent or unusable.
+
+    The value crosses the js_api bridge, so it is treated like any other
+    external input: anything that is not a finite positive number degrades to
+    "no window" - the listing is then merely larger, never wrongly empty.
+    ``bool`` is rejected explicitly because it would otherwise pass as an int.
+    """
+    if isinstance(max_age_seconds, bool) or not isinstance(max_age_seconds, (int, float)):
+        return None
+
+    window = float(max_age_seconds)
+    if not math.isfinite(window) or window <= 0:
+        return None
+
+    return window
 
 
 def _resolve_folder_cwd(slug: str, folder_records: list[dict[str, Any]], slug_to_cwd: dict[str, str]) -> str:

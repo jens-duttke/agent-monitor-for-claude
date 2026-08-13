@@ -204,6 +204,38 @@ class DeleteSessionOriginTest(unittest.TestCase):
         delete_mock.assert_not_called()
 
 
+class GetHistoryWindowTest(unittest.TestCase):
+    """The history window crosses the bridge as a number and is coerced there.
+
+    Anything unusable has to widen the listing rather than empty it: the
+    failure mode of the opposite choice is a history that silently shows
+    nothing.
+    """
+
+    def test_positive_window_is_passed_through(self) -> None:
+        api = _MonitorApi()
+        with mock.patch.object(app, 'list_history', return_value=[]) as history_mock:
+            api.get_history(86400)
+
+        history_mock.assert_called_once_with(86400.0)
+
+    def test_missing_window_lists_everything(self) -> None:
+        api = _MonitorApi()
+        with mock.patch.object(app, 'list_history', return_value=[]) as history_mock:
+            api.get_history()
+
+        history_mock.assert_called_once_with(None)
+
+    def test_unusable_window_lists_everything(self) -> None:
+        api = _MonitorApi()
+        for value in ('86400', -1, 0, True, [], None):
+            with self.subTest(value=value):
+                with mock.patch.object(app, 'list_history', return_value=[]) as history_mock:
+                    api.get_history(value)
+
+                history_mock.assert_called_once_with(None)
+
+
 class UnknownOriginRefusalTest(unittest.TestCase):
     """An origin naming no currently available root is a refusal, matching each method's own empty shape."""
 

@@ -618,6 +618,71 @@ body {
         }
     }
 
+    /* The History chip is the one chip carrying a second control - how far back
+       the listing reaches. Both halves live inside this single shell so the pair
+       reads as one control rather than two chips: the shell keeps the border,
+       the radius and the faded/lit state, a hairline divides the halves, and
+       each half lights its own text so it stays obvious which one a click hits.
+       The shell itself is not a button (a button cannot contain a button), so it
+       carries no pointer cursor - only its halves do. */
+    &.filter-chip-split {
+        padding: 0 0 0 14px;
+        cursor: default;
+    }
+
+    .chip-toggle,
+    .chip-range {
+        display: inline-flex;
+        align-items: center;
+        align-self: stretch;
+        gap: 8px;
+        padding: 7px 0;
+        background: none;
+        border: 0;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+
+        &:hover,
+        &:focus-visible,
+        &.menu-open {
+            color: var(--fg-heading);
+        }
+    }
+
+    .chip-range {
+        gap: 4px;
+        margin-left: 4px;
+        padding-inline: 12px;
+        border-left: 1px solid var(--border);
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+    }
+
+    /* A floor under the window label so switching between the shorter and
+       longer options ("Alle" vs "30 Tage") does not resize the chip - and with
+       it possibly rewrap the chip row. A label longer than this still grows the
+       chip; the floor only removes the constant small wobble. */
+    .chip-range-label {
+        min-width: 4.4em;
+        text-align: left;
+    }
+
+    .chip-caret {
+        flex: none;
+        width: 13px;
+        height: 13px;
+        opacity: 0.55;
+    }
+
+    /* Holds the badge's slot while there is no number to show (the history scan
+       has not run yet, or nothing falls inside the window), so the chip does not
+       change width the moment a count appears. Hidden, not removed: the space is
+       the entire point. */
+    .count-placeholder {
+        visibility: hidden;
+    }
+
     &.dot-needs::before,
     &.dot-errored::before,
     &.dot-interrupted::before,
@@ -678,6 +743,18 @@ body {
     text-align: center;
     color: var(--fg-dim);
     font-size: 15px;
+
+    /* A second line explaining why the view can be empty without the data being
+       gone (a bounded history window). Quieter than the message it follows, so
+       it reads as a footnote rather than a second headline. */
+    .empty-hint {
+        display: block;
+        max-width: 46ch;
+        margin: 10px auto 0;
+        font-size: 13px;
+        line-height: 1.5;
+        opacity: 0.75;
+    }
 
     /* A surfaced UI error (see reportUiError): left-aligned, monospace, wrapping
        so the stack trace stays readable instead of leaving a frozen skeleton. */

@@ -147,6 +147,84 @@ class RawSnapshotTest(_RegistryFixture):
         self.assertEqual(session['last_entry_kind'], 'assistant')
 
 
+class EndedRetentionTest(_RegistryFixture):
+    """The window an ended session stays visible for is measured from when it ended.
+
+    ``last_seen`` supplies that moment (the last poll that saw the process
+    alive).  Keying the window on the transcript's activity age instead - the
+    previous rule, still the fallback - drops a session that sat idle for hours
+    and was then closed in the very same poll that noticed it ended, which is
+    exactly the session someone who closed a window by accident is after.
+    """
+
+    # Last activity far past any retention window, so only a sighting can keep
+    # this session in the overview.
+    _STALE_TURN = json.dumps({
+        'type': 'assistant',
+        'timestamp': '2020-01-01T10:00:00Z',
+        'message': {'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': 'x'}]},
+    })
+
+    def setUp(self) -> None:
+        super().setUp()
+        # The sighting memory is process-global, so clear it around each test -
+        # a leftover sighting from another test would decide this one's outcome.
+        snapshot_mod.prune_last_seen([])
+        self.addCleanup(snapshot_mod.prune_last_seen, [])
+
+    def _add_ended_session(self, session_id: str) -> None:
+        # A live pid with a mismatched procStart reads as a recycled pid, so the
+        # record is present but not alive - a session that has ended.
+        sessions = Path(self._temp.name) / 'sessions'
+        (sessions / f'{session_id}.json').write_text(
+            json.dumps({'pid': os.getpid(), 'sessionId': session_id, 'cwd': 'd:\\x',
+                        'kind': 'interactive', 'procStart': '1'}),
+            encoding='utf-8',
+        )
+        path = transcript_path(windows_root(), session_id, 'd:\\x')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self._STALE_TURN, encoding='utf-8')
+
+    def _ids(self) -> set[str]:
+        return {session['session_id'] for session in build_snapshot()['sessions']}
+
+    def test_recently_ended_session_is_retained_despite_stale_activity(self) -> None:
+        self._add_ended_session('closed')
+
+        with mock.patch.object(snapshot_mod, 'seconds_since_alive', return_value=60.0):
+            self.assertIn('closed', self._ids())
+
+    def test_session_ended_past_the_window_is_dropped(self) -> None:
+        self._add_ended_session('closed')
+
+        with mock.patch.object(snapshot_mod, 'seconds_since_alive', return_value=snapshot_mod.ENDED_MAX_AGE + 1):
+            self.assertNotIn('closed', self._ids())
+
+    def test_without_a_sighting_the_activity_age_still_decides(self) -> None:
+        # Already dead when the monitor started: no sighting exists, so the
+        # previous rule (activity age) applies unchanged.
+        self._add_ended_session('closed')
+
+        with mock.patch.object(snapshot_mod, 'seconds_since_alive', return_value=None):
+            self.assertNotIn('closed', self._ids())
+
+    def test_a_live_session_records_a_sighting(self) -> None:
+        self._add_session('a', 'd:\\WebDev\\one')
+
+        build_snapshot()
+
+        self.assertIsNotNone(snapshot_mod.seconds_since_alive('windows', 'a'))
+
+    def test_sightings_are_pruned_with_the_registry(self) -> None:
+        self._add_session('a', 'd:\\WebDev\\one')
+        build_snapshot()
+
+        (Path(self._temp.name) / 'sessions' / 'a.json').unlink()
+        build_snapshot()
+
+        self.assertIsNone(snapshot_mod.seconds_since_alive('windows', 'a'))
+
+
 class PerRecordIsolationTest(_RegistryFixture):
     def test_one_failing_record_does_not_blank_the_snapshot(self) -> None:
         # An unforeseen failure while assembling one session must skip that

@@ -370,6 +370,71 @@ function searchScopeRefs(sessions, history, filterKeys, includeHistory) {
     return refs;
 }
 
+// How far back the history listing reaches. A machine that has run Claude Code
+// for a while accumulates hundreds of past sessions, of which only the newest
+// few are ever the answer to "I just closed that by accident" - so the listing
+// is a graded window rather than all-or-nothing. `seconds: null` means no
+// bound. The window is passed to the backend, which uses it to skip
+// out-of-window transcripts without opening them, so a short window is also a
+// much cheaper scan.
+const HISTORY_RANGES = [
+    { key: '1h', seconds: 3600, label: 'history_range_1h' },
+    { key: '24h', seconds: 86400, label: 'history_range_24h' },
+    { key: '7d', seconds: 604800, label: 'history_range_7d' },
+    { key: '30d', seconds: 2592000, label: 'history_range_30d' },
+    { key: 'all', seconds: null, label: 'history_range_all' },
+];
+
+// Wide enough to cover "yesterday I was still working on this", narrow enough
+// to stay a scannable list on a machine with hundreds of past sessions.
+const DEFAULT_HISTORY_RANGE = '24h';
+
+// The range definition for a key, falling back to the default for an unknown
+// one (a stale value from localStorage, say) so a bad key can never leave the
+// listing without a window.
+function historyRange(key) {
+    return HISTORY_RANGES.find((range) => range.key === key)
+        || HISTORY_RANGES.find((range) => range.key === DEFAULT_HISTORY_RANGE);
+}
+
+function historyRangeSeconds(key) {
+    return historyRange(key).seconds;
+}
+
+// Whether history already fetched for `loadedSeconds` still covers `wantedSeconds`.
+// The fetch returns everything within its window, so a *narrower* selection is
+// already in hand and only needs filtering - re-scanning would read files the
+// cache can answer for. Only widening (or "all", which nothing but itself
+// covers) needs the backend again. A never-fetched cache (undefined) covers
+// nothing.
+function historyRangeCovered(loadedSeconds, wantedSeconds) {
+    if (loadedSeconds === undefined) {
+        return false;
+    }
+    if (loadedSeconds === null) {
+        return true;
+    }
+    if (wantedSeconds === null) {
+        return false;
+    }
+    return wantedSeconds <= loadedSeconds;
+}
+
+// Narrow cached history records to the selected window. Ages are the ones
+// frozen at fetch time (the same values the rows display from), so the set is
+// stable while the user reads it instead of shedding rows as they tick past the
+// boundary. A record whose age could not be determined is kept: the listing
+// errs towards showing a session it cannot date rather than hiding it.
+function filterHistoryByAge(records, maxAgeSeconds) {
+    if (!Array.isArray(records)) {
+        return [];
+    }
+    if (maxAgeSeconds == null) {
+        return records;
+    }
+    return records.filter((record) => record && (record.age_seconds == null || record.age_seconds <= maxAgeSeconds));
+}
+
 // The filter chips active on a first launch (or any fallback): every chip
 // except the ones that opt out (History), so the potentially large history scan
 // only runs once the user asks for it. Deriving this - rather than "all chips" -
@@ -1178,6 +1243,12 @@ const AMC_LOGIC = {
     sessionBucket,
     pruneResumedHistory,
     historyNeedsRefresh,
+    HISTORY_RANGES,
+    DEFAULT_HISTORY_RANGE,
+    historyRange,
+    historyRangeSeconds,
+    historyRangeCovered,
+    filterHistoryByAge,
     searchScopeRefs,
     sessionMatchesSearch,
     defaultFilterKeys,

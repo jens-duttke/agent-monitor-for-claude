@@ -24,6 +24,7 @@ import time
 from datetime import datetime
 from typing import Any
 
+from .last_seen import note_alive, prune_last_seen, seconds_since_alive
 from .paths import SessionRoot, transcript_path
 from .process_probe import ProcessInfo, probe_all
 from .roots import session_roots
@@ -58,6 +59,7 @@ def build_snapshot() -> dict[str, Any]:
     # Evict scan-cache entries for sessions no longer in the registry so the
     # cache does not grow unbounded over a long-running monitor.
     prune_scan_cache((root, record['session_id'], record['cwd']) for root, record in pairs)
+    prune_last_seen((record['origin'], record['session_id']) for _, record in pairs)
 
     return {
         'generated_at': datetime.now().astimezone().isoformat(timespec='seconds'),
@@ -78,10 +80,14 @@ def _build_session_record(
     info = probe_map[(record['origin'], record['pid'])]
     transcript_state = state_for(root, record['session_id'], record['cwd'])
 
-    # A process that ended long ago has nothing worth showing; drop it here
-    # so the UI never has to know about the retention policy.
-    if not info.alive and not _include_ended(transcript_state.age_seconds):
-        return None
+    if info.alive:
+        note_alive(record['origin'], record['session_id'])
+    else:
+        # A process that ended long ago has nothing worth showing; drop it here
+        # so the UI never has to know about the retention policy.
+        ended_seconds = seconds_since_alive(record['origin'], record['session_id'])
+        if not _include_ended(transcript_state.age_seconds, ended_seconds):
+            return None
 
     subagents = count_subagents(root, record['session_id'], record['cwd'])
 
@@ -144,11 +150,12 @@ def live_or_recent_ids() -> set[str]:
     for root, record in pairs:
         info = probe_map.get((record['origin'], record['pid']))
         if info is not None and info.alive:
+            note_alive(record['origin'], record['session_id'])
             ids.add(record['session_id'])
             continue
 
         age = state_for(root, record['session_id'], record['cwd']).age_seconds
-        if _include_ended(age):
+        if _include_ended(age, seconds_since_alive(record['origin'], record['session_id'])):
             ids.add(record['session_id'])
 
     return ids
@@ -250,9 +257,31 @@ def _display_age(transcript_age: float | None, started_at_ms: float | None) -> f
     return max(0.0, time.time() - started_at_ms / 1000)
 
 
-def _include_ended(age_seconds: float | None) -> bool:
-    """Return True if an ended session should still be shown."""
+def _include_ended(age_seconds: float | None, ended_seconds: float | None) -> bool:
+    """Return True if an ended session should still be shown.
+
+    The window is measured from the moment the session ended - approximated by
+    the last poll that saw its process alive (*ended_seconds*, from
+    :mod:`last_seen`) - not from its last transcript entry.  A session that sat
+    idle for hours and was then closed has an activity age far past the window
+    and would otherwise vanish in the same poll that noticed it ended, which is
+    precisely the session someone who closed a window by accident wants back.
+
+    Parameters
+    ----------
+    age_seconds : float or None
+        Age of the transcript's newest entry.  The fallback, used when the
+        session was never seen alive by this process (already dead when the
+        monitor started), which preserves the previous behaviour there.
+    ended_seconds : float or None
+        How long ago the session was last seen alive, or None if never seen.
+        A sighting can only ever be *newer* than the last entry, so consulting
+        it never shortens the window.
+    """
     if INCLUDE_COMPLETED:
         return True
+
+    if ended_seconds is not None:
+        return ended_seconds < ENDED_MAX_AGE
 
     return age_seconds is not None and age_seconds < ENDED_MAX_AGE

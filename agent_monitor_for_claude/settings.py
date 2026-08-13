@@ -138,7 +138,8 @@ _S = _load_settings()
 # Poll cadence (seconds)
 POLL_INTERVAL: int = _S.get('poll_interval', 5)
 
-# How long an ended session stays visible (seconds); also see INCLUDE_COMPLETED
+# How long an ended session stays visible after it ended (seconds); also see
+# INCLUDE_COMPLETED
 ENDED_MAX_AGE: int = _S.get('ended_max_age', 3600)
 INCLUDE_COMPLETED: bool = _S.get('include_completed', False)
 

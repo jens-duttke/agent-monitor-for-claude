@@ -333,6 +333,48 @@ test('historyNeedsRefresh: true only when a previously-live session left the sna
     assert.equal(logic.historyNeedsRefresh([], [{ session_id: 'a' }]), false);
 });
 
+test('historyRange: an unknown or missing key falls back to the default window', () => {
+    // A stale value from localStorage must never leave the listing unbounded.
+    assert.equal(logic.historyRange('7d').key, '7d');
+    assert.equal(logic.historyRange('nonsense').key, logic.DEFAULT_HISTORY_RANGE);
+    assert.equal(logic.historyRange(null).key, logic.DEFAULT_HISTORY_RANGE);
+    assert.equal(logic.historyRange(undefined).key, logic.DEFAULT_HISTORY_RANGE);
+    assert.notEqual(logic.historyRangeSeconds(logic.DEFAULT_HISTORY_RANGE), null);
+    assert.equal(logic.historyRangeSeconds('all'), null);
+});
+
+test('historyRangeCovered: only a wider window needs a re-scan', () => {
+    // Narrowing is served from the cache (the fetch returned everything inside
+    // the wider window); widening - and "all", which only itself covers - has to
+    // go back to the backend.
+    assert.equal(logic.historyRangeCovered(86400, 3600), true);
+    assert.equal(logic.historyRangeCovered(86400, 86400), true);
+    assert.equal(logic.historyRangeCovered(3600, 86400), false);
+    assert.equal(logic.historyRangeCovered(null, 86400), true);
+    assert.equal(logic.historyRangeCovered(null, null), true);
+    assert.equal(logic.historyRangeCovered(86400, null), false);
+    // Nothing fetched yet covers nothing.
+    assert.equal(logic.historyRangeCovered(undefined, 3600), false);
+    assert.equal(logic.historyRangeCovered(undefined, null), false);
+});
+
+test('filterHistoryByAge: narrows to the window, keeps records it cannot date', () => {
+    const records = [
+        { session_id: 'fresh', age_seconds: 600 },
+        { session_id: 'edge', age_seconds: 86400 },
+        { session_id: 'old', age_seconds: 5 * 86400 },
+        { session_id: 'undated', age_seconds: null },
+    ];
+
+    const ids = logic.filterHistoryByAge(records, 86400).map((r) => r.session_id);
+    assert.deepEqual(ids, ['fresh', 'edge', 'undated']);
+
+    // No window keeps everything; a non-array input is an empty list, never a throw.
+    assert.equal(logic.filterHistoryByAge(records, null).length, 4);
+    assert.deepEqual(logic.filterHistoryByAge(null, 86400), []);
+    assert.deepEqual(logic.filterHistoryByAge(undefined, null), []);
+});
+
 test('sessionMatchesSearch: a not-yet-run search (null matches) shows everything', () => {
     const set = new Set(['a']);
     assert.equal(logic.sessionMatchesSearch('a', false, null), true);       // no query

@@ -252,10 +252,15 @@ yourself.
 
 ### The history listing (on demand)
 
-Enabling the *History* filter lists finished sessions by scanning the `projects/` folder. Each past
+Enabling the *Older* filter lists finished sessions by scanning the `projects/` folder. Each past
 transcript is read once in full, but only three things are taken from it: the title fields, the first
 prompt (as the fallback title described above), and the session's working directory, which is needed
 to group it under its project.
+
+The listing reaches back only as far as the window selected on the chip itself (24 hours by default).
+A transcript whose file has not been written within that window is skipped on its timestamp alone and
+never opened, so with the default window the scan reads only the handful of sessions from the last day
+- not every session you have ever run.
 
 ### Sessions running inside WSL
 

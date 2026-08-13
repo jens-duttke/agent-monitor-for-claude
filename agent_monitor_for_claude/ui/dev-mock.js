@@ -366,6 +366,9 @@ window.__MOCK_SCRATCHPADS__ = {
 // Past, non-live sessions - the on-demand history listing (get_history). All are
 // dead (alive:false, is_history:true) with no usage, exactly like the backend's
 // history records. index.js loads these only when the history chip is enabled.
+// Their ages deliberately straddle the chip's window options (hours to a month),
+// so switching the range in the preview visibly changes the listing - and the
+// default 24 h window is never empty.
 function historySession(overrides) {
     return rawSession(Object.assign({
         alive: false, is_history: true, pid: null, host: null, entrypoint: null,
@@ -381,12 +384,12 @@ window.__MOCK_HISTORY__ = [
     historySession({
         session_id: 'aaaaaaaa-1111-2222-3333-444444444444', short_name: 'aaaaaaaa',
         cwd: 'D:\\Projects\\helios-renderer', title: 'Prototype the wavefront path-tracing loop',
-        model_id: 'claude-opus-4-8[1m]', age_seconds: 172800,
+        model_id: 'claude-opus-4-8[1m]', age_seconds: 9000,
     }),
     historySession({
         session_id: 'bbbbbbbb-1111-2222-3333-444444444444', short_name: 'bbbbbbbb',
         cwd: 'D:\\Projects\\helios-renderer', title: 'First pass at the material system',
-        model_id: 'claude-sonnet-5', age_seconds: 604800,
+        model_id: 'claude-sonnet-5', age_seconds: 172800,
     }),
     historySession({
         session_id: 'cccccccc-1111-2222-3333-444444444444', short_name: 'cccccccc',

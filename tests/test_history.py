@@ -14,11 +14,13 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
-from agent_monitor_for_claude import history
+from agent_monitor_for_claude import history, snapshot
 from agent_monitor_for_claude.history import list_history
 from agent_monitor_for_claude.paths import SessionRoot, windows_root
 
@@ -129,6 +131,25 @@ class ListHistoryTest(HistoryEnvTest):
 
         self.assertIn(dead_id, ids)
 
+    def test_session_retained_by_a_recent_sighting_stays_out_of_history(self) -> None:
+        # The live snapshot keeps an ended session for a while after it ended,
+        # even when its last activity is long past (see snapshot._include_ended).
+        # History dedupes against exactly that retained set, so such a session
+        # must appear only in the live overview - listing it here as well is the
+        # duplicate-row case (a live row plus an undeletable history row).
+        closed_id = 'dddddddd-1111-2222-3333-444444444444'
+        self._write_history_transcript('d--proj', closed_id, [
+            json.dumps({'type': 'user', 'timestamp': '2020-01-01T09:00:00Z', 'cwd': 'd:\\proj',
+                        'message': {'content': 'idle for hours, then closed'}}),
+        ])
+        # A live PID with a mismatched procStart is detected as PID reuse: not alive.
+        self._write_session(closed_id, 'd:\\proj', os.getpid(), proc_start='1')
+
+        with mock.patch.object(snapshot, 'seconds_since_alive', return_value=60.0):
+            ids = {record['session_id'] for record in list_history()}
+
+        self.assertNotIn(closed_id, ids)
+
     def test_custom_title_deep_in_file_outranks_first_prompt(self) -> None:
         # A rename entry sits far past any head window; the whole-file scan must
         # still find it and let it outrank the auto title and the first prompt.
@@ -220,6 +241,113 @@ class ListHistoryTest(HistoryEnvTest):
         self.assertIsNotNone(record['age_seconds'])
         self.assertEqual(record['usage'], {})
         self.assertEqual(record['subagents_running'], 0)
+
+
+class HistoryWindowTest(HistoryEnvTest):
+    """The listing is bounded by the selected time window.
+
+    A machine that has run Claude Code for a while accumulates hundreds of past
+    sessions; the window is what keeps the listing (and the scan behind it)
+    proportional to what the user asked for.  The window is enforced twice - a
+    ``stat()``-only prefilter so an out-of-window transcript is never opened,
+    and the record's real activity age - and these tests cover both, plus the
+    fail-open behaviour that keeps a malformed value from emptying the listing.
+    """
+
+    def _write_dated_transcript(self, session_id: str, age_seconds: float, slug: str = 'd--proj') -> Path:
+        """Write a transcript whose entry timestamp and file mtime are both *age_seconds* old.
+
+        Both matter and they are read by different halves of the window: the
+        mtime by the ``stat()`` prefilter, the entry timestamp by the record's
+        activity age.  Keeping them in step is the normal case; the divergent
+        one is exercised separately below.
+        """
+        stamp = time.time() - age_seconds
+        written_at = datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat().replace('+00:00', 'Z')
+        path = self._write_history_transcript(slug, session_id, [
+            json.dumps({'type': 'user', 'timestamp': written_at, 'cwd': 'D:\\proj',
+                        'message': {'content': 'prompt'}}),
+        ])
+        os.utime(path, (stamp, stamp))
+        return path
+
+    def test_window_keeps_recent_sessions_and_drops_older_ones(self) -> None:
+        self._write_dated_transcript('aaaaaaaa-1111-2222-3333-444444444444', 600)
+        self._write_dated_transcript('bbbbbbbb-1111-2222-3333-444444444444', 5 * 86400)
+
+        ids = {record['session_id'] for record in list_history(86400)}
+
+        self.assertEqual(ids, {'aaaaaaaa-1111-2222-3333-444444444444'})
+
+    def test_no_window_lists_everything(self) -> None:
+        self._write_dated_transcript('aaaaaaaa-1111-2222-3333-444444444444', 600)
+        self._write_dated_transcript('bbbbbbbb-1111-2222-3333-444444444444', 5 * 86400)
+
+        self.assertEqual(len(list_history()), 2)
+
+    def test_out_of_window_transcript_is_never_opened(self) -> None:
+        # The point of the window: the scan must be proportional to it, so an
+        # out-of-window file is skipped on its stat() alone.
+        self._write_dated_transcript('aaaaaaaa-1111-2222-3333-444444444444', 600)
+        self._write_dated_transcript('bbbbbbbb-1111-2222-3333-444444444444', 5 * 86400)
+
+        real_state_for = history.history_state_for
+        read: list[str] = []
+
+        def recording(path: Path):
+            read.append(path.stem)
+            return real_state_for(path)
+
+        with mock.patch.object(history, 'history_state_for', side_effect=recording):
+            list_history(86400)
+
+        self.assertEqual(read, ['aaaaaaaa-1111-2222-3333-444444444444'])
+
+    def test_unusable_window_lists_everything(self) -> None:
+        # A malformed value from the bridge must widen the listing, never empty
+        # it - the failure mode of the opposite choice is an invisible history.
+        self._write_dated_transcript('aaaaaaaa-1111-2222-3333-444444444444', 600)
+        self._write_dated_transcript('bbbbbbbb-1111-2222-3333-444444444444', 5 * 86400)
+
+        for value in ('nonsense', -5, 0, float('nan'), float('inf'), True, None):
+            with self.subTest(value=value):
+                self.assertEqual(len(list_history(value)), 2)
+
+    def test_a_freshly_touched_but_old_transcript_is_read_and_then_dropped(self) -> None:
+        # The two halves of the window disagree here: an in-place metadata
+        # rewrite bumped the mtime, so the prefilter admits the file, but its
+        # newest entry is weeks old - the age the row would display - so the
+        # exact filter drops it. The looser prefilter is deliberate: it may
+        # admit a session the exact filter then drops, never the reverse.
+        path = self._write_dated_transcript('bbbbbbbb-1111-2222-3333-444444444444', 30 * 86400)
+        touched = time.time() - 60
+        os.utime(path, (touched, touched))
+
+        self.assertEqual(list_history(86400), [])
+
+    def test_folder_cwd_is_resolved_before_the_window_drops_a_record(self) -> None:
+        # The read-but-out-of-window sibling is the only transcript carrying the
+        # folder's real cwd; the in-window, cwd-less one must still inherit it
+        # instead of falling back to the raw slug and splitting into its own
+        # panel. So the window is applied after the folder's cwd is resolved.
+        old = self._write_dated_transcript('bbbbbbbb-1111-2222-3333-444444444444', 30 * 86400, slug='d--proj-x')
+        touched = time.time() - 60
+        os.utime(old, (touched, touched))
+        self._write_history_transcript('d--proj-x', 'aaaaaaaa-1111-2222-3333-444444444444', [
+            json.dumps({'type': 'summary', 'operation': 'compact', 'sessionId': 'x'}),
+        ])
+
+        records = list_history(86400)
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]['cwd'], 'D:\\proj')
+
+    def test_unstatable_transcript_falls_through_to_the_regular_read(self) -> None:
+        # The prefilter must never hide a session it merely failed to stat; the
+        # decision is left to the regular read, which has its own guard.
+        missing = Path(self._temp.name) / 'projects' / 'd--proj' / 'gone.jsonl'
+
+        self.assertTrue(history._touched_since(missing, time.time()))
 
 
 class MultiRootHistoryTest(HistoryEnvTest):

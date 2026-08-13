@@ -92,6 +92,12 @@ const state = {
     // drives the loading note.
     history: null,
     historyLoading: false,
+    // How far back the history chip reaches (a logic.HISTORY_RANGES key), and
+    // the window the cache above was actually fetched for. The two differ while
+    // a narrower selection is served from a wider fetch; undefined means the
+    // cache holds nothing yet.
+    historyRange: logic.DEFAULT_HISTORY_RANGE,
+    historyLoadedSeconds: undefined,
 };
 
 // Sort options: key -> label key. Values are computed per session below.
@@ -200,9 +206,16 @@ const DEFAULT_LABELS = {
     copied: 'Copied to clipboard',
     open_in_explorer: 'Open in Explorer',
     open_scratchpad: 'Open scratchpad',
-    filter_history: 'History',
-    filter_history_tip: 'Past sessions that are no longer running (loaded on demand)',
-    history_loading: 'Loading past sessions…',
+    filter_history: 'Older',
+    filter_history_tip: 'Older sessions that are no longer running and have left the overview (loaded on demand)',
+    history_loading: 'Loading older sessions…',
+    history_range_tip: 'How far back older sessions are listed. A shorter window also makes the scan faster.',
+    history_range_hint: 'Only older sessions inside the selected window are listed and searched. Widen it to look further back.',
+    history_range_1h: '1 h',
+    history_range_24h: '24 h',
+    history_range_7d: '7 days',
+    history_range_30d: '30 days',
+    history_range_all: 'All',
     delete_session: 'Delete session',
     delete_confirm_title: 'Delete this session?',
     delete_confirm_body: 'This permanently removes the session transcript and its subagent files from disk. This cannot be undone.',
@@ -227,6 +240,8 @@ const FILTER_DEFS = [
     { key: 'background', label: 'filter_background', tip: 'filter_background_tip', dot: 'dot-background' },
     { key: 'quiet', label: 'filter_quiet', tip: 'filter_quiet_tip', dot: 'dot-quiet' },
     // Off by default: enabling it triggers the on-demand scan of past sessions.
+    // Labelled "Older" in the UI - the key stays `history` because it is part of
+    // the persisted filter selection (and of is_history / get_history).
     { key: 'history', label: 'filter_history', tip: 'filter_history_tip', dot: 'dot-history', offByDefault: true },
 ];
 
@@ -731,6 +746,10 @@ function syncOpenMenu() {
     let anchor = null;
     if (menu.type === 'sort') {
         anchor = document.getElementById('sort-trigger');
+    } else if (menu.type === 'history-range') {
+        // renderFilters rebuilds the chip row wholesale, so this node is a new
+        // one after every poll - look it up by id rather than keeping a handle.
+        anchor = document.getElementById('history-range-trigger');
     } else if (menu.type === 'row') {
         anchor = findRowMenuButton(menu.rowKey);
     }
@@ -1554,6 +1573,50 @@ function toggleFilter(key) {
     }
 }
 
+// The cached past sessions narrowed to the selected window. The cache can hold
+// a wider fetch than the current selection (picking a narrower window never
+// re-scans), so every reader of history goes through here rather than touching
+// state.history directly - the raw cache is only for the fetch and for dropping
+// a deleted session.
+function visibleHistory() {
+    return logic.filterHistoryByAge(state.history, logic.historyRangeSeconds(state.historyRange));
+}
+
+// Switch how far back the history listing reaches. A narrower window is served
+// from the cache; only a wider one needs the backend again. Selecting a range
+// also switches the chip on: the range half is otherwise a dead end while the
+// chip is off - the user picks a window, and nothing appears.
+function setHistoryRange(key) {
+    const range = logic.historyRange(key);
+    const needsFetch = !logic.historyRangeCovered(state.historyLoadedSeconds, range.seconds);
+
+    state.historyRange = range.key;
+    try {
+        localStorage.setItem('amc-history-range', range.key);
+    } catch (e) { /* storage unavailable */ }
+
+    const wasActive = state.filters.has('history');
+    if (!wasActive) {
+        state.filters.add('history');
+        persistFilters();
+    }
+
+    if (needsFetch) {
+        state.history = null;
+        state.historyLoadedSeconds = undefined;
+        ensureHistoryLoaded();
+        return;
+    }
+
+    // The visible set changed, so an active search has to re-run over the new
+    // scope - exactly as a chip toggle does.
+    if (state.search.trim().length >= SEARCH_MIN_CHARS) {
+        runSearch();
+    } else if (state.last) {
+        render(state.last);
+    }
+}
+
 // Fetch past sessions once, the first time the history chip is enabled, and
 // cache them. The bridge call runs on a pywebview worker thread, so awaiting it
 // does not block the WebView: the live overview stays interactive and a loading
@@ -1576,7 +1639,11 @@ async function ensureHistoryLoaded() {
         // Without a bridge and not in mock mode the data source is not ready yet;
         // leave history null so a later call (a re-toggle, or boot) retries.
         if (mockMode()) {
+            // The fabricated history is the whole (tiny) set, so it covers every
+            // window; the selected range then narrows it client-side like a real
+            // wider fetch would.
             state.history = Array.isArray(window.__MOCK_HISTORY__) ? window.__MOCK_HISTORY__ : [];
+            state.historyLoadedSeconds = null;
             state.historyReceivedAt = Date.now();
             afterHistoryLoaded();
         }
@@ -1588,9 +1655,14 @@ async function ensureHistoryLoaded() {
         render(state.last);
     }
 
+    // The window is read once, up front: the selection can change while the
+    // scan is in flight, and the cache must be stamped with the window the
+    // records actually came from, never with a newer one it does not cover.
+    const windowSeconds = logic.historyRangeSeconds(state.historyRange);
     try {
-        const history = await bridge.get_history();
+        const history = await bridge.get_history(windowSeconds);
         state.history = Array.isArray(history) ? history : [];
+        state.historyLoadedSeconds = windowSeconds;
         state.historyReceivedAt = Date.now();
     } catch (e) {
         // A failed one-shot fetch must not cache []: that empty sentinel is what
@@ -1598,6 +1670,7 @@ async function ensureHistoryLoaded() {
         // forever and never retry. Reset to null so toggling History off and on
         // (or the next invalidation) re-fetches.
         state.history = null;
+        state.historyLoadedSeconds = undefined;
     }
 
     state.historyLoading = false;
@@ -1674,15 +1747,24 @@ function countByFilter(projects, includeSession) {
     return counts;
 }
 
+// The thin chevron the dropdown triggers share, drawn rather than typed so it
+// matches the sort field's caret at any zoom level.
+const CARET_SVG = '<svg class="chip-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+    + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<path d="m6 9 6 6 6-6"></path></svg>';
+
 function renderFilters(counts) {
     const container = document.getElementById('filters');
 
     container.innerHTML = FILTER_DEFS.map((def) => {
         const active = state.filters.has(def.key);
+        const count = counts[def.key];
+        if (def.key === 'history') {
+            return historyChipMarkup(def, active, count);
+        }
         const dot = def.dot ? ' ' + def.dot : '';
         const label = state.labels[def.label] || def.key;
         const tip = def.tip ? (state.labels[def.tip] || '') : '';
-        const count = counts[def.key];
         return '<button'
             + attr('class', 'filter-chip' + dot + (active ? ' active' : ''))
             + attr('data-filter', def.key)
@@ -1694,9 +1776,64 @@ function renderFilters(counts) {
             + '</button>';
     }).join('');
 
-    container.querySelectorAll('.filter-chip[data-filter]').forEach((button) => {
+    container.querySelectorAll('[data-filter]').forEach((button) => {
         button.addEventListener('click', () => toggleFilter(button.dataset.filter));
     });
+
+    const rangeTrigger = container.querySelector('#history-range-trigger');
+    if (rangeTrigger) {
+        rangeTrigger.addEventListener('click', (event) => {
+            event.stopPropagation();
+            openHistoryRangeMenu(rangeTrigger);
+        });
+    }
+}
+
+// The History chip is the one chip that carries a second control: how far back
+// the listing reaches. Both halves live inside one chip shell, so the pair reads
+// as a single control - the left half toggles the chip, the right half opens the
+// window menu, and only a hairline divider separates them. A button cannot
+// contain a button, so the shell is a plain element and the two halves are the
+// buttons.
+function historyChipMarkup(def, active, count) {
+    const label = state.labels[def.label] || def.key;
+    const tip = def.tip ? (state.labels[def.tip] || '') : '';
+    const rangeLabel = state.labels[logic.historyRange(state.historyRange).label] || state.historyRange;
+    const rangeTip = state.labels.history_range_tip || '';
+
+    // The count keeps its slot even at zero - before the first scan has run
+    // there is no number to show, and a badge that only materializes then would
+    // widen the chip (and can rewrap the chip row) at that moment. The
+    // placeholder is hidden rather than empty: an empty pill would read as a
+    // rendering glitch.
+    const badge = count > 0
+        ? '<span class="count">' + esc(count) + '</span>'
+        : '<span class="count count-placeholder" aria-hidden="true">00</span>';
+
+    return '<div' + attr('class', 'filter-chip filter-chip-split ' + (def.dot || '') + (active ? ' active' : '')) + '>'
+        + '<button' + attr('type', 'button') + attr('class', 'chip-toggle')
+        + attr('data-filter', def.key)
+        + (tip ? attr('data-tip', tip) : '')
+        + attr('aria-pressed', active ? 'true' : 'false')
+        + '>'
+        + esc(label) + badge
+        + '</button>'
+        + '<button' + attr('type', 'button') + attr('class', 'chip-range') + attr('id', 'history-range-trigger')
+        + (rangeTip ? attr('data-tip', rangeTip) : '')
+        + attr('aria-haspopup', 'menu')
+        + '>'
+        + '<span class="chip-range-label">' + esc(rangeLabel) + '</span>' + CARET_SVG
+        + '</button>'
+        + '</div>';
+}
+
+function openHistoryRangeMenu(trigger) {
+    const items = logic.HISTORY_RANGES.map((range) => ({
+        key: range.key,
+        label: state.labels[range.label] || range.key,
+        active: range.key === state.historyRange,
+    }));
+    openMenu(trigger, items, setHistoryRange, { type: 'history-range' });
 }
 
 // Content search. The query is matched against the transcript CONTENT, which
@@ -1837,7 +1974,7 @@ function scheduleSearch() {
 function collectSearchRefs(includeHistory) {
     return logic.searchScopeRefs(
         state.last ? state.last.sessions : [],
-        state.history,
+        visibleHistory(),
         state.filters,
         includeHistory
     );
@@ -2059,9 +2196,7 @@ function mockSearchMatches(query) {
         }
     };
     scan(state.last ? state.last.sessions : []);
-    if (Array.isArray(state.history)) {
-        scan(state.history);
-    }
+    scan(visibleHistory());
     return matches;
 }
 
@@ -2606,8 +2741,21 @@ function onContentClick(event) {
     }
 }
 
-function emptyBlock(message) {
-    return '<div class="empty">' + esc(message || '') + '</div>';
+function emptyBlock(message, hint) {
+    return '<div class="empty">' + esc(message || '')
+        + (hint ? '<span class="empty-hint">' + esc(hint) + '</span>' : '')
+        + '</div>';
+}
+
+// A bounded history window silently limits what can be found: only the past
+// sessions inside it are listed, and only those are handed to the content
+// search. So when nothing is left to show, name the window - otherwise an empty
+// result reads as "that session does not exist" when it is merely out of view.
+function historyWindowHint() {
+    if (!state.filters.has('history') || logic.historyRangeSeconds(state.historyRange) == null) {
+        return '';
+    }
+    return state.labels.history_range_hint || '';
 }
 
 // Column variable -> cell selector. After each render the widest cell per
@@ -2662,20 +2810,26 @@ function render(snapshot) {
 
     const prices = logic.resolvePrices(state.pricing, todayIso());
 
+    // The past sessions the current window covers, minus any that came back to
+    // life. Resolved whether or not the chip is on: with it off they stay out of
+    // the view but still feed the chip's count (below).
+    const historyActive = state.filters.has('history');
+    const historyRows = Array.isArray(state.history)
+        ? logic.pruneResumedHistory(visibleHistory(), snapshot.sessions || [])
+        : [];
+
     // Fold past sessions in only while the history chip is active and they have
     // finished loading; groupProjects then places them under their own project
     // panels, marked (and, in updateRow, styled) as history rows.
-    const historyActive = state.filters.has('history');
     let rawSessions = snapshot.sessions || [];
     if (historyActive && Array.isArray(state.history)) {
-        // Drop a resumed past session's stale history row (it is live again, so
-        // it is already in the snapshot) - otherwise it renders twice.
-        rawSessions = rawSessions.concat(logic.pruneResumedHistory(state.history, snapshot.sessions || []));
+        rawSessions = rawSessions.concat(historyRows);
         // A previously-live session that just left the snapshot (ended and its
         // registry record pruned) was excluded from the one-shot history fetch;
         // re-fetch so it can move into history instead of vanishing from both.
         if (previous && logic.historyNeedsRefresh(previous.sessions, snapshot.sessions)) {
             state.history = null;
+            state.historyLoadedSeconds = undefined;
             ensureHistoryLoaded();
         }
     }
@@ -2692,6 +2846,17 @@ function render(snapshot) {
     const matchesSearch = (session) => logic.sessionMatchesSearch(session.session_id, searchActive, state.searchMatches);
 
     const counts = countByFilter(projects, matchesSearch);
+    // Every status chip counts its sessions whether or not it is on, because its
+    // sessions are in the grouped set either way. History's are not while its
+    // chip is off, so count them here from the same cache - otherwise the badge
+    // would appear only on switching the chip on, changing the chip's width at
+    // the moment it is clicked and possibly rewrapping the whole chip row. The
+    // search narrows this count exactly as it narrows every other chip's: with
+    // the chip off its sessions are outside the search scope, so an active query
+    // matches none of them.
+    if (!historyActive) {
+        counts.history = historyRows.filter(matchesSearch).length;
+    }
     renderFilters(counts);
 
     ensureShell();
@@ -2703,7 +2868,13 @@ function render(snapshot) {
     if (!hasAnySession) {
         heroSlot.replaceChildren();
         panelsSlot.replaceChildren();
-        stateSlot.innerHTML = emptyBlock(loadingNote || state.labels.empty_state);
+        // Nothing at all in view is where the window matters most: with the
+        // chip on, it means nothing fell inside it - not that there is nothing
+        // to find. The hint is dropped while the scan is still running, when
+        // the emptiness says nothing yet.
+        stateSlot.innerHTML = loadingNote
+            ? emptyBlock(loadingNote)
+            : emptyBlock(state.labels.empty_state, historyWindowHint());
         syncOpenMenu();
         syncProcPanel();
         return;
@@ -2750,7 +2921,9 @@ function render(snapshot) {
     } else if (loadingNote) {
         stateSlot.innerHTML = emptyBlock(loadingNote);
     } else {
-        stateSlot.innerHTML = visible.length === 0 ? emptyBlock(state.labels.empty_filter || state.labels.empty_state) : '';
+        stateSlot.innerHTML = visible.length === 0
+            ? emptyBlock(state.labels.empty_filter || state.labels.empty_state, historyWindowHint())
+            : '';
     }
 
     // The CLI-version column is only worth its width when more than one version
@@ -2858,6 +3031,9 @@ async function boot() {
     try {
         state.sort = localStorage.getItem('amc-sort') || 'activity';
         state.sortDir = localStorage.getItem('amc-sort-dir') === 'desc' ? 'desc' : 'asc';
+        // An unknown or missing key resolves to the default window, so a stale
+        // stored value can never leave the listing unbounded.
+        state.historyRange = logic.historyRange(localStorage.getItem('amc-history-range')).key;
         state.priorityOrder = localStorage.getItem('amc-priority-order') !== '0';
         state.collapsed = new Set(JSON.parse(localStorage.getItem('amc-collapsed') || '[]'));
         const searchOpts = JSON.parse(localStorage.getItem('amc-search-opts') || '{}');
@@ -2867,6 +3043,7 @@ async function boot() {
     } catch (e) {
         state.sort = 'activity';
         state.sortDir = 'asc';
+        state.historyRange = logic.DEFAULT_HISTORY_RANGE;
         state.priorityOrder = true;
         state.collapsed = new Set();
         state.searchMatchCase = false;
