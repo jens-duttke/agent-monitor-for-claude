@@ -15,11 +15,12 @@ on:
   workflow_dispatch:
     inputs:
       signing-policy:
-        description: 'SignPath signing policy'
+        description: 'SignPath signing policy ("none" builds unsigned)'
         type: choice
         options:
           - test-signing
           - release-signing
+          - none
         default: test-signing
 
 env:
@@ -28,8 +29,9 @@ env:
   # Configurations). Its root element must be <zip-file>, because
   # actions/upload-artifact wraps the EXE in a ZIP archive.
   SIGNPATH_ARTIFACT_CONFIGURATION_SLUG: initial
-  # A tag always signs for release; a manual run rehearses with the test policy.
-  SIGNING_POLICY: ${{ inputs.signing-policy || 'release-signing' }}
+  # The production certificate has not been issued yet, so a tag currently builds
+  # unsigned. Change this back to 'release-signing' once the certificate is there.
+  SIGNING_POLICY: ${{ inputs.signing-policy || 'none' }}
 
 permissions:
   contents: write
@@ -97,6 +99,7 @@ jobs:
           if-no-files-found: error
 
       - name: Submit the signing request to SignPath
+        if: env.SIGNING_POLICY != 'none'
         uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -114,6 +117,7 @@ jobs:
 
       - name: Locate and verify the signed EXE
         id: signed-exe
+        if: env.SIGNING_POLICY != 'none'
         shell: pwsh
         run: |
           # The signed artifact comes back the way it went in - as a ZIP, unless
@@ -139,6 +143,7 @@ jobs:
           "path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
 
       - name: Upload the signed EXE
+        if: env.SIGNING_POLICY != 'none'
         uses: actions/upload-artifact@v4
         with:
           name: AgentMonitorForClaude-signed
@@ -161,15 +166,29 @@ jobs:
           if (-not $section.Success) {
             throw "CHANGELOG.md has no section for version $version"
           }
-          $footer = @(
-            '## Code signing policy',
-            '',
-            'Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).',
-            '',
-            'This executable was built by the [release workflow](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/.github/workflows/release.yml) on a GitHub-hosted runner, straight from the source of tag `${{ github.ref_name }}`, and signed after manual approval. See the [code signing policy](https://github.com/${{ github.repository }}#code-signing-policy) for who reviews and approves.',
-            '',
-            'This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it - see [PRIVACY.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/PRIVACY.md).'
-          ) -join "`n"
+          $privacy = 'This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it - see [PRIVACY.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/PRIVACY.md).'
+          $workflow = '[release workflow](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/.github/workflows/release.yml)'
+          $footer = if ('${{ env.SIGNING_POLICY }}' -eq 'none') {
+            # Nothing was signed, so the page must not claim otherwise - and it
+            # should explain the publisher warning Windows will show instead.
+            @(
+              '## About this build',
+              '',
+              "This executable was built by the $workflow on a GitHub-hosted runner, straight from the source of tag ``${{ github.ref_name }}``. It is not code signed yet, so Windows will report an unknown publisher.",
+              '',
+              $privacy
+            ) -join "`n"
+          } else {
+            @(
+              '## Code signing policy',
+              '',
+              'Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).',
+              '',
+              "This executable was built by the $workflow on a GitHub-hosted runner, straight from the source of tag ``${{ github.ref_name }}``, and signed after manual approval. See the [code signing policy](https://github.com/${{ github.repository }}#code-signing-policy) for who reviews and approves.",
+              '',
+              $privacy
+            ) -join "`n"
+          }
           Set-Content -Path release-notes.md -Value ($section.Groups[1].Value.Trim() + "`n`n" + $footer) -Encoding utf8
           Write-Host (Get-Content release-notes.md -Raw)
 
@@ -177,4 +196,5 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" "${{ steps.signed-exe.outputs.path }}" --draft --title "${{ github.ref_name }}" --notes-file release-notes.md
+        # Falls back to the unsigned build when the signing steps were skipped.
+        run: gh release create "${{ github.ref_name }}" "${{ steps.signed-exe.outputs.path || 'dist/AgentMonitorForClaude.exe' }}" --draft --title "${{ github.ref_name }}" --notes-file release-notes.md
