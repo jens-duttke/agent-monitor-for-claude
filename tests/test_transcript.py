@@ -74,6 +74,104 @@ class InterruptVsToolResultTest(unittest.TestCase):
         self.assertFalse(state.pending_tool)
 
 
+class LocalCommandOutputTest(unittest.TestCase):
+    """A local command's captured output is its execution record, not a prompt.
+
+    Newer Claude Code versions end a `/compact` (and other local commands) with
+    an ordinary ``user`` entry wrapping the command's output instead of the
+    ``system``/``local_command`` record.  Read as a fresh prompt it would leave
+    the session permanently "working", because nothing is ever appended after it.
+    """
+
+    def test_captured_stdout_reads_as_a_local_command(self) -> None:
+        entry = {
+            'type': 'user',
+            'timestamp': '2026-07-11T09:00:00Z',
+            'message': {'role': 'user', 'content': '<local-command-stdout>Compacted </local-command-stdout>'},
+        }
+        state = _parse(_lines(entry))
+        self.assertEqual(state.last_entry_kind, 'local_command')
+
+    def test_captured_stderr_reads_as_a_local_command(self) -> None:
+        entry = {
+            'type': 'user',
+            'timestamp': '2026-07-11T09:00:00Z',
+            'message': {'role': 'user', 'content': '<local-command-stderr>boom</local-command-stderr>'},
+        }
+        state = _parse(_lines(entry))
+        self.assertEqual(state.last_entry_kind, 'local_command')
+
+    def test_a_block_list_carries_the_marker_too(self) -> None:
+        entry = {
+            'type': 'user',
+            'timestamp': '2026-07-11T09:00:00Z',
+            'message': {'content': [{'type': 'text', 'text': '<local-command-stdout>x</local-command-stdout>'}]},
+        }
+        state = _parse(_lines(entry))
+        self.assertEqual(state.last_entry_kind, 'local_command')
+
+    def test_a_command_invocation_still_reads_as_a_prompt(self) -> None:
+        # A slash command that briefs the model (`/loop ...`) is recorded as a
+        # plain user entry naming the command. The model owes a reply to it, so
+        # it must stay user_text ("working") - only the *output* wrapper above
+        # means the command already ran outside the model.
+        entry = {
+            'type': 'user',
+            'timestamp': '2026-07-11T09:00:00Z',
+            'message': {'role': 'user',
+                        'content': '<command-message>loop</command-message>\n<command-name>/loop</command-name>'},
+        }
+        state = _parse(_lines(entry))
+        self.assertEqual(state.last_entry_kind, 'user_text')
+
+    def test_the_interrupt_marker_still_wins(self) -> None:
+        entry = {
+            'type': 'user',
+            'timestamp': '2026-07-11T09:00:00Z',
+            'message': {'content': [
+                {'type': 'text', 'text': '[Request interrupted by user]'},
+                {'type': 'text', 'text': '<local-command-stdout>x</local-command-stdout>'},
+            ]},
+        }
+        state = _parse(_lines(entry))
+        self.assertEqual(state.last_entry_kind, 'user_interrupt')
+
+    def test_trailing_attachments_do_not_reopen_the_turn(self) -> None:
+        # What a real `/compact` tail looks like: the caveat (isMeta), the command
+        # entry, its captured output, then only attachment/title records - none of
+        # which is a turn. The newest kind must stay local_command.
+        state = _parse(_lines(
+            {'type': 'user', 'isMeta': True, 'timestamp': '2026-07-11T09:00:00Z',
+             'message': {'role': 'user', 'content': '<local-command-caveat>x</local-command-caveat>'}},
+            {'type': 'user', 'timestamp': '2026-07-11T09:00:01Z',
+             'message': {'role': 'user', 'content': '<command-name>/compact</command-name>'}},
+            {'type': 'user', 'timestamp': '2026-07-11T09:00:02Z',
+             'message': {'role': 'user', 'content': '<local-command-stdout>Compacted </local-command-stdout>'}},
+            {'type': 'attachment', 'timestamp': '2026-07-11T09:00:03Z'},
+            {'type': 'last-prompt'},
+            {'type': 'ai-title'},
+        ))
+        self.assertEqual(state.last_entry_kind, 'local_command')
+
+    def test_a_later_prompt_supersedes_the_command_record(self) -> None:
+        state = _parse(_lines(
+            {'type': 'user', 'timestamp': '2026-07-11T09:00:00Z',
+             'message': {'role': 'user', 'content': '<local-command-stdout>Compacted </local-command-stdout>'}},
+            {'type': 'user', 'timestamp': '2026-07-11T09:00:01Z', 'message': {'role': 'user', 'content': 'carry on'}},
+        ))
+        self.assertEqual(state.last_entry_kind, 'user_text')
+
+    def test_a_mistyped_or_missing_text_field_degrades_to_a_prompt(self) -> None:
+        # Defensive parsing: the marker check must never crash on a text block
+        # whose `text` is absent or not a string, and an entry it cannot read
+        # stays the ordinary user turn rather than being claimed as a command.
+        for block in ({'type': 'text', 'text': 123}, {'type': 'text'}, {'type': 'image'}, 'not-a-dict'):
+            with self.subTest(block=block):
+                entry = {'type': 'user', 'timestamp': '2026-07-11T09:00:00Z', 'message': {'content': [block]}}
+                state = _parse(_lines(entry))
+                self.assertEqual(state.last_entry_kind, 'user_text')
+
+
 class TitleSkipsInjectedMetaTest(unittest.TestCase):
     def test_absorb_line_ignores_a_meta_user_entry_for_the_first_prompt(self) -> None:
         # An injected isMeta user entry (a continuation summary) must not become

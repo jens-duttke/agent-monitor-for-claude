@@ -81,6 +81,14 @@ _CLI_VERSION_KEY = 'version'
 # "... for tool use" variant.
 _INTERRUPT_MARKER = '[Request interrupted by user'
 
+# Wrappers Claude Code puts around the captured output of a local command (a
+# slash or ``!`` command).  Only a command that already ran outside the model
+# produces them, so such a user entry is that command's execution record, never
+# a prompt awaiting an answer - the same meaning as the ``system``/
+# ``local_command`` entry below, in the shape newer Claude Code versions write.
+# Matched only to that boolean entry kind; the output itself is never read.
+_LOCAL_COMMAND_OUTPUT_MARKERS = ('<local-command-stdout>', '<local-command-stderr>')
+
 _USAGE_MARKER = b'"usage"'
 _AI_TITLE_MARKER = b'ai-title'
 _CUSTOM_TITLE_MARKER = b'custom-title'
@@ -461,11 +469,14 @@ def _read_tail(path: Path, max_bytes: int = _TAIL_BYTES) -> list[str]:
     return lines
 
 
-def _is_interrupt_marker(content: object) -> bool:
-    """Return True if a user entry's content is Claude Code's interrupt marker.
+def _leading_text_starts_with(content: object, prefixes: tuple[str, ...]) -> bool:
+    """Return True if a user entry's leading text opens with one of *prefixes*.
 
-    Matches only the fixed control string (via prefix), and its result is
-    surfaced as an entry kind - the text itself is never returned or stored.
+    The entry's text never leaves this function: it is compared against fixed
+    control strings and only the boolean result is returned.  That is what keeps
+    the two marker checks below inside the module's privacy boundary - a helper
+    handing the text back would put conversation content in reach of every
+    caller in the module.
     """
     text = None
     if isinstance(content, str):
@@ -476,7 +487,35 @@ def _is_interrupt_marker(content: object) -> bool:
                 text = block.get('text')
                 break
 
-    return isinstance(text, str) and text.lstrip().startswith(_INTERRUPT_MARKER)
+    if not isinstance(text, str):
+        return False
+
+    stripped = text.lstrip()
+
+    return any(stripped.startswith(prefix) for prefix in prefixes)
+
+
+def _is_interrupt_marker(content: object) -> bool:
+    """Return True if a user entry's content is Claude Code's interrupt marker.
+
+    Matches only the fixed control string (via prefix), and its result is
+    surfaced as an entry kind - the text itself is never returned or stored.
+    """
+    return _leading_text_starts_with(content, (_INTERRUPT_MARKER,))
+
+
+def _is_local_command_output(content: object) -> bool:
+    """Return True if a user entry is the captured output of a local command.
+
+    Newer Claude Code versions record a slash or ``!`` command's execution as an
+    ordinary ``user`` entry wrapping its captured output, instead of (or besides)
+    the ``system``/``local_command`` entry ``_parse`` already knows.  On disk that
+    is indistinguishable from a fresh prompt, yet it means the opposite: the
+    command ran outside the model, so no reply is owed.  Matched only to the
+    fixed wrapper prefix and surfaced as an entry kind; the output is never
+    returned or stored.
+    """
+    return _leading_text_starts_with(content, _LOCAL_COMMAND_OUTPUT_MARKERS)
 
 
 def _parse(lines: list[str]) -> TranscriptState:
@@ -563,21 +602,29 @@ def _parse(lines: list[str]) -> TranscriptState:
 
         elif entry_type == 'user':
             # A user entry is a fresh prompt, a tool_result answering a request,
-            # or the fixed marker Claude Code writes when the user interrupts a
-            # running turn.  The interrupt marker is a plain user turn on disk
-            # but means the opposite of a fresh prompt - control is back with the
-            # user and the model owes nothing - so it is tracked as its own kind.
+            # the fixed marker Claude Code writes when the user interrupts a
+            # running turn, or a local command's captured output.  Both markers
+            # are plain user turns on disk but mean the opposite of a fresh
+            # prompt - control is back with the user, or the command already ran
+            # outside the model - so each is tracked as its own kind.
             is_interrupt = _is_interrupt_marker(content)
-            last_entry_kind = 'user_interrupt' if is_interrupt else 'user_text'
+            is_local_command = not is_interrupt and _is_local_command_output(content)
+            if is_interrupt:
+                last_entry_kind = 'user_interrupt'
+            elif is_local_command:
+                last_entry_kind = 'local_command'
+            else:
+                last_entry_kind = 'user_text'
             usage_limited = False
             if isinstance(content, list):
                 for block in content:
                     if isinstance(block, dict) and block.get('type') == 'tool_result':
                         # Still record the resolved id so a pending tool is
-                        # cleared, but never let a tool_result downgrade the
-                        # interrupt marker: the whole turn was stopped, so the
-                        # interrupt wins (matching the documented precedence).
-                        if not is_interrupt:
+                        # cleared, but never let a tool_result downgrade either
+                        # marker: the whole turn was stopped, or the entry is a
+                        # command's own record, so the marker wins (matching the
+                        # documented precedence).
+                        if not is_interrupt and not is_local_command:
                             last_entry_kind = 'tool_result'
                         tool_use_id = block.get('tool_use_id')
                         if tool_use_id:
@@ -588,6 +635,9 @@ def _parse(lines: list[str]) -> TranscriptState:
             # the model - Claude Code even writes a caveat telling the model not
             # to respond - so no reply is owed. Recorded as its own kind so the
             # trailing command entries are not misread as a pending prompt.
+            # Claude Code writes this record for some commands and the wrapped
+            # user entry above for others (`/compact` produces only the latter),
+            # so both shapes have to yield the same kind.
             last_entry_kind = 'local_command'
             usage_limited = False
 

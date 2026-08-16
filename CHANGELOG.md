@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - The released `AgentMonitorForClaude.exe` is now code signed, so Windows can name its publisher instead of reporting an unknown one. Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Every release is now built by a GitHub Actions workflow from the tagged source in this repository - never on a developer machine - and signed only after a manual approval; see the code signing policy in the README.
 
+### Fixed
+- A session abandoned in the middle of a tool call no longer claims to be working for the rest of the day. Its unanswered tool call looked exactly like one still executing, so the row stayed on "Working" for as long as the process lived - which for a VS Code session can be days. A pending call with nothing running behind it and a transcript that has stood still for five minutes now reads as "Waiting for you": by then the only two remaining explanations are an open permission dialog and a session someone walked away from, and both are yours to resolve. A tool that genuinely takes hours keeps reading as "Working" as long as its process is alive, and a silently thinking agent is untouched - it has no open call.
+- A session whose last activity was a local command - a `/compact`, or a `!` shell command - no longer stays on "Working" forever. Recent Claude Code versions record such a command as an ordinary user entry wrapping its captured output, which looked exactly like a prompt the agent had not answered yet; a session left after a `/compact` therefore claimed to be working for as long as it stayed open, in one case for days. Both recording formats are now understood. A slash command that briefs the agent still reads as "Working", because that one really is awaiting a reply.
+
 ## [0.6.0] - 2026-08-15
 
 ### Changed

@@ -287,6 +287,88 @@ test('pendingIsBlocking', () => {
     assert.equal(logic.pendingIsBlocking('Edit', 'auto'), false);
 });
 
+/* --- a pending tool that stopped going anywhere --- */
+
+const STALE = logic.STALLED_PENDING_SECONDS + 1;
+
+test('deriveStatus: a pending tool with no child and a long-still transcript stops reading as working', () => {
+    // A session abandoned mid-call: the tool_use is in the transcript, no
+    // tool_result ever arrived, nothing is executing, and nothing has been
+    // appended since. Either a permission dialog is open or the session was
+    // left - both put the ball in the user's court, so it must not claim to
+    // be working (which it did indefinitely, for as long as the process lived).
+    assert.equal(logic.deriveStatus(raw({
+        pending_tool: true, last_tool_name: 'Bash', permission_mode: null,
+        child_count: 0, last_entry_kind: 'assistant', age_seconds: STALE,
+    })), 'awaiting_permission');
+});
+
+test('deriveStatus: a freshly pending tool is still working', () => {
+    assert.equal(logic.deriveStatus(raw({
+        pending_tool: true, last_tool_name: 'Bash', permission_mode: 'auto',
+        child_count: 0, last_entry_kind: 'assistant', age_seconds: 5,
+    })), 'working');
+});
+
+test('deriveStatus: a long-running tool with a live child keeps working', () => {
+    // The whole point of the child gate: a build or test run that legitimately
+    // takes an hour is executing, however old the last transcript entry is.
+    assert.equal(logic.deriveStatus(raw({
+        pending_tool: true, last_tool_name: 'Bash', permission_mode: 'auto',
+        child_count: 1, last_entry_kind: 'assistant', age_seconds: STALE * 20,
+    })), 'working');
+});
+
+test('deriveStatus: a missing or mistyped age never counts as stalled', () => {
+    // Infinity is the one that would otherwise pass the comparison: an age the
+    // snapshot could not supply is no evidence, so it must not raise attention.
+    for (const age of [undefined, null, NaN, 'soon', Infinity, -Infinity]) {
+        assert.equal(logic.deriveStatus(raw({
+            pending_tool: true, last_tool_name: 'Bash', permission_mode: 'auto',
+            child_count: 0, last_entry_kind: 'assistant', age_seconds: age,
+        })), 'working');
+    }
+});
+
+test('deriveStatus: an old session with no pending tool is untouched by the rule', () => {
+    // The rule is scoped to an unanswered tool_use. A finished turn stays idle
+    // and a thinking session stays working, however long they have been quiet -
+    // that is the structural principle the time input must not erode.
+    assert.equal(logic.deriveStatus(raw({
+        last_entry_kind: 'assistant', last_stop_reason: 'end_turn', age_seconds: STALE * 100,
+    })), 'awaiting_input');
+    assert.equal(logic.deriveStatus(raw({
+        last_entry_kind: 'tool_result', age_seconds: STALE * 100,
+    })), 'working');
+});
+
+test('pendingBlockReason names why the pending tool blocks', () => {
+    const at = (overrides) => logic.pendingBlockReason(raw(Object.assign({ pending_tool: true, child_count: 0 }, overrides)));
+
+    assert.equal(at({ last_tool_name: 'AskUserQuestion', permission_mode: 'auto' }), 'dialog');
+    assert.equal(at({ last_tool_name: 'Edit', permission_mode: 'default' }), 'prompt');
+    assert.equal(at({ last_tool_name: 'Bash', permission_mode: 'auto', age_seconds: STALE }), 'stalled');
+    assert.equal(at({ last_tool_name: 'Bash', permission_mode: 'auto', age_seconds: 5 }), null);
+    assert.equal(logic.pendingBlockReason(raw({ pending_tool: false, age_seconds: STALE })), null);
+});
+
+test('buildSession: a stalled call stays neutral, a real prompt still names itself', () => {
+    // A stalled call cannot say what it waits for, so it must not claim a
+    // permission is needed; a genuine prompt or dialog keeps its specific label.
+    const labels = {
+        status_awaiting_permission: 'Permission needed',
+        status_needs_you: 'Waiting for you',
+        status_question: 'Question for you',
+    };
+    const build = (overrides) => logic.buildSession(raw(Object.assign({
+        session_id: 's', pending_tool: true, child_count: 0, last_entry_kind: 'assistant',
+    }, overrides)), labels, {});
+
+    assert.equal(build({ last_tool_name: 'Bash', permission_mode: 'auto', age_seconds: STALE }).status_label, 'Waiting for you');
+    assert.equal(build({ last_tool_name: 'Edit', permission_mode: 'default', age_seconds: 5 }).status_label, 'Permission needed');
+    assert.equal(build({ last_tool_name: 'AskUserQuestion', permission_mode: 'auto', age_seconds: STALE }).status_label, 'Question for you');
+});
+
 test('attentionLabel', () => {
     const labels = {
         status_awaiting_permission: 'Permission needed',

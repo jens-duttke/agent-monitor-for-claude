@@ -496,21 +496,12 @@ function settleCall(thunk, onError) {
 // Full status for one raw record, combining the transcript-derived state with
 // the registry's busy/idle field and any background work.
 function deriveStatus(raw) {
-    const toolRunning = (raw.child_count || 0) > 0;
-    // A dialog tool (question / plan review) never spawns a child process, so a
-    // live child alongside a pending dialog is unrelated background work and must
-    // not demote the block - the dialog is waiting on you in every mode. Only a
-    // generic tool is gated by the child (a running child means it is executing,
-    // not prompting).
-    const pendingBlocking = Boolean(raw.pending_tool)
-        && (DIALOG_TOOLS.has(raw.last_tool_name) || (!toolRunning && pendingIsBlocking(raw.last_tool_name, raw.permission_mode)));
-
     let status = classify({
         alive: raw.alive,
         has_transcript: raw.has_transcript,
         last_stop_reason: raw.last_stop_reason,
         pending_tool: raw.pending_tool,
-        pending_blocking: pendingBlocking,
+        pending_blocking: pendingBlockReason(raw) !== null,
         has_activity: raw.has_activity,
         last_entry_kind: raw.last_entry_kind,
     });
@@ -525,7 +516,7 @@ function deriveStatus(raw) {
         const turnStopped = raw.last_entry_kind === 'user_interrupt' || raw.last_entry_kind === 'api_error';
         const subagentsRunning = turnStopped ? 0 : (raw.subagents_running || 0);
         const workflowRunning = !turnStopped && activeWorkflows(raw.workflows).length > 0;
-        const backgroundWork = subagentsRunning > 0 || toolRunning || workflowRunning;
+        const backgroundWork = subagentsRunning > 0 || childRunning(raw) || workflowRunning;
         status = refineWithBackgroundWork(status, backgroundWork);
     }
     return status;
@@ -537,6 +528,21 @@ const QUESTION_TOOLS = new Set(['AskUserQuestion']);
 const PLAN_TOOLS = new Set(['ExitPlanMode', 'EnterPlanMode']);
 const DIALOG_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode', 'EnterPlanMode']);
 const PROMPTING_MODES = new Set(['default']);
+
+// How long a pending tool_use may sit with no child process and no transcript
+// growth before it stops counting as a tool that is executing. This is the one
+// place elapsed time enters the status model, and it is deliberately narrow: it
+// applies only while a tool_use is unanswered, never to the thinking case the
+// structural rule exists for (a think has no open tool_use, so it is untouched).
+// Past this point the two remaining readings - an open permission dialog, or a
+// session abandoned mid-call - both put the ball in the user's court, so the row
+// stops claiming the agent is working. Wide enough to clear any ordinary
+// in-process call; the residual cost is a call that legitimately runs longer
+// with no child process to show for it (a slow MCP tool, whose server started
+// with the session and is therefore excluded from child_count), which reads as
+// blocked - traded deliberately for never stranding an abandoned session on
+// "working", where nothing is ever appended to clear it.
+const STALLED_PENDING_SECONDS = 300;
 
 const MODE_LABELS = {
     default: 'Manual',
@@ -551,6 +557,50 @@ function pendingIsBlocking(toolName, permissionMode) {
         return true;
     }
     return PROMPTING_MODES.has(permissionMode);
+}
+
+// Whether the session has a meaningful descendant process, i.e. a tool that
+// spawned one is executing right now. Read by both the pending-tool reasoning
+// and the background-work promotion, so the two can never drift apart.
+function childRunning(raw) {
+    return (raw.child_count || 0) > 0;
+}
+
+// Why a session's pending tool_use blocks the user, or null when it does not
+// block at all. The reason is what the caller needs, not just the boolean: only
+// a named dialog or a real permission prompt may be spelled out in the label -
+// a stalled call cannot say what it is waiting for, so it keeps the neutral one.
+function pendingBlockReason(raw) {
+    if (!raw.pending_tool) {
+        return null;
+    }
+    // A dialog tool (question / plan review) never spawns a child process, so a
+    // live child alongside a pending dialog is unrelated background work and must
+    // not demote the block - the dialog is waiting on you in every mode.
+    if (DIALOG_TOOLS.has(raw.last_tool_name)) {
+        return 'dialog';
+    }
+    // A running child means a generic tool is executing, never prompting.
+    if (childRunning(raw)) {
+        return null;
+    }
+    if (pendingIsBlocking(raw.last_tool_name, raw.permission_mode)) {
+        return 'prompt';
+    }
+    return pendingIsStalled(raw.age_seconds) ? 'stalled' : null;
+}
+
+// A pending tool_use whose transcript has stood still this long is not running.
+// The finite check is load-bearing in one direction: a missing or mistyped age
+// yields NaN, which fails the comparison on its own, but Infinity would pass it
+// and declare a session with no usable age stalled. An unusable age is no
+// evidence at all, so it degrades to the calmer reading - the session keeps
+// whatever the structural rule said - rather than raising attention on a
+// number the snapshot could not supply.
+function pendingIsStalled(ageSeconds) {
+    const age = Number(ageSeconds);
+
+    return Number.isFinite(age) && age >= STALLED_PENDING_SECONDS;
 }
 
 function modeLabel(permissionMode) {
@@ -1003,11 +1053,18 @@ function cliColumnRelevant(sessions) {
     return false;
 }
 
+// The pending tool the status label may name, or null when it may not.
+function namedPendingTool(raw) {
+    const reason = pendingBlockReason(raw);
+
+    return (reason === 'dialog' || reason === 'prompt') ? raw.last_tool_name : null;
+}
+
 // Turn one raw backend record into the display object the renderer consumes.
 // Everything here is derived; age is kept numeric so the UI can tick it live.
 function buildSession(raw, labels, prices) {
     const status = deriveStatus(raw);
-    const toolRunning = (raw.child_count || 0) > 0;
+    const toolRunning = childRunning(raw);
     const usage = raw.usage || {};
     const models = modelHistory(raw.model_timeline);
     const cliVersions = cliHistory(raw.cli_timeline);
@@ -1057,10 +1114,13 @@ function buildSession(raw, labels, prices) {
         short_name: raw.short_name,
         kind: raw.kind,
         status: status,
-        // Only name the tool when one is actually pending; last_tool_name lingers
-        // from a resolved tool, so the registry-`waiting` route (no pending tool)
-        // must fall through to the neutral label - matching the deriveStatus gate.
-        status_label: attentionLabel(status, raw.pending_tool ? raw.last_tool_name : null, labels, raw.usage_limited),
+        // Only name the tool when the block is one we can name. last_tool_name
+        // lingers from a resolved tool, so the registry-`waiting` route (no
+        // pending tool) must fall through to the neutral label - matching the
+        // deriveStatus gate. A stalled call falls through for the opposite
+        // reason: a tool is named, but nothing says it is waiting on a
+        // permission rather than simply abandoned, so it must not claim one.
+        status_label: attentionLabel(status, namedPendingTool(raw), labels, raw.usage_limited),
         needs_attention: needsAttention(status),
         model: formatModel(raw.model_id),
         model_switched: models.length > 1,
@@ -1254,6 +1314,9 @@ const AMC_LOGIC = {
     defaultFilterKeys,
     settleCall,
     pendingIsBlocking,
+    pendingBlockReason,
+    pendingIsStalled,
+    STALLED_PENDING_SECONDS,
     modeLabel,
     statusLabel,
     attentionLabel,

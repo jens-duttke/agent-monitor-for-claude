@@ -345,6 +345,22 @@ class ParseTest(TranscriptEnvTest):
         self.assertFalse(state.pending_tool)
         self.assertEqual(state.last_entry_kind, 'user_interrupt')
 
+    def test_local_command_output_is_a_kind_and_its_text_never_escapes(self) -> None:
+        # The captured output of a local command is read only far enough to match
+        # the fixed wrapper prefix. The command's actual output is conversation-
+        # adjacent content and must not reach the parsed state or the snapshot,
+        # exactly like the interrupt marker above.
+        self._write_transcript(_SESSION_ID, _CWD, [
+            json.dumps({
+                'type': 'user', 'timestamp': '2026-07-11T10:53:09Z',
+                'message': {'role': 'user', 'content': '<local-command-stdout>SECRET_STDOUT</local-command-stdout>'},
+            }),
+        ])
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual(state.last_entry_kind, 'local_command')
+        self.assertNotIn('SECRET_STDOUT', json.dumps(asdict(state)))
+
     def test_plain_trailing_user_text_is_not_an_interrupt(self) -> None:
         # A normal trailing user message (a fresh prompt the model is now
         # thinking about) stays user_text, so it still reads as working.
