@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Sessions running in VS Code now show their permission mode. The mode badge only ever appeared for a session that had been used in the terminal at least once, because only the terminal records a mode switch as its own entry - VS Code notes the mode on each turn instead, which was not read. A VS Code session therefore showed no mode at all, however often it was switched. Both recording formats are now understood, so the badge follows the actual mode and updates when it changes. This also affects the status: a session whose mode was unknown was assumed not to ask before acting, so a permission prompt in a VS Code session could read as "Working" instead of "Needs you".
+
 ### Added
 - The released `AgentMonitorForClaude.exe` is now code signed, so Windows can name its publisher instead of reporting an unknown one. Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Every release is now built by a GitHub Actions workflow from the tagged source in this repository - never on a developer machine - and signed only after a manual approval; see the code signing policy in the README.
 

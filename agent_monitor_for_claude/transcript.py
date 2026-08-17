@@ -92,7 +92,15 @@ _LOCAL_COMMAND_OUTPUT_MARKERS = ('<local-command-stdout>', '<local-command-stder
 _USAGE_MARKER = b'"usage"'
 _AI_TITLE_MARKER = b'ai-title'
 _CUSTOM_TITLE_MARKER = b'custom-title'
-_PERMISSION_MODE_MARKER = b'permission-mode'
+# Matches the field name, which both shapes of the permission mode carry (see
+# _absorb_line): the dedicated ``permission-mode`` entry writes it alongside its
+# type, and an ordinary entry carries it on its own.  Matching the type name
+# instead would see only the first shape.  The wider match admits prompt entries
+# (only those carry the field - never a tool result), so the initial full scan
+# parses a few hundred more lines, some of them large when a prompt embeds an
+# image; measured on a 53 MB transcript that is ~231 ms -> ~240 ms, once per
+# session.  The per-second poll is untouched: it parses only appended bytes.
+_PERMISSION_MODE_MARKER = b'permissionMode'
 _CWD_MARKER = b'"cwd"'
 _USER_MARKER = b'"user"'
 
@@ -794,6 +802,19 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
     if entry is None:
         return
 
+    # The permission mode is recorded in two shapes, and a session can write only
+    # one of them: the CLI logs a switch as its own ``permission-mode`` entry,
+    # while a VS Code session never writes that entry at all and instead stamps
+    # the mode in force onto each ordinary entry.  Both say the same thing about
+    # the same point in the file, so reading the field wherever it appears - last
+    # one wins - covers either shape without a per-entrypoint rule.  Sidechain
+    # turns are skipped like everywhere else: a subagent's entries do not report
+    # the main conversation's mode.
+    if entry.get('isSidechain') is not True:
+        permission_mode = entry.get('permissionMode')
+        if isinstance(permission_mode, str) and permission_mode:
+            state.permission_mode = permission_mode
+
     entry_type = entry.get('type')
 
     if entry_type == 'assistant':
@@ -852,11 +873,6 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
         value = entry.get('customTitle')
         if isinstance(value, str) and value:
             state.custom_title = value
-
-    elif entry_type == 'permission-mode':
-        value = entry.get('permissionMode')
-        if isinstance(value, str) and value:
-            state.permission_mode = value
 
     elif (entry_type == 'user' and state.first_prompt is None
             and entry.get('isSidechain') is not True and entry.get('isMeta') is not True):

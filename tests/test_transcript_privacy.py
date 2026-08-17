@@ -461,6 +461,63 @@ class ParseTest(TranscriptEnvTest):
 
         self.assertEqual(state.permission_mode, 'auto')
 
+    def test_permission_mode_from_entry_field(self) -> None:
+        # A VS Code session writes no 'permission-mode' entry at all; the mode in
+        # force is stamped onto each ordinary entry instead.
+        lines = [
+            json.dumps({'type': 'user', 'timestamp': '2026-07-11T10:00:00Z', 'permissionMode': 'acceptEdits',
+                        'message': {'content': [{'type': 'text', 'text': 'first'}]}}),
+            json.dumps({'type': 'assistant', 'timestamp': '2026-07-11T10:00:30Z',
+                        'message': {'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': 'x'}]}}),
+            json.dumps({'type': 'user', 'timestamp': '2026-07-11T10:01:00Z', 'permissionMode': 'auto',
+                        'message': {'content': [{'type': 'text', 'text': 'second'}]}}),
+        ]
+        self._write_transcript(_SESSION_ID, _CWD, lines)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual(state.permission_mode, 'auto')
+
+    def test_permission_mode_mixes_both_shapes(self) -> None:
+        # A session continued in the CLI writes both shapes; whichever comes last
+        # in the file is the current mode.
+        lines = [
+            json.dumps({'type': 'user', 'timestamp': '2026-07-11T10:00:00Z', 'permissionMode': 'default',
+                        'message': {'content': [{'type': 'text', 'text': 'prompt'}]}}),
+            json.dumps({'type': 'permission-mode', 'permissionMode': 'plan', 'sessionId': _SESSION_ID}),
+        ]
+        self._write_transcript(_SESSION_ID, _CWD, lines)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual(state.permission_mode, 'plan')
+
+    def test_permission_mode_ignores_sidechain_entries(self) -> None:
+        # A subagent turn does not report the main conversation's mode.
+        lines = [
+            json.dumps({'type': 'user', 'timestamp': '2026-07-11T10:00:00Z', 'permissionMode': 'auto',
+                        'message': {'content': [{'type': 'text', 'text': 'prompt'}]}}),
+            json.dumps({'type': 'assistant', 'timestamp': '2026-07-11T10:00:30Z', 'isSidechain': True,
+                        'permissionMode': 'default',
+                        'message': {'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': 'x'}]}}),
+        ]
+        self._write_transcript(_SESSION_ID, _CWD, lines)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual(state.permission_mode, 'auto')
+
+    def test_permission_mode_ignores_malformed_value(self) -> None:
+        lines = [
+            json.dumps({'type': 'user', 'timestamp': '2026-07-11T10:00:00Z', 'permissionMode': 'auto',
+                        'message': {'content': [{'type': 'text', 'text': 'prompt'}]}}),
+            json.dumps({'type': 'user', 'timestamp': '2026-07-11T10:01:00Z', 'permissionMode': 7,
+                        'message': {'content': [{'type': 'text', 'text': 'next'}]}}),
+            json.dumps({'type': 'user', 'timestamp': '2026-07-11T10:02:00Z', 'permissionMode': '',
+                        'message': {'content': [{'type': 'text', 'text': 'more'}]}}),
+        ]
+        self._write_transcript(_SESSION_ID, _CWD, lines)
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual(state.permission_mode, 'auto')
+
     def test_extracts_session_title(self) -> None:
         self._write_transcript(_SESSION_ID, _CWD, _transcript_lines())
         state = state_for(windows_root(), _SESSION_ID, _CWD)

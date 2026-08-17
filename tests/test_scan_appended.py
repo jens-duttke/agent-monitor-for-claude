@@ -153,6 +153,62 @@ class TimelineMemoizationTest(unittest.TestCase):
             self.assertEqual([entry['version'] for entry in second.cli_timeline], ['2.1.224'])
 
 
+class PermissionModeScanTest(unittest.TestCase):
+    """A mode switch arrives as appended bytes, not in the priming scan.
+
+    Only the first poll reads a whole transcript; every later one parses just
+    what was appended.  A switch therefore reaches the scan as one new entry
+    carrying the mode - the shape a VS Code session writes - so the incremental
+    path, not only the full one, has to keep the mode current.
+    """
+
+    def setUp(self) -> None:
+        transcript._scan_cache.clear()
+
+    def tearDown(self) -> None:
+        transcript._scan_cache.clear()
+
+    @staticmethod
+    def _prompt(timestamp: str, permission_mode: str) -> str:
+        return (
+            '{"type":"user","timestamp":"' + timestamp + '","permissionMode":"' + permission_mode + '",'
+            '"message":{"content":[{"type":"text","text":"go"}]}}\n'
+        )
+
+    def test_appended_prompt_updates_the_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session.jsonl'
+            path.write_text(self._prompt('2026-07-11T09:00:00Z', 'default'), encoding='utf-8')
+            self.assertEqual(transcript._scan_appended(path).permission_mode, 'default')
+
+            with path.open('a', encoding='utf-8') as handle:
+                handle.write(self._prompt('2026-07-11T09:30:00Z', 'auto'))
+
+            self.assertEqual(transcript._scan_appended(path).permission_mode, 'auto')
+
+    def test_partial_trailing_prompt_does_not_change_the_mode_until_complete(self) -> None:
+        # A prompt entry is written while the poll may be running, so the scan can
+        # see half of it. Until the line is complete it parses to nothing and the
+        # previous mode stands - and the half line must not be consumed, or the
+        # switch would be lost once the rest arrives.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session.jsonl'
+            path.write_text(self._prompt('2026-07-11T09:00:00Z', 'default'), encoding='utf-8')
+            transcript._scan_appended(path)
+
+            complete = self._prompt('2026-07-11T09:30:00Z', 'plan')
+            split = len(complete) // 2
+            with path.open('a', encoding='utf-8') as handle:
+                handle.write(complete[:split])
+
+            self.assertEqual(transcript._scan_appended(path).permission_mode, 'default')
+
+            with path.open('a', encoding='utf-8') as handle:
+                handle.write(complete[split:])
+
+            self.assertEqual(transcript._scan_appended(path).permission_mode, 'plan')
+
+
 class PruneScanCacheTest(unittest.TestCase):
     """The scan cache must be evictable and must not duplicate case-variant cwds."""
 
