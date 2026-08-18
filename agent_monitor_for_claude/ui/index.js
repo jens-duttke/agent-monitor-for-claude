@@ -70,6 +70,12 @@ const state = {
     searchWholeWord: false,
     searchRegex: false,
     searchError: false,
+    // Set only by the empty result's widening offer: the search then reads past
+    // the active chips (see logic.searchScopeRefs) and its extra hits are shown
+    // even though their chip is off. It belongs to the QUERY, not to the chips -
+    // toggling a chip keeps it, and any edit to the search text drops it, so the
+    // widened view is a one-off answer that disappears with the question.
+    searchIncludeHidden: false,
     sort: 'activity',
     sortDir: 'asc',
     priorityOrder: true,
@@ -149,6 +155,13 @@ const DEFAULT_LABELS = {
     search_whole_word: 'Match whole word',
     search_regex: 'Use regular expression',
     search_regex_invalid: 'Invalid regular expression',
+    search_no_match: 'The search text was not found in any session.',
+    search_scope_hint: 'Only the sessions currently shown were searched.',
+    search_widen_hidden: 'Also search hidden sessions',
+    search_widen_range: 'Search further back ({range})',
+    search_widened_note: 'Outside the active filters: {count}',
+    search_widened_reset: 'Reset',
+    search_widened_reset_tip: 'Drop the extra hits and search only what your filter chips show. Your search text stays.',
     last_activity: 'Last activity {age} ago',
     no_activity: 'No activity yet',
     tool_running: 'tool running',
@@ -350,6 +363,10 @@ const TOOLTIP_DELAY = 350;
 let tooltipEl = null;
 let tooltipTarget = null;
 let tooltipTimer = null;
+// Where the pointer was when it last entered a trigger. A render can replace the
+// trigger node under a motionless pointer, and this is what lets syncTooltip ask
+// "is an equivalent trigger still under the cursor" instead of just giving up.
+let tooltipPoint = { x: 0, y: 0 };
 
 function ensureTooltip() {
     if (!tooltipEl || !tooltipEl.isConnected) {
@@ -396,6 +413,10 @@ function hideTooltip() {
 function initTooltips() {
     ensureTooltip();
     document.addEventListener('pointerover', (event) => {
+        // Recorded before the early return below, so it keeps up as the pointer
+        // moves across a trigger's own children.
+        tooltipPoint = { x: event.clientX, y: event.clientY };
+
         const target = event.target.closest ? event.target.closest('[data-tip]') : null;
         if (!target || target === tooltipTarget) {
             return;
@@ -428,6 +449,41 @@ function initTooltips() {
     // A moved/scrolled target leaves a stale tooltip behind - drop it.
     document.addEventListener('scroll', hideTooltip, true);
     window.addEventListener('resize', hideTooltip);
+}
+
+// The tooltip is dismissed by the pointer leaving its target - so a target that
+// leaves the DOM instead dismisses nothing, and the popup stands over content it
+// no longer describes. Two ways that happens, both routine: a render drops the
+// target outright (the widened-search notice on reset), or replaces it with an
+// equivalent node (renderFilters rebuilds its whole chip row every render, after
+// which the later pointerout arrives on the NEW node, fails the `!== tooltipTarget`
+// check, and never fires at all - so that one used to stick indefinitely).
+// Reconciling the popup against a render is what syncOpenMenu and syncProcPanel
+// already do for the menu and the process panel; this is the same for the tooltip.
+function syncTooltip() {
+    if (!tooltipTarget || tooltipTarget.isConnected) {
+        return;
+    }
+
+    const under = document.elementFromPoint(tooltipPoint.x, tooltipPoint.y);
+    // The pointer is on the tooltip itself (it is clickable, so it can be
+    // hovered): the user is reading it, and its own leave handler owns it.
+    if (under && tooltipEl && tooltipEl.contains(under)) {
+        return;
+    }
+
+    // Replaced rather than gone: re-anchor instead of blinking the tooltip out
+    // from under someone who is still pointing at the very same control.
+    const replacement = under && under.closest ? under.closest('[data-tip]') : null;
+    if (replacement && replacement.dataset.tip === tooltipTarget.dataset.tip) {
+        tooltipTarget = replacement;
+        if (tooltipEl && tooltipEl.classList.contains('show')) {
+            positionTooltip(replacement);
+        }
+        return;
+    }
+
+    hideTooltip();
 }
 
 /* --- theme --- */
@@ -1584,9 +1640,12 @@ function visibleHistory() {
 
 // Switch how far back the history listing reaches. A narrower window is served
 // from the cache; only a wider one needs the backend again. Selecting a range
-// also switches the chip on: the range half is otherwise a dead end while the
-// chip is off - the user picks a window, and nothing appears.
-function setHistoryRange(key) {
+// from the chip's menu also switches the chip on: the range half is otherwise a
+// dead end while the chip is off - the user picks a window, and nothing appears.
+// The search's widening offer passes activateChip false: it asked to look
+// further back, not to list every past session, and switching the chip on would
+// leave those rows behind once the query is cleared.
+function setHistoryRange(key, activateChip = true) {
     const range = logic.historyRange(key);
     const needsFetch = !logic.historyRangeCovered(state.historyLoadedSeconds, range.seconds);
 
@@ -1596,7 +1655,7 @@ function setHistoryRange(key) {
     } catch (e) { /* storage unavailable */ }
 
     const wasActive = state.filters.has('history');
-    if (!wasActive) {
+    if (activateChip && !wasActive) {
         state.filters.add('history');
         persistFilters();
     }
@@ -1866,17 +1925,13 @@ function initSearch() {
 
     input.value = state.search;
 
-    input.addEventListener('input', () => {
-        state.search = input.value;
-        scheduleSearch();
-    });
+    input.addEventListener('input', () => setSearchQuery(input.value));
 
     input.addEventListener('keydown', (event) => {
         if (event.key === 'Escape' && input.value) {
             event.stopPropagation();
             input.value = '';
-            state.search = '';
-            scheduleSearch();
+            setSearchQuery('');
         }
     });
 
@@ -1962,6 +2017,16 @@ function updateSearchBox() {
     }
 }
 
+// The one place the query text changes. A widened scope answers exactly one
+// question, so every edit to the text - typing, clearing, the input's own clear
+// button - is a new question and puts the search back to the sessions in view.
+// The empty state then offers to widen again if the new query comes up empty.
+function setSearchQuery(value) {
+    state.search = value;
+    state.searchIncludeHidden = false;
+    scheduleSearch();
+}
+
 function scheduleSearch() {
     clearTimeout(state.searchTimer);
     state.searchTimer = setTimeout(runSearch, SEARCH_DEBOUNCE_MS);
@@ -1976,7 +2041,8 @@ function collectSearchRefs(includeHistory) {
         state.last ? state.last.sessions : [],
         visibleHistory(),
         state.filters,
-        includeHistory
+        includeHistory,
+        state.searchIncludeHidden
     );
 }
 
@@ -2106,6 +2172,65 @@ function rescanForNewMatches() {
     // Fire-and-forget; a bridge hiccup (sync or async) is contained - the next
     // change retries - and never reaches the global handler.
     logic.settleCall(() => bridge.start_search(query, refs, searchOptions(), seq));
+}
+
+// Take the empty result's offer to look wider. Deliberately one step per click:
+// each step costs more than the one before (the chips hide sessions already in
+// memory; a wider window means re-scanning `projects/`), and a user who finds
+// what they wanted after step one never pays for step two. The chips themselves
+// are never touched - clearing the query is what puts the view back.
+function widenSearch(step) {
+    if (step === 'hidden') {
+        state.searchIncludeHidden = true;
+
+        // The hidden set includes past sessions, and those are not fetched at all
+        // while the history chip is off. Load them first - afterHistoryLoaded
+        // starts the search once the complete widened scope is in hand, so the
+        // scan runs once rather than once now and again when the history lands.
+        if (state.history === null) {
+            ensureHistoryLoaded();
+            return;
+        }
+        runSearch();
+        return;
+    }
+
+    if (step !== 'range') {
+        return;
+    }
+
+    // Checked before the flag is set: with no wider window to move to there is
+    // nothing to widen, and flagging the scope anyway would leave the search
+    // reading past the chips with no re-scan and no notice to undo it. The offer
+    // is never rendered in that state, but `step` comes from a DOM attribute.
+    const next = logic.nextHistoryRange(state.historyRange);
+    if (!next) {
+        return;
+    }
+    state.searchIncludeHidden = true;
+    // Re-fetches and re-runs the search through afterHistoryLoaded; the chip
+    // stays as it is (see setHistoryRange).
+    setHistoryRange(next, false);
+}
+
+// Give the widening back without giving up the query - the only other way out
+// is editing the search text, which destroys the very query that led here.
+// Deliberately no re-scan: the extra rows disappear because `widened` is false
+// again, and re-reading files that are already answered for would cost a
+// progress bar and a full row flicker for what is an undo. The match set is
+// pruned to the chip-defined scope instead, so it keeps describing exactly what
+// was searched - otherwise the chip counts would go on reporting matches in
+// sessions that are no longer being read.
+function resetWidenedSearch() {
+    state.searchIncludeHidden = false;
+
+    if (state.searchMatches instanceof Set) {
+        const inScope = new Set(collectSearchRefs(true).map((ref) => ref.session_id));
+        state.searchMatches = new Set([...state.searchMatches].filter((id) => inScope.has(id)));
+    }
+    if (state.last) {
+        render(state.last);
+    }
 }
 
 // One streaming update from the backend: {seq, processed, total, ids, done, error}.
@@ -2693,6 +2818,20 @@ async function scratchpadPath(sessionId, cwd, origin) {
 // One delegated handler for the whole content area, so reconciled rows never
 // need per-node listeners rebound on every render.
 function onContentClick(event) {
+    // The two controls of the widened search - the offer to look wider, and the
+    // way back out of it. Checked first: both sit in slots of their own, where
+    // no row or panel handler below could claim the click.
+    const widen = event.target.closest('.empty-action');
+    if (widen) {
+        widenSearch(widen.dataset.widen);
+        return;
+    }
+
+    if (event.target.closest('.notice-reset')) {
+        resetWidenedSearch();
+        return;
+    }
+
     const menuBtn = event.target.closest('.row-menu-btn');
     if (menuBtn) {
         event.stopPropagation();
@@ -2741,21 +2880,27 @@ function onContentClick(event) {
     }
 }
 
-function emptyBlock(message, hint) {
-    return '<div class="empty">' + esc(message || '')
-        + (hint ? '<span class="empty-hint">' + esc(hint) + '</span>' : '')
-        + '</div>';
-}
-
-// A bounded history window silently limits what can be found: only the past
-// sessions inside it are listed, and only those are handed to the content
-// search. So when nothing is left to show, name the window - otherwise an empty
-// result reads as "that session does not exist" when it is merely out of view.
-function historyWindowHint() {
-    if (!state.filters.has('history') || logic.historyRangeSeconds(state.historyRange) == null) {
-        return '';
-    }
-    return state.labels.history_range_hint || '';
+// The one place UI state is mapped onto the plain data the pure markup builders
+// in logic.js take. Keeping the mapping here (and the wording rules there) is
+// what lets the empty-state and notice wording be tested without a DOM.
+function emptyStateView(searchActive, quietMessage, loadingNote) {
+    return {
+        // The same four keys logic.searchWideningStep reads, so the widening
+        // decision is made once, inside the markup, from this one object.
+        allKeys: FILTER_KEYS,
+        activeKeys: state.filters,
+        includeHidden: state.searchIncludeHidden,
+        historyRange: state.historyRange,
+        searchActive,
+        // A pending debounce counts as running: until that scan starts, the rows
+        // are still filtered by the PREVIOUS query's matches, so an empty view
+        // says nothing about the one being typed - and "not found", complete
+        // with an offer to widen, would flicker in and out between keystrokes.
+        searching: Boolean(state.searchLoading || state.searchTimer),
+        quietMessage,
+        loadingNote,
+        labels: state.labels,
+    };
 }
 
 // Column variable -> cell selector. After each render the widest cell per
@@ -2790,6 +2935,7 @@ function alignColumns() {
 
 // Stable shell created once; reconciliation happens inside the panels slot.
 let heroSlot = null;
+let noticeSlot = null;
 let panelsSlot = null;
 let stateSlot = null;
 
@@ -2798,8 +2944,10 @@ function ensureShell() {
         return;
     }
     const content = document.getElementById('content');
-    content.innerHTML = '<div class="hero-slot"></div><div class="panels-slot"></div><div class="state-slot"></div>';
+    content.innerHTML = '<div class="hero-slot"></div><div class="notice-slot"></div>'
+        + '<div class="panels-slot"></div><div class="state-slot"></div>';
     heroSlot = content.querySelector('.hero-slot');
+    noticeSlot = content.querySelector('.notice-slot');
     panelsSlot = content.querySelector('.panels-slot');
     stateSlot = content.querySelector('.state-slot');
 }
@@ -2810,6 +2958,24 @@ function render(snapshot) {
 
     const prices = logic.resolvePrices(state.pricing, todayIso());
 
+    // The content search narrows the whole view at once - the chip counts, the
+    // blocked banner, and the rows all reflect only sessions the backend matched
+    // (matches stream in, so the set grows live). A query below the minimum, or
+    // no query, matches everything. It combines with the status chips: a session
+    // shows only when both its chip is on and its content matched.
+    const searchActive = state.search.trim().length >= SEARCH_MIN_CHARS;
+    const matchesSearch = (session) => logic.sessionMatchesSearch(session.session_id, searchActive, state.searchMatches);
+
+    // A widened search read past the active chips, so its extra hits must also
+    // be allowed past the row filter - finding a session and then still hiding
+    // it would make the whole offer pointless. Only a settled hit counts: while
+    // a scan runs, matchesSearch passes everything, which would briefly show
+    // every hidden session.
+    const widened = searchActive && state.searchIncludeHidden;
+    const isWidenedHit = (session) => widened
+        && state.searchMatches instanceof Set
+        && state.searchMatches.has(session.session_id);
+
     // The past sessions the current window covers, minus any that came back to
     // life. Resolved whether or not the chip is on: with it off they stay out of
     // the view but still feed the chip's count (below).
@@ -2818,11 +2984,13 @@ function render(snapshot) {
         ? logic.pruneResumedHistory(visibleHistory(), snapshot.sessions || [])
         : [];
 
-    // Fold past sessions in only while the history chip is active and they have
-    // finished loading; groupProjects then places them under their own project
-    // panels, marked (and, in updateRow, styled) as history rows.
+    // Fold past sessions in while the history chip is active - or while a
+    // widened search reaches into them, in which case only the ones it matched
+    // pass the row filter below. groupProjects then places them under their own
+    // project panels, marked (and, in updateRow, styled) as history rows.
+    const foldHistory = (historyActive || widened) && Array.isArray(state.history);
     let rawSessions = snapshot.sessions || [];
-    if (historyActive && Array.isArray(state.history)) {
+    if (foldHistory) {
         rawSessions = rawSessions.concat(historyRows);
         // A previously-live session that just left the snapshot (ended and its
         // registry record pruned) was excluded from the one-shot history fetch;
@@ -2833,17 +3001,9 @@ function render(snapshot) {
             ensureHistoryLoaded();
         }
     }
-    const loadingNote = (historyActive && state.historyLoading) ? state.labels.history_loading : '';
+    const loadingNote = ((historyActive || widened) && state.historyLoading) ? state.labels.history_loading : '';
 
     const projects = logic.groupProjects(rawSessions, state.labels, prices);
-
-    // The content search narrows the whole view at once - the chip counts, the
-    // blocked banner, and the rows all reflect only sessions the backend matched
-    // (matches stream in, so the set grows live). A query below the minimum, or
-    // no query, matches everything. It combines with the status chips: a session
-    // shows only when both its chip is on and its content matched.
-    const searchActive = state.search.trim().length >= SEARCH_MIN_CHARS;
-    const matchesSearch = (session) => logic.sessionMatchesSearch(session.session_id, searchActive, state.searchMatches);
 
     const counts = countByFilter(projects, matchesSearch);
     // Every status chip counts its sessions whether or not it is on, because its
@@ -2853,30 +3013,33 @@ function render(snapshot) {
     // the moment it is clicked and possibly rewrapping the whole chip row. The
     // search narrows this count exactly as it narrows every other chip's: with
     // the chip off its sessions are outside the search scope, so an active query
-    // matches none of them.
-    if (!historyActive) {
+    // matches none of them - which stays true through a widening, because that
+    // folds them in (so the count comes from countByFilter above instead) and
+    // resetWidenedSearch prunes their ids back out of the match set.
+    if (!foldHistory) {
         counts.history = historyRows.filter(matchesSearch).length;
     }
     renderFilters(counts);
 
     ensureShell();
 
-    // "No sessions at all" (or the history scan still loading) shows the empty
-    // state; a query that merely matched nothing falls through to the per-filter
-    // empty note below, so the search count is not mistaken for an idle machine.
+    // Nothing grouped at all - no panels to render, so the whole view is one
+    // message. Which message it is, emptyStateMarkup decides from the same
+    // reasons the settled case below uses.
     const hasAnySession = projects.some((project) => project.sessions.length > 0);
     if (!hasAnySession) {
         heroSlot.replaceChildren();
+        noticeSlot.replaceChildren();
         panelsSlot.replaceChildren();
         // Nothing at all in view is where the window matters most: with the
         // chip on, it means nothing fell inside it - not that there is nothing
-        // to find. The hint is dropped while the scan is still running, when
-        // the emptiness says nothing yet.
-        stateSlot.innerHTML = loadingNote
-            ? emptyBlock(loadingNote)
-            : emptyBlock(state.labels.empty_state, historyWindowHint());
+        // to find. An active query still gets the search wording and its
+        // widening offer here: "no agents at all" is not the answer to "where is
+        // that text", and this is the very case where it was a past session.
+        stateSlot.innerHTML = logic.emptyStateMarkup(emptyStateView(searchActive, state.labels.empty_state, loadingNote));
         syncOpenMenu();
         syncProcPanel();
+        syncTooltip();
         return;
     }
 
@@ -2897,9 +3060,20 @@ function render(snapshot) {
         heroSlot.replaceChildren();
     }
 
+    // Counted while selecting, not measured afterwards: it is exactly the rows
+    // that are on screen against their chip, which is what the notice reports.
+    let outsideFilters = 0;
     const visible = [];
     for (const project of projects) {
-        const sessions = sortSessions(project.sessions.filter((session) => matchesFilter(session) && matchesSearch(session)));
+        const sessions = [];
+        for (const session of project.sessions) {
+            if (matchesFilter(session) && matchesSearch(session)) {
+                sessions.push(session);
+            } else if (isWidenedHit(session)) {
+                sessions.push(session);
+                outsideFilters += 1;
+            }
+        }
         if (sessions.length === 0) {
             continue;
         }
@@ -2907,23 +3081,29 @@ function render(snapshot) {
         // (key) and its origin fields must survive this projection - losing
         // `key` once gave every panel the reconcile key "undefined", which is
         // the duplicate-key case where unmatched panels accumulate forever.
-        visible.push({ ...project, sessions });
+        visible.push({ ...project, sessions: sortSessions(sessions) });
     }
+
+    // With rows on screen that the chips say are hidden, the list no longer
+    // follows the chips - so say so above it, or the extra rows read as a filter
+    // that quietly stopped working. The reset sits in the same box: the box is
+    // where someone asks "why are these here", so the way back belongs next to
+    // the answer - and without it, undoing the widening means retyping the very
+    // query that led to it.
+    noticeSlot.innerHTML = outsideFilters > 0 ? logic.widenedNoticeMarkup(outsideFilters, state.labels) : '';
 
     const ordered = logic.sortProjects(visible, state.priorityOrder);
 
     reconcile(panelsSlot, ordered, (project) => project.key, createPanel, updatePanel);
     // A live scan shows its own note (results keep filling in beneath it); then
-    // the history-loading note; then, once settled, the empty-filter note when
-    // nothing matched.
-    if (searchActive && state.searchLoading) {
-        stateSlot.innerHTML = emptyBlock(state.labels.search_loading);
-    } else if (loadingNote) {
-        stateSlot.innerHTML = emptyBlock(loadingNote);
+    // the history-loading note; then, once settled and with nothing left in
+    // view, whichever empty message fits the reason.
+    if (visible.length > 0 && !(searchActive && state.searchLoading) && !loadingNote) {
+        stateSlot.innerHTML = '';
     } else {
-        stateSlot.innerHTML = visible.length === 0
-            ? emptyBlock(state.labels.empty_filter || state.labels.empty_state, historyWindowHint())
-            : '';
+        stateSlot.innerHTML = logic.emptyStateMarkup(
+            emptyStateView(searchActive, state.labels.empty_filter || state.labels.empty_state, loadingNote)
+        );
     }
 
     // The CLI-version column is only worth its width when more than one version
@@ -2936,6 +3116,7 @@ function render(snapshot) {
     alignColumns();
     syncOpenMenu();
     syncProcPanel();
+    syncTooltip();
 }
 
 function renderLoading() {

@@ -738,6 +738,41 @@ body {
     }
 }
 
+/* A widened search shows hits the active chips would hide, so the list stops
+   matching the chips. This strip above the panels says how many rows are there
+   against their filter - the one cue that the chips are not broken. */
+.search-notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 9px 14px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-control);
+    background: var(--chip-bg);
+    color: var(--fg-dim);
+    font-size: 13px;
+
+    /* The way back out of the widening, at the far end of the line that
+       explains it. A quiet text button, not a second call to action: the rows
+       it would remove are what the user just asked for. */
+    .notice-reset {
+        flex: none;
+        border: 0;
+        padding: 0;
+        background: none;
+        color: var(--accent);
+        font: inherit;
+        cursor: pointer;
+
+        &:hover,
+        &:focus-visible {
+            text-decoration: underline;
+        }
+    }
+}
+
 .empty {
     margin-top: 14vh;
     text-align: center;
@@ -754,6 +789,28 @@ body {
         font-size: 13px;
         line-height: 1.5;
         opacity: 0.75;
+    }
+
+    /* The offer to widen an empty search (hidden sessions, then a longer time
+       window). A real button rather than a link: it costs a scan, so it should
+       look like something you press. */
+    .empty-action {
+        display: inline-block;
+        margin-top: 16px;
+        padding: 7px 14px;
+        border: 1px solid var(--border-strong);
+        border-radius: var(--radius-control);
+        background: var(--control-bg);
+        color: var(--fg);
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+
+        &:hover,
+        &:focus-visible {
+            border-color: var(--accent);
+            color: var(--fg-heading);
+        }
     }
 
     /* A surfaced UI error (see reportUiError): left-aligned, monospace, wrapping

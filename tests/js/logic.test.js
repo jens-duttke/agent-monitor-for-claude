@@ -496,6 +496,194 @@ test('searchScopeRefs: history is only in scope for the full search with its chi
     assert.deepEqual(chipOff, ['a']);
 });
 
+test('searchScopeRefs: the widened scope reaches past the chips, history included', () => {
+    // What the empty result's "search hidden sessions too" offer switches on:
+    // the chip filter comes off the SCOPE, so a hidden live session and the past
+    // sessions are read even though neither chip is on.
+    const shown = { session_id: 'a', cwd: 'd:\\a', alive: true, has_transcript: true, has_activity: true, last_entry_kind: 'user_text' };
+    const hidden = { session_id: 'b', cwd: 'd:\\b', alive: true, has_transcript: true, has_activity: true, last_entry_kind: 'end_turn' };
+    const history = [{ session_id: 'h', cwd: 'd:\\h', alive: false, is_history: true }];
+    const filters = new Set(['working']);
+
+    const narrow = logic.searchScopeRefs([shown, hidden], history, filters, true, false).map((r) => r.session_id);
+    assert.deepEqual(narrow, ['a']);
+
+    const wide = logic.searchScopeRefs([shown, hidden], history, filters, true, true).map((r) => r.session_id).sort();
+    assert.deepEqual(wide, ['a', 'b', 'h']);
+
+    // The delta rescan keeps its own rule on top: dead sessions cannot gain a
+    // match, so widening must not start re-reading them every poll.
+    const delta = logic.searchScopeRefs([shown, hidden], history, filters, false, true).map((r) => r.session_id).sort();
+    assert.deepEqual(delta, ['a', 'b']);
+});
+
+test('nextHistoryRange: steps one window wider, and stops at the widest', () => {
+    assert.equal(logic.nextHistoryRange('1h'), '24h');
+    assert.equal(logic.nextHistoryRange('24h'), '7d');
+    assert.equal(logic.nextHistoryRange('30d'), 'all');
+    assert.equal(logic.nextHistoryRange('all'), null);
+    // An unknown key resolves through historyRange's default (24h) first.
+    assert.equal(logic.nextHistoryRange('nonsense'), '7d');
+});
+
+test('searchWideningStep: offers the cheap step first, then the costly one, then nothing', () => {
+    const all = new Set(['needs', 'idle', 'working', 'history']);
+
+    // A chip is off: the sessions already in memory are the cheapest thing to add.
+    assert.equal(logic.searchWideningStep({
+        allKeys: all, activeKeys: new Set(['needs', 'idle', 'working']), includeHidden: false, historyRange: '24h',
+    }), 'hidden');
+
+    // Every chip on, but the window still bounds how far back the scan reaches.
+    assert.equal(logic.searchWideningStep({
+        allKeys: all, activeKeys: all, includeHidden: false, historyRange: '24h',
+    }), 'range');
+
+    // Already widened past the chips: the window is what is left to give.
+    assert.equal(logic.searchWideningStep({
+        allKeys: all, activeKeys: new Set(['working']), includeHidden: true, historyRange: '7d',
+    }), 'range');
+
+    // Everything covered - offering a widening that widens nothing would send
+    // the user in a circle, so there is no button at all.
+    assert.equal(logic.searchWideningStep({
+        allKeys: all, activeKeys: all, includeHidden: false, historyRange: 'all',
+    }), null);
+    assert.equal(logic.searchWideningStep({
+        allKeys: all, activeKeys: new Set(['working']), includeHidden: true, historyRange: 'all',
+    }), null);
+
+    // Arrays work like sets, and a missing options object never throws.
+    assert.equal(logic.searchWideningStep({
+        allKeys: ['a', 'b'], activeKeys: ['a'], includeHidden: false, historyRange: 'all',
+    }), 'hidden');
+    assert.equal(logic.searchWideningStep(), 'range');
+});
+
+/* --- empty-state wording and the widened-search notice --- */
+
+/* These build markup rather than derive data, but they belong here for the same
+   reason everything else does: they are pure. index.js maps UI state onto one
+   plain `view` object (emptyStateView) and the wording rules live here, so which
+   reason wins for an empty view, whether a widening is offered, and what the
+   notice says are all checkable without a DOM. */
+
+const EMPTY_LABELS = {
+    empty_state: 'No active Claude Code agents.',
+    empty_filter: 'No agents match this filter.',
+    search_loading: 'Searching sessions…',
+    search_no_match: 'The search text was not found in any session.',
+    search_scope_hint: 'Only the sessions currently shown were searched.',
+    search_widen_hidden: 'Also search hidden sessions',
+    search_widen_range: 'Search further back ({range})',
+    search_widened_note: 'Outside the active filters: {count}',
+    search_widened_reset: 'Reset',
+    search_widened_reset_tip: 'Drop the extra hits.',
+    history_range_hint: 'Only older sessions inside the selected window are listed and searched.',
+    history_range_7d: '7 days',
+};
+
+const ALL_CHIPS = ['needs', 'errored', 'interrupted', 'new', 'idle', 'working', 'background', 'quiet', 'history'];
+
+// The shipped default has every chip on except History, which is exactly why a
+// first empty search can always offer the "hidden" step.
+function emptyView(overrides) {
+    return Object.assign({
+        allKeys: ALL_CHIPS,
+        activeKeys: ALL_CHIPS.filter((key) => key !== 'history'),
+        includeHidden: false,
+        historyRange: '24h',
+        searchActive: false,
+        searching: false,
+        quietMessage: EMPTY_LABELS.empty_filter,
+        loadingNote: '',
+        labels: EMPTY_LABELS,
+    }, overrides || {});
+}
+
+test('emptyStateMarkup: an unsettled view never claims "not found"', () => {
+    // A running scan, and a pending typing debounce (where the rows are still
+    // filtered by the PREVIOUS query's matches), both say nothing yet about the
+    // query being typed - so neither may show the not-found wording.
+    assert.match(logic.emptyStateMarkup(emptyView({ searchActive: true, searching: true })), /Searching sessions/);
+
+    const loading = logic.emptyStateMarkup(emptyView({ searchActive: true, loadingNote: 'Loading older sessions…' }));
+    assert.match(loading, /Loading older sessions/);
+    assert.doesNotMatch(loading, /was not found/);
+
+    // Missing input degrades to an empty block instead of throwing.
+    assert.equal(logic.emptyStateMarkup(), '<div class="empty"></div>');
+});
+
+test('emptyStateMarkup: a search that matched nothing never blames the filter chips', () => {
+    const searched = logic.emptyStateMarkup(emptyView({ searchActive: true }));
+    assert.match(searched, /The search text was not found in any session\./);
+    assert.doesNotMatch(searched, /No agents match this filter\./);
+
+    // Without a query the filter wording is the right one, and nothing is offered.
+    const filtered = logic.emptyStateMarkup(emptyView());
+    assert.match(filtered, /No agents match this filter\./);
+    assert.doesNotMatch(filtered, /empty-action/);
+});
+
+test('emptyStateMarkup: the widening offer escalates one step per click', () => {
+    // Step 1 - the History chip is off by default, so sessions are hidden, and
+    // those are the cheapest thing to add (they are already in memory).
+    const hidden = logic.emptyStateMarkup(emptyView({ searchActive: true }));
+    assert.match(hidden, /data-widen="hidden"/);
+    assert.match(hidden, /Also search hidden sessions/);
+    assert.match(hidden, /Only the sessions currently shown were searched\./);
+
+    // Step 2 - nothing is hidden any more, but the window still bounds the scan.
+    // The button names the window it would move to, so the cost of the click is
+    // on the button rather than behind it.
+    const range = logic.emptyStateMarkup(emptyView({ searchActive: true, includeHidden: true }));
+    assert.match(range, /data-widen="range"/);
+    assert.match(range, /Search further back \(7 days\)/);
+
+    // Every chip on but the window still bounded: also the range step, never a
+    // "hidden" offer that would widen nothing.
+    assert.match(
+        logic.emptyStateMarkup(emptyView({ searchActive: true, activeKeys: ALL_CHIPS })),
+        /data-widen="range"/
+    );
+
+    // Nothing left to reach - offering a widening that widens nothing would send
+    // the user in a circle, so the plain sentence is the whole answer.
+    const done = logic.emptyStateMarkup(emptyView({ searchActive: true, includeHidden: true, historyRange: 'all' }));
+    assert.match(done, /The search text was not found/);
+    assert.doesNotMatch(done, /empty-action/);
+    assert.doesNotMatch(done, /empty-hint/);
+});
+
+test('emptyStateMarkup: the history window is named only while it bounds the view', () => {
+    // Chip on and a bounded window: an empty view can mean "outside the window"
+    // rather than "gone", so the window has to be named.
+    assert.match(logic.emptyStateMarkup(emptyView({ activeKeys: ALL_CHIPS })), /empty-hint/);
+
+    // Chip off, or no bound at all - the window explains nothing either way.
+    assert.doesNotMatch(logic.emptyStateMarkup(emptyView()), /empty-hint/);
+    assert.doesNotMatch(logic.emptyStateMarkup(emptyView({ activeKeys: ALL_CHIPS, historyRange: 'all' })), /empty-hint/);
+});
+
+test('widenedNoticeMarkup: a plural-invariant count, plus the way back', () => {
+    const one = logic.widenedNoticeMarkup(1, EMPTY_LABELS);
+    // The label carries no counted noun and the number comes last, so a single
+    // hit cannot read "1 hits" - the same idiom as every other counted label.
+    assert.match(one, /Outside the active filters: 1/);
+    assert.match(logic.widenedNoticeMarkup(2, EMPTY_LABELS), /Outside the active filters: 2/);
+
+    // The reset is the only way out of the widening that keeps the query, so the
+    // notice must carry it - and explain itself through the app's own tooltip,
+    // never the native title attribute.
+    assert.match(one, /class="notice-reset"/);
+    assert.match(one, />Reset<\/button>/);
+    assert.match(one, /data-tip="Drop the extra hits\."/);
+
+    // Missing labels must still produce the box, not throw.
+    assert.match(logic.widenedNoticeMarkup(1), /class="search-notice"/);
+});
+
 test('searchScopeRefs: refs carry the session origin, defaulting to windows', () => {
     // The scoped refs are what the origin-aware start_search bridge call
     // receives, so each ref needs to know which root to search.
@@ -1317,4 +1505,36 @@ test('ansiToHtml: empty and missing input yield empty markup', () => {
     assert.equal(logic.ansiToHtml(''), '');
     assert.equal(logic.ansiToHtml(null), '');
     assert.equal(logic.ansiToHtml(undefined), '');
+});
+
+test('empty-state and notice markup keep hostile label text out of the markup', () => {
+    // Labels come from locale files on disk and the count is interpolated like
+    // any other value, so both go through esc/attr - numbers included.
+    const labels = {
+        search_no_match: '<img src=x onerror=alert(1)>',
+        search_scope_hint: '</div><script>x</script>',
+        search_widen_hidden: '"><script>x</script>',
+        search_widened_note: '{count}',
+        search_widened_reset: '"><b>go</b>',
+        search_widened_reset_tip: '" onmouseover="alert(1)',
+    };
+
+    const empty = logic.emptyStateMarkup({
+        allKeys: ['a'], activeKeys: [], includeHidden: false, historyRange: '24h',
+        searchActive: true, labels,
+    });
+    assert.ok(!empty.includes('<img'));
+    assert.ok(!empty.includes('<script'));
+    assert.ok(!empty.includes('</div><'));
+    // The one attribute the block writes is still the one it meant to write.
+    assert.match(empty, /data-widen="hidden"/);
+
+    // A hostile count is escaped too - the rule is every interpolated value, so
+    // no call site has to decide whether a "number" needs escaping.
+    const notice = logic.widenedNoticeMarkup('<b>1</b>', labels);
+    assert.ok(!notice.includes('<b>'));
+    assert.match(notice, /&lt;b&gt;1&lt;\/b&gt;/);
+    // The tooltip's quote is escaped, so it cannot close the attribute it sits in.
+    assert.ok(!notice.includes('" onmouseover='));
+    assert.match(notice, /data-tip="&quot; onmouseover=&quot;alert\(1\)"/);
 });

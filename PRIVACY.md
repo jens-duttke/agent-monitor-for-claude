@@ -195,8 +195,14 @@ feature that matches conversation text against something you supplied, so it is 
   when your session data changes, so a match that has only just appeared shows up without you
   retyping. With the search box empty, no transcript is ever opened for it.
 - It reads only the transcripts of the sessions currently shown by your filter chips. A session
-  hidden by a filter is never opened. On a self-triggered refresh the scope is narrower still: only
-  live sessions that have not already matched.
+  hidden by a filter is not opened - the single exception being the widening in the next point, which
+  only a click of yours can start. On a self-triggered refresh the scope is narrower still: only live
+  sessions that have not already matched.
+- That scope widens only when you click to widen it. When a search finds nothing, the empty result
+  offers one button - first to include the sessions your chips hide, then to reach further back in
+  time - and each click adds exactly that one step for exactly that one query. Nothing widens on its
+  own. It narrows back the moment you edit the search text, or immediately when you use the "Reset"
+  control on the line above the results.
 - It answers one question per file - does this transcript contain the string - and abandons the file
   at the first hit.
 - It reports back **only the ids of the matching sessions**. Not a line, not a snippet, not a

@@ -338,7 +338,13 @@ function historyNeedsRefresh(previousSessions, currentSessions) {
 // growing, so it can never gain a new match - re-reading it every poll is waste
 // the delta path must avoid. The initial full search (includeHistory true) still
 // reads a dead-but-visible session once.
-function searchScopeRefs(sessions, history, filterKeys, includeHistory) {
+//
+// `includeHidden` is the one deliberate exception, set only after the user
+// clicks the empty result's widening offer: the chip filter is lifted off the
+// SCOPE (never off the chips themselves), so the scan reaches the sessions the
+// chips hide - past ones included, whether or not their chip is on. Everything
+// else still holds, the delta rescan's dead-session skip above included.
+function searchScopeRefs(sessions, history, filterKeys, includeHistory, includeHidden) {
     const refs = [];
     const seen = new Set();
     const filters = filterKeys instanceof Set ? filterKeys : new Set(filterKeys || []);
@@ -351,9 +357,11 @@ function searchScopeRefs(sessions, history, filterKeys, includeHistory) {
             if (!includeHistory && !raw.alive) {
                 continue;
             }
-            const bucket = isHistory ? 'history' : filterBucket(deriveStatus(raw));
-            if (!bucket || !filters.has(bucket)) {
-                continue;
+            if (!includeHidden) {
+                const bucket = isHistory ? 'history' : filterBucket(deriveStatus(raw));
+                if (!bucket || !filters.has(bucket)) {
+                    continue;
+                }
             }
             const key = raw.session_id + '|' + raw.cwd;
             if (!seen.has(key)) {
@@ -364,7 +372,7 @@ function searchScopeRefs(sessions, history, filterKeys, includeHistory) {
     };
 
     add(sessions, false);
-    if (includeHistory && filters.has('history') && Array.isArray(history)) {
+    if (includeHistory && (includeHidden || filters.has('history')) && Array.isArray(history)) {
         add(history, true);
     }
     return refs;
@@ -433,6 +441,158 @@ function filterHistoryByAge(records, maxAgeSeconds) {
         return records;
     }
     return records.filter((record) => record && (record.age_seconds == null || record.age_seconds <= maxAgeSeconds));
+}
+
+// Which widening step an empty search result can still offer, cheapest first.
+// 'hidden' pulls in the sessions the chips hide (past ones inside the current
+// window included); 'range' reaches one window further back. null means the
+// query already covered everything reachable, so "not found" is the whole
+// answer and no button should appear - an offer that cannot widen anything
+// would just send the user in a circle.
+function searchWideningStep(options) {
+    const opts = options || {};
+    const all = asKeySet(opts.allKeys);
+    const active = asKeySet(opts.activeKeys);
+
+    if (!opts.includeHidden) {
+        for (const key of all) {
+            if (!active.has(key)) {
+                return 'hidden';
+            }
+        }
+    }
+    if (nextHistoryRange(opts.historyRange) != null) {
+        return 'range';
+    }
+    return null;
+}
+
+// The next wider window after `key`, or null once the widest ("all") is
+// selected. Drives the second widening step, and answers "is there anything
+// further back at all" without duplicating the range order.
+function nextHistoryRange(key) {
+    const current = historyRange(key).key;
+    const index = HISTORY_RANGES.findIndex((range) => range.key === current);
+    if (index < 0 || index + 1 >= HISTORY_RANGES.length) {
+        return null;
+    }
+    return HISTORY_RANGES[index + 1].key;
+}
+
+// A filter-key collection as a Set, whether the caller had one or an array.
+function asKeySet(keys) {
+    return keys instanceof Set ? keys : new Set(keys || []);
+}
+
+/* --- empty-state and widened-search markup --- */
+
+// The empty content area and the widened-search notice are built here rather
+// than in index.js because they are pure string work: they take a plain `view`
+// object (assembled once by index.js `emptyStateView`) instead of reading UI
+// state, which puts the wording rules - which message wins, whether a widening
+// is offered, what the hint names - under tests/js/logic.test.js. The view uses
+// the same key names searchWideningStep takes, so the decision is made in one
+// place and never restated here.
+
+function emptyBlock(message, hint) {
+    return '<div class="empty">' + esc(message || '')
+        + (hint ? '<span class="empty-hint">' + esc(hint) + '</span>' : '')
+        + '</div>';
+}
+
+// The message for an empty content area, in the order the reasons matter. A
+// running scan or history load speaks first - the emptiness says nothing yet.
+// Then a query that genuinely matched nothing, which gets its own message (and
+// its widening offer) rather than the filter one: blaming the chips for a search
+// result is what sent people looking in the wrong place. Only then the plain
+// "nothing here", in the caller's wording.
+function emptyStateMarkup(view) {
+    const options = view || {};
+    const labels = options.labels || {};
+
+    if (options.searchActive && options.searching) {
+        return emptyBlock(labels.search_loading);
+    }
+    if (options.loadingNote) {
+        return emptyBlock(options.loadingNote);
+    }
+    if (options.searchActive) {
+        return searchEmptyMarkup(options);
+    }
+    return emptyBlock(options.quietMessage, historyWindowHint(options));
+}
+
+// Nothing matched. Below the message, a hint names whatever silently limited the
+// scan, and - when there is anything left to reach - one button widens it by a
+// single step. With everything already covered neither appears: the plain
+// sentence is then the complete and honest answer.
+function searchEmptyMarkup(view) {
+    const labels = view.labels || {};
+    const step = searchWideningStep(view);
+    const hint = wideningHint(step, view);
+    const action = wideningLabel(step, view);
+
+    return '<div class="empty">' + esc(labels.search_no_match || labels.empty_filter || '')
+        + (hint ? '<span class="empty-hint">' + esc(hint) + '</span>' : '')
+        + (action ? '<button type="button" class="empty-action"' + attr('data-widen', step) + '>' + esc(action) + '</button>' : '')
+        + '</div>';
+}
+
+// What limited the scan, phrased as the reason the button exists. Takes the whole
+// view, like its sibling wideningLabel, so the two read alike at the call site.
+function wideningHint(step, view) {
+    const labels = view.labels || {};
+    if (step === 'hidden') {
+        return labels.search_scope_hint || '';
+    }
+    if (step === 'range') {
+        return labels.history_range_hint || '';
+    }
+    return '';
+}
+
+// The offer itself. The range step names the window it would move to, so the
+// click's cost is on the button rather than behind it.
+function wideningLabel(step, view) {
+    const labels = view.labels || {};
+    if (step === 'hidden') {
+        return labels.search_widen_hidden || '';
+    }
+    if (step !== 'range') {
+        return '';
+    }
+    const next = nextHistoryRange(view.historyRange);
+    if (!next) {
+        return '';
+    }
+    const rangeLabel = labels[historyRange(next).label] || next;
+    return (labels.search_widen_range || '').replace('{range}', rangeLabel);
+}
+
+// A bounded history window silently limits what can be found: only the past
+// sessions inside it are listed, and only those are handed to the content
+// search. So when nothing is left to show, name the window - otherwise an empty
+// result reads as "that session does not exist" when it is merely out of view.
+function historyWindowHint(view) {
+    const options = view || {};
+    if (!asKeySet(options.activeKeys).has('history') || historyRangeSeconds(options.historyRange) == null) {
+        return '';
+    }
+    return (options.labels || {}).history_range_hint || '';
+}
+
+// How many rows are on screen against their chip, and the way back out of the
+// widening. The count is plural-invariant by construction - the label carries no
+// counted noun and the number comes last - like every other counted label here.
+function widenedNoticeMarkup(count, labels) {
+    const strings = labels || {};
+    const tip = strings.search_widened_reset_tip;
+
+    return '<div class="search-notice">'
+        + '<span>' + esc((strings.search_widened_note || '').replace('{count}', count)) + '</span>'
+        + '<button type="button" class="notice-reset"' + (tip ? attr('data-tip', tip) : '') + '>'
+        + esc(strings.search_widened_reset || '') + '</button>'
+        + '</div>';
 }
 
 // The filter chips active on a first launch (or any fallback): every chip
@@ -1308,8 +1468,12 @@ const AMC_LOGIC = {
     historyRange,
     historyRangeSeconds,
     historyRangeCovered,
+    nextHistoryRange,
     filterHistoryByAge,
     searchScopeRefs,
+    searchWideningStep,
+    emptyStateMarkup,
+    widenedNoticeMarkup,
     sessionMatchesSearch,
     defaultFilterKeys,
     settleCall,
