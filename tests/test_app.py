@@ -79,6 +79,83 @@ class ScratchpadPathTest(unittest.TestCase):
         self.assertEqual(api.scratchpad_path('not-a-uuid', self._CWD), '')
 
 
+class TranscriptPathTest(unittest.TestCase):
+    """The row menu's transcript entry: a path only for a real file inside ``projects/``."""
+
+    _SESSION = '6e22e66f-6298-442a-9762-2a5b65052389'
+    _CWD = r'D:\WebDev\vs-edge264'
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self._root = SessionRoot('windows', None, Path(tmp.name) / '.claude', None, Path(tmp.name) / 'temp')
+        self._transcript = self._root.config_dir / 'projects' / cwd_to_slug(self._CWD) / f'{self._SESSION}.jsonl'
+
+        # Pin origin resolution to this fixture's root, so the real roots.session_roots()
+        # - and with it real WSL discovery - is never reached from a test.
+        patcher = mock.patch.object(app, 'root_for_origin', side_effect=lambda origin: self._root if origin == 'windows' else None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_returns_path_only_when_file_exists(self) -> None:
+        api = _MonitorApi()
+        self.assertEqual(api.transcript_path(self._SESSION, self._CWD), '')
+
+        self._transcript.parent.mkdir(parents=True)
+        self._transcript.write_text('{}\n', encoding='utf-8')
+        self.assertEqual(api.transcript_path(self._SESSION, self._CWD), str(self._transcript.resolve()))
+
+    def test_never_opens_the_transcript(self) -> None:
+        # The menu entry needs the path, not the content: this stays a stat, never
+        # a read - the transcript is conversation content, which no bridge method
+        # outside the encapsulated search may touch.
+        self._transcript.parent.mkdir(parents=True)
+        self._transcript.write_text('{}\n', encoding='utf-8')
+
+        api = _MonitorApi()
+        with mock.patch('builtins.open', side_effect=AssertionError('the transcript must not be opened')):
+            self.assertEqual(api.transcript_path(self._SESSION, self._CWD), str(self._transcript.resolve()))
+
+    def test_a_directory_of_that_name_is_not_a_transcript(self) -> None:
+        # The session's subagent folder is a sibling of the same stem; only the
+        # file may ever be handed out.
+        self._transcript.mkdir(parents=True)
+        api = _MonitorApi()
+        self.assertEqual(api.transcript_path(self._SESSION, self._CWD), '')
+
+    def test_rejects_bad_input(self) -> None:
+        api = _MonitorApi()
+        self.assertEqual(api.transcript_path('', self._CWD), '')
+        self.assertEqual(api.transcript_path(self._SESSION, ''), '')
+        self.assertEqual(api.transcript_path(None, None), '')
+        # A non-UUID session id (e.g. a traversal attempt) is refused before it is
+        # ever built into a path.
+        self.assertEqual(api.transcript_path('..\\..\\Windows', self._CWD), '')
+        self.assertEqual(api.transcript_path('not-a-uuid', self._CWD), '')
+
+    def test_traversal_in_cwd_stays_inside_projects(self) -> None:
+        # cwd_to_slug leaves no separator to traverse with, so a cwd made of them
+        # is just an oddly named project folder - and one that holds no transcript.
+        api = _MonitorApi()
+        self.assertEqual(api.transcript_path(self._SESSION, '..\\..'), '')
+
+    def test_a_path_outside_projects_is_refused(self) -> None:
+        # The confinement check is the backstop behind the path builder: a real
+        # file that resolves outside projects/ is refused however it got there.
+        outside = self._root.config_dir / f'{self._SESSION}.jsonl'
+        outside.parent.mkdir(parents=True, exist_ok=True)
+        outside.write_text('{}\n', encoding='utf-8')
+
+        api = _MonitorApi()
+        with mock.patch.object(app, '_transcript_path', return_value=outside):
+            self.assertEqual(api.transcript_path(self._SESSION, self._CWD), '')
+
+    def test_unknown_origin_is_refused(self) -> None:
+        api = _MonitorApi()
+        self.assertEqual(api.transcript_path(self._SESSION, self._CWD, origin='gone:X'), '')
+        self.assertEqual(api.transcript_path(self._SESSION, self._CWD, origin=123), '')
+
+
 class RunSearchFailureTest(unittest.TestCase):
     """An unexpected backend failure must not read as a successful empty search."""
 

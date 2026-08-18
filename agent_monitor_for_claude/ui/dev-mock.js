@@ -357,12 +357,23 @@ window.__MOCK_TASK_OUTPUT__ = {
     ].join('\n'),
 };
 
-// Sessions whose row menu should offer "Open scratchpad" - a non-empty path is
-// all the check needs (opening it is a no-op without a bridge).
+// Sessions whose row menu should offer "Show scratchpad in Explorer" - a
+// non-empty path is all the check needs (showing it is a no-op without a bridge).
 window.__MOCK_SCRATCHPADS__ = {
     h2b: 'D:\\Projects\\helios-renderer\\.scratch',
     h3c: 'D:\\Projects\\helios-renderer\\.scratch',
     c2j: 'D:\\Projects\\cipher-vault\\.scratch',
+};
+
+// Same for "Show transcript in Explorer": the sessions that already wrote a
+// transcript. A couple of rows deliberately have one without a scratchpad, so
+// the preview shows the menu in both shapes.
+window.__MOCK_TRANSCRIPTS__ = {
+    h2b: 'C:\\Users\\dev\\.claude\\projects\\D--Projects-helios-renderer\\h2b.jsonl',
+    h3c: 'C:\\Users\\dev\\.claude\\projects\\D--Projects-helios-renderer\\h3c.jsonl',
+    a1d: 'C:\\Users\\dev\\.claude\\projects\\D--Projects-aurora-realtime\\a1d.jsonl',
+    c2j: 'C:\\Users\\dev\\.claude\\projects\\D--Projects-cipher-vault\\c2j.jsonl',
+    'aaaaaaaa-1111-2222-3333-444444444444': 'C:\\Users\\dev\\.claude\\projects\\D--Projects-helios-renderer\\aaaaaaaa-1111-2222-3333-444444444444.jsonl',
 };
 
 // Past, non-live sessions - the on-demand history listing (get_history). All are

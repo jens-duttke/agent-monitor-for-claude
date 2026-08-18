@@ -223,8 +223,9 @@ const DEFAULT_LABELS = {
     row_menu: 'More actions',
     copy_session_id: 'Copy session ID',
     copied: 'Copied to clipboard',
-    open_in_explorer: 'Open in Explorer',
-    open_scratchpad: 'Open scratchpad',
+    show_in_explorer: 'Show in Explorer',
+    show_transcript: 'Show transcript in Explorer',
+    show_scratchpad: 'Show scratchpad in Explorer',
     filter_history: 'Older',
     filter_history_tip: 'Older sessions that are no longer running and have left the overview (loaded on demand)',
     history_loading: 'Loading older sessions…',
@@ -2505,7 +2506,7 @@ function updateRow(row, session, projectName) {
     row.dataset.title = session.title || '';
     // buildSession always resolves an origin ('windows' by default), so every
     // row - live or history - carries it: focusSession and the row menu's
-    // scratchpad/delete actions all need it to route their bridge call.
+    // transcript/scratchpad/delete actions all need it to route their bridge call.
     row.dataset.origin = session.origin || 'windows';
     // A history session has no live process, so it is not a focus target (no
     // data-pid); the click-to-focus handler keys on .row[data-pid].
@@ -2620,7 +2621,7 @@ function updatePanel(section, project) {
     // clicking elsewhere in the header still toggles the panel.
     const pathOpen = section.querySelector('.path-open');
     pathOpen.textContent = project.cwd;
-    pathOpen.dataset.tip = state.labels.open_in_explorer || 'Open in Explorer';
+    pathOpen.dataset.tip = state.labels.show_in_explorer || 'Show in Explorer';
 
     // Names the distro when the panel belongs to a WSL root, so two panels
     // with the same path text stay tellable apart at a glance.
@@ -2751,6 +2752,19 @@ function openPath(cwd, origin) {
     }
 }
 
+// Show one file in Explorer, selected in its folder. The file is never opened -
+// the backend hands it to the shell's select-in-folder call, nothing else.
+function revealPath(path, origin) {
+    if (!path) {
+        return;
+    }
+    const bridge = apiBridge();
+    if (bridge && typeof bridge.reveal_path === 'function') {
+        // Fire-and-forget: a Win32-side rejection must not wipe the content area.
+        logic.settleCall(() => bridge.reveal_path(path, origin || 'windows'));
+    }
+}
+
 function focusSession(el) {
     const bridge = apiBridge();
     if (bridge && typeof bridge.focus_session === 'function') {
@@ -2766,9 +2780,9 @@ function focusSession(el) {
     }
 }
 
-// Build and open a row's action menu. The scratchpad entry is added only when
-// that session actually has a scratchpad directory - checked on demand here (a
-// quick bridge stat), never on the per-second poll.
+// Build and open a row's action menu. The transcript and scratchpad entries are
+// added only when that session actually has those files - checked on demand here
+// (two quick bridge stats, run together), never on the per-second poll.
 async function openRowMenu(menuBtn) {
     const sessionId = menuBtn.dataset.session || '';
     const cwd = menuBtn.dataset.cwd || '';
@@ -2776,7 +2790,10 @@ async function openRowMenu(menuBtn) {
     const rowEl = menuBtn.closest('.row');
     const menuRowKey = rowEl ? rowEl.dataset.key : '';
 
-    const scratchpad = await scratchpadPath(sessionId, cwd, origin);
+    const [transcript, scratchpad] = await Promise.all([
+        transcriptPath(sessionId, cwd, origin),
+        scratchpadPath(sessionId, cwd, origin),
+    ]);
 
     // The row could have been reconciled away while the check was in flight.
     if (!menuBtn.isConnected) {
@@ -2784,8 +2801,11 @@ async function openRowMenu(menuBtn) {
     }
 
     const items = [{ key: 'copy-id', label: state.labels.copy_session_id }];
+    if (transcript) {
+        items.push({ key: 'transcript', label: state.labels.show_transcript });
+    }
     if (scratchpad) {
-        items.push({ key: 'scratchpad', label: state.labels.open_scratchpad });
+        items.push({ key: 'scratchpad', label: state.labels.show_scratchpad });
     }
     if (menuBtn.dataset.history === '1') {
         items.push({ key: 'delete', label: state.labels.delete_session, danger: true });
@@ -2794,6 +2814,8 @@ async function openRowMenu(menuBtn) {
     openMenu(menuBtn, items, (key) => {
         if (key === 'copy-id') {
             copyToClipboard(sessionId);
+        } else if (key === 'transcript') {
+            revealPath(transcript, origin);
         } else if (key === 'scratchpad') {
             openPath(scratchpad, origin);
         } else if (key === 'delete') {
@@ -2820,6 +2842,21 @@ async function scratchpadPath(sessionId, cwd, origin) {
         }
     }
     const mock = window.__MOCK_SCRATCHPADS__;
+    return (mock && mock[sessionId]) ? mock[sessionId] : '';
+}
+
+// Return the session's transcript file when it exists, else '' (no entry) - a
+// session that has not been prompted yet has no transcript on disk.
+async function transcriptPath(sessionId, cwd, origin) {
+    const bridge = apiBridge();
+    if (bridge && typeof bridge.transcript_path === 'function') {
+        try {
+            return (await bridge.transcript_path(sessionId, cwd, origin || 'windows')) || '';
+        } catch (e) {
+            return '';
+        }
+    }
+    const mock = window.__MOCK_TRANSCRIPTS__;
     return (mock && mock[sessionId]) ? mock[sessionId] : '';
 }
 

@@ -24,7 +24,8 @@ from . import __version__
 from .clipboard import copy_text as _copy_text
 from .history import list_history
 from .i18n import T
-from .paths import config_dir, scratchpad_dir, windows_root, wsl_path_to_windows
+from .paths import config_dir, projects_dir, scratchpad_dir, windows_root, wsl_path_to_windows
+from .paths import transcript_path as _transcript_path
 from .pricing import load_pricing
 from .process_probe import process_stats
 from .roots import root_for_origin
@@ -37,7 +38,7 @@ from .tasks import list_tasks
 from .tasks import read_task_output as _read_task_output
 from .verbose import print_runtime_diagnostics
 from .window_background import apply_native_background, window_background_color
-from .window_focus import focus_session_window, focus_terminal_window, open_directory, open_vscode_session
+from .window_focus import focus_session_window, focus_terminal_window, open_directory, open_vscode_session, reveal_in_explorer
 from .wsl import wsl_process_stats
 
 __all__ = ['run']
@@ -377,11 +378,36 @@ class _MonitorApi:
 
         return open_directory(wsl_path_to_windows(root, path))
 
+    def reveal_path(self, path: object, origin: object = 'windows') -> bool:
+        """Show a session file in Windows Explorer, selected in its folder (user-initiated).
+
+        The file counterpart of ``open_path``, driving the row menu's "show
+        transcript in Explorer" action.  The file is shown, never opened:
+        ``window_focus.reveal_in_explorer`` raises an Explorer window with the item
+        selected and refuses anything that is not an existing file, so no program
+        is ever launched for it.  The path the UI hands over comes from
+        ``transcript_path``, which is where the ``projects/`` confinement lives.
+        ``origin`` resolves to the session's root and translates a POSIX path a WSL
+        session reported into its Windows-readable UNC form, exactly as
+        ``open_path`` does.
+        """
+        if not isinstance(path, str) or not path:
+            return False
+
+        if not isinstance(origin, str):
+            return False
+
+        root = root_for_origin(origin)
+        if root is None:
+            return False
+
+        return reveal_in_explorer(wsl_path_to_windows(root, path))
+
     def scratchpad_path(self, session_id: object, cwd: object, origin: object = 'windows') -> str:
         """Return the session's scratchpad directory if it exists, else ''.
 
         Checked on demand when the row menu opens (so no per-poll cost), so the
-        UI can offer an "open scratchpad" entry only when there is one.  The
+        UI can offer a "show scratchpad in Explorer" entry only when there is one.  The
         returned path is validated again by ``open_path`` before the shell sees
         it.  ``origin`` resolves to the session's root; for a WSL root the
         directory is already a Windows-readable UNC path (built from that
@@ -402,6 +428,38 @@ class _MonitorApi:
         try:
             return str(directory) if directory.is_dir() else ''
         except OSError:
+            return ''
+
+    def transcript_path(self, session_id: object, cwd: object, origin: object = 'windows') -> str:
+        """Return the session's transcript file if it exists, else ''.
+
+        Checked on demand when the row menu opens (so no per-poll cost), so the UI
+        can offer a "show transcript in Explorer" entry only for a session that has
+        a transcript - a freshly opened one has none yet.  Only the path is
+        returned; the file is never read here.  The path is confined to the root's
+        ``projects/`` tree (resolved and checked with ``relative_to``, the same
+        guard the search and deletion surfaces use) and the session id must be a
+        UUID, so no crafted id or cwd can point the entry outside that tree.  What
+        is handed back is the resolved path itself, so the string the UI later
+        passes to ``reveal_path`` is exactly the one that passed the check.  An
+        origin naming no currently available root refuses with ''.
+        """
+        if not isinstance(session_id, str) or not _SESSION_UUID.match(session_id) or not isinstance(cwd, str) or not cwd:
+            return ''
+
+        if not isinstance(origin, str):
+            return ''
+
+        root = root_for_origin(origin)
+        if root is None:
+            return ''
+
+        try:
+            transcript = _transcript_path(root, session_id, cwd).resolve()
+            transcript.relative_to(projects_dir(root).resolve())
+
+            return str(transcript) if transcript.is_file() else ''
+        except (OSError, ValueError):
             return ''
 
     def focus_session(self, pid: object, project_name: object = '', session_id: object = '', vscode_deeplink: object = False,

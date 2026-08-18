@@ -375,9 +375,13 @@ something you did:
   Communication](#network-communication)). The link is only built when the version reads as a plain
   release number - three groups of digits separated by dots - so the address can never hold anything
   but digits and dots, whatever a transcript claims its version is.
-- **Opening a folder.** Opening a session's project folder or its scratchpad in Windows Explorer. The
-  path is verified to be an existing directory before the shell sees it, so nothing else can be
-  launched through it.
+- **Opening a folder, or showing a file in one.** Opening a session's project folder or its scratchpad
+  in Windows Explorer, and showing a session's transcript file selected in its folder. A folder path is
+  verified to be an existing directory, a file path to be an existing file, before the shell sees it, so
+  nothing else can be launched through it. A file is only ever *shown*: the shell is asked to raise an
+  Explorer window with the item selected, never to open the file, so no program is started for it and
+  its content is not handed to anything. That is the same kind of shell call as opening a folder: the
+  application hands Windows a path and lets it decide what opens, and starts no program of its own.
 - **Copying a session id.** The row menu's copy action places the session id on your clipboard. It is
   the only thing ever copied there, and only when you ask for it. Like any clipboard write it replaces
   what was there before.

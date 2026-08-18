@@ -25,6 +25,11 @@ fallback above, skipping the pid-based search entirely.
 Side effects are limited to Win32 window enumeration and activation, and run
 only on an explicit user click.  Window titles are compared in memory to pick
 the right window - never stored, logged, or displayed.
+
+Alongside activation this module holds the user-initiated launch surfaces: the
+VS Code deep link, opening a directory in Explorer, and showing a file selected
+in its folder.  Each validates its target first - a UUID, a real directory, a
+real file - so nothing else can ever be handed to the shell.
 """
 from __future__ import annotations
 
@@ -35,7 +40,10 @@ import re
 
 from .process_probe import TERMINAL_WINDOW_OWNERS, ancestry, process_names
 
-__all__ = ['focus_session_window', 'focus_terminal_window', 'open_directory', 'open_vscode_session', 'vscode_session_url']
+__all__ = [
+    'focus_session_window', 'focus_terminal_window', 'open_directory', 'open_vscode_session',
+    'reveal_in_explorer', 'vscode_session_url',
+]
 
 # Official deep link of the Claude Code VS Code extension (since v2.1.72):
 # focuses the tab of an already-open session in the focused VS Code window.
@@ -46,10 +54,33 @@ _VSCODE_SESSION_URL = 'vscode://anthropic.claude-code/open?session={session_id}'
 _SESSION_ID_PATTERN = re.compile(r'\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z')
 
 _user32 = ctypes.windll.user32
+_shell32 = ctypes.windll.shell32
+_ole32 = ctypes.windll.ole32
 
 _SW_RESTORE = 9
 _VK_MENU = 0x12
 _KEYEVENTF_KEYUP = 0x0002
+
+# COM has to be live on the calling thread for the shell's select-in-folder
+# call; every js_api call arrives on its own worker thread, where it is not.
+# CoInitializeEx reports S_OK for a fresh apartment and S_FALSE when this
+# thread already had one - only those two are undone again afterwards.
+_COINIT_APARTMENTTHREADED = 0x2
+_S_OK = 0
+_S_FALSE = 1
+
+# A shell id list is a pointer and must be declared as one: read back as the
+# default C int, it would be truncated to 32 bits on a 64-bit build.
+_shell32.ILCreateFromPathW.argtypes = [ctypes.wintypes.LPCWSTR]
+_shell32.ILCreateFromPathW.restype = ctypes.c_void_p
+_shell32.ILFree.argtypes = [ctypes.c_void_p]
+_shell32.ILFree.restype = None
+_shell32.SHOpenFolderAndSelectItems.argtypes = [ctypes.c_void_p, ctypes.wintypes.UINT, ctypes.POINTER(ctypes.c_void_p), ctypes.wintypes.DWORD]
+_shell32.SHOpenFolderAndSelectItems.restype = ctypes.c_long
+_ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.wintypes.DWORD]
+_ole32.CoInitializeEx.restype = ctypes.c_long
+_ole32.CoUninitialize.argtypes = []
+_ole32.CoUninitialize.restype = None
 
 # Ancestors that own windows for the whole desktop, never for one session.
 _IGNORED_ANCESTOR_NAMES = frozenset({'explorer.exe'})
@@ -174,6 +205,32 @@ def open_directory(path: str) -> bool:
     return True
 
 
+def reveal_in_explorer(path: str) -> bool:
+    """Show an existing file in Windows Explorer, selected in its folder (user-initiated).
+
+    The file is only ever *shown*, never opened: ``SHOpenFolderAndSelectItems``
+    raises an Explorer window on the containing folder with the item selected, so
+    no program is launched for the file and its content is never handed to
+    another application.  Only a real file reaches that call - the path is
+    validated with ``os.path.isfile`` first, so a stale path, a directory, or
+    anything carrying a URI scheme is a no-op.  When the shell call fails (an id
+    list the namespace cannot build, for instance), the containing folder is
+    opened instead: the same window, minus the selection.
+
+    Returns
+    -------
+    bool
+        True if an Explorer window was raised on the file or its folder.
+    """
+    if not path or not os.path.isfile(path):
+        return False
+
+    if _select_in_explorer(path):
+        return True
+
+    return open_directory(os.path.dirname(path))
+
+
 def select_window(windows: list[tuple[int, int, str]], candidate_pids: list[int], project_name: str) -> int | None:
     """Pick the best window for a session (pure decision logic).
 
@@ -235,6 +292,43 @@ def select_terminal_window(windows: list[tuple[int, int, str]], owner_names: dic
             return hwnd
 
     return None
+
+
+def _select_in_explorer(path: str) -> bool:
+    """Raise an Explorer window on *path*'s folder with *path* selected.
+
+    Wraps the shell's ``SHOpenFolderAndSelectItems``, which takes shell id lists
+    rather than path strings: one for the folder, one for the item inside it.
+    COM is initialized for the calling thread and released again only when this
+    call is what initialized it.  Every failure along the way - an id list the
+    namespace cannot build, a refusing shell - is reported as False, leaving the
+    caller to fall back on the plain folder.
+    """
+    folder = None
+    item = None
+    com_ready = False
+
+    try:
+        com_ready = _ole32.CoInitializeEx(None, _COINIT_APARTMENTTHREADED) in (_S_OK, _S_FALSE)
+
+        folder = _shell32.ILCreateFromPathW(os.path.dirname(path))
+        item = _shell32.ILCreateFromPathW(path)
+        if not folder or not item:
+            return False
+
+        items = (ctypes.c_void_p * 1)(item)
+
+        # SUCCEEDED(hr): any non-negative HRESULT means the window was raised.
+        return _shell32.SHOpenFolderAndSelectItems(folder, 1, items, 0) >= 0
+    except OSError:
+        return False
+    finally:
+        if folder:
+            _shell32.ILFree(folder)
+        if item:
+            _shell32.ILFree(item)
+        if com_ready:
+            _ole32.CoUninitialize()
 
 
 def _enum_windows() -> list[tuple[int, int, str]]:

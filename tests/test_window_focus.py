@@ -10,7 +10,9 @@ from unittest import mock
 from agent_monitor_for_claude import window_focus
 from agent_monitor_for_claude.app import _MonitorApi
 from agent_monitor_for_claude.paths import SessionRoot, windows_root
-from agent_monitor_for_claude.window_focus import focus_terminal_window, open_directory, select_terminal_window, select_window, vscode_session_url
+from agent_monitor_for_claude.window_focus import (
+    focus_terminal_window, open_directory, reveal_in_explorer, select_terminal_window, select_window, vscode_session_url,
+)
 
 # (hwnd, pid, title)
 _WINDOWS = [
@@ -124,6 +126,51 @@ class OpenDirectoryTest(unittest.TestCase):
                 self.assertFalse(open_directory(tmp))
 
 
+class RevealInExplorerTest(unittest.TestCase):
+    """Only an existing file may ever reach the shell's select-in-folder call."""
+
+    def setUp(self) -> None:
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self._file = os.path.join(self._dir.name, 'session.jsonl')
+        with open(self._file, 'w', encoding='utf-8') as handle:
+            handle.write('{}\n')
+
+    def test_shows_existing_file_selected(self) -> None:
+        with mock.patch.object(window_focus, '_select_in_explorer', return_value=True) as select, \
+             mock.patch.object(window_focus, 'open_directory') as opener:
+            self.assertTrue(reveal_in_explorer(self._file))
+
+        select.assert_called_once_with(self._file)
+        # The file is selected in its folder, never opened - no fallback needed.
+        opener.assert_not_called()
+
+    def test_falls_back_to_containing_folder(self) -> None:
+        with mock.patch.object(window_focus, '_select_in_explorer', return_value=False), \
+             mock.patch.object(window_focus, 'open_directory', return_value=True) as opener:
+            self.assertTrue(reveal_in_explorer(self._file))
+
+        opener.assert_called_once_with(self._dir.name)
+
+    def test_rejects_empty_and_missing_path(self) -> None:
+        missing = os.path.join(self._dir.name, 'gone.jsonl')
+        with mock.patch.object(window_focus, '_select_in_explorer') as select, \
+             mock.patch.object(window_focus, 'open_directory') as opener:
+            self.assertFalse(reveal_in_explorer(''))
+            self.assertFalse(reveal_in_explorer(missing))
+
+        select.assert_not_called()
+        opener.assert_not_called()
+
+    def test_rejects_a_directory(self) -> None:
+        # This surface is for a file; a directory belongs to open_directory, which
+        # validates it in its own right.
+        with mock.patch.object(window_focus, '_select_in_explorer') as select:
+            self.assertFalse(reveal_in_explorer(self._dir.name))
+
+        select.assert_not_called()
+
+
 class OpenPathBridgeTest(unittest.TestCase):
     """The JS bridge must reject junk and only forward real strings on to the shell."""
 
@@ -179,6 +226,45 @@ class OpenPathOriginTest(unittest.TestCase):
             self.assertFalse(api.open_path('D:\\Projects\\aurora-realtime', origin=123))
 
         opener.assert_not_called()
+
+
+class RevealPathBridgeTest(unittest.TestCase):
+    """``reveal_path`` is ``open_path`` for a file: junk is refused, a WSL path translated first."""
+
+    def test_rejects_non_string_and_empty(self) -> None:
+        api = _MonitorApi()
+        with mock.patch('agent_monitor_for_claude.app.reveal_in_explorer') as reveal:
+            self.assertFalse(api.reveal_path(123))
+            self.assertFalse(api.reveal_path(None))
+            self.assertFalse(api.reveal_path(True))
+            self.assertFalse(api.reveal_path(''))
+            reveal.assert_not_called()
+
+    def test_forwards_valid_path(self) -> None:
+        api = _MonitorApi()
+        with mock.patch('agent_monitor_for_claude.app.root_for_origin', return_value=windows_root()), \
+             mock.patch('agent_monitor_for_claude.app.reveal_in_explorer', return_value=True) as reveal:
+            self.assertTrue(api.reveal_path('D:\\Projects\\aurora-realtime\\a1d.jsonl'))
+
+        reveal.assert_called_once_with('D:\\Projects\\aurora-realtime\\a1d.jsonl')
+
+    def test_wsl_origin_translates_to_unc_path(self) -> None:
+        wsl_root = SessionRoot(origin='wsl:U', label='U', config_dir=Path('cfg'), proc_dir=Path('proc'), temp_dir=Path('tmp'))
+        api = _MonitorApi()
+        with mock.patch('agent_monitor_for_claude.app.root_for_origin', return_value=wsl_root), \
+             mock.patch('agent_monitor_for_claude.app.reveal_in_explorer', return_value=True) as reveal:
+            self.assertTrue(api.reveal_path('/home/dev/.claude/projects/-home-dev-proj/a1d.jsonl', origin='wsl:U'))
+
+        reveal.assert_called_once_with(r'\\wsl.localhost\U\home\dev\.claude\projects\-home-dev-proj\a1d.jsonl')
+
+    def test_refused_origins_never_reach_the_shell(self) -> None:
+        api = _MonitorApi()
+        with mock.patch('agent_monitor_for_claude.app.root_for_origin', return_value=None), \
+             mock.patch('agent_monitor_for_claude.app.reveal_in_explorer') as reveal:
+            self.assertFalse(api.reveal_path('/home/dev/a1d.jsonl', origin='gone:X'))
+            self.assertFalse(api.reveal_path('D:\\Projects\\a1d.jsonl', origin=123))
+
+        reveal.assert_not_called()
 
 
 class FocusTerminalWindowTest(unittest.TestCase):
