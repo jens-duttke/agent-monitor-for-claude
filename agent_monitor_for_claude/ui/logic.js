@@ -687,7 +687,18 @@ function deriveStatus(raw) {
 const QUESTION_TOOLS = new Set(['AskUserQuestion']);
 const PLAN_TOOLS = new Set(['ExitPlanMode', 'EnterPlanMode']);
 const DIALOG_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode', 'EnterPlanMode']);
-const PROMPTING_MODES = new Set(['default']);
+
+// The modes in which a pending generic tool can be a permission prompt rather
+// than a tool executing. `acceptEdits` belongs here because it is auto-EDIT, not
+// auto-everything: it waives the prompt for the file-editing tools below and
+// for nothing else, so a command or a fetch still asks. Reading it as a blanket
+// allow left a session sitting on an unanswered permission prompt reading
+// "working" - and permanently, since nothing is appended while the prompt waits
+// (only the stalled fallback eventually caught it, five minutes late).
+const PROMPTING_MODES = new Set(['default', 'acceptEdits']);
+
+// The tools whose prompt `acceptEdits` waives - the ones that change a file.
+const AUTO_EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 
 // How long a pending tool_use may sit with no child process and no transcript
 // growth before it stops counting as a tool that is executing. This is the one
@@ -716,7 +727,14 @@ function pendingIsBlocking(toolName, permissionMode) {
     if (DIALOG_TOOLS.has(toolName)) {
         return true;
     }
-    return PROMPTING_MODES.has(permissionMode);
+    if (!PROMPTING_MODES.has(permissionMode)) {
+        return false;
+    }
+    // The one mode that prompts for some tools and not others.
+    if (permissionMode === 'acceptEdits') {
+        return !AUTO_EDIT_TOOLS.has(toolName);
+    }
+    return true;
 }
 
 // Whether the session has a meaningful descendant process, i.e. a tool that
@@ -724,6 +742,19 @@ function pendingIsBlocking(toolName, permissionMode) {
 // and the background-work promotion, so the two can never drift apart.
 function childRunning(raw) {
     return (raw.child_count || 0) > 0;
+}
+
+// Whether work is running inside the session's own process - a subagent, or a
+// workflow bridging the pause between two fan-out phases. Neither spawns an OS
+// child, so the child gate cannot speak for them, yet the call they hang off (a
+// pending Task) is executing exactly like a build with a child is, and it is a
+// call no permission mode ever prompts for. No force-stop guard is needed here,
+// unlike in deriveStatus / buildSession where a phantom count must not promote or
+// badge a stopped session: classify settles an interrupt or an API error before it
+// ever consults the pending-tool reason, and the reason's tool name is read only
+// for a session that came out of it as awaiting_permission.
+function inProcessWorkRunning(raw) {
+    return (raw.subagents_running || 0) > 0 || activeWorkflows(raw.workflows).length > 0;
 }
 
 // Why a session's pending tool_use blocks the user, or null when it does not
@@ -740,8 +771,10 @@ function pendingBlockReason(raw) {
     if (DIALOG_TOOLS.has(raw.last_tool_name)) {
         return 'dialog';
     }
-    // A running child means a generic tool is executing, never prompting.
-    if (childRunning(raw)) {
+    // A running child means a generic tool is executing, never prompting - and so
+    // does a subagent or workflow working under a pending Task call, which shows
+    // no child to prove it.
+    if (childRunning(raw) || inProcessWorkRunning(raw)) {
         return null;
     }
     if (pendingIsBlocking(raw.last_tool_name, raw.permission_mode)) {

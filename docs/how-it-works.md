@@ -51,8 +51,8 @@ The derivation, in order (the first match wins):
 | the interrupt marker `[Request interrupted by user]` | **Interrupted** - you stopped the turn, so control is back with you (this wins even when the interrupt left a tool call unfinished) |
 | a trailing turn flagged as an API error | **Error** - the turn stopped on an API error and nothing is running; the status names the cause where the error record identifies one (**Usage limit reached** for a 429, otherwise **Error: servers overloaded**, **Error: server-side problem**, **Error: request rejected**, **Error: authentication failed**, or **Error: HTTP nnn**), and stays a plain **Error** where it does not; hovering the status dot adds the error's own message line, which is where a limit's reset time appears (this wins even when the error left a tool call unfinished) |
 | a pending tool that is a question or plan dialog (`AskUserQuestion`, `ExitPlanMode`) | blocked - **Question for you** or **Plan review** (dialogs block in every mode) |
-| a pending generic tool in Manual (`default`) mode | **Permission needed** |
-| a pending generic tool in Auto / Auto-edit / Plan mode, or while a child process runs | **Working** - the tool is executing (these modes never prompt) |
+| a pending generic tool in Manual (`default`) mode, or a pending command, fetch or MCP call in Auto-edit (`acceptEdits`) mode | **Permission needed** - Auto-edit is auto-*edit*, not auto-everything: it waives the prompt for file edits only, so everything else still asks |
+| a pending file edit in Auto-edit mode, a pending generic tool in Auto / Bypass / Plan mode, or a pending call with a child process, a subagent or a workflow running behind it | **Working** - the tool is executing (nothing here prompts) |
 | a finished assistant turn (`end_turn`) | **Idle** - the agent handed control back, your turn |
 | a fresh user prompt, a tool result, or a mid-loop assistant turn | **Working** - a prompt just arrived, or generation is under way |
 | a transcript with nothing interpretable | **Unknown** |

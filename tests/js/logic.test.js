@@ -280,11 +280,43 @@ test('deriveStatus: a generic pending tool with a child still reads as executing
     })), 'working');
 });
 
+test('deriveStatus: a pending command in auto-edit mode needs you right away', () => {
+    // The reported case: a VS Code session in acceptEdits, a PowerShell call
+    // waiting on its permission prompt, no child process, fresh entry - it read
+    // as "working" until the stalled fallback caught it five minutes later.
+    assert.equal(logic.deriveStatus(raw({
+        pending_tool: true, last_tool_name: 'PowerShell', permission_mode: 'acceptEdits',
+        child_count: 0, last_entry_kind: 'assistant', age_seconds: 4,
+    })), 'awaiting_permission');
+    // ... while the edit the mode does wave through keeps working.
+    assert.equal(logic.deriveStatus(raw({
+        pending_tool: true, last_tool_name: 'Edit', permission_mode: 'acceptEdits',
+        child_count: 0, last_entry_kind: 'assistant', age_seconds: 4,
+    })), 'working');
+});
+
 test('pendingIsBlocking', () => {
     assert.equal(logic.pendingIsBlocking('AskUserQuestion', 'auto'), true);
     assert.equal(logic.pendingIsBlocking('ExitPlanMode', 'acceptEdits'), true);
     assert.equal(logic.pendingIsBlocking('Edit', 'default'), true);
     assert.equal(logic.pendingIsBlocking('Edit', 'auto'), false);
+});
+
+test('pendingIsBlocking: acceptEdits waives the prompt for edits only', () => {
+    // Auto-edit is not auto-everything: a file edit runs unattended, but a
+    // command, a fetch or an MCP call still asks. Reading the mode as a blanket
+    // allow is what left a session on an open permission prompt reading
+    // "working" - with nothing ever appended to correct it.
+    for (const tool of ['Edit', 'MultiEdit', 'Write', 'NotebookEdit']) {
+        assert.equal(logic.pendingIsBlocking(tool, 'acceptEdits'), false);
+    }
+    for (const tool of ['Bash', 'PowerShell', 'WebFetch', 'mcp__server__do_thing']) {
+        assert.equal(logic.pendingIsBlocking(tool, 'acceptEdits'), true);
+    }
+    // The modes that genuinely never prompt stay untouched, edits or not.
+    for (const mode of ['auto', 'bypassPermissions', 'plan', null, undefined]) {
+        assert.equal(logic.pendingIsBlocking('Bash', mode), false);
+    }
 });
 
 /* --- a pending tool that stopped going anywhere --- */
@@ -316,6 +348,41 @@ test('deriveStatus: a long-running tool with a live child keeps working', () => 
     assert.equal(logic.deriveStatus(raw({
         pending_tool: true, last_tool_name: 'Bash', permission_mode: 'auto',
         child_count: 1, last_entry_kind: 'assistant', age_seconds: STALE * 20,
+    })), 'working');
+});
+
+test('deriveStatus: a pending call with a subagent working under it is executing', () => {
+    // A Task call spawns no OS child, so the child gate cannot speak for it -
+    // but a running subagent (or a workflow between its fan-out phases) proves
+    // the call is executing, and no mode ever prompts for it. Without this the
+    // prompting modes above would report every auto-edit session with a working
+    // subagent as blocked.
+    assert.equal(logic.deriveStatus(raw({
+        pending_tool: true, last_tool_name: 'Task', permission_mode: 'acceptEdits',
+        child_count: 0, subagents_running: 1, last_entry_kind: 'assistant', age_seconds: 90,
+    })), 'working');
+    assert.equal(logic.deriveStatus(raw({
+        pending_tool: true, last_tool_name: 'Task', permission_mode: 'default',
+        child_count: 0, workflows: [{ run_id: 'w', total: 4, done: 1, active: true }],
+        last_entry_kind: 'assistant', age_seconds: 90,
+    })), 'working');
+    // A finished subagent count no longer excuses the pending call.
+    assert.equal(logic.deriveStatus(raw({
+        pending_tool: true, last_tool_name: 'Task', permission_mode: 'acceptEdits',
+        child_count: 0, subagents_running: 0, workflows: [{ run_id: 'w', active: false }],
+        last_entry_kind: 'assistant', age_seconds: 90,
+    })), 'awaiting_permission');
+    // A dialog still wins over unrelated background work, as with a child.
+    assert.equal(logic.deriveStatus(raw({
+        pending_tool: true, last_tool_name: 'AskUserQuestion', permission_mode: 'auto',
+        child_count: 0, subagents_running: 2, last_entry_kind: 'assistant', age_seconds: 90,
+    })), 'awaiting_permission');
+    // And it outlasts the stalled window, exactly as a live child does: the main
+    // transcript stands still for as long as the subagent works, which is what
+    // that window would otherwise read as an abandoned call.
+    assert.equal(logic.deriveStatus(raw({
+        pending_tool: true, last_tool_name: 'Task', permission_mode: 'auto',
+        child_count: 0, subagents_running: 1, last_entry_kind: 'assistant', age_seconds: STALE * 4,
     })), 'working');
 });
 
