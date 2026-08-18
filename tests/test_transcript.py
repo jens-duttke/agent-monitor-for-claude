@@ -304,34 +304,90 @@ class TitleLooksPastAClearCommandTest(unittest.TestCase):
 
 _LIMIT_ERROR = {
     'type': 'assistant', 'timestamp': '2026-07-11T10:00:00Z', 'isApiErrorMessage': True,
-    'apiErrorStatus': 429, 'message': {'stop_reason': 'error', 'model': 'claude-opus-4-8', 'usage': {}},
+    'apiErrorStatus': 429, 'error': 'rate_limit',
+    'message': {'stop_reason': 'error', 'model': 'claude-opus-4-8', 'usage': {}},
 }
 
 
-class UsageLimitedResetTest(unittest.TestCase):
-    def test_trailing_usage_limit_sets_the_flag(self) -> None:
+class ApiErrorFieldsTest(unittest.TestCase):
+    def test_trailing_error_reports_its_own_fields(self) -> None:
         state = _parse(_lines(_LIMIT_ERROR))
         self.assertEqual(state.last_entry_kind, 'api_error')
-        self.assertTrue(state.usage_limited)
+        self.assertEqual(state.api_error_status, 429)
+        self.assertEqual(state.api_error_kind, 'rate_limit')
 
-    def test_usage_limited_is_reset_when_a_later_turn_supersedes_the_error(self) -> None:
+    def test_a_status_written_as_a_string_is_still_read(self) -> None:
+        # Defensive: the field is an unversioned internal; a string reading must
+        # not degrade the status to None and cost the label its cause.
+        state = _parse(_lines({**_LIMIT_ERROR, 'apiErrorStatus': '529', 'error': 'server_error'}))
+        self.assertEqual(state.api_error_status, 529)
+        self.assertEqual(state.api_error_kind, 'server_error')
+
+    def test_an_unusable_status_degrades_to_none_but_keeps_the_token(self) -> None:
+        # A failure that never reached the API carries no status at all, and a
+        # mistyped one must reach the UI as nothing but None.
+        state = _parse(_lines({**_LIMIT_ERROR, 'apiErrorStatus': 'n/a', 'error': 'server_error'}))
+        self.assertIsNone(state.api_error_status)
+        self.assertEqual(state.api_error_kind, 'server_error')
+
+    def test_the_error_message_first_line_is_read_for_the_tooltip(self) -> None:
+        # The wording carries what the two structural fields cannot - here the
+        # reset time - so the first line is read, and only that: a second line
+        # and any later block must stay unread.
+        state = _parse(_lines({
+            **_LIMIT_ERROR,
+            'message': {
+                'stop_reason': 'stop_sequence', 'model': '<synthetic>', 'usage': {},
+                'content': [
+                    {'type': 'text', 'text': "You've hit your session limit - resets 11:30pm\nUNREAD_SECOND_LINE"},
+                    {'type': 'text', 'text': 'UNREAD_SECOND_BLOCK'},
+                ],
+            },
+        }))
+        self.assertEqual(state.api_error_detail, "You've hit your session limit - resets 11:30pm")
+
+    def test_a_long_error_message_line_is_clipped(self) -> None:
+        state = _parse(_lines({
+            **_LIMIT_ERROR,
+            'message': {'stop_reason': 'stop_sequence', 'usage': {}, 'content': [{'type': 'text', 'text': 'x' * 400}]},
+        }))
+        self.assertEqual(len(state.api_error_detail), 160)
+        self.assertTrue(state.api_error_detail.endswith('…'))
+
+    def test_an_error_without_readable_text_reports_no_detail(self) -> None:
+        # Nothing to show is None, never an empty string the UI would render as
+        # a blank second tooltip line.
+        for content in ([], [{'type': 'thinking', 'thinking': 'unread'}], [{'type': 'text', 'text': '   \n  '}], None, 42):
+            with self.subTest(content=content):
+                state = _parse(_lines({
+                    **_LIMIT_ERROR,
+                    'message': {'stop_reason': 'stop_sequence', 'usage': {}, 'content': content},
+                }))
+                self.assertEqual(state.last_entry_kind, 'api_error')
+                self.assertIsNone(state.api_error_detail)
+
+    def test_error_fields_are_reset_when_a_later_turn_supersedes_the_error(self) -> None:
         # The CLI retried past a mid-conversation 429: last_entry_kind moves on, so
-        # the usage_limited flag must not linger True for the rest of the transcript.
+        # the error fields must not linger for the rest of the transcript.
         state = _parse(_lines(
             _LIMIT_ERROR,
             {'type': 'assistant', 'timestamp': '2026-07-11T10:01:00Z',
              'message': {'stop_reason': 'end_turn', 'model': 'claude-opus-4-8', 'usage': {}}},
         ))
         self.assertEqual(state.last_entry_kind, 'assistant')
-        self.assertFalse(state.usage_limited)
+        self.assertIsNone(state.api_error_status)
+        self.assertIsNone(state.api_error_kind)
+        self.assertIsNone(state.api_error_detail)
 
-    def test_usage_limited_is_reset_by_a_later_user_turn(self) -> None:
+    def test_error_fields_are_reset_by_a_later_user_turn(self) -> None:
         state = _parse(_lines(
             _LIMIT_ERROR,
             {'type': 'user', 'timestamp': '2026-07-11T10:01:00Z', 'message': {'content': 'try again'}},
         ))
         self.assertEqual(state.last_entry_kind, 'user_text')
-        self.assertFalse(state.usage_limited)
+        self.assertIsNone(state.api_error_status)
+        self.assertIsNone(state.api_error_kind)
+        self.assertIsNone(state.api_error_detail)
 
 
 class ModelEventGuardTest(unittest.TestCase):

@@ -49,7 +49,7 @@ The derivation, in order (the first match wins):
 | the process has exited | **Finished** |
 | no transcript yet (fresh window, no prompt) | **New** |
 | the interrupt marker `[Request interrupted by user]` | **Interrupted** - you stopped the turn, so control is back with you (this wins even when the interrupt left a tool call unfinished) |
-| a trailing turn flagged as an API error | **Error** - the turn stopped on an API error and nothing is running; a usage/session limit (HTTP 429) is named **Usage limit reached**, any other error stays generic (this wins even when the error left a tool call unfinished) |
+| a trailing turn flagged as an API error | **Error** - the turn stopped on an API error and nothing is running; the status names the cause where the error record identifies one (**Usage limit reached** for a 429, otherwise **Error: servers overloaded**, **Error: server-side problem**, **Error: request rejected**, **Error: authentication failed**, or **Error: HTTP nnn**), and stays a plain **Error** where it does not; hovering the status dot adds the error's own message line, which is where a limit's reset time appears (this wins even when the error left a tool call unfinished) |
 | a pending tool that is a question or plan dialog (`AskUserQuestion`, `ExitPlanMode`) | blocked - **Question for you** or **Plan review** (dialogs block in every mode) |
 | a pending generic tool in Manual (`default`) mode | **Permission needed** |
 | a pending generic tool in Auto / Auto-edit / Plan mode, or while a child process runs | **Working** - the tool is executing (these modes never prompt) |

@@ -378,7 +378,7 @@ class ParseTest(TranscriptEnvTest):
         # A usage/session limit is written as a locally-generated (synthetic)
         # assistant turn with an error flag and a non-end_turn stop_reason. It
         # must read as its own api_error kind (never a pending assistant turn),
-        # flagged as a usage limit, without leaking the message text.
+        # reporting the structural error fields, without leaking the message text.
         self._write_transcript(_SESSION_ID, _CWD, [
             json.dumps({
                 'type': 'assistant', 'timestamp': '2026-07-11T13:19:14Z',
@@ -391,11 +391,12 @@ class ParseTest(TranscriptEnvTest):
         state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.last_entry_kind, 'api_error')
-        self.assertTrue(state.usage_limited)
+        self.assertEqual(state.api_error_kind, 'rate_limit')
+        self.assertEqual(state.api_error_status, 429)
 
-    def test_usage_limit_detected_from_error_token_without_a_status(self) -> None:
-        # Defensive: a rate-limit turn whose status field is absent is still
-        # recognized from the `error` token alone.
+    def test_error_token_is_read_when_no_status_is_written(self) -> None:
+        # Defensive: a rate-limit turn whose status field is absent must still
+        # report the `error` token, which on its own names the cause.
         self._write_transcript(_SESSION_ID, _CWD, [
             json.dumps({
                 'type': 'assistant', 'timestamp': '2026-07-11T13:19:14Z',
@@ -407,11 +408,13 @@ class ParseTest(TranscriptEnvTest):
         state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.last_entry_kind, 'api_error')
-        self.assertTrue(state.usage_limited)
+        self.assertEqual(state.api_error_kind, 'rate_limit')
+        self.assertIsNone(state.api_error_status)
 
-    def test_non_limit_api_error_is_not_flagged_usage_limited(self) -> None:
-        # Other trailing API errors (an overload, a server error) are still the
-        # api_error kind, but must not be labelled a usage limit.
+    def test_non_limit_api_error_reports_its_own_fields(self) -> None:
+        # Other trailing API errors (an overload, a server error) are the same
+        # api_error kind and report their own token and status, which is what
+        # lets the UI name a cause other than a usage limit.
         self._write_transcript(_SESSION_ID, _CWD, [
             json.dumps({
                 'type': 'assistant', 'timestamp': '2026-07-11T13:19:14Z',
@@ -424,7 +427,8 @@ class ParseTest(TranscriptEnvTest):
         state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.last_entry_kind, 'api_error')
-        self.assertFalse(state.usage_limited)
+        self.assertEqual(state.api_error_kind, 'overloaded_error')
+        self.assertEqual(state.api_error_status, 529)
 
     def test_api_error_superseded_by_a_later_real_turn(self) -> None:
         # A mid-conversation error that Claude Code retried and followed with a
@@ -446,7 +450,8 @@ class ParseTest(TranscriptEnvTest):
         state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.last_entry_kind, 'assistant')
-        self.assertFalse(state.usage_limited)
+        self.assertIsNone(state.api_error_kind)
+        self.assertIsNone(state.api_error_status)
         self.assertEqual(state.model, 'claude-opus-4-8')
 
     def test_extracts_latest_permission_mode(self) -> None:
@@ -640,23 +645,50 @@ class PrivacyTest(TranscriptEnvTest):
         for secret in _SECRETS:
             self.assertNotIn(secret, serialized)
 
-    def test_api_error_message_text_is_never_read(self) -> None:
-        # A usage-limit / API-error turn carries a human-readable message (which
-        # can quote arbitrary context); only the structural error fields may be
-        # read, never that text.
+    def test_only_the_error_message_first_line_is_read(self) -> None:
+        # The sanctioned, bounded exception: an API-error turn's own message line
+        # is read for the status tooltip, because it names what the structural
+        # fields cannot (here the reset time). The bound is what is guarded - the
+        # FIRST line of the FIRST text block, and nothing else in the entry: a
+        # second line, a further block, and a thinking block all stay unread.
         self._write_transcript(_SESSION_ID, _CWD, [
             json.dumps({
                 'type': 'assistant', 'timestamp': '2026-07-11T13:19:14Z',
                 'message': {'stop_reason': 'stop_sequence', 'model': '<synthetic>',
                             'usage': {'input_tokens': 0, 'output_tokens': 0},
-                            'content': [{'type': 'text', 'text': 'SECRET_TEXT hit your session limit'}]},
+                            'content': [
+                                {'type': 'thinking', 'thinking': 'SECRET_THINKING'},
+                                {'type': 'text', 'text': "You've hit your session limit\nSECRET_TEXT"},
+                                {'type': 'text', 'text': 'SECRET_RESULT'},
+                            ]},
                 'error': 'rate_limit', 'isApiErrorMessage': True, 'apiErrorStatus': 429,
             }),
         ])
         state = state_for(windows_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.last_entry_kind, 'api_error')
-        self.assertTrue(state.usage_limited)
+        self.assertEqual(state.api_error_kind, 'rate_limit')
+        self.assertEqual(state.api_error_detail, "You've hit your session limit")
+        serialized = json.dumps(asdict(state))
+        for secret in _SECRETS:
+            self.assertNotIn(secret, serialized)
+
+    def test_an_ordinary_turn_text_is_never_read_as_an_error_detail(self) -> None:
+        # The read above is keyed on the isApiErrorMessage flag alone. An
+        # ordinary assistant turn - the same shape, minus that flag - must yield
+        # no detail at all, or the exception would quietly cover every turn.
+        self._write_transcript(_SESSION_ID, _CWD, [
+            json.dumps({
+                'type': 'assistant', 'timestamp': '2026-07-11T13:19:14Z',
+                'message': {'stop_reason': 'end_turn', 'model': 'claude-opus-4-8',
+                            'usage': {'input_tokens': 0, 'output_tokens': 0},
+                            'content': [{'type': 'text', 'text': 'SECRET_TEXT'}]},
+            }),
+        ])
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual(state.last_entry_kind, 'assistant')
+        self.assertIsNone(state.api_error_detail)
         self.assertNotIn('SECRET_TEXT', json.dumps(asdict(state)))
 
     def test_only_first_prompt_is_read_never_later_messages(self) -> None:

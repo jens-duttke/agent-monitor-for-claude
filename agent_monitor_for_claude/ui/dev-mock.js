@@ -42,7 +42,8 @@ function rawSession(overrides) {
         entrypoint: null, native_status: null, waiting_for: null, alive: true,
         child_count: 0, host: null, via_cli: false,
         has_transcript: true, has_activity: true, last_entry_kind: 'assistant', last_stop_reason: 'end_turn',
-        pending_tool: false, last_tool_name: null, usage_limited: false, permission_mode: null,
+        pending_tool: false, last_tool_name: null, permission_mode: null,
+        api_error_kind: null, api_error_status: null, api_error_detail: null,
         model_id: null, usage: {}, usage_by_model: {}, model_timeline: [], title: null,
         // Every session runs the current CLI unless it says otherwise; the two
         // that do are what makes the conditional version column appear at all.
@@ -175,7 +176,8 @@ window.__MOCK_SNAPSHOT__ = {
         rawSession({
             session_id: 'h6f', short_name: 'helios-renderer-d4', pid: 28190, entrypoint: 'claude-vscode', host: 'VS Code',
             title: 'Vectorize the tone-mapping pass', permission_mode: 'default',
-            last_entry_kind: 'api_error', last_stop_reason: 'stop_sequence', usage_limited: true,
+            last_entry_kind: 'api_error', last_stop_reason: 'stop_sequence', api_error_kind: 'rate_limit', api_error_status: 429,
+            api_error_detail: "You've hit your session limit - resets 11:30pm (Europe/Berlin)",
             age_seconds: 5400,
             ...priced('claude-opus-4-8[1m]', {
                 input_tokens: 52300, output_tokens: 11800, cache_read_input_tokens: 34700000,

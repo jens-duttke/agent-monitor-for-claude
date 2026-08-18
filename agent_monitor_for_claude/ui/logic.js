@@ -772,11 +772,90 @@ function modeLabel(permissionMode) {
 
 /* --- label formatting (ported from formatting.py) --- */
 
+/* An API-error turn carries two raw fields - Claude Code's own error token and
+   the HTTP status of the failed call - and naming the cause from them is a
+   classification, so it happens here rather than in Python. Neither field is
+   ever guaranteed: a lost connection has no status, and the token set is an
+   unversioned internal, so an unrecognized pair falls back to the bare status
+   and finally to the plain "Error" label. A raw token is never shown - it would
+   put an untranslated internal name in a localized UI.
+
+   The status is consulted first because it is the more specific of the two: an
+   overload arrives as a plain `server_error` with status 529. */
+const API_ERROR_STATUS_LABELS = new Map([
+    [429, 'status_usage_limit'],
+    [529, 'error_overloaded'],
+]);
+
+// Both spellings of each cause: the token Claude Code writes into the entry, and
+// the API error type it wraps - either can show up, and they mean the same.
+const API_ERROR_KIND_LABELS = new Map([
+    ['rate_limit', 'status_usage_limit'],
+    ['rate_limit_error', 'status_usage_limit'],
+    ['overloaded_error', 'error_overloaded'],
+    ['server_error', 'error_server'],
+    ['internal_server_error', 'error_server'],
+    ['api_error', 'error_server'],
+    ['invalid_request', 'error_invalid_request'],
+    ['invalid_request_error', 'error_invalid_request'],
+    ['request_too_large', 'error_invalid_request'],
+    ['authentication_failed', 'error_auth'],
+    ['authentication_error', 'error_auth'],
+    ['permission_error', 'error_auth'],
+]);
+
 function statusLabel(status, labels) {
     return labels['status_' + status] || status;
 }
 
-function attentionLabel(status, pendingToolName, labels, usageLimited) {
+// The HTTP status as a positive integer, or null when the entry carries none or
+// a value that does not read as one.
+function apiErrorStatusCode(raw) {
+    const status = Number(raw && raw.api_error_status);
+
+    return Number.isFinite(status) && status > 0 ? Math.trunc(status) : null;
+}
+
+// The label for a session whose last turn stopped on an API error: the cause
+// named where the error's own fields identify one ("Error: servers overloaded"),
+// the bare status where only that is known ("Error: HTTP 521"), and null when
+// there is nothing to add to the plain "Error" - which is what the caller then
+// falls back to. A usage limit keeps its own standalone label: it is the one
+// cause that is not a fault to report but a wait to sit out.
+function apiErrorLabel(raw, labels) {
+    const status = apiErrorStatusCode(raw);
+    const kind = typeof (raw && raw.api_error_kind) === 'string' ? raw.api_error_kind.trim().toLowerCase() : '';
+    const reasonKey = (status !== null ? API_ERROR_STATUS_LABELS.get(status) : null)
+        || API_ERROR_KIND_LABELS.get(kind)
+        // Any other 5xx is a server-side failure whatever the token says.
+        || (status !== null && status >= 500 ? 'error_server' : null);
+
+    if (reasonKey === 'status_usage_limit') {
+        return labels.status_usage_limit || null;
+    }
+
+    const reason = reasonKey ? labels[reasonKey] : (status !== null ? fmt(labels.error_http, { status: status }) : '');
+    if (!reason) {
+        return null;
+    }
+
+    return fmt(labels.status_errored_reason, { reason: reason }) || null;
+}
+
+// The dot's hover text: the translated status label, with the error entry's own
+// line under it when one was read. The two are joined into one string by a
+// newline, which the tooltip renders as a line break (white-space: pre-line);
+// the row and the panel header keep the label alone, both being single-line.
+function statusTip(label, detail) {
+    const text = typeof detail === 'string' ? detail.trim() : '';
+    if (!text) {
+        return label;
+    }
+
+    return label ? label + '\n' + text : text;
+}
+
+function attentionLabel(status, pendingToolName, labels, errorLabel) {
     if (status === 'awaiting_permission') {
         if (QUESTION_TOOLS.has(pendingToolName)) {
             return labels.status_question;
@@ -793,11 +872,12 @@ function attentionLabel(status, pendingToolName, labels, usageLimited) {
             return labels.status_needs_you;
         }
     }
-    // A stuck-on-error session names the usage/session limit specifically (the
-    // common, actionable case - wait for the reset); any other API error keeps
-    // the generic label.
+    // A stuck-on-error session names its cause where the error entry's own
+    // fields identify one - the usage/session limit that only needs waiting out,
+    // an overload, a rejected request - because "Error" alone says nothing about
+    // what to do next. An unrecognized error keeps the plain label.
     if (status === 'errored') {
-        return usageLimited ? labels.status_usage_limit : statusLabel(status, labels);
+        return errorLabel || statusLabel(status, labels);
     }
     return statusLabel(status, labels);
 }
@@ -1264,6 +1344,22 @@ function buildSession(raw, labels, prices) {
         usageDetail = breakdown + ' ·\u00A0';
     }
 
+    // Only name the tool when the block is one we can name. last_tool_name
+    // lingers from a resolved tool, so the registry-`waiting` route (no pending
+    // tool) must fall through to the neutral label - matching the deriveStatus
+    // gate. A stalled call falls through for the opposite reason: a tool is
+    // named, but nothing says it is waiting on a permission rather than simply
+    // abandoned, so it must not claim one.
+    const statusText = attentionLabel(status, namedPendingTool(raw), labels, apiErrorLabel(raw, labels));
+
+    // That one label goes to the dot, the row and the panel header; the dot's
+    // tooltip gets a second line on top of it, the error's own wording, which
+    // carries what the structural fields cannot (when a limit resets, which
+    // invalid-request case applied). Only the tooltip has room for it - the
+    // other two are single-line - and only `errored` gets it at all, since the
+    // line describes a turn that stopped.
+    const statusTipText = statusTip(statusText, status === 'errored' ? raw.api_error_detail : null);
+
     return {
         session_id: raw.session_id,
         pid: raw.pid,
@@ -1274,13 +1370,8 @@ function buildSession(raw, labels, prices) {
         short_name: raw.short_name,
         kind: raw.kind,
         status: status,
-        // Only name the tool when the block is one we can name. last_tool_name
-        // lingers from a resolved tool, so the registry-`waiting` route (no
-        // pending tool) must fall through to the neutral label - matching the
-        // deriveStatus gate. A stalled call falls through for the opposite
-        // reason: a tool is named, but nothing says it is waiting on a
-        // permission rather than simply abandoned, so it must not claim one.
-        status_label: attentionLabel(status, namedPendingTool(raw), labels, raw.usage_limited),
+        status_label: statusText,
+        status_tip: statusTipText,
         needs_attention: needsAttention(status),
         model: formatModel(raw.model_id),
         model_switched: models.length > 1,
@@ -1483,6 +1574,8 @@ const AMC_LOGIC = {
     STALLED_PENDING_SECONDS,
     modeLabel,
     statusLabel,
+    apiErrorLabel,
+    statusTip,
     attentionLabel,
     formatAge,
     formatAgeSince,

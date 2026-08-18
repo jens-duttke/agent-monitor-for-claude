@@ -127,7 +127,13 @@ const DEFAULT_LABELS = {
     status_processing: 'Background',
     status_interrupted: 'Interrupted',
     status_errored: 'Error',
+    status_errored_reason: 'Error: {reason}',
     status_usage_limit: 'Usage limit reached',
+    error_overloaded: 'Servers overloaded',
+    error_server: 'Server-side problem',
+    error_invalid_request: 'Request rejected',
+    error_auth: 'Authentication failed',
+    error_http: 'HTTP {status}',
     status_awaiting_input: 'Idle',
     status_awaiting_permission: 'Permission needed',
     status_needs_you: 'Waiting for you',
@@ -2514,10 +2520,12 @@ function updateRow(row, session, projectName) {
         delete row.dataset.deeplink;
     }
 
-    // The dot is now the primary status signal, so it names the status itself.
+    // The dot is now the primary status signal, so it names the status itself -
+    // on an API error with the error's own line beneath the label (status_tip),
+    // which is the one place there is room for it.
     const dot = row.querySelector('.dot');
-    if (session.status_label) {
-        dot.dataset.tip = session.status_label;
+    if (session.status_tip) {
+        dot.dataset.tip = session.status_tip;
     } else {
         delete dot.dataset.tip;
     }
@@ -2701,7 +2709,7 @@ function setHero(blocked) {
         + attr('data-title', session.title || '')
         + attr('data-origin', session.origin || 'windows')
         + (session.vscode_deeplink ? attr('data-deeplink', '1') : '')
-        + attr('data-tip', session.status_label)
+        + attr('data-tip', session.status_tip)
         + '>'
         + esc(session.name) + '</button>'
     ).join('');

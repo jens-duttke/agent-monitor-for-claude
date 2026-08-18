@@ -107,6 +107,12 @@ _USER_MARKER = b'"user"'
 # Display length cap for the first-prompt fallback title.
 _TITLE_MAX_CHARS = 80
 
+# Display length cap for the one line of an API-error turn's own message that
+# the status tooltip shows. Wide enough for the longest wording Claude Code
+# writes (the 529 overload sentence, about 150 characters); anything longer - a
+# raw JSON body from an edge proxy, say - is clipped rather than shown in full.
+_ERROR_DETAIL_MAX_CHARS = 160
+
 # Wrapper blocks Claude Code injects around prompts; stripped before using a
 # prompt as the fallback title, mirroring what Claude Code's own UI displays.
 _WRAPPER_TAGS = (
@@ -263,7 +269,18 @@ class TranscriptState:
     # was captured - a long sidechain-only tail parses fine and must not re-read
     # up to 16 MB every poll.
     any_parsed: bool = False
-    usage_limited: bool = False
+    # The trailing API-error turn's own error token and HTTP status, exactly as
+    # Claude Code writes them; both absent when the newest entry is not an error.
+    # Naming the cause from them (a usage limit, an overload, a rejected request)
+    # is a classification and therefore the UI's job.
+    api_error_kind: str | None = None
+    api_error_status: int | None = None
+    # The first line of that error turn's own message, truncated - the one thing
+    # the two fields above cannot express (when a limit resets, which of the
+    # invalid-request cases applied). Claude Code writes this line itself, so it
+    # is CLI text, not conversation, and it is shown verbatim in the status
+    # tooltip alone - never parsed, and never for any other entry type.
+    api_error_detail: str | None = None
     age_seconds: float | None = None
     title: str | None = None
     model: str | None = None
@@ -537,7 +554,9 @@ def _parse(lines: list[str]) -> TranscriptState:
     last_stop_reason: str | None = None
     last_timestamp: str | None = None
     last_entry_kind: str | None = None
-    usage_limited: bool = False
+    api_error_kind: str | None = None
+    api_error_status: int | None = None
+    api_error_detail: str | None = None
     model: str | None = None
     cli_version: str | None = None
     any_parsed: bool = False
@@ -585,17 +604,23 @@ def _parse(lines: list[str]) -> TranscriptState:
                 # overload, or a server error). The turn stopped and nothing is
                 # running, so it is its own kind - never the pending assistant
                 # turn that a non-end_turn stop_reason would otherwise imply and
-                # read as "working". Only the structural error fields are read
-                # (status/kind), never the message text.
+                # read as "working". The structural error fields are read, plus
+                # the bounded first line of the CLI's own error message (see
+                # _api_error_detail) - which is the only entry type whose text is
+                # read here at all.
                 last_entry_kind = 'api_error'
                 last_stop_reason = message.get('stop_reason')
-                usage_limited = _is_usage_limit(entry)
+                api_error_kind = _api_error_kind(entry)
+                api_error_status = _api_error_status(entry)
+                api_error_detail = _api_error_detail(content)
             else:
                 last_entry_kind = 'assistant'
-                # A real turn superseded any earlier API error, so usage_limited
-                # (set only in the api_error branch) must not linger True - it
-                # reflects the trailing entry alone.
-                usage_limited = False
+                # A real turn superseded any earlier API error, so the error
+                # fields (set only in the api_error branch) must not linger -
+                # they describe the trailing entry alone.
+                api_error_kind = None
+                api_error_status = None
+                api_error_detail = None
                 last_stop_reason = message.get('stop_reason')
                 entry_model = message.get('model')
                 # Keep the last *real* model for the column; the synthetic sentinel
@@ -623,7 +648,9 @@ def _parse(lines: list[str]) -> TranscriptState:
                 last_entry_kind = 'local_command'
             else:
                 last_entry_kind = 'user_text'
-            usage_limited = False
+            api_error_kind = None
+            api_error_status = None
+            api_error_detail = None
             if isinstance(content, list):
                 for block in content:
                     if isinstance(block, dict) and block.get('type') == 'tool_result':
@@ -647,7 +674,9 @@ def _parse(lines: list[str]) -> TranscriptState:
             # user entry above for others (`/compact` produces only the latter),
             # so both shapes have to yield the same kind.
             last_entry_kind = 'local_command'
-            usage_limited = False
+            api_error_kind = None
+            api_error_status = None
+            api_error_detail = None
 
     pending_tool = last_tool_id is not None and last_tool_id not in resolved_tool_ids
 
@@ -659,24 +688,86 @@ def _parse(lines: list[str]) -> TranscriptState:
         last_timestamp=last_timestamp,
         last_entry_kind=last_entry_kind,
         any_parsed=any_parsed,
-        usage_limited=usage_limited,
+        api_error_kind=api_error_kind,
+        api_error_status=api_error_status,
+        api_error_detail=api_error_detail,
         model=model,
         cli_version=cli_version,
     )
 
 
-def _is_usage_limit(entry: dict) -> bool:
-    """Return True if an API-error entry is a usage/session limit (HTTP 429).
+def _api_error_kind(entry: dict) -> str | None:
+    """Return an API-error entry's error token, or None if it carries none.
 
-    Distinguishes the rate-limit case (the model cannot continue until the
-    limit resets) from other API errors, so the UI can name it precisely.
-    Both the numeric status and the ``error`` token are checked defensively.
+    The token is Claude Code's own short name for the failure (``rate_limit``,
+    ``server_error``, ``invalid_request``, ``authentication_failed``, ...).  It
+    is passed through verbatim - what it means for the label is decided in the
+    UI, like every other classification.
+    """
+    kind = entry.get('error')
+    if isinstance(kind, str) and kind:
+        return kind
+
+    return None
+
+
+def _api_error_status(entry: dict) -> int | None:
+    """Return an API-error entry's HTTP status, or None if it carries none.
+
+    A failure that never reached the API (a lost connection) has no status at
+    all, and the field has been seen both as a number and as a string, so both
+    readings are accepted and anything else degrades to None.
     """
     status = entry.get('apiErrorStatus')
-    if status == 429 or status == '429':
-        return True
+    if isinstance(status, bool):
+        return None
+    if isinstance(status, int):
+        return status
+    if isinstance(status, str) and status.strip().isdigit():
+        return int(status.strip())
 
-    return entry.get('error') == 'rate_limit'
+    return None
+
+
+def _api_error_detail(content: object) -> str | None:
+    """Return the first line of an API-error turn's own message, truncated.
+
+    This is a sanctioned, bounded read of message text, and the only one the
+    status needs: the wording carries what the structural fields cannot - which
+    limit was hit and when it resets, or which of the invalid-request cases
+    applied - and Claude Code generates the line itself, so it is CLI text
+    rather than conversation.  Only the first text block's first non-empty line
+    is read, clipped to ``_ERROR_DETAIL_MAX_CHARS``, and it is passed through
+    verbatim: the label above it comes from the structural fields, so this line
+    is never parsed for meaning.  Called for an ``isApiErrorMessage`` entry
+    alone; no other entry type's text is read here.
+    """
+    text = None
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get('type') == 'text':
+                text = block.get('text')
+                break
+
+    if not isinstance(text, str):
+        return None
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return _clip(stripped, _ERROR_DETAIL_MAX_CHARS)
+
+    return None
+
+
+def _clip(text: str, limit: int) -> str:
+    """Return *text* cut to *limit* characters, ending in an ellipsis when it had to be cut."""
+    if len(text) <= limit:
+        return text
+
+    return text[:limit - 1] + '…'
 
 
 def _scan_appended(path: Path) -> _ScanResult:
@@ -929,19 +1020,15 @@ def _prompt_display_parts(entry: dict) -> tuple[str | None, bool]:
             # newlines (re.S), and a raw newline must never reach a title.
             args_match = _COMMAND_ARGS_PATTERN.search(text)
             args = ' '.join(args_match.group(1).split()) if args_match else ''
-            display = f'{command_name} {args}' if args else command_name
-            if len(display) > _TITLE_MAX_CHARS:
-                display = display[:_TITLE_MAX_CHARS - 1] + '…'
+            display = _clip(f'{command_name} {args}' if args else command_name, _TITLE_MAX_CHARS)
+
             return display, command_name in _HOUSEKEEPING_TITLE_COMMANDS
 
     cleaned = ' '.join(_WRAPPER_PATTERN.sub('', text).split())
     if not cleaned:
         return None, False
 
-    if len(cleaned) > _TITLE_MAX_CHARS:
-        cleaned = cleaned[:_TITLE_MAX_CHARS - 1] + '…'
-
-    return cleaned, False
+    return _clip(cleaned, _TITLE_MAX_CHARS), False
 
 
 def _load(line: str) -> dict | None:

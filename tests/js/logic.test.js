@@ -386,11 +386,104 @@ test('attentionLabel', () => {
     assert.equal(logic.attentionLabel('awaiting_permission', 'Edit', labels), 'Permission needed');
     // The registry-derived block has no pending tool: stay neutral, do not claim permission.
     assert.equal(logic.attentionLabel('awaiting_permission', null, labels), 'Waiting for you');
-    // An errored session names the usage limit specifically; any other error is generic.
-    assert.equal(logic.attentionLabel('errored', null, labels, true), 'Usage limit reached');
-    assert.equal(logic.attentionLabel('errored', null, labels, false), 'Error');
+    // An errored session shows the cause its error fields named (built by
+    // apiErrorLabel below); an error nothing could name stays generic.
+    assert.equal(logic.attentionLabel('errored', null, labels, 'Usage limit reached'), 'Usage limit reached');
+    assert.equal(logic.attentionLabel('errored', null, labels, null), 'Error');
     // Other statuses fall through to their plain label.
     assert.equal(logic.attentionLabel('working', null, labels), 'Working');
+});
+
+test('apiErrorLabel: the cause is named from the error entry own fields', () => {
+    const labels = {
+        status_errored: 'Error',
+        status_errored_reason: 'Error: {reason}',
+        status_usage_limit: 'Usage limit reached',
+        error_overloaded: 'Servers overloaded',
+        error_server: 'Server-side problem',
+        error_invalid_request: 'Request rejected',
+        error_auth: 'Authentication failed',
+        error_http: 'HTTP {status}',
+    };
+    const label = (raw) => logic.apiErrorLabel(raw, labels);
+
+    // A usage limit keeps its own standalone label: it is not a fault to report
+    // but a wait to sit out, and either field alone identifies it.
+    assert.equal(label({ api_error_kind: 'rate_limit', api_error_status: 429 }), 'Usage limit reached');
+    assert.equal(label({ api_error_kind: null, api_error_status: 429 }), 'Usage limit reached');
+    assert.equal(label({ api_error_kind: 'rate_limit', api_error_status: null }), 'Usage limit reached');
+    // The status is the more specific of the two fields: Claude Code writes an
+    // overload as a plain server_error carrying status 529.
+    assert.equal(label({ api_error_kind: 'server_error', api_error_status: 529 }), 'Error: Servers overloaded');
+    // The token carries it alone when the failure has no HTTP status.
+    assert.equal(label({ api_error_kind: 'overloaded_error', api_error_status: null }), 'Error: Servers overloaded');
+    assert.equal(label({ api_error_kind: 'server_error', api_error_status: 500 }), 'Error: Server-side problem');
+    assert.equal(label({ api_error_kind: 'invalid_request', api_error_status: null }), 'Error: Request rejected');
+    assert.equal(label({ api_error_kind: 'authentication_failed', api_error_status: 401 }), 'Error: Authentication failed');
+    // An unrecognized token with a 5xx is still a server-side failure...
+    assert.equal(label({ api_error_kind: 'edge_proxy_error', api_error_status: 521 }), 'Error: Server-side problem');
+    // ...and anything else with a status names just the status, never the raw
+    // token, which would put an untranslated internal name in a localized UI.
+    assert.equal(label({ api_error_kind: 'brand_new_token', api_error_status: 418 }), 'Error: HTTP 418');
+    // Defensive: a status written as a string reads the same as a number.
+    assert.equal(label({ api_error_kind: 'server_error', api_error_status: '529' }), 'Error: Servers overloaded');
+    // Nothing identifiable: null, so the caller keeps today's plain "Error".
+    assert.equal(label({ api_error_kind: 'brand_new_token', api_error_status: null }), null);
+    assert.equal(label({}), null);
+    assert.equal(label(null), null);
+    // The token is untrusted on-disk data, so an inherited Object property must
+    // never resolve as a label key.
+    assert.equal(label({ api_error_kind: 'constructor' }), null);
+    assert.equal(label({ api_error_kind: 'toString' }), null);
+    // A label set with no wording for the cause degrades to the plain label too.
+    assert.equal(logic.apiErrorLabel({ api_error_kind: 'server_error', api_error_status: 500 }, {}), null);
+});
+
+test('statusTip: the error wording rides under the label, never over it', () => {
+    // The label alone is the row and header text; the tooltip adds the second
+    // line, separated by the newline the tooltip renders as a line break.
+    assert.equal(logic.statusTip('Error: Servers overloaded', 'API Error: 529 Overloaded.'),
+        'Error: Servers overloaded\nAPI Error: 529 Overloaded.');
+    // Nothing to add: the tip stays exactly the label, never a trailing newline
+    // that would open a blank line in the popup.
+    assert.equal(logic.statusTip('Idle', null), 'Idle');
+    assert.equal(logic.statusTip('Idle', ''), 'Idle');
+    assert.equal(logic.statusTip('Idle', '   \n '), 'Idle');
+    assert.equal(logic.statusTip('Idle', 42), 'Idle');
+    assert.equal(logic.statusTip('Idle', undefined), 'Idle');
+    // A detail with no label is still worth showing on its own.
+    assert.equal(logic.statusTip('', 'API Error: 500'), 'API Error: 500');
+});
+
+test('buildSession: the error wording reaches the tooltip and only the tooltip', () => {
+    const labels = {
+        status_errored: 'Error', status_errored_reason: 'Error: {reason}',
+        error_overloaded: 'Servers overloaded', status_awaiting_input: 'Idle',
+    };
+    const build = (overrides) => logic.buildSession({
+        session_id: 's', pid: 1, cwd: 'd:\\x', short_name: 's', alive: true, has_transcript: true,
+        last_entry_kind: 'api_error', last_stop_reason: 'stop_sequence',
+        native_status: null, usage: {}, child_count: 0, ...overrides,
+    }, labels, {});
+
+    const errored = build({
+        api_error_kind: 'server_error', api_error_status: 529,
+        api_error_detail: 'API Error: 529 Overloaded. Try again in a moment.',
+    });
+    // The label the row and the panel header show stays the short one...
+    assert.equal(errored.status_label, 'Error: Servers overloaded');
+    // ...and the dot's tooltip carries the CLI's own wording beneath it.
+    assert.equal(errored.status_tip, 'Error: Servers overloaded\nAPI Error: 529 Overloaded. Try again in a moment.');
+
+    // A detail left over on a session that is no longer errored (a lagging
+    // record) must not reach the tooltip: the second line describes a stopped
+    // turn, and no other status has one.
+    const idle = build({
+        last_entry_kind: 'assistant', last_stop_reason: 'end_turn',
+        api_error_detail: 'API Error: 529 Overloaded. Try again in a moment.',
+    });
+    assert.equal(idle.status, 'awaiting_input');
+    assert.equal(idle.status_tip, 'Idle');
 });
 
 test('pruneResumedHistory: a resumed session is not folded in twice', () => {
@@ -958,7 +1051,8 @@ test('buildSession: an interrupt reads as interrupted and clears the phantom sub
 test('buildSession: a usage limit reads as errored, is named specifically, and clears the phantom subagent badge', () => {
     const session = logic.buildSession({
         session_id: 's', pid: 1, cwd: 'd:\\x', short_name: 's', alive: true, has_transcript: true,
-        last_entry_kind: 'api_error', last_stop_reason: 'stop_sequence', usage_limited: true,
+        last_entry_kind: 'api_error', last_stop_reason: 'stop_sequence',
+        api_error_kind: 'rate_limit', api_error_status: 429,
         native_status: null, usage: {}, subagents_running: 1, subagents_labels: ['general-purpose'], child_count: 0,
     }, { status_errored: 'Error', status_usage_limit: 'Usage limit reached' }, {});
     assert.equal(session.status, 'errored');
@@ -1008,14 +1102,25 @@ test('buildSession: a history record is completed, flagged, and content-free', (
     assert.equal(session.usage_compact, '');
 });
 
-test('buildSession: a non-limit API error reads as errored with the generic label', () => {
-    const session = logic.buildSession({
+test('buildSession: a non-limit API error reads as errored and names its cause', () => {
+    const labels = {
+        status_errored: 'Error', status_usage_limit: 'Usage limit reached',
+        status_errored_reason: 'Error: {reason}', error_overloaded: 'Servers overloaded',
+    };
+    const build = (overrides) => logic.buildSession({
         session_id: 's', pid: 1, cwd: 'd:\\x', short_name: 's', alive: true, has_transcript: true,
-        last_entry_kind: 'api_error', last_stop_reason: 'stop_sequence', usage_limited: false,
-        native_status: null, usage: {}, child_count: 0,
-    }, { status_errored: 'Error', status_usage_limit: 'Usage limit reached' }, {});
-    assert.equal(session.status, 'errored');
-    assert.equal(session.status_label, 'Error');
+        last_entry_kind: 'api_error', last_stop_reason: 'stop_sequence',
+        native_status: null, usage: {}, child_count: 0, ...overrides,
+    }, labels, {});
+
+    const overloaded = build({ api_error_kind: 'server_error', api_error_status: 529 });
+    assert.equal(overloaded.status, 'errored');
+    assert.equal(overloaded.status_label, 'Error: Servers overloaded');
+    // An error whose fields name nothing keeps the plain label rather than
+    // inventing a cause.
+    const unnamed = build({ api_error_kind: null, api_error_status: null });
+    assert.equal(unnamed.status, 'errored');
+    assert.equal(unnamed.status_label, 'Error');
 });
 
 test('buildSession: a registry-waiting block with a stale tool name stays neutral', () => {

@@ -19,6 +19,16 @@ _END_TURN = json.dumps({
     'message': {'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': 'x'}]},
 })
 
+_API_ERROR = json.dumps({
+    'type': 'assistant',
+    'timestamp': '2026-07-11T10:54:06Z',
+    'isApiErrorMessage': True,
+    'error': 'server_error',
+    'apiErrorStatus': 529,
+    'message': {'stop_reason': 'stop_sequence', 'model': '<synthetic>',
+                'content': [{'type': 'text', 'text': 'API Error: 529 Overloaded.'}]},
+})
+
 _SUBAGENT_RUNNING = json.dumps({
     'type': 'assistant',
     'timestamp': '2026-07-11T10:54:06Z',
@@ -114,6 +124,19 @@ class RawSnapshotTest(_RegistryFixture):
         # No derived fields leak in from the old formatting layer.
         self.assertNotIn('status', session)
         self.assertNotIn('status_label', session)
+
+    def test_record_carries_the_api_error_fields(self) -> None:
+        # All three fields an errored session's status is built from have to reach
+        # the record. The parser and the UI are each tested on their own, so a
+        # field dropped in between them would surface only in the window.
+        self._add_session_with_transcript('e', 'd:\\WebDev\\one', _API_ERROR)
+
+        session = next(s for s in build_snapshot()['sessions'] if s['session_id'] == 'e')
+
+        self.assertEqual(session['last_entry_kind'], 'api_error')
+        self.assertEqual(session['api_error_kind'], 'server_error')
+        self.assertEqual(session['api_error_status'], 529)
+        self.assertEqual(session['api_error_detail'], 'API Error: 529 Overloaded.')
 
     def test_record_carries_native_status_and_waiting_for(self) -> None:
         sessions = Path(self._temp.name) / 'sessions'
