@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- The released `AgentMonitorForClaude.exe` is now code signed, so Windows can name its publisher instead of reporting an unknown one. Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Every release is built by a GitHub Actions workflow from the tagged source in this repository - never on a developer machine - and signed only after a manual approval; see the code signing policy in the README.
+
+## [0.7.0] - 2026-08-19
+
 ### Fixed
 - A session in *Auto-edit* mode no longer reads as "Working" while it waits for a permission prompt. That mode waives the prompt for file edits only - a pending command, fetch or MCP call still asks, and now reads "Needs you". A call with a subagent or workflow running under it keeps reading as "Working".
 - A tooltip no longer stays on screen after the element it describes is gone. Rebuilt in place it stays put, genuinely removed it disappears - on the filter chips, which are rebuilt on every refresh, it could previously stay standing indefinitely.
@@ -20,7 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - A session's row menu can now show its transcript file in Windows Explorer, selected in its folder - for archiving the raw `.jsonl`, diffing it, or handing it to another tool. The file is only shown, never opened; the entry appears once a transcript exists.
 - A search that finds nothing now offers to look wider. Since it only reads the sessions your chips show, one button widens it by one step: first to the sessions the chips hide, then one time window further back. Matches found this way are shown even with their chip off and counted on a line above the list, and keep updating live. Your chips are never changed - the extra rows belong to that one query and go when you edit the search text, or via *Reset* on that same line.
-- The released `AgentMonitorForClaude.exe` is now code signed, so Windows can name its publisher instead of reporting an unknown one. Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Every release is built by a GitHub Actions workflow from the tagged source in this repository - never on a developer machine - and signed only after a manual approval; see the code signing policy in the README.
 
 ## [0.6.1] - 2026-08-16
 
@@ -153,7 +157,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 13 languages, auto-detected from the system locale.
 - Optional settings file to tune the poll interval and window size.
 
-[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.4.0...v0.5.0
