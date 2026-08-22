@@ -10,6 +10,9 @@ from agent_monitor_for_claude import single_instance
 _IDYES = 6
 _IDNO = 7
 
+# Stand-in for the process handle OpenProcess hands back in the terminate tests.
+_FAKE_PROCESS_HANDLE = 0x222
+
 
 class ReplacePathTest(unittest.TestCase):
     """The 'replace running instance' flow must never terminate a stale PID.
@@ -89,6 +92,47 @@ class ReplacePathTest(unittest.TestCase):
         result, terminated, stored = self._drive_replace([(1234, '0.3.0'), (1234, '0.3.0')], sole_owner=False)
         self.assertFalse(result)
         self.assertFalse(stored, 'a failed replace must not claim the holder record')
+
+
+class TerminatePidTest(unittest.TestCase):
+    """Terminating the previous holder: exit code, wait, and handle release.
+
+    The replaced instance must die with a success exit code, and every path out
+    of the terminate must release the process handle it opened.
+    """
+
+    def _terminate(self, process_handle=_FAKE_PROCESS_HANDLE, terminate_ok=1):
+        fake_kernel = mock.Mock()
+        fake_kernel.OpenProcess.return_value = process_handle
+        fake_kernel.TerminateProcess.return_value = terminate_ok
+        fake_kernel.CloseHandle.return_value = 1
+
+        with mock.patch.object(single_instance, '_kernel32', fake_kernel):
+            single_instance._terminate_pid(1234)
+
+        return fake_kernel
+
+    def test_replaced_instance_exits_with_code_zero(self) -> None:
+        # A user-confirmed replace is an orderly handover. A non-zero code makes
+        # a launcher waiting on this process (a tray app that started it) report
+        # the replaced instance as a failed command.
+        fake_kernel = self._terminate()
+
+        fake_kernel.TerminateProcess.assert_called_once_with(_FAKE_PROCESS_HANDLE, 0)
+        fake_kernel.WaitForSingleObject.assert_called_once_with(_FAKE_PROCESS_HANDLE, mock.ANY)
+        fake_kernel.CloseHandle.assert_called_once_with(_FAKE_PROCESS_HANDLE)
+
+    def test_no_terminate_when_the_process_cannot_be_opened(self) -> None:
+        fake_kernel = self._terminate(process_handle=0)
+
+        fake_kernel.TerminateProcess.assert_not_called()
+        fake_kernel.CloseHandle.assert_not_called()
+
+    def test_failed_terminate_closes_the_handle_without_waiting(self) -> None:
+        fake_kernel = self._terminate(terminate_ok=0)
+
+        fake_kernel.WaitForSingleObject.assert_not_called()
+        fake_kernel.CloseHandle.assert_called_once_with(_FAKE_PROCESS_HANDLE)
 
 
 class MutexCreationFailureTest(unittest.TestCase):

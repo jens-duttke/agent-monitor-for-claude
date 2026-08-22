@@ -127,7 +127,10 @@ def _terminate_pid(pid: int) -> None:
     if not handle:
         return
 
-    if not _kernel32.TerminateProcess(handle, 1):
+    # Exit code 0: replacing the running instance is a user-confirmed, orderly
+    # handover, not a failure. A launcher that waits on the replaced process - a
+    # tray app that started it, say - would otherwise report it as a failed command.
+    if not _kernel32.TerminateProcess(handle, 0):
         _kernel32.CloseHandle(handle)
         return
 
