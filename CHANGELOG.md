@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Replacing a running instance no longer looks like a crash to whatever started it. The replaced instance was ended with an error exit code, so a launcher waiting on it - a tray tool that starts Agent Monitor on double-click - reported the replace as a failed command.
-- A session that hands its whole turn to a subagent no longer ages as though it had gone quiet. While the turn runs inside the subagent the session writes nothing to its own transcript, so its last-activity time kept climbing - observed at twelve minutes - and the panel ordering sank it while it was plainly working. The running subagent's activity now counts as the session's.
+- A session that hands its whole turn to a subagent no longer ages as though it had gone quiet. Its last-activity time kept climbing while the subagent worked, sinking the project panel down the list; the running subagent's activity now counts as the session's.
 - The last-activity time is no longer refreshed by Claude Code's own bookkeeping records. One of those is written whenever any tool writes a file, which could make an untouched session look as if the conversation had just moved on.
 
 ### Changed

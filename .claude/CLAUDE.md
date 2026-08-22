@@ -157,6 +157,12 @@ Prioritize readability and auditability - this tool reads local Claude Code data
 - The language list in the docs must stay in sync with the `locale/` files
 - Locale files are convention-based (filename = registration); every locale must carry exactly the `en.json` keyset (enforced by `test_i18n`) - never add per-status translation keys beyond the shared set. The error-cause keys are not such a set: `status_errored_reason` is one composition template ("Error: {reason}", so a language can order the two parts itself) and `error_overloaded`/`error_server`/`error_invalid_request`/`error_auth`/`error_http` name *causes*, not statuses - one shared set for the single `errored` status, mapped in `logic.apiErrorLabel`
 
+## Documentation Style
+- `README.md` and `docs/configuration.md` state what happens and what the reader has to do - not why the code works that way. A reason belongs in a code comment or in this file; someone on the settings page is configuring the app, not reviewing its design. The two deliberate exceptions are `docs/how-it-works.md`, where explaining the mechanism *is* the job, and `PRIVACY.md`, which answers to accuracy before brevity because its claims are checkable promises - neither is licence for the other pages to explain themselves
+- Cut a sentence that only justifies a behavior, repeats the first half of its own sentence, or restates what a neighbouring passage already said. Prefer short sentences over semicolon chains, and lead with the condition ("If a session has no transcript yet, ...") instead of building the subject out of a subordinate clause - "How a session that was abandoned mid-call ages is not shown" is a sentence no reader should have to parse twice
+- Never duplicate a passage between `README.md` and `docs/` - link to the page that owns it. A feature pitch copied into a how-to section is the usual offender: the how-to needs one sentence of context, not the pitch
+- This is a hard rule like the changelog length rule below, and it applies to every edit of an existing page: a paragraph that has grown into a justification gets trimmed when you touch it, not left because each sentence is true
+
 ## Changelog
 - Update `CHANGELOG.md` for every user-facing change; group under `## [Unreleased]` as Added / Changed / Fixed / Removed
 - Write from the user's perspective; one bullet per logical change; hyphens for dashes

@@ -16,16 +16,16 @@ Invalid JSON or invalid values are reported in a dialog; invalid individual entr
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `poll_interval` | integer (>= 1) | `5` | Seconds between full refreshes of the overview. Independently of this, a cheap change probe runs every second and triggers an immediate refresh when a session or transcript changes. |
-| `ended_max_age` | integer (>= 0) | `3600` | How long (seconds) a finished agent stays visible after its process exits. Counted from the last refresh that saw the process running; for a session that had already ended before Agent Monitor was started, its last transcript activity is used instead. |
+| `poll_interval` | integer (>= 1) | `5` | Seconds between full refreshes of the overview. A session or transcript that changes in between is picked up within about a second, whatever this is set to. |
+| `ended_max_age` | integer (>= 0) | `3600` | How long (seconds) a finished agent stays visible after its process exits, counted from the last refresh that saw the process running. If the session had already ended before Agent Monitor was started, its last transcript activity is used instead. |
 | `include_completed` | boolean | `false` | Show finished agents regardless of `ended_max_age`. |
 | `wsl` | boolean | `true` | Discover and monitor Claude Code sessions running inside WSL distributions, alongside native Windows sessions. Set to `false` to turn this off entirely - no `wsl.exe` call and no `\\wsl.localhost` read ever happens. |
-| `subagent_recent_seconds` | integer (>= 1) | `900` | How long (seconds) a subagent transcript is still considered part of the current run - within this window it counts as running (until it ends) or recently finished; older ones are ignored. |
+| `subagent_recent_seconds` | integer (>= 1) | `900` | How long (seconds) a subagent transcript is still counted as part of the current run - as running until it ends, then as recently finished. Older ones are ignored. |
 | `window_width` | integer (>= 320) | `920` | Initial window width in logical pixels. |
 | `window_height` | integer (>= 240) | `680` | Initial window height in logical pixels. |
 | `language` | string | `""` | Force a language by locale code (see below). Empty means auto-detect from the system locale. |
 
-The light/dark appearance is chosen with the toggle in the window's header (it follows your system preference by default), so it is not a settings-file option.
+The light/dark appearance is not a settings-file option. Set it with the toggle in the window's header; it follows your system preference by default.
 
 ## Example
 
@@ -63,8 +63,8 @@ Top-level keys are **effective-from dates** (`YYYY-MM-DD`). The schedule with th
 }
 ```
 
-- A dated schedule **fully replaces** the previous one - schedules are never merged. List **every** model you use in each dated table, even the ones whose price did not change (note `opus-4-8` is repeated unchanged above): a model omitted from the active schedule loses its cost estimate once that date takes effect.
+- A dated schedule **fully replaces** the previous one. List **every** model you use in each dated table, even the ones whose price did not change (note `opus-4-8` is repeated unchanged above): a model omitted from the active schedule loses its cost estimate once that date takes effect.
 - **Model keys** are family-version - the model id with `claude-`, any `[tier]`, and a trailing snapshot date removed (e.g. `claude-opus-4-8[1m]` and `claude-haiku-4-5-20251001` both need `opus-4-8` / `haiku-4-5`). Versions can be priced differently, so list each one you use.
-- All five rate fields are explicit (no multipliers), so cache prices that do not follow the usual ratios are handled correctly.
-- A session using a model that is not listed shows a plain token total instead of a cost, so nothing is ever priced wrong - add the model to fix it.
+- All five rate fields are explicit - no multipliers are applied, so enter each rate as it is published.
+- If a session uses a model that is not listed, it shows a plain token total instead of a cost - add the model to fix that.
 - A `_comment` key is allowed for notes and is ignored.
