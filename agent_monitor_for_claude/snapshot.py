@@ -91,6 +91,13 @@ def _build_session_record(
 
     subagents = count_subagents(root, record['session_id'], record['cwd'])
 
+    # Subagents run in-process, so one cannot outlive its session: a "running"
+    # agent under a dead process is a phantom the recent window has yet to
+    # clear, and its file age must not make an ended session look freshly
+    # active.  The same reading the UI applies to the running *count* after a
+    # force-stopped turn.
+    subagent_age = subagents.running_age if info.alive else None
+
     return {
         'pid': record['pid'],
         'session_id': record['session_id'],
@@ -130,7 +137,7 @@ def _build_session_record(
             {'run_id': workflow.run_id, 'total': workflow.total, 'done': workflow.done, 'active': workflow.active}
             for workflow in subagents.workflows
         ],
-        'age_seconds': _display_age(transcript_state.age_seconds, record['started_at']),
+        'age_seconds': _display_age(transcript_state.age_seconds, subagent_age, record['started_at']),
     }
 
 
@@ -244,14 +251,32 @@ def _probe_map(pairs: list[tuple[SessionRoot, dict[str, Any]]]) -> dict[tuple[st
     return probe_map
 
 
-def _display_age(transcript_age: float | None, started_at_ms: float | None) -> float | None:
-    """Age for display: transcript activity age, else time since the window opened.
+def _display_age(transcript_age: float | None, subagent_age: float | None, started_at_ms: float | None) -> float | None:
+    """Age for display: the freshest activity anywhere in the session, else time since the window opened.
 
-    The fallback gives never-used ("new") sessions a meaningful timestamp
-    instead of an empty column.
+    A session that delegates its whole turn to a subagent appends nothing to its
+    own transcript while that agent works, so the transcript age alone would
+    report it as untouched for as long as the delegation lasts - minutes, while
+    it plainly works.  The running subagent's own transcript is the missing
+    evidence, so whichever of the two is fresher wins.  Only a *running* agent
+    contributes (see ``SubagentInfo.running_age``).
+
+    The ``started_at`` fallback gives never-used ("new") sessions a meaningful
+    timestamp instead of an empty column.
+
+    Parameters
+    ----------
+    transcript_age : float or None
+        Seconds since the session transcript's newest conversational turn.
+    subagent_age : float or None
+        Seconds since the most recently written running subagent transcript.
+    started_at_ms : float or None
+        Registry start time in epoch milliseconds, used only when neither age
+        is known.
     """
-    if transcript_age is not None:
-        return transcript_age
+    ages = [age for age in (transcript_age, subagent_age) if age is not None]
+    if ages:
+        return min(ages)
 
     if started_at_ms is None:
         return None

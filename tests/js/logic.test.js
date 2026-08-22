@@ -163,6 +163,26 @@ test('deriveStatus: finished turn with a running subagent is processing', () => 
     assert.equal(status, 'processing');
 });
 
+test('deriveStatus: a turn delegated to a subagent is processing, not quiet', () => {
+    // A session whose whole turn runs inside a subagent appends nothing of its
+    // own meanwhile - no turn at all, so classify has nothing to go on and says
+    // unknown. The running agent is the only evidence it is busy, and without
+    // the promotion the session would sit in the quiet band while it works.
+    const delegated = raw({ has_activity: false, last_entry_kind: null, subagents_running: 1, child_count: 0 });
+
+    assert.equal(logic.classify(delegated), 'unknown');
+    assert.equal(logic.deriveStatus(delegated), 'processing');
+});
+
+test('deriveStatus: a transcript with no turn at all is quiet, never "your turn"', () => {
+    // Bookkeeping-only transcripts report has_activity false, so an untouched
+    // session reads unknown ("Quiet") rather than claiming the user is owed a
+    // reply it has no evidence for.
+    const empty = raw({ has_activity: false, last_entry_kind: null, subagents_running: 0, child_count: 0 });
+
+    assert.equal(logic.deriveStatus(empty), 'unknown');
+});
+
 test('deriveStatus: an interrupted session with a phantom subagent stays interrupted, not processing', () => {
     // The interrupt killed the in-process subagent; its still-"running" count is
     // a phantom the recent window has not cleared. It must not promote to processing.

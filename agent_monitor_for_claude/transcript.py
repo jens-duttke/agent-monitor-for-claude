@@ -89,6 +89,19 @@ _INTERRUPT_MARKER = '[Request interrupted by user'
 # Matched only to that boolean entry kind; the output itself is never read.
 _LOCAL_COMMAND_OUTPUT_MARKERS = ('<local-command-stdout>', '<local-command-stderr>')
 
+# Entry types that carry a conversational turn, and therefore the only ones
+# whose timestamp counts as session activity - the same types ``_parse`` reads
+# ``last_entry_kind`` from, so age and status are driven by the same entries.
+# Everything else Claude Code appends (``queue-operation``, ``file-history-*``,
+# ``ai-title``, ...) is bookkeeping about the session rather than movement in
+# it.  ``system`` is included for the local-command execution record, the one
+# subtype that yields a kind; another subtype yields none but is still the
+# session doing something, so its timestamp counts too.  Unknown types are
+# treated as bookkeeping, the quieter reading: a new conversational type would
+# leave the age standing rather than refresh it on something that never
+# happened.
+_TURN_ENTRY_TYPES = frozenset({'assistant', 'user', 'system'})
+
 _USAGE_MARKER = b'"usage"'
 _AI_TITLE_MARKER = b'ai-title'
 _CUSTOM_TITLE_MARKER = b'custom-title'
@@ -582,8 +595,17 @@ def _parse(lines: list[str]) -> TranscriptState:
         if entry.get('isMeta') is True:
             continue
 
+        # Read up front: the timestamp below counts only for a conversational type.
+        entry_type = entry.get('type')
+
+        # Claude Code also appends bookkeeping entries - queue operations,
+        # file-history snapshots and deltas, the generated title - which say
+        # nothing about the conversation having moved.  Letting one of those set
+        # the age is the very mistake ``_activity_age`` avoids by preferring the
+        # entry timestamp over the file mtime, merely arriving as an appended
+        # line instead of an in-place rewrite.
         timestamp = entry.get('timestamp')
-        if isinstance(timestamp, str):
+        if isinstance(timestamp, str) and entry_type in _TURN_ENTRY_TYPES:
             last_timestamp = timestamp
 
         # The Claude Code version is stamped on every entry, not just assistant
@@ -594,7 +616,6 @@ def _parse(lines: list[str]) -> TranscriptState:
         if isinstance(entry_version, str) and entry_version:
             cli_version = entry_version
 
-        entry_type = entry.get('type')
         message = entry.get('message')
         content = message.get('content') if isinstance(message, dict) else None
 

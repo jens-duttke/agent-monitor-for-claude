@@ -6,6 +6,7 @@ import os
 import tempfile
 import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -295,6 +296,85 @@ class SubagentRawTest(_RegistryFixture):
         session = build_snapshot()['sessions'][0]
 
         self.assertEqual(session['subagents_running'], 1)
+
+
+class DelegatedTurnAgeTest(_RegistryFixture):
+    """A session working inside a subagent must not read as having gone quiet.
+
+    While a turn is delegated, the session appends nothing to its own
+    transcript - the observed case ran twelve minutes that way - so the
+    transcript age alone reports it as untouched while it plainly works.  The
+    running agent's own file is the missing evidence.
+    """
+
+    def _add_subagent(self, session_id: str, cwd: str, body: str, age_seconds: float) -> None:
+        directory = transcript_path(windows_root(), session_id, cwd).parent / session_id / 'subagents'
+        directory.mkdir(parents=True, exist_ok=True)
+
+        agent = directory / 'agent-1.jsonl'
+        agent.write_text(body, encoding='utf-8')
+        mtime = time.time() - age_seconds
+        os.utime(agent, (mtime, mtime))
+
+    def test_age_comes_from_the_running_subagent(self) -> None:
+        # Transcript entry weeks old, agent written seconds ago.
+        self._add_session_with_transcript('d', 'd:\\WebDev\\proj', _END_TURN)
+        self._add_subagent('d', 'd:\\WebDev\\proj', _SUBAGENT_RUNNING, age_seconds=5)
+
+        session = build_snapshot()['sessions'][0]
+
+        self.assertEqual(session['subagents_running'], 1)
+        self.assertLess(session['age_seconds'], 60)
+
+    def test_a_finished_subagent_leaves_the_transcript_age_alone(self) -> None:
+        # Once the agent returns, the main transcript carries the turn again, so
+        # a fresh agent file must not keep a long-idle session looking active.
+        self._add_session_with_transcript('e', 'd:\\WebDev\\proj2', _END_TURN)
+        self._add_subagent('e', 'd:\\WebDev\\proj2', _END_TURN, age_seconds=5)
+
+        session = build_snapshot()['sessions'][0]
+
+        self.assertEqual(session['subagents_running'], 0)
+        self.assertGreater(session['age_seconds'], 3600)
+
+    def test_bookkeeping_entries_do_not_refresh_the_age(self) -> None:
+        # A file-history delta lands whenever a tool writes a file - a subagent
+        # writing to the scratchpad included - and is not the conversation moving.
+        fresh_delta = json.dumps({
+            'type': 'file-history-delta',
+            'messageId': 'm1',
+            'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'trackingPath': 'C:/x/scratchpad/note.md',
+        })
+        self._add_session_with_transcript('f', 'd:\\WebDev\\proj3', _END_TURN + '\n' + fresh_delta)
+
+        session = build_snapshot()['sessions'][0]
+
+        self.assertGreater(session['age_seconds'], 3600)
+
+    def test_a_phantom_subagent_under_a_dead_process_does_not_refresh_the_age(self) -> None:
+        # Subagents run in-process, so one cannot outlive its session: an agent
+        # left mid-tool-call when the process ended still reads as running until
+        # the recent window clears it, and must not make the ended session look
+        # freshly active.
+        cwd = 'd:\\WebDev\\proj4'
+        sessions = Path(self._temp.name) / 'sessions'
+        # A live pid with a mismatched procStart reads as a recycled pid: present
+        # in the registry, but not alive.
+        (sessions / 'g.json').write_text(
+            json.dumps({'pid': os.getpid(), 'sessionId': 'g', 'cwd': cwd, 'kind': 'interactive', 'procStart': '1'}),
+            encoding='utf-8',
+        )
+        path = transcript_path(windows_root(), 'g', cwd)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_END_TURN, encoding='utf-8')
+        self._add_subagent('g', cwd, _SUBAGENT_RUNNING, age_seconds=5)
+
+        with mock.patch.object(snapshot_mod, 'seconds_since_alive', return_value=60.0):
+            session = build_snapshot()['sessions'][0]
+
+        self.assertFalse(session['alive'])
+        self.assertGreater(session['age_seconds'], 3600)
 
 
 class FingerprintTest(_RegistryFixture):

@@ -6,6 +6,7 @@ import os
 import tempfile
 import time
 import unittest
+from dataclasses import asdict
 from pathlib import Path
 
 from agent_monitor_for_claude.paths import cwd_to_slug, projects_dir, windows_root
@@ -134,7 +135,9 @@ class SubagentsTest(unittest.TestCase):
 
         info = count_subagents(windows_root(), _SESSION_ID, _CWD)
 
-        serialized = json.dumps(info.labels)
+        # The whole returned record, not just the labels, so a field added later
+        # cannot carry content past this guard unnoticed.
+        serialized = json.dumps(asdict(info))
         self.assertIn('Benign label', serialized)
         self.assertNotIn('SECRET_SUBAGENT_BODY', serialized)
 
@@ -203,6 +206,42 @@ class SubagentsTest(unittest.TestCase):
 
         serialized = json.dumps([(w.run_id, w.total, w.done, w.active) for w in info.workflows])
         self.assertNotIn('SECRET_WORKFLOW_RESULT', serialized)
+
+    # The freshest running agent's file age - the activity the session's own
+    # transcript cannot see, because a delegated turn appends nothing to it
+    # while the agent works.
+
+    def test_running_age_reports_the_freshest_running_agent(self) -> None:
+        self._add_agent('old', 200, 'Old task', body=_assistant_tool_use())
+        self._add_agent('fresh', 4, 'Fresh task', body=_assistant_tool_use('Bash', 'tu_2'))
+
+        info = count_subagents(windows_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual(info.running, 2)
+        self.assertIsNotNone(info.running_age)
+        self.assertLess(info.running_age, 30)
+
+    def test_running_age_ignores_finished_agents(self) -> None:
+        # A returned agent hands the turn back, so the main transcript carries
+        # the conversation again and its own age is the honest one.
+        self._add_agent('done', 3, 'Done task', body=_assistant_end_turn())
+
+        info = count_subagents(windows_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual(info.recent_done, 1)
+        self.assertIsNone(info.running_age)
+
+    def test_running_age_is_none_without_subagents(self) -> None:
+        self.assertIsNone(count_subagents(windows_root(), _SESSION_ID, _CWD).running_age)
+
+    def test_running_age_clamps_a_file_dated_ahead_of_now(self) -> None:
+        # Clock skew must not produce a negative age (which would sort a session
+        # ahead of everything genuinely fresh).
+        self._add_agent('skewed', -120, 'Skewed', body=_assistant_tool_use())
+
+        info = count_subagents(windows_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual(info.running_age, 0.0)
 
 
 if __name__ == '__main__':

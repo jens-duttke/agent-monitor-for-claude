@@ -9,6 +9,9 @@ finished, from the per-session subagent transcripts Claude Code writes under
 
 A subagent within the active window is running until its transcript shows a
 completed, settled turn (see ``_is_finished``); older ones have long finished.
+The freshest running agent's file age is reported alongside the counts
+(``running_age``), because a session that delegates a whole turn writes nothing
+to its own transcript meanwhile and would otherwise appear to have gone quiet.
 Only control fields are read - file timestamps, the transcript tail's entry
 ``type``/``stop_reason``/block ``type``, and each ``meta.json``'s two display
 fields (``agentType``, ``description``) - never the subagent's own
@@ -77,6 +80,13 @@ class SubagentInfo:
     recent_done: int = 0
     labels: tuple[str, ...] = ()
     workflows: tuple[WorkflowActivity, ...] = ()
+    # Seconds since the most recently written *running* subagent's transcript, or
+    # None when none is running.  A session whose whole turn happens inside a
+    # subagent appends nothing to its own transcript for as long as that agent
+    # works, so its activity age would grow while it is plainly busy; this is the
+    # activity the main transcript cannot see.  Finished agents are excluded:
+    # once one returns, the main transcript carries the turn again.
+    running_age: float | None = None
 
 
 def count_subagents(root: SessionRoot, session_id: str, cwd: str) -> SubagentInfo:
@@ -87,6 +97,7 @@ def count_subagents(root: SessionRoot, session_id: str, cwd: str) -> SubagentInf
 
     now = time.time()
     running_paths: list[Path] = []
+    running_age: float | None = None
     recent_done = 0
 
     # rglob walks lazily, so an inaccessible sub-directory raises mid-iteration -
@@ -111,13 +122,19 @@ def count_subagents(root: SessionRoot, session_id: str, cwd: str) -> SubagentInf
         # producing; it is finished once its turn is complete and quiet.
         if _is_finished(path, age):
             recent_done += 1
-        else:
-            running_paths.append(path)
+            continue
+
+        running_paths.append(path)
+        # A clock skew that puts the file ahead of ``now`` would otherwise report
+        # a negative age; clamp it the way _activity_age does.
+        clamped_age = max(0.0, age)
+        if running_age is None or clamped_age < running_age:
+            running_age = clamped_age
 
     labels = tuple(label for label in (_label(path) for path in running_paths) if label)
     workflows = _workflow_activity(directory, now)
 
-    return SubagentInfo(running=len(running_paths), recent_done=recent_done, labels=labels, workflows=workflows)
+    return SubagentInfo(running=len(running_paths), recent_done=recent_done, labels=labels, workflows=workflows, running_age=running_age)
 
 
 def _is_finished(agent_path: Path, age: float) -> bool:

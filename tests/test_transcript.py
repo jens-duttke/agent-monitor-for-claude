@@ -590,5 +590,72 @@ class TailEscalationTest(unittest.TestCase):
             temp.cleanup()
 
 
+class ActivityTimestampTest(unittest.TestCase):
+    """Only a conversational turn's timestamp counts as session activity.
+
+    Claude Code appends bookkeeping entries of its own (queue operations,
+    file-history snapshots and deltas, the generated title).  They say nothing
+    about the conversation having moved, so letting one set the activity
+    timestamp would age a session backwards on housekeeping alone - the very
+    thing preferring the entry timestamp over the file mtime is meant to avoid.
+    """
+
+    def test_bookkeeping_only_transcript_reports_no_activity(self) -> None:
+        # What a session's own transcript holds while its whole turn runs inside
+        # a subagent: metadata and nothing else.
+        state = _parse(_lines(
+            {'type': 'queue-operation', 'operation': 'enqueue', 'timestamp': '2026-07-11T09:00:00Z'},
+            {'type': 'file-history-snapshot', 'messageId': 'm1', 'snapshot': {'messageId': 'm1'}},
+            {'type': 'ai-title', 'aiTitle': 'Generated title'},
+            {'type': 'file-history-delta', 'messageId': 'm2', 'timestamp': '2026-07-11T09:10:00Z'},
+        ))
+
+        self.assertTrue(state.has_transcript)
+        self.assertTrue(state.any_parsed)
+        self.assertIsNone(state.last_entry_kind)
+        self.assertIsNone(state.last_timestamp)
+
+    def test_bookkeeping_after_a_turn_does_not_refresh_the_age(self) -> None:
+        # A file-history delta lands whenever a tool writes a file - including a
+        # subagent writing to the scratchpad - so it must not be mistaken for the
+        # conversation itself moving on.
+        state = _parse(_lines(
+            {'type': 'assistant', 'timestamp': '2026-07-11T09:00:00Z',
+             'message': {'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': 'done'}]}},
+            {'type': 'file-history-delta', 'messageId': 'm2', 'timestamp': '2026-07-11T09:10:00Z'},
+            {'type': 'queue-operation', 'operation': 'dequeue', 'timestamp': '2026-07-11T09:11:00Z'},
+        ))
+
+        self.assertEqual(state.last_entry_kind, 'assistant')
+        self.assertEqual(state.last_timestamp, '2026-07-11T09:00:00Z')
+
+    def test_every_conversational_kind_counts(self) -> None:
+        for entry in (
+            {'type': 'user', 'timestamp': '2026-07-11T09:00:05Z', 'message': {'role': 'user', 'content': 'hi'}},
+            {'type': 'assistant', 'timestamp': '2026-07-11T09:00:05Z',
+             'message': {'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': 'ok'}]}},
+            {'type': 'system', 'subtype': 'local_command', 'timestamp': '2026-07-11T09:00:05Z'},
+        ):
+            with self.subTest(entry_type=entry['type']):
+                state = _parse(_lines(
+                    {'type': 'user', 'timestamp': '2026-07-11T09:00:00Z', 'message': {'role': 'user', 'content': 'first'}},
+                    entry,
+                ))
+                self.assertEqual(state.last_timestamp, '2026-07-11T09:00:05Z')
+
+    def test_a_skipped_turn_still_does_not_count(self) -> None:
+        # Sidechain and isMeta entries are skipped before the timestamp is read,
+        # so a subagent's own turn cannot drive the main conversation's age.
+        state = _parse(_lines(
+            {'type': 'user', 'timestamp': '2026-07-11T09:00:00Z', 'message': {'role': 'user', 'content': 'go'}},
+            {'type': 'assistant', 'isSidechain': True, 'timestamp': '2026-07-11T09:05:00Z',
+             'message': {'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': 'agent'}]}},
+            {'type': 'user', 'isMeta': True, 'timestamp': '2026-07-11T09:06:00Z',
+             'message': {'role': 'user', 'content': 'caveat'}},
+        ))
+
+        self.assertEqual(state.last_timestamp, '2026-07-11T09:00:00Z')
+
+
 if __name__ == '__main__':
     unittest.main()
