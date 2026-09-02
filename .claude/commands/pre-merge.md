@@ -66,7 +66,7 @@ The dependency gate below pins the set of leaves to a closed universe. Always ru
 
 New dependencies expand the set of available primitives (network, code execution, filesystem) in ways the audit cannot fully predict, so they must be ruled out or scrutinized **before** anything else.
 
-- **Default stance: no new dependencies.** The sanctioned runtime set is `pywebview` and `psutil` (`pyinstaller` is build-only). Any addition to `requirements.txt`, any new third-party top-level `import`, or any new entry in the spec's `hiddenimports`/`datas` is a finding by default. Demand a justification tied directly to the stated PR goal. CLAUDE.md mandates minimal, well-known dependencies.
+- **Default stance: no new dependencies.** The sanctioned runtime set is `pywebview` and `psutil` (`pyinstaller` is build-only; on Linux the distribution's PyGObject and WebKitGTK come from apt, not pip). Any addition to `requirements.txt`, any new third-party top-level `import`, or any new entry in the spec's `hiddenimports`/`datas` is a finding by default. Demand a justification tied directly to the stated PR goal. CLAUDE.md mandates minimal, well-known dependencies.
 - For each new dependency that survives that bar: `WebFetch` its PyPI page (maintainer identity, release history, download counts, last update), inspect the source repository, recurse into transitive dependencies, and look for typosquats/lookalikes.
 - Changes to `agent_monitor_for_claude.spec`, `version_info.py`, `.github/workflows/*`, or any build script are **high-risk surfaces in their own right** - a malicious PR can hide a payload in build configuration that never appears in the source diff. Verify every line is justified.
 - The diff must not contain vendored third-party code. Any such inclusion is a finding.
@@ -103,7 +103,7 @@ Non-exhaustive hints: `eval`, `exec`, `compile`, `__import__`, `importlib.*`, `r
 
 **Capability check:** does any leaf cause a side effect on the filesystem or registry?
 
-The app is **read-only except for two sanctioned write surfaces**: (1) the WebView2 UI-preference profile under `%LOCALAPPDATA%\AgentMonitorForClaude` (`webview.start(storage_path=...)`), and (2) `session_delete.delete_session` deleting a **past** session's own transcript and subagent folder under `projects/`. Non-exhaustive hints for write capability: `open(..., 'w'/'a'/'x'/'r+'/...)`, `os.remove`/`unlink`/`rename`/`replace`/`mkdir`/`chmod`, `shutil.*` (copy/move/rmtree), `pathlib.Path` write/touch/mkdir/unlink, `tempfile.mkstemp`/`NamedTemporaryFile(delete=False)`, `winreg.SetValue*`/`DeleteValue`/`CreateKey*`, `ctypes` into Win32 file/registry write APIs. **Any write outside those two surfaces is a finding by default.** In `session_delete` specifically, any weakening of its three guards - the UUID validation, the live-process refusal (re-probed immediately before deleting), and the `projects/` path confinement - is a finding, as is any deletion path that is not gated on an explicit user action.
+The app is **read-only except for the sanctioned write surfaces**: (1) the browser UI-preference profile (`webview.start(storage_path=...)`) under `%LOCALAPPDATA%\AgentMonitorForClaude` or `~/.local/share/agent-monitor-for-claude`, (2) `session_delete.delete_session` deleting a **past** session's own transcript and subagent folder under `projects/`, and (3) on Linux only, the single-instance lock file in `$XDG_RUNTIME_DIR` (`platforms/instance_linux.py`). Non-exhaustive hints for write capability: `open(..., 'w'/'a'/'x'/'r+'/...)`, `os.open`/`os.write`/`os.ftruncate`, `os.remove`/`unlink`/`rename`/`replace`/`mkdir`/`chmod`, `shutil.*` (copy/move/rmtree), `pathlib.Path` write/touch/mkdir/unlink, `tempfile.mkstemp`/`NamedTemporaryFile(delete=False)`, `winreg.SetValue*`/`DeleteValue`/`CreateKey*`, `ctypes` into Win32 file/registry write APIs. **Any write outside those surfaces is a finding by default.** In `session_delete` specifically, any weakening of its three guards - the UUID validation, the live-process refusal (re-probed immediately before deleting), and the `projects/` path confinement - is a finding, as is any deletion path that is not gated on an explicit user action.
 
 ### Obfuscation
 - Any base64, hex, or otherwise encoded strings? Decode and inspect.
@@ -120,6 +120,7 @@ The app is **read-only except for two sanctioned write surfaces**: (1) the WebVi
 
 For every factual claim about external behavior, verify against primary sources with `WebFetch`/`WebSearch`:
 - Windows APIs (`ctypes.windll.*`, `winreg.*`) - check Microsoft Learn for the exact signature and behavior.
+- Linux interfaces (Xlib/EWMH, GTK, GIO, D-Bus, procfs) - check the relevant specification or man page (`proc(5)`, the EWMH spec, the freedesktop portal and FileManager1 interfaces) for the exact field or method contract.
 - Library behavior (pywebview, psutil) - check upstream documentation or source.
 - Any new dependency - check its PyPI page, source repository, and recent issues.
 - Claims about Claude Code's on-disk layout (registry fields, transcript schema, slug scheme) - these are unversioned; confirm the parsing degrades safely if the claim is wrong.

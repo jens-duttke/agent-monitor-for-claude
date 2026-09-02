@@ -18,7 +18,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_monitor_for_claude import session_delete
-from agent_monitor_for_claude.paths import SessionRoot, cwd_to_slug, windows_root
+from agent_monitor_for_claude.paths import SessionRoot, cwd_to_slug, local_root
 from agent_monitor_for_claude.session_delete import delete_session, _within
 
 _CWD = 'd:\\PythonDev\\demo-proj'
@@ -40,7 +40,7 @@ class DeleteEnvTest(unittest.TestCase):
     ``roots.session_roots()`` - and a real running WSL distro on the machine
     running the suite - on every test below, including every pre-existing one
     (none of them pass an ``origin``, so they all resolve the default
-    ``'windows'``).  ``DeleteOriginTest`` overrides both pins explicitly for its
+    ``'local'``).  ``DeleteOriginTest`` overrides both pins explicitly for its
     own narrower scope.
     """
 
@@ -49,15 +49,15 @@ class DeleteEnvTest(unittest.TestCase):
         self._temp = tempfile.TemporaryDirectory()
         os.environ['CLAUDE_CONFIG_DIR'] = self._temp.name
 
-        self.windows_root = windows_root()
+        self.local_root = local_root()
         origin_patcher = mock.patch.object(
             session_delete, 'root_for_origin',
-            side_effect=lambda origin: self.windows_root if origin == 'windows' else None,
+            side_effect=lambda origin: self.local_root if origin == 'local' else None,
         )
         origin_patcher.start()
         self.addCleanup(origin_patcher.stop)
 
-        roots_patcher = mock.patch.object(session_delete, 'session_roots', return_value=[self.windows_root])
+        roots_patcher = mock.patch.object(session_delete, 'session_roots', return_value=[self.local_root])
         roots_patcher.start()
         self.addCleanup(roots_patcher.stop)
 
@@ -159,7 +159,7 @@ class DeleteOriginTest(DeleteEnvTest):
     def _wsl_root_with_session(self, base: str, alive_pid: int | None) -> SessionRoot:
         root = SessionRoot(
             origin='wsl:U', label='U', config_dir=Path(base) / 'cfg',
-            proc_dir=Path(base) / 'proc', temp_dir=Path(base) / 'tmp',
+            proc_dir=Path(base) / 'proc', claude_temp_dir=Path(base) / 'tmp',
         )
         project = root.config_dir / 'projects' / '-home-dev-proj'
         (project / WSL_SID).mkdir(parents=True)                      # subagent dir
@@ -217,7 +217,7 @@ class DeleteOriginTest(DeleteEnvTest):
         with tempfile.TemporaryDirectory() as base:
             wsl_root = self._wsl_root_with_session(base, alive_pid=None)
             with mock.patch.object(session_delete, 'root_for_origin', return_value=wsl_root), \
-                 mock.patch.object(session_delete, 'session_roots', return_value=[self.windows_root, wsl_root]):
+                 mock.patch.object(session_delete, 'session_roots', return_value=[self.local_root, wsl_root]):
                 self.assertTrue(delete_session(WSL_SID, '/home/dev/proj', 'wsl:U'))
 
 

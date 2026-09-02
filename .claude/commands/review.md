@@ -22,11 +22,11 @@ Run `git diff --staged` and critically review EVERY changed file:
 - When a comment is corrected because behavior changed, check whether the same outdated concept is encoded in nearby variable, parameter, or function names - and rename them too.
 - No ambiguous names like `other`, `data2`, `flag`.
 
-### Security & Privacy (especially changes touching `transcript.py`, `sessions.py`, `process_probe.py`)
+### Security & Privacy (especially changes touching `transcript.py`, `sessions.py`, `process_probe.py`, `platforms/`)
 - **Privacy boundary:** does any code path read, return, store, log, or render conversation content - message `text`, `thinking` blocks, tool `input`, or tool-result `content`? Only control metadata (entry type, `stop_reason`, tool IDs, tool name, timestamps) may be extracted.
 - **No network:** no sockets, no `requests`, no URL literals, no external destinations of any kind.
 - **No credentials:** nothing reads authentication tokens or other secrets.
-- **Read-only bar two sanctioned write surfaces:** no file or registry writes except (1) the WebView2 UI-preference profile and (2) `session_delete.delete_session` removing a past session's own files under `projects/` (guarded by a UUID check, a live-process refusal, and `projects/` path confinement, only on an explicit user action). Any other write - or any weakening of those guards - is a finding.
+- **Read-only bar the sanctioned write surfaces:** no file or registry writes except (1) the browser UI-preference profile, (2) `session_delete.delete_session` removing a past session's own files under `projects/` (guarded by a UUID check, a live-process refusal, and `projects/` path confinement, only on an explicit user action), and (3) on Linux only, the single-instance lock file in `$XDG_RUNTIME_DIR` (`platforms/instance_linux.py`). Any other write - or any weakening of those guards - is a finding.
 - No `eval()`, `exec()`, `compile()`, dynamic imports, obfuscation, or base64-encoded strings.
 - **Defensive parsing:** unversioned Claude Code internals (registry, transcript schema, slug scheme) must degrade to `unknown`/skip on a missing or mistyped field, never crash.
 
@@ -45,6 +45,7 @@ Run `git diff --staged` and critically review EVERY changed file:
 - Type hints in function signatures (not in docstrings)?
 - Import grouping correct (stdlib / third-party / local), relative imports within the package?
 - No circular dependencies, no unused imports?
+- **Platform layer respected?** No `ctypes.windll`, `ctypes.wintypes`, `winreg`, `fcntl` or `gi` import outside `platforms/`, and no `sys.platform` check outside the three dispatch modules (`platforms/__init__.py`, `process_probe.py`, `single_instance.py`).
 
 ### Style & Formatting (per CLAUDE.md)
 - Single quotes default, double when containing singles, triple-double for docstrings?
@@ -78,7 +79,8 @@ Apply necessary changes directly.
 - Are edge cases covered (missing/renamed fields, empty transcripts, dead PIDs, UTC-vs-local age)?
 - **Is the privacy boundary still enforced?** If transcript parsing changed, does `test_transcript_privacy.py` still prove no content leaks - and was it extended for the new fields?
 - Do the `status.classify` table tests still cover every branch?
-- Run `python -m unittest discover -s tests` to verify all tests pass.
+- Does a change to one platform backend have a counterpart in the other, or a documented reason it cannot?
+- Run `python -m unittest discover -s tests` to verify all tests pass. Tests for the other operating system's backend skip themselves; a green run covers only the system you are on.
 
 If tests are missing or failing, fix them directly.
 

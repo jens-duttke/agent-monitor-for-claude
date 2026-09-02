@@ -3,168 +3,42 @@ Verbose Diagnostics
 ====================
 
 Collects and prints system and runtime diagnostics when the app is launched
-with ``--verbose``.  Helps users diagnose startup failures (missing WebView2,
-DPI issues, dependency versions) without needing a Python installation.
+with ``--verbose``.  Helps users diagnose startup failures (a missing web-view
+runtime, DPI or display issues, dependency versions) without needing a Python
+installation.
+
+The frame - the sections, the layout, the home-directory redaction - is shared;
+the rows that only one system can answer come from the platform layer, so a
+Linux run reports its session type and GTK/WebKitGTK versions where a Windows
+run reports DPI awareness and WebView2.
 """
 from __future__ import annotations
 
-import ctypes
 import importlib.metadata
 import locale
 import os
-import platform
 import sys
-import winreg
 from pathlib import Path
+
+from .platforms import (
+    DIAGNOSTIC_PACKAGES, diagnostic_display_rows, diagnostic_post_init_rows, diagnostic_runtime_rows,
+    diagnostic_system_rows,
+)
+from .platforms import setup_console as _platform_setup_console
 
 __all__ = ['setup_console', 'print_startup_diagnostics', 'print_runtime_diagnostics']
 
-# WebView2 registry GUIDs (runtime, beta, dev, canary)
-_WEBVIEW2_GUIDS = [
-    ('{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'Runtime'),
-    ('{2CD8A007-E189-409D-A2C8-9AF4EF3C72AA}', 'Beta'),
-    ('{0D50BFEC-CD6A-4F9A-964C-C7416E3ACB10}', 'Developer'),
-    ('{65C35B14-6C1D-4122-AC46-7148CC9D6497}', 'Canary'),
-]
-
 
 def setup_console() -> None:
-    """Ensure diagnostics have somewhere to print, without clobbering redirection.
+    """Ensure diagnostics have somewhere to print, and turn on pywebview's own logging.
 
-    A stream the shell already connected - a console session, or output the user
-    redirected to a file (``--verbose > diag.txt``) - is left untouched;
-    overwriting it with the console buffer (``CONOUT$``) would send everything to
-    the console and produce an empty redirect target. Only a missing/detached
-    stream (a frozen windowed build, where ``sys.stdout`` is ``None``) gets a
-    console attached and bound.
+    Attaching a console is the platform's job (only Windows needs one, and only
+    for a windowed build); raising pywebview's log level is not, so it happens
+    here for both systems.
     """
-    ATTACH_PARENT_PROCESS = -1
-
-    have_out = _stream_usable(sys.stdout)
-    have_err = _stream_usable(sys.stderr)
-
-    if not have_out or not have_err:
-        if not ctypes.windll.kernel32.AttachConsole(ATTACH_PARENT_PROCESS):
-            ctypes.windll.kernel32.AllocConsole()
-        # errors='backslashreplace' (Python's own stderr default) so a lone
-        # surrogate in any diagnostic degrades to an escape instead of raising.
-        if not have_out:
-            sys.stdout = open('CONOUT$', 'w', encoding='utf-8', errors='backslashreplace')  # noqa: SIM115
-        if not have_err:
-            sys.stderr = open('CONOUT$', 'w', encoding='utf-8', errors='backslashreplace')  # noqa: SIM115
+    _platform_setup_console()
 
     os.environ['PYWEBVIEW_LOG'] = 'DEBUG'
-
-
-def _stream_usable(stream: object) -> bool:
-    """Return True if *stream* is a real, connected stream (not None or detached)."""
-    if stream is None:
-        return False
-    try:
-        stream.fileno()
-        return True
-    except (OSError, ValueError, AttributeError):
-        return False
-
-
-def _section(title: str) -> None:
-    """Print a section header."""
-    print(f'\n  {title}')
-    print(f'  {"-" * len(title)}')
-
-
-def _row(label: str, value: str, indent: int = 4) -> None:
-    """Print a key-value row with aligned columns."""
-    print(f'{" " * indent}{label + ":":<22s} {value}')
-
-
-def _package_version(name: str) -> str:
-    """Get an installed package version, or 'not found'."""
-    try:
-        return importlib.metadata.version(name)
-    except importlib.metadata.PackageNotFoundError:
-        return 'not found'
-
-
-def _webview2_version() -> str:
-    """Read the WebView2 runtime version from the registry."""
-    for guid, channel in _WEBVIEW2_GUIDS:
-        for root_key in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
-            for sub_path in (
-                rf'SOFTWARE\Microsoft\EdgeUpdate\Clients\{guid}',
-                rf'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{guid}',
-            ):
-                try:
-                    with winreg.OpenKey(root_key, sub_path) as key:
-                        build, _ = winreg.QueryValueEx(key, 'pv')
-                        if build and build != '0.0.0.0':
-                            suffix = f' ({channel})' if channel != 'Runtime' else ''
-                            return f'{build}{suffix}'
-                except OSError:
-                    pass
-
-    return 'not found'
-
-
-def _dotnet_version() -> str:
-    """Read the .NET Framework version from the registry."""
-    try:
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full') as key:
-            release, _ = winreg.QueryValueEx(key, 'Release')
-            if not isinstance(release, int):
-                # A damaged registry can hold a non-DWORD Release; comparing it
-                # against the integer thresholds below would raise TypeError.
-                return 'not found'
-            version_map = [
-                (533320, '4.8.1'), (528040, '4.8'), (461808, '4.7.2'), (461308, '4.7.1'),
-                (460798, '4.7'), (394802, '4.6.2'), (394254, '4.6.1'), (393295, '4.6'),
-            ]
-            for min_release, version in version_map:
-                if release >= min_release:
-                    return f'{version} (release {release})'
-            return f'< 4.6 (release {release})'
-    except OSError:
-        return 'not found'
-
-
-def _dpi_info() -> tuple[str, str]:
-    """Get the DPI awareness mode and system DPI."""
-    user32 = ctypes.windll.user32
-
-    try:
-        ctx = user32.GetThreadDpiAwarenessContext()
-        awareness = user32.GetAwarenessFromDpiAwarenessContext(ctx)
-        awareness_names = {0: 'Unaware', 1: 'System', 2: 'Per-Monitor V2'}
-        awareness_str = awareness_names.get(awareness, f'Unknown ({awareness})')
-    except Exception:
-        awareness_str = 'unavailable'
-
-    try:
-        dpi = user32.GetDpiForSystem()
-        scale = round(dpi / 96 * 100)
-        dpi_str = f'{dpi} ({scale}%)'
-    except Exception:
-        dpi_str = 'unavailable'
-
-    return awareness_str, dpi_str
-
-
-def _redact_home(path_str: str) -> str:
-    """Replace the user's home directory with ``~`` to avoid exposing the username.
-
-    Compares on the case- and separator-normalized paths: NTFS is
-    case-insensitive and a hand-typed ``CLAUDE_CONFIG_DIR`` can differ in casing
-    or slashes from ``Path.home()``, and a plain prefix check would also
-    over-match a sibling (``...\\jens2`` against home ``...\\jens``).
-    """
-    home_n = os.path.normcase(os.path.normpath(str(Path.home())))
-    norm = os.path.normcase(os.path.normpath(path_str))
-
-    if norm == home_n:
-        return '~'
-    if norm.startswith(home_n + os.sep):
-        return '~' + path_str[len(home_n):]
-    return path_str
 
 
 def print_startup_diagnostics() -> None:
@@ -175,9 +49,7 @@ def print_startup_diagnostics() -> None:
     print(f'  {"=" * 48}')
 
     _section('System')
-    winver = sys.getwindowsversion()
-    _row('OS', f'{platform.platform()} (build {winver.build})')
-    _row('Architecture', platform.machine())
+    _rows(diagnostic_system_rows())
 
     _section('Python')
     _row('Version', sys.version.split()[0])
@@ -193,23 +65,20 @@ def print_startup_diagnostics() -> None:
     _row('CLAUDE_CONFIG_DIR', _redact_home(os.environ.get('CLAUDE_CONFIG_DIR', '')) or '(not set)')
 
     _section('Display')
-    awareness_str, dpi_str = _dpi_info()
-    _row('DPI awareness', awareness_str)
-    _row('System DPI', dpi_str)
+    _rows(diagnostic_display_rows())
 
     _section('Runtimes')
-    _row('WebView2', _webview2_version())
-    _row('.NET Framework', _dotnet_version())
+    _rows(diagnostic_runtime_rows())
 
     _section('Dependencies')
-    for pkg in ('pywebview', 'pythonnet', 'clr-loader', 'psutil'):
-        _row(pkg, _package_version(pkg))
+    for package in DIAGNOSTIC_PACKAGES:
+        _row(package, _package_version(package))
 
     print()
 
 
 def print_runtime_diagnostics() -> None:
-    """Print diagnostics only available after the webview/CLR has loaded."""
+    """Print diagnostics only available after the webview host has loaded."""
     import webview  # type: ignore[import-untyped]  # no type stubs available
 
     _section('Runtime (post-init)')
@@ -220,4 +89,50 @@ def print_runtime_diagnostics() -> None:
     guilib = getattr(webview, 'guilib', None)
     _row('GUI backend', guilib.__name__ if guilib else 'unknown')
 
+    _rows(diagnostic_post_init_rows())
+
     print()
+
+
+def _section(title: str) -> None:
+    """Print a section header."""
+    print(f'\n  {title}')
+    print(f'  {"-" * len(title)}')
+
+
+def _row(label: str, value: str, indent: int = 4) -> None:
+    """Print a key-value row with aligned columns."""
+    print(f'{" " * indent}{label + ":":<22s} {value}')
+
+
+def _rows(rows: list[tuple[str, str]]) -> None:
+    """Print a platform-supplied list of key-value rows."""
+    for label, value in rows:
+        _row(label, value)
+
+
+def _package_version(name: str) -> str:
+    """Get an installed package version, or 'not found'."""
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return 'not found'
+
+
+def _redact_home(path_str: str) -> str:
+    """Replace the user's home directory with ``~`` to avoid exposing the username.
+
+    Compares on the case- and separator-normalized paths: NTFS is
+    case-insensitive and a hand-typed ``CLAUDE_CONFIG_DIR`` can differ in casing
+    or slashes from ``Path.home()``, while a Linux path is compared as typed
+    (``normcase`` leaves it alone there).  A plain prefix check would also
+    over-match a sibling (``.../jens2`` against home ``.../jens``).
+    """
+    home_n = os.path.normcase(os.path.normpath(str(Path.home())))
+    norm = os.path.normcase(os.path.normpath(path_str))
+
+    if norm == home_n:
+        return '~'
+    if norm.startswith(home_n + os.sep):
+        return '~' + path_str[len(home_n):]
+    return path_str

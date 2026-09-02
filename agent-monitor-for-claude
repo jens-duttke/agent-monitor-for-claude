@@ -1,0 +1,20 @@
+#!/bin/sh
+# Start Agent Monitor for Claude without activating the virtual environment
+# first, and from any working directory.  See the Linux section of README.md for
+# how to put it on your PATH.
+#
+# Two things this has to get right.  The symlink is resolved before the
+# directory is taken, so a link on the PATH still finds the checkout rather than
+# the directory it was linked into.  And PYTHONPATH, not a "cd", is what puts
+# the package within reach: "python -m" searches the working directory, and
+# changing that would be a side effect the application never asked for.
+set -eu
+
+here=$(dirname -- "$(readlink -f -- "$0")")
+
+if [ ! -x "$here/.venv/bin/python" ]; then
+    echo "No virtual environment in $here/.venv - see the Linux section of README.md." >&2
+    exit 1
+fi
+
+PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" exec "$here/.venv/bin/python" -m agent_monitor_for_claude "$@"

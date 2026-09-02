@@ -223,9 +223,9 @@ const DEFAULT_LABELS = {
     row_menu: 'More actions',
     copy_session_id: 'Copy session ID',
     copied: 'Copied to clipboard',
-    show_in_explorer: 'Show in Explorer',
-    show_transcript: 'Show transcript in Explorer',
-    show_scratchpad: 'Show scratchpad in Explorer',
+    show_in_file_manager: 'Show in file manager',
+    show_transcript: 'Show transcript in file manager',
+    show_scratchpad: 'Show scratchpad in file manager',
     filter_history: 'Older',
     filter_history_tip: 'Older sessions that are no longer running and have left the overview (loaded on demand)',
     history_loading: 'Loading older sessions…',
@@ -974,7 +974,7 @@ function openProcPanel(anchor) {
         pid: Number(anchor.dataset.procPid),
         sessionId: anchor.dataset.procSession || '',
         cwd: anchor.dataset.procCwd || '',
-        origin: anchor.dataset.procOrigin || 'windows',
+        origin: anchor.dataset.procOrigin || 'local',
         expanded: new Set(),
         tick: 0,
         timer: null,
@@ -1318,7 +1318,7 @@ async function callProcessStats(pid, origin) {
     const bridge = apiBridge();
     if (bridge && typeof bridge.get_process_stats === 'function') {
         try {
-            return (await bridge.get_process_stats(pid, origin || 'windows')) || [];
+            return (await bridge.get_process_stats(pid, origin || 'local')) || [];
         } catch (e) {
             return [];
         }
@@ -1330,7 +1330,7 @@ async function callTasks(sessionId, cwd, maxAge, origin) {
     const bridge = apiBridge();
     if (bridge && typeof bridge.get_tasks === 'function') {
         try {
-            return (await bridge.get_tasks(sessionId, cwd, maxAge || 0, origin || 'windows')) || { tasks: [], total: 0 };
+            return (await bridge.get_tasks(sessionId, cwd, maxAge || 0, origin || 'local')) || { tasks: [], total: 0 };
         } catch (e) {
             return { tasks: [], total: 0 };
         }
@@ -1343,7 +1343,7 @@ async function callTaskOutput(sessionId, cwd, taskId, origin) {
     const bridge = apiBridge();
     if (bridge && typeof bridge.read_task_output === 'function') {
         try {
-            return await bridge.read_task_output(sessionId, cwd, taskId, origin || 'windows');
+            return await bridge.read_task_output(sessionId, cwd, taskId, origin || 'local');
         } catch (e) {
             return null;
         }
@@ -1519,7 +1519,7 @@ function confirmDeleteSession(sessionId, cwd, name, age, origin) {
 
         let ok = false;
         try {
-            ok = await bridge.delete_session(sessionId, cwd, origin || 'windows');
+            ok = await bridge.delete_session(sessionId, cwd, origin || 'local');
         } catch (e) {
             ok = false;
         }
@@ -2451,7 +2451,7 @@ function nameCellHtml(session) {
             + attr('data-proc-pid', session.pid)
             + attr('data-proc-session', session.session_id)
             + attr('data-proc-cwd', session.cwd)
-            + attr('data-proc-origin', session.origin || 'windows')
+            + attr('data-proc-origin', session.origin || 'local')
             + attr('data-tip', labels.proc_open_hint || '')
             + '>⚙ ' + esc(session.processes) + '</span>';
     }
@@ -2504,10 +2504,10 @@ function updateRow(row, session, projectName) {
     row.dataset.project = projectName || '';
     row.dataset.session = session.session_id || '';
     row.dataset.title = session.title || '';
-    // buildSession always resolves an origin ('windows' by default), so every
+    // buildSession always resolves an origin ('local' by default), so every
     // row - live or history - carries it: focusSession and the row menu's
     // transcript/scratchpad/delete actions all need it to route their bridge call.
-    row.dataset.origin = session.origin || 'windows';
+    row.dataset.origin = session.origin || 'local';
     // A history session has no live process, so it is not a focus target (no
     // data-pid); the click-to-focus handler keys on .row[data-pid].
     if (session.is_history) {
@@ -2566,7 +2566,7 @@ function updateRow(row, session, projectName) {
     const menuBtn = row.querySelector('.row-menu-btn');
     menuBtn.dataset.session = session.session_id || '';
     menuBtn.dataset.cwd = session.cwd || '';
-    menuBtn.dataset.origin = session.origin || 'windows';
+    menuBtn.dataset.origin = session.origin || 'local';
     // Only a history row (a past, non-live session with no registry record) may
     // be deleted; the menu adds its delete item off this flag.
     if (session.is_history) {
@@ -2613,15 +2613,15 @@ function updatePanel(section, project) {
     // reconciliation); the cwd stays the real path the click opens.
     head.dataset.key = project.key;
     head.dataset.cwd = project.cwd;
-    head.dataset.origin = project.origin || 'windows';
+    head.dataset.origin = project.origin || 'local';
     section.querySelector('h2').textContent = project.name;
     section.querySelector('.panel-count').textContent = project.sessions.length;
 
-    // The path text is its own click target (opens the folder in Explorer);
+    // The path text is its own click target (opens the folder in the file manager);
     // clicking elsewhere in the header still toggles the panel.
     const pathOpen = section.querySelector('.path-open');
     pathOpen.textContent = project.cwd;
-    pathOpen.dataset.tip = state.labels.show_in_explorer || 'Show in Explorer';
+    pathOpen.dataset.tip = state.labels.show_in_file_manager || 'Show in file manager';
 
     // Names the distro when the panel belongs to a WSL root, so two panels
     // with the same path text stay tellable apart at a glance.
@@ -2708,7 +2708,7 @@ function setHero(blocked) {
         + attr('data-project', projectName)
         + attr('data-session', session.session_id || '')
         + attr('data-title', session.title || '')
-        + attr('data-origin', session.origin || 'windows')
+        + attr('data-origin', session.origin || 'local')
         + (session.vscode_deeplink ? attr('data-deeplink', '1') : '')
         + attr('data-tip', session.status_tip)
         + '>'
@@ -2748,11 +2748,11 @@ function openPath(cwd, origin) {
     const bridge = apiBridge();
     if (bridge && typeof bridge.open_path === 'function') {
         // Fire-and-forget: a Win32-side rejection must not wipe the content area.
-        logic.settleCall(() => bridge.open_path(cwd, origin || 'windows'));
+        logic.settleCall(() => bridge.open_path(cwd, origin || 'local'));
     }
 }
 
-// Show one file in Explorer, selected in its folder. The file is never opened -
+// Show one file in the file manager, selected in its folder. The file is never opened -
 // the backend hands it to the shell's select-in-folder call, nothing else.
 function revealPath(path, origin) {
     if (!path) {
@@ -2761,7 +2761,7 @@ function revealPath(path, origin) {
     const bridge = apiBridge();
     if (bridge && typeof bridge.reveal_path === 'function') {
         // Fire-and-forget: a Win32-side rejection must not wipe the content area.
-        logic.settleCall(() => bridge.reveal_path(path, origin || 'windows'));
+        logic.settleCall(() => bridge.reveal_path(path, origin || 'local'));
     }
 }
 
@@ -2775,7 +2775,7 @@ function focusSession(el) {
             el.dataset.session || '',
             el.dataset.deeplink === '1',
             el.dataset.title || '',
-            el.dataset.origin || 'windows'
+            el.dataset.origin || 'local'
         ));
     }
 }
@@ -2786,7 +2786,7 @@ function focusSession(el) {
 async function openRowMenu(menuBtn) {
     const sessionId = menuBtn.dataset.session || '';
     const cwd = menuBtn.dataset.cwd || '';
-    const origin = menuBtn.dataset.origin || 'windows';
+    const origin = menuBtn.dataset.origin || 'local';
     const rowEl = menuBtn.closest('.row');
     const menuRowKey = rowEl ? rowEl.dataset.key : '';
 
@@ -2836,7 +2836,7 @@ async function scratchpadPath(sessionId, cwd, origin) {
     const bridge = apiBridge();
     if (bridge && typeof bridge.scratchpad_path === 'function') {
         try {
-            return (await bridge.scratchpad_path(sessionId, cwd, origin || 'windows')) || '';
+            return (await bridge.scratchpad_path(sessionId, cwd, origin || 'local')) || '';
         } catch (e) {
             return '';
         }
@@ -2851,7 +2851,7 @@ async function transcriptPath(sessionId, cwd, origin) {
     const bridge = apiBridge();
     if (bridge && typeof bridge.transcript_path === 'function') {
         try {
-            return (await bridge.transcript_path(sessionId, cwd, origin || 'windows')) || '';
+            return (await bridge.transcript_path(sessionId, cwd, origin || 'local')) || '';
         } catch (e) {
             return '';
         }
@@ -2891,7 +2891,7 @@ function onContentClick(event) {
     if (pathOpen) {
         event.stopPropagation();
         const pathHead = pathOpen.closest('.panel-head');
-        openPath(pathHead ? pathHead.dataset.cwd : '', pathHead ? pathHead.dataset.origin : 'windows');
+        openPath(pathHead ? pathHead.dataset.cwd : '', pathHead ? pathHead.dataset.origin : 'local');
         return;
     }
 

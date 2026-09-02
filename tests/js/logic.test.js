@@ -873,7 +873,7 @@ test('searchScopeRefs: refs carry the session origin, defaulting to windows', ()
         last_entry_kind: 'user_text', origin: 'wsl:Ubuntu',
     };
     const refs = logic.searchScopeRefs([winSession, wslSession], null, new Set(['working']), true);
-    assert.equal(refs.find((r) => r.session_id === 'a').origin, 'windows');
+    assert.equal(refs.find((r) => r.session_id === 'a').origin, 'local');
     assert.equal(refs.find((r) => r.session_id === 'b').origin, 'wsl:Ubuntu');
 });
 
@@ -1240,7 +1240,7 @@ test('buildSession: a genuinely pending dialog tool keeps its specific label', (
 
 /* --- WSL origin (host, flags) ---
 
-   A raw record's origin ('windows' | 'wsl:<distro>') shapes the display host
+   A raw record's origin ('local' | 'wsl:<distro>') shapes the display host
    and the wsl/origin_label flags buildSession exposes. Fixture shared across
    this group (mirrors the file's existing pattern of a base raw object spread
    with per-test overrides, e.g. the compact-cost test above); wslLabels is
@@ -1261,7 +1261,7 @@ test('buildSession: WSL origin shapes host and flags', () => {
 
 test('buildSession: absent origin defaults to windows', () => {
     const session = logic.buildSession(wslBaseRaw, wslLabels, null);
-    assert.equal(session.origin, 'windows');
+    assert.equal(session.origin, 'local');
     assert.equal(session.wsl, false);
 });
 
@@ -1418,7 +1418,7 @@ test('groupProjects groups case-insensitively', () => {
     assert.equal(projects.length, 1);
     assert.equal(projects[0].sessions.length, 2);
     assert.equal(projects[0].sessions[0].status_label, 'Idle');
-    assert.equal(projects[0].key, 'windows|d:\\webdev\\proj');
+    assert.equal(projects[0].key, 'local|d:\\webdev\\proj');
     assert.equal(projects[0].origin_display, '');
 });
 

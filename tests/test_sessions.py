@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_monitor_for_claude.paths import SessionRoot, windows_root
+from agent_monitor_for_claude.paths import SessionRoot, local_root
 from agent_monitor_for_claude.sessions import list_sessions
 
 
@@ -18,7 +18,7 @@ class SessionsTest(unittest.TestCase):
         os.environ['CLAUDE_CONFIG_DIR'] = self._temp.name
         self._sessions = Path(self._temp.name) / 'sessions'
         self._sessions.mkdir()
-        self.root = windows_root()
+        self.root = local_root()
 
     def tearDown(self) -> None:
         if self._previous is None:
@@ -42,7 +42,7 @@ class SessionsTest(unittest.TestCase):
         self.assertEqual(records[0]['pid'], 1234)
         self.assertEqual(records[0]['name'], 'proj-a1')
         self.assertEqual(records[0]['entrypoint'], 'claude-vscode')
-        self.assertEqual(records[0]['origin'], 'windows')
+        self.assertEqual(records[0]['origin'], 'local')
         self.assertIsNone(records[0]['origin_label'])
 
     def test_parses_native_status_and_waiting_for(self) -> None:
@@ -93,11 +93,11 @@ class SessionsTest(unittest.TestCase):
 
     def test_missing_directory_returns_empty(self) -> None:
         os.environ['CLAUDE_CONFIG_DIR'] = str(Path(self._temp.name) / 'does-not-exist')
-        self.assertEqual(list_sessions(windows_root()), [])
+        self.assertEqual(list_sessions(local_root()), [])
 
     def test_origin_and_origin_label_come_from_a_wsl_root(self) -> None:
         with tempfile.TemporaryDirectory() as base:
-            wsl_root = SessionRoot(origin='wsl:U', label='U', config_dir=Path(base), proc_dir=None, temp_dir=Path(base))
+            wsl_root = SessionRoot(origin='wsl:U', label='U', config_dir=Path(base), proc_dir=None, claude_temp_dir=Path(base))
             (Path(base) / 'sessions').mkdir()
             (Path(base) / 'sessions' / '1.json').write_text(
                 json.dumps({'pid': 1, 'sessionId': 's', 'cwd': '/home/dev/proj'}), encoding='utf-8')

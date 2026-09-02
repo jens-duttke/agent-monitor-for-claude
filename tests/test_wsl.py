@@ -1,12 +1,23 @@
-"""Tests for WSL distro discovery - all without WSL installed."""
+"""
+Tests for WSL distro discovery and probing - all without WSL installed.
+
+Discovery itself only ever runs on a Windows host (WSL is a Windows feature, and
+:func:`wsl.wsl_roots` returns an empty list before touching anything elsewhere),
+and its paths are UNC, so those cases are skipped off Windows.  The probing that
+follows reads a plain procfs tree, so it runs anywhere against a fabricated one -
+which is also how the shared reader itself is covered, in ``test_procfs.py``.
+"""
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_monitor_for_claude import wsl
+from agent_monitor_for_claude import procfs, wsl
+
+_WINDOWS_ONLY = unittest.skipUnless(sys.platform == 'win32', 'WSL discovery runs on a Windows host only')
 
 
 class ParseDistroListTests(unittest.TestCase):
@@ -25,6 +36,7 @@ class ParseDistroListTests(unittest.TestCase):
         self.assertEqual(wsl._parse_distro_list(raw), ['Ubuntu', 'docker-desktop'])
 
 
+@_WINDOWS_ONLY
 class WslExePathTests(unittest.TestCase):
     def test_wsl_exe_is_invoked_by_absolute_system32_path(self) -> None:
         # A relative "wsl.exe" resolves through CreateProcess's search order,
@@ -40,6 +52,7 @@ class WslExePathTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0][0], wsl._WSL_EXE)
 
 
+@_WINDOWS_ONLY
 class DiscoverRootsTests(unittest.TestCase):
     def test_home_and_root_claude(self) -> None:
         with tempfile.TemporaryDirectory() as base:
@@ -172,6 +185,7 @@ class IsReadableDirTests(unittest.TestCase):
             self.assertFalse(wsl._is_readable_dir(Path('irrelevant')))
 
 
+@_WINDOWS_ONLY
 class WslRootsGateTests(unittest.TestCase):
     def setUp(self) -> None:
         wsl.reset_caches()
@@ -222,20 +236,7 @@ def _write_proc_stat(proc_dir: Path, btime: int) -> None:
 
 def _wsl_root(base: str) -> wsl.SessionRoot:
     return wsl.SessionRoot(origin='wsl:U', label='U', config_dir=Path(base) / 'cfg',
-                           proc_dir=Path(base) / 'proc', temp_dir=Path(base) / 'tmp')
-
-
-class ParseStatTests(unittest.TestCase):
-    def test_comm_with_spaces_and_parens(self) -> None:
-        parsed = wsl._parse_stat('123 (tmux: server (x)) S 1 123 123 0 -1 4 0 0 0 0 5 6 0 0 20 0 1 0 83860 1 2')
-        self.assertIsNotNone(parsed)
-        comm, fields = parsed
-        self.assertEqual(comm, 'tmux: server (x)')
-        self.assertEqual(fields[1], '1')        # ppid (field 4)
-        self.assertEqual(fields[19], '83860')   # starttime (field 22)
-
-    def test_malformed(self) -> None:
-        self.assertIsNone(wsl._parse_stat('no parens here'))
+                           proc_dir=Path(base) / 'proc', claude_temp_dir=Path(base) / 'tmp')
 
 
 class ProbeWslSessionsTests(unittest.TestCase):
@@ -273,7 +274,7 @@ class ProbeWslSessionsTests(unittest.TestCase):
     def test_unreadable_proc_dir(self) -> None:
         root = _wsl_root(tempfile.mkdtemp())
         root = wsl.SessionRoot(origin='wsl:U', label='U', config_dir=root.config_dir,
-                               proc_dir=root.proc_dir / 'missing', temp_dir=root.temp_dir)
+                               proc_dir=root.proc_dir / 'missing', claude_temp_dir=root.claude_temp_dir)
         self.assertFalse(wsl.probe_wsl_sessions(root, [(1, None)])[1].alive)
 
 
@@ -282,8 +283,8 @@ class WslProcessStatsTests(unittest.TestCase):
     memory/uptime read straight from procfs and CPU sampled against a prior call."""
 
     def setUp(self) -> None:
-        wsl._wsl_sample_cache.clear()
-        self.addCleanup(wsl._wsl_sample_cache.clear)
+        procfs._sample_cache.clear()
+        self.addCleanup(procfs._sample_cache.clear)
 
     def test_first_call_yields_no_cpu_with_correct_rss_and_uptime(self) -> None:
         with tempfile.TemporaryDirectory() as base:
@@ -302,8 +303,8 @@ class WslProcessStatsTests(unittest.TestCase):
         self.assertEqual(stat.pid, 101)
         self.assertEqual(stat.name, 'node')
         self.assertIsNone(stat.cpu_percent)
-        self.assertEqual(stat.rss_bytes, 500 * 4096)
-        expected_uptime = now - (btime + (5000 + 60000) / wsl._CLK_TCK)
+        self.assertEqual(stat.rss_bytes, 500 * procfs.DEFAULT_PAGE_SIZE)
+        expected_uptime = now - (btime + (5000 + 60000) / procfs.DEFAULT_CLK_TCK)
         self.assertAlmostEqual(stat.uptime_seconds, expected_uptime, places=6)
         self.assertEqual(stat.kind, 'process')
 
@@ -325,7 +326,7 @@ class WslProcessStatsTests(unittest.TestCase):
                 second = wsl.wsl_process_stats(root, 100, 5000)
 
         self.assertEqual(len(second), 1)
-        expected_cpu = (60 / wsl._CLK_TCK) / 1.0 * 100.0
+        expected_cpu = (60 / procfs.DEFAULT_CLK_TCK) / 1.0 * 100.0
         self.assertAlmostEqual(second[0].cpu_percent, expected_cpu, places=6)
 
     def test_recycled_child_starttime_resets_cpu_to_none(self) -> None:
@@ -370,12 +371,12 @@ class WslProcessStatsTests(unittest.TestCase):
             _write_stat(root.proc_dir, 101, 'node', 100, 5000 + 60000)
 
             other_key = ('wsl:Other', 555)
-            wsl._wsl_sample_cache[other_key] = (123, 60, 1700000000.0)
+            procfs._sample_cache[other_key] = (123, 60, 1700000000.0)
 
             with mock.patch.object(wsl.time, 'time', return_value=1700100000.0):
                 wsl.wsl_process_stats(root, 100, 5000)
 
-        self.assertIn(other_key, wsl._wsl_sample_cache)
+        self.assertIn(other_key, procfs._sample_cache)
 
 
 if __name__ == '__main__':

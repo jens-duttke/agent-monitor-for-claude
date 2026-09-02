@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_monitor_for_claude import transcript
-from agent_monitor_for_claude.paths import SessionRoot, cwd_to_slug, transcript_path, windows_root
+from agent_monitor_for_claude.paths import SessionRoot, cwd_to_slug, transcript_path, local_root
 
 _TURN = '{"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":100,"output_tokens":0}}}\n'
 
@@ -227,13 +227,13 @@ class PruneScanCacheTest(unittest.TestCase):
         self._temp.cleanup()
 
     def _key(self, session_id: str, cwd: str) -> str:
-        return os.path.normcase(str(transcript_path(windows_root(), session_id, cwd)))
+        return os.path.normcase(str(transcript_path(local_root(), session_id, cwd)))
 
     def test_prune_evicts_entries_not_in_the_active_registry_set(self) -> None:
         transcript._scan_cache[self._key('aaa', 'd:\\proj')] = transcript._ScanState()
         transcript._scan_cache[self._key('bbb', 'd:\\other')] = transcript._ScanState()
 
-        transcript.prune_scan_cache([(windows_root(), 'aaa', 'd:\\proj')])
+        transcript.prune_scan_cache([(local_root(), 'aaa', 'd:\\proj')])
 
         self.assertIn(self._key('aaa', 'd:\\proj'), transcript._scan_cache)
         self.assertNotIn(self._key('bbb', 'd:\\other'), transcript._scan_cache)
@@ -245,7 +245,7 @@ class PruneScanCacheTest(unittest.TestCase):
         # (root included), not the bare (session_id, cwd) pair, or evicting one
         # root's stale entry could also evict the other root's live one.
         with tempfile.TemporaryDirectory() as wsl_base:
-            wsl_root = SessionRoot(origin='wsl:U', label='U', config_dir=Path(wsl_base), proc_dir=None, temp_dir=Path(wsl_base))
+            wsl_root = SessionRoot(origin='wsl:U', label='U', config_dir=Path(wsl_base), proc_dir=None, claude_temp_dir=Path(wsl_base))
             win_key = self._key('same-id', 'd:\\proj')
             wsl_key = os.path.normcase(str(transcript_path(wsl_root, 'same-id', 'd:\\proj')))
             self.assertNotEqual(win_key, wsl_key)
@@ -265,8 +265,8 @@ class PruneScanCacheTest(unittest.TestCase):
         slug_dir.mkdir(parents=True)
         (slug_dir / 'aaaaaaaa.jsonl').write_text(_TURN, encoding='utf-8')
 
-        transcript._scan_appended(transcript_path(windows_root(), 'aaaaaaaa', 'd:\\proj'))
-        transcript._scan_appended(transcript_path(windows_root(), 'aaaaaaaa', 'D:\\Proj'))
+        transcript._scan_appended(transcript_path(local_root(), 'aaaaaaaa', 'd:\\proj'))
+        transcript._scan_appended(transcript_path(local_root(), 'aaaaaaaa', 'D:\\Proj'))
 
         self.assertEqual(len(transcript._scan_cache), 1)
 

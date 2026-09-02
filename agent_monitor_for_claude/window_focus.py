@@ -8,41 +8,45 @@ processes; their visible top-level windows are enumerated and, for hosts
 that keep several windows in one process (VS Code, JetBrains IDEs), the
 window whose title mentions the session's project is preferred.
 
-A session driven through an external terminal owns no window on its process
-chain: a classic console window belongs to a ``conhost.exe`` child of the
-shell, and Windows' default-terminal handoff routes the console to a separate
-Windows Terminal process with no link back to the shell.  For those the
-ancestor search finds nothing, so a fallback matches the session title - which
-Claude Code sets as the terminal title - against windows owned by a known
-terminal or console host.
+A session driven through an external terminal can own no window on its process
+chain.  On Windows that is the normal case: a classic console window belongs to
+a ``conhost.exe`` child of the shell, and the default-terminal handoff routes
+the console to a separate Windows Terminal process with no link back to the
+shell.  On Linux the terminal emulator usually *is* on the chain, so the
+ancestor search finds it.  Either way, when it finds nothing, a fallback matches
+the session title - which Claude Code sets as the terminal title - against
+windows owned by a known terminal or console host.
 
-A session running inside a WSL distribution has no Windows process at all -
+A session running inside a WSL distribution has no host-side process at all -
 the agent runs inside the distro, so there is no pid and no ancestor chain to
 walk in the first place.  ``app.py`` routes those sessions straight to
 :func:`focus_terminal_window`, the same title-only match used as the
 fallback above, skipping the pid-based search entirely.
 
-Side effects are limited to Win32 window enumeration and activation, and run
-only on an explicit user click.  Window titles are compared in memory to pick
-the right window - never stored, logged, or displayed.
+Side effects are limited to window enumeration and activation, and run only on
+an explicit user click.  Window titles are compared in memory to pick the right
+window - never stored, logged, or displayed.  On Linux that enumeration reads
+the standard EWMH properties from the X server; a window drawn by a native
+Wayland client is out of reach there and simply not found (see
+``platforms/x11.py``).
 
 Alongside activation this module holds the user-initiated launch surfaces: the
-VS Code deep link, opening a directory in Explorer, and showing a file selected
-in its folder.  Each validates its target first - a UUID, a real directory, a
-real file - so nothing else can ever be handed to the shell.
+VS Code deep link, opening a directory in the file manager, and showing a file
+selected in its folder.  Each validates its target first - a UUID, a real
+directory, a real file - so nothing else can ever be handed to the desktop; the
+platform layer performs the call itself.
 """
 from __future__ import annotations
 
-import ctypes
-import ctypes.wintypes
 import os
 import re
 
-from .process_probe import TERMINAL_WINDOW_OWNERS, ancestry, process_names
+from .platforms import activate_window, enum_windows, open_path, open_uri, reveal_file
+from .process_probe import IGNORED_ANCESTOR_NAMES, TERMINAL_WINDOW_OWNERS, ancestry, process_names
 
 __all__ = [
     'focus_session_window', 'focus_terminal_window', 'open_directory', 'open_vscode_session',
-    'reveal_in_explorer', 'vscode_session_url',
+    'reveal_in_file_manager', 'select_terminal_window', 'select_window', 'vscode_session_url',
 ]
 
 # Official deep link of the Claude Code VS Code extension (since v2.1.72):
@@ -53,43 +57,9 @@ _VSCODE_SESSION_URL = 'vscode://anthropic.claude-code/open?session={session_id}'
 # non-UUID tail into the launched URI.
 _SESSION_ID_PATTERN = re.compile(r'\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z')
 
-_user32 = ctypes.windll.user32
-_shell32 = ctypes.windll.shell32
-_ole32 = ctypes.windll.ole32
-
-_SW_RESTORE = 9
-_VK_MENU = 0x12
-_KEYEVENTF_KEYUP = 0x0002
-
-# COM has to be live on the calling thread for the shell's select-in-folder
-# call; every js_api call arrives on its own worker thread, where it is not.
-# CoInitializeEx reports S_OK for a fresh apartment and S_FALSE when this
-# thread already had one - only those two are undone again afterwards.
-_COINIT_APARTMENTTHREADED = 0x2
-_S_OK = 0
-_S_FALSE = 1
-
-# A shell id list is a pointer and must be declared as one: read back as the
-# default C int, it would be truncated to 32 bits on a 64-bit build.
-_shell32.ILCreateFromPathW.argtypes = [ctypes.wintypes.LPCWSTR]
-_shell32.ILCreateFromPathW.restype = ctypes.c_void_p
-_shell32.ILFree.argtypes = [ctypes.c_void_p]
-_shell32.ILFree.restype = None
-_shell32.SHOpenFolderAndSelectItems.argtypes = [ctypes.c_void_p, ctypes.wintypes.UINT, ctypes.POINTER(ctypes.c_void_p), ctypes.wintypes.DWORD]
-_shell32.SHOpenFolderAndSelectItems.restype = ctypes.c_long
-_ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.wintypes.DWORD]
-_ole32.CoInitializeEx.restype = ctypes.c_long
-_ole32.CoUninitialize.argtypes = []
-_ole32.CoUninitialize.restype = None
-
-# Ancestors that own windows for the whole desktop, never for one session.
-_IGNORED_ANCESTOR_NAMES = frozenset({'explorer.exe'})
-
 # Shortest session title still specific enough to match a terminal window by;
 # below this a stray short title could raise an unrelated terminal.
 _MIN_TERMINAL_TITLE = 3
-
-_EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.wintypes.BOOL, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
 
 
 def focus_session_window(pid: int, project_name: str, session_title: str = '') -> bool:
@@ -107,33 +77,33 @@ def focus_session_window(pid: int, project_name: str, session_title: str = '') -
     """
     candidate_pids = [pid]
     for ancestor_pid, ancestor_name in ancestry(pid):
-        if ancestor_name not in _IGNORED_ANCESTOR_NAMES:
+        if ancestor_name not in IGNORED_ANCESTOR_NAMES:
             candidate_pids.append(ancestor_pid)
 
-    windows = _enum_windows()
-    hwnd = select_window(windows, candidate_pids, project_name)
+    windows = enum_windows()
+    handle = select_window(windows, candidate_pids, project_name)
 
-    if hwnd is None:
-        hwnd = select_terminal_window(windows, process_names(), session_title)
+    if handle is None:
+        handle = select_terminal_window(windows, process_names(), session_title)
 
-    if hwnd is None:
+    if handle is None:
         return False
 
-    return _activate(hwnd)
+    return activate_window(handle)
 
 
 def focus_terminal_window(session_title: str) -> bool:
     """Bring a session's terminal window to the foreground by its title alone.
 
-    A session running inside a WSL distribution has no Windows process at all
+    A session running inside a WSL distribution has no host-side process at all
     - the agent runs inside the distro - so there is no pid to search from and
     no window can ever sit on a process chain the way :func:`focus_session_window`
-    walks for a native session.  The session's terminal is still a Windows-side
-    window (some terminal emulator hosts it), and Claude Code sets that
-    terminal's title to the session title exactly as it does for a native
-    session, so matching on the title alone - the same fallback
-    :func:`focus_session_window` already uses when the ancestor search finds
-    nothing - is the only route that can ever find it.
+    walks for a local session.  The session's terminal is still a window on this
+    side (some terminal emulator hosts it), and Claude Code sets that terminal's
+    title to the session title exactly as it does for a local session, so
+    matching on the title alone - the same fallback :func:`focus_session_window`
+    already uses when the ancestor search finds nothing - is the only route that
+    can ever find it.
 
     Parameters
     ----------
@@ -146,13 +116,12 @@ def focus_terminal_window(session_title: str) -> bool:
     bool
         True if a matching terminal window was found and activated.
     """
-    windows = _enum_windows()
-    hwnd = select_terminal_window(windows, process_names(), session_title)
+    handle = select_terminal_window(enum_windows(), process_names(), session_title)
 
-    if hwnd is None:
+    if handle is None:
         return False
 
-    return _activate(hwnd)
+    return activate_window(handle)
 
 
 def vscode_session_url(session_id: str) -> str | None:
@@ -173,21 +142,15 @@ def open_vscode_session(session_id: str) -> bool:
     if url is None:
         return False
 
-    try:
-        os.startfile(url)
-    except OSError:
-        return False
-
-    return True
+    return open_uri(url)
 
 
 def open_directory(path: str) -> bool:
-    """Open an existing local directory in Windows Explorer (user-initiated).
+    """Open an existing local directory in the desktop's file manager (user-initiated).
 
-    Only a real directory is ever handed to the shell: the path is validated
+    Only a real directory is ever handed to the desktop: the path is validated
     with ``os.path.isdir`` first, so a stale path, a file, or anything carrying
-    a URI scheme is a no-op rather than something the shell might execute.  For
-    a folder, ``os.startfile`` is routed to Explorer by the shell.
+    a URI scheme is a no-op rather than something that could be executed.
 
     Returns
     -------
@@ -197,35 +160,30 @@ def open_directory(path: str) -> bool:
     if not path or not os.path.isdir(path):
         return False
 
-    try:
-        os.startfile(path)
-    except OSError:
-        return False
-
-    return True
+    return open_path(path)
 
 
-def reveal_in_explorer(path: str) -> bool:
-    """Show an existing file in Windows Explorer, selected in its folder (user-initiated).
+def reveal_in_file_manager(path: str) -> bool:
+    """Show an existing file in the file manager, selected in its folder (user-initiated).
 
-    The file is only ever *shown*, never opened: ``SHOpenFolderAndSelectItems``
-    raises an Explorer window on the containing folder with the item selected, so
-    no program is launched for the file and its content is never handed to
-    another application.  Only a real file reaches that call - the path is
-    validated with ``os.path.isfile`` first, so a stale path, a directory, or
-    anything carrying a URI scheme is a no-op.  When the shell call fails (an id
-    list the namespace cannot build, for instance), the containing folder is
-    opened instead: the same window, minus the selection.
+    The file is only ever *shown*, never opened: the platform call raises a file-
+    manager window on the containing folder with the item selected, so no program
+    is launched for the file and its content is never handed to another
+    application.  Only a real file reaches that call - the path is validated with
+    ``os.path.isfile`` first, so a stale path, a directory, or anything carrying a
+    URI scheme is a no-op.  When the call fails (a shell that cannot build an id
+    list, a desktop with no file-manager service), the containing folder is opened
+    instead: the same window, minus the selection.
 
     Returns
     -------
     bool
-        True if an Explorer window was raised on the file or its folder.
+        True if a file-manager window was raised on the file or its folder.
     """
     if not path or not os.path.isfile(path):
         return False
 
-    if _select_in_explorer(path):
+    if reveal_file(path):
         return True
 
     return open_directory(os.path.dirname(path))
@@ -241,7 +199,7 @@ def select_window(windows: list[tuple[int, int, str]], candidate_pids: list[int]
 
     Parameters
     ----------
-    windows : list of (hwnd, pid, title)
+    windows : list of (handle, pid, title)
         Visible top-level windows.
     candidate_pids : list of int
         Session process and its ancestors, nearest first.
@@ -256,9 +214,9 @@ def select_window(windows: list[tuple[int, int, str]], candidate_pids: list[int]
             continue
 
         if needle:
-            for hwnd, _pid, title in owned:
+            for handle, _pid, title in owned:
                 if needle in title.casefold():
-                    return hwnd
+                    return handle
 
         return owned[0][0]
 
@@ -276,7 +234,7 @@ def select_terminal_window(windows: list[tuple[int, int, str]], owner_names: dic
 
     Parameters
     ----------
-    windows : list of (hwnd, pid, title)
+    windows : list of (handle, pid, title)
         Visible top-level windows.
     owner_names : dict[int, str]
         Map of window-owner PID to lowercased process name.
@@ -287,87 +245,8 @@ def select_terminal_window(windows: list[tuple[int, int, str]], owner_names: dic
     if len(needle) < _MIN_TERMINAL_TITLE:
         return None
 
-    for hwnd, pid, title in windows:
+    for handle, pid, title in windows:
         if owner_names.get(pid) in TERMINAL_WINDOW_OWNERS and needle in title.casefold():
-            return hwnd
+            return handle
 
     return None
-
-
-def _select_in_explorer(path: str) -> bool:
-    """Raise an Explorer window on *path*'s folder with *path* selected.
-
-    Wraps the shell's ``SHOpenFolderAndSelectItems``, which takes shell id lists
-    rather than path strings: one for the folder, one for the item inside it.
-    COM is initialized for the calling thread and released again only when this
-    call is what initialized it.  Every failure along the way - an id list the
-    namespace cannot build, a refusing shell - is reported as False, leaving the
-    caller to fall back on the plain folder.
-    """
-    folder = None
-    item = None
-    com_ready = False
-
-    try:
-        com_ready = _ole32.CoInitializeEx(None, _COINIT_APARTMENTTHREADED) in (_S_OK, _S_FALSE)
-
-        folder = _shell32.ILCreateFromPathW(os.path.dirname(path))
-        item = _shell32.ILCreateFromPathW(path)
-        if not folder or not item:
-            return False
-
-        items = (ctypes.c_void_p * 1)(item)
-
-        # SUCCEEDED(hr): any non-negative HRESULT means the window was raised.
-        return _shell32.SHOpenFolderAndSelectItems(folder, 1, items, 0) >= 0
-    except OSError:
-        return False
-    finally:
-        if folder:
-            _shell32.ILFree(folder)
-        if item:
-            _shell32.ILFree(item)
-        if com_ready:
-            _ole32.CoUninitialize()
-
-
-def _enum_windows() -> list[tuple[int, int, str]]:
-    """Return all visible, titled top-level windows as ``(hwnd, pid, title)``."""
-    windows: list[tuple[int, int, str]] = []
-
-    def _collect(hwnd: int, _lparam: int) -> bool:
-        if not _user32.IsWindowVisible(hwnd):
-            return True
-
-        length = _user32.GetWindowTextLengthW(hwnd)
-        if length == 0:
-            return True
-
-        buffer = ctypes.create_unicode_buffer(length + 1)
-        _user32.GetWindowTextW(hwnd, buffer, length + 1)
-
-        window_pid = ctypes.wintypes.DWORD()
-        _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(window_pid))
-
-        windows.append((hwnd, window_pid.value, buffer.value))
-        return True
-
-    _user32.EnumWindows(_EnumWindowsProc(_collect), 0)
-    return windows
-
-
-def _activate(hwnd: int) -> bool:
-    """Restore and raise a window to the foreground."""
-    if _user32.IsIconic(hwnd):
-        _user32.ShowWindow(hwnd, _SW_RESTORE)
-
-    if _user32.SetForegroundWindow(hwnd):
-        return True
-
-    # Windows refuses foreground changes in some states; a synthetic ALT tap
-    # is the documented workaround to lift that restriction.
-    _user32.keybd_event(_VK_MENU, 0, 0, 0)
-    result = _user32.SetForegroundWindow(hwnd)
-    _user32.keybd_event(_VK_MENU, 0, _KEYEVENTF_KEYUP, 0)
-
-    return bool(result)

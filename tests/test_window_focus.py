@@ -1,4 +1,14 @@
-"""Tests for the window selection logic (pure part of window focusing)."""
+"""
+Tests for the window-focus module: the pure selection logic, and the guards that
+stand in front of the platform's launch surfaces.
+
+The selection fixtures use Windows process names because that is the busier of
+the two host tables; the logic itself only compares strings, and the Linux name
+set is covered in ``test_process_linux.py``.  The launch calls themselves are
+the platform layer's (``test_platforms_win32.py`` / ``test_platforms_linux.py``);
+what is pinned here is that nothing but a real directory or a real file ever
+reaches them.
+"""
 from __future__ import annotations
 
 import os
@@ -9,10 +19,18 @@ from unittest import mock
 
 from agent_monitor_for_claude import window_focus
 from agent_monitor_for_claude.app import _MonitorApi
-from agent_monitor_for_claude.paths import SessionRoot, windows_root
+from agent_monitor_for_claude.paths import SessionRoot, local_root
+from agent_monitor_for_claude.platforms import IS_WINDOWS
 from agent_monitor_for_claude.window_focus import (
-    focus_terminal_window, open_directory, reveal_in_explorer, select_terminal_window, select_window, vscode_session_url,
+    focus_terminal_window, open_directory, reveal_in_file_manager, select_terminal_window, select_window, vscode_session_url,
 )
+
+_WINDOWS_ONLY = unittest.skipUnless(IS_WINDOWS, 'Windows host path translation')
+
+# A terminal emulator this system's process backend recognises, and an owner no
+# backend does - the title match is confined to the former.
+_TERMINAL_OWNER = 'windowsterminal.exe' if IS_WINDOWS else 'konsole'
+_OTHER_OWNER = 'chrome.exe'
 
 # (hwnd, pid, title)
 _WINDOWS = [
@@ -30,7 +48,7 @@ _TERM_WINDOWS = [
     (901, 42, 'Git CMD'),
     (902, 77, 'Implement AskUser dialog interaction - Google Chrome'),
 ]
-_TERM_OWNERS = {42: 'windowsterminal.exe', 77: 'chrome.exe'}
+_TERM_OWNERS = {42: _TERMINAL_OWNER, 77: _OTHER_OWNER}
 
 
 class SelectWindowTest(unittest.TestCase):
@@ -94,20 +112,20 @@ class OpenDirectoryTest(unittest.TestCase):
 
     def test_opens_existing_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch('agent_monitor_for_claude.window_focus.os.startfile') as startfile:
+            with mock.patch.object(window_focus, 'open_path', return_value=True) as opener:
                 self.assertTrue(open_directory(tmp))
-                startfile.assert_called_once_with(tmp)
+                opener.assert_called_once_with(tmp)
 
     def test_rejects_empty_path(self) -> None:
-        with mock.patch('agent_monitor_for_claude.window_focus.os.startfile') as startfile:
+        with mock.patch.object(window_focus, 'open_path') as opener:
             self.assertFalse(open_directory(''))
-            startfile.assert_not_called()
+            opener.assert_not_called()
 
     def test_rejects_missing_directory(self) -> None:
         missing = os.path.join(tempfile.gettempdir(), 'amc-no-such-dir-4f2a9c')
-        with mock.patch('agent_monitor_for_claude.window_focus.os.startfile') as startfile:
+        with mock.patch.object(window_focus, 'open_path') as opener:
             self.assertFalse(open_directory(missing))
-            startfile.assert_not_called()
+            opener.assert_not_called()
 
     def test_rejects_a_file(self) -> None:
         # A file is not a directory - never hand an arbitrary (possibly
@@ -116,18 +134,18 @@ class OpenDirectoryTest(unittest.TestCase):
             file_path = os.path.join(tmp, 'note.txt')
             with open(file_path, 'w', encoding='utf-8') as handle:
                 handle.write('x')
-            with mock.patch('agent_monitor_for_claude.window_focus.os.startfile') as startfile:
+            with mock.patch.object(window_focus, 'open_path') as opener:
                 self.assertFalse(open_directory(file_path))
-                startfile.assert_not_called()
+                opener.assert_not_called()
 
-    def test_propagates_startfile_failure(self) -> None:
+    def test_propagates_a_refusing_desktop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch('agent_monitor_for_claude.window_focus.os.startfile', side_effect=OSError):
+            with mock.patch.object(window_focus, 'open_path', return_value=False):
                 self.assertFalse(open_directory(tmp))
 
 
 class RevealInExplorerTest(unittest.TestCase):
-    """Only an existing file may ever reach the shell's select-in-folder call."""
+    """Only an existing file may ever reach the platform's show-in-folder call."""
 
     def setUp(self) -> None:
         self._dir = tempfile.TemporaryDirectory()
@@ -137,27 +155,27 @@ class RevealInExplorerTest(unittest.TestCase):
             handle.write('{}\n')
 
     def test_shows_existing_file_selected(self) -> None:
-        with mock.patch.object(window_focus, '_select_in_explorer', return_value=True) as select, \
+        with mock.patch.object(window_focus, 'reveal_file', return_value=True) as select, \
              mock.patch.object(window_focus, 'open_directory') as opener:
-            self.assertTrue(reveal_in_explorer(self._file))
+            self.assertTrue(reveal_in_file_manager(self._file))
 
         select.assert_called_once_with(self._file)
         # The file is selected in its folder, never opened - no fallback needed.
         opener.assert_not_called()
 
     def test_falls_back_to_containing_folder(self) -> None:
-        with mock.patch.object(window_focus, '_select_in_explorer', return_value=False), \
+        with mock.patch.object(window_focus, 'reveal_file', return_value=False), \
              mock.patch.object(window_focus, 'open_directory', return_value=True) as opener:
-            self.assertTrue(reveal_in_explorer(self._file))
+            self.assertTrue(reveal_in_file_manager(self._file))
 
         opener.assert_called_once_with(self._dir.name)
 
     def test_rejects_empty_and_missing_path(self) -> None:
         missing = os.path.join(self._dir.name, 'gone.jsonl')
-        with mock.patch.object(window_focus, '_select_in_explorer') as select, \
+        with mock.patch.object(window_focus, 'reveal_file') as select, \
              mock.patch.object(window_focus, 'open_directory') as opener:
-            self.assertFalse(reveal_in_explorer(''))
-            self.assertFalse(reveal_in_explorer(missing))
+            self.assertFalse(reveal_in_file_manager(''))
+            self.assertFalse(reveal_in_file_manager(missing))
 
         select.assert_not_called()
         opener.assert_not_called()
@@ -165,8 +183,8 @@ class RevealInExplorerTest(unittest.TestCase):
     def test_rejects_a_directory(self) -> None:
         # This surface is for a file; a directory belongs to open_directory, which
         # validates it in its own right.
-        with mock.patch.object(window_focus, '_select_in_explorer') as select:
-            self.assertFalse(reveal_in_explorer(self._dir.name))
+        with mock.patch.object(window_focus, 'reveal_file') as select:
+            self.assertFalse(reveal_in_file_manager(self._dir.name))
 
         select.assert_not_called()
 
@@ -190,10 +208,10 @@ class OpenPathBridgeTest(unittest.TestCase):
 
     def test_forwards_valid_string(self) -> None:
         api = _MonitorApi()
-        # root_for_origin('windows') is pinned to the real windows_root(): open_path now
+        # root_for_origin('local') is pinned to the real local_root(): open_path now
         # resolves origin before translating the path, so this must keep succeeding
         # regardless of whether the machine running the suite has WSL installed.
-        with mock.patch('agent_monitor_for_claude.app.root_for_origin', return_value=windows_root()), \
+        with mock.patch('agent_monitor_for_claude.app.root_for_origin', return_value=local_root()), \
              mock.patch('agent_monitor_for_claude.app.open_directory', return_value=True) as opener:
             self.assertTrue(api.open_path('D:\\Projects\\aurora-realtime'))
             opener.assert_called_once_with('D:\\Projects\\aurora-realtime')
@@ -202,8 +220,9 @@ class OpenPathBridgeTest(unittest.TestCase):
 class OpenPathOriginTest(unittest.TestCase):
     """``open_path`` resolves *origin* to a root and translates a WSL-reported path through it."""
 
+    @_WINDOWS_ONLY
     def test_wsl_origin_translates_to_unc_path(self) -> None:
-        wsl_root = SessionRoot(origin='wsl:U', label='U', config_dir=Path('cfg'), proc_dir=Path('proc'), temp_dir=Path('tmp'))
+        wsl_root = SessionRoot(origin='wsl:U', label='U', config_dir=Path('cfg'), proc_dir=Path('proc'), claude_temp_dir=Path('tmp'))
         api = _MonitorApi()
         with mock.patch('agent_monitor_for_claude.app.root_for_origin', return_value=wsl_root) as root_for_origin, \
              mock.patch('agent_monitor_for_claude.app.open_directory', return_value=True) as opener:
@@ -211,6 +230,16 @@ class OpenPathOriginTest(unittest.TestCase):
 
         root_for_origin.assert_called_once_with('wsl:U')
         opener.assert_called_once_with(r'\\wsl.localhost\U\home\dev\proj')
+
+    def test_the_resolved_origin_is_still_required_on_every_host(self) -> None:
+        # A WSL root can only exist on Windows, but resolving the origin first is
+        # what refuses a stale one, and that must hold on both systems.
+        api = _MonitorApi()
+        with mock.patch('agent_monitor_for_claude.app.root_for_origin', return_value=local_root()) as root_for_origin, \
+             mock.patch('agent_monitor_for_claude.app.open_directory', return_value=True):
+            self.assertTrue(api.open_path('/home/dev/proj', origin='local'))
+
+        root_for_origin.assert_called_once_with('local')
 
     def test_unknown_origin_is_refused_without_calling_open_directory(self) -> None:
         api = _MonitorApi()
@@ -233,7 +262,7 @@ class RevealPathBridgeTest(unittest.TestCase):
 
     def test_rejects_non_string_and_empty(self) -> None:
         api = _MonitorApi()
-        with mock.patch('agent_monitor_for_claude.app.reveal_in_explorer') as reveal:
+        with mock.patch('agent_monitor_for_claude.app.reveal_in_file_manager') as reveal:
             self.assertFalse(api.reveal_path(123))
             self.assertFalse(api.reveal_path(None))
             self.assertFalse(api.reveal_path(True))
@@ -242,17 +271,18 @@ class RevealPathBridgeTest(unittest.TestCase):
 
     def test_forwards_valid_path(self) -> None:
         api = _MonitorApi()
-        with mock.patch('agent_monitor_for_claude.app.root_for_origin', return_value=windows_root()), \
-             mock.patch('agent_monitor_for_claude.app.reveal_in_explorer', return_value=True) as reveal:
+        with mock.patch('agent_monitor_for_claude.app.root_for_origin', return_value=local_root()), \
+             mock.patch('agent_monitor_for_claude.app.reveal_in_file_manager', return_value=True) as reveal:
             self.assertTrue(api.reveal_path('D:\\Projects\\aurora-realtime\\a1d.jsonl'))
 
         reveal.assert_called_once_with('D:\\Projects\\aurora-realtime\\a1d.jsonl')
 
+    @_WINDOWS_ONLY
     def test_wsl_origin_translates_to_unc_path(self) -> None:
-        wsl_root = SessionRoot(origin='wsl:U', label='U', config_dir=Path('cfg'), proc_dir=Path('proc'), temp_dir=Path('tmp'))
+        wsl_root = SessionRoot(origin='wsl:U', label='U', config_dir=Path('cfg'), proc_dir=Path('proc'), claude_temp_dir=Path('tmp'))
         api = _MonitorApi()
         with mock.patch('agent_monitor_for_claude.app.root_for_origin', return_value=wsl_root), \
-             mock.patch('agent_monitor_for_claude.app.reveal_in_explorer', return_value=True) as reveal:
+             mock.patch('agent_monitor_for_claude.app.reveal_in_file_manager', return_value=True) as reveal:
             self.assertTrue(api.reveal_path('/home/dev/.claude/projects/-home-dev-proj/a1d.jsonl', origin='wsl:U'))
 
         reveal.assert_called_once_with(r'\\wsl.localhost\U\home\dev\.claude\projects\-home-dev-proj\a1d.jsonl')
@@ -260,7 +290,7 @@ class RevealPathBridgeTest(unittest.TestCase):
     def test_refused_origins_never_reach_the_shell(self) -> None:
         api = _MonitorApi()
         with mock.patch('agent_monitor_for_claude.app.root_for_origin', return_value=None), \
-             mock.patch('agent_monitor_for_claude.app.reveal_in_explorer') as reveal:
+             mock.patch('agent_monitor_for_claude.app.reveal_in_file_manager') as reveal:
             self.assertFalse(api.reveal_path('/home/dev/a1d.jsonl', origin='gone:X'))
             self.assertFalse(api.reveal_path('D:\\Projects\\a1d.jsonl', origin=123))
 
@@ -270,25 +300,25 @@ class RevealPathBridgeTest(unittest.TestCase):
 class FocusTerminalWindowTest(unittest.TestCase):
     """``focus_terminal_window`` is the pid-free route ``focus_session`` uses for WSL sessions.
 
-    A session running inside a WSL distribution has no Windows process at all, so there is no pid to
-    walk an ancestor chain from - the only way to find its terminal is the same title match
-    ``focus_session_window`` already falls back to for a native external-terminal session.
+    A session running inside a WSL distribution has no host-side process at all, so there is no pid
+    to walk an ancestor chain from - the only way to find its terminal is the same title match
+    ``focus_session_window`` already falls back to for a local external-terminal session.
     """
 
     def test_finds_and_activates_terminal_window_by_title(self) -> None:
         windows = [(900, 42, '✳ Implement AskUser dialog interaction')]
-        with mock.patch.object(window_focus, '_enum_windows', return_value=windows), \
-             mock.patch.object(window_focus, 'process_names', return_value={42: 'windowsterminal.exe'}), \
-             mock.patch.object(window_focus, '_activate', return_value=True) as activate:
+        with mock.patch.object(window_focus, 'enum_windows', return_value=windows), \
+             mock.patch.object(window_focus, 'process_names', return_value={42: _TERMINAL_OWNER}), \
+             mock.patch.object(window_focus, 'activate_window', return_value=True) as activate:
             self.assertTrue(focus_terminal_window('Implement AskUser dialog interaction'))
 
         activate.assert_called_once_with(900)
 
     def test_returns_false_when_no_title_match(self) -> None:
         windows = [(900, 42, 'Unrelated window title')]
-        with mock.patch.object(window_focus, '_enum_windows', return_value=windows), \
-             mock.patch.object(window_focus, 'process_names', return_value={42: 'windowsterminal.exe'}), \
-             mock.patch.object(window_focus, '_activate') as activate:
+        with mock.patch.object(window_focus, 'enum_windows', return_value=windows), \
+             mock.patch.object(window_focus, 'process_names', return_value={42: _TERMINAL_OWNER}), \
+             mock.patch.object(window_focus, 'activate_window') as activate:
             self.assertFalse(focus_terminal_window('Implement AskUser dialog interaction'))
 
         activate.assert_not_called()

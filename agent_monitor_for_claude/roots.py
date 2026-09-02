@@ -2,12 +2,12 @@
 Session Roots
 =============
 
-Composes the full list of places a Claude Code session can live: the native
-Windows install (:func:`paths.windows_root`) plus one entry per running WSL
-distro with a ``.claude`` directory (:func:`wsl.wsl_roots`).  Every other
-module that needs to enumerate every root, or resolve one the UI already
-named, goes through this module rather than combining ``paths`` and ``wsl``
-itself.
+Composes the full list of places a Claude Code session can live: the install
+on this machine (:func:`paths.local_root`) plus, on a Windows host, one entry
+per running WSL distro with a ``.claude`` directory (:func:`wsl.wsl_roots`).
+Every other module that needs to enumerate every root, or resolve one the UI
+already named, goes through this module rather than combining ``paths`` and
+``wsl`` itself.
 
 Resolving a UI-supplied origin back to its root is a deliberate refusal, never
 a fallback: an origin that does not exactly match a currently discovered root
@@ -18,7 +18,7 @@ unreachable by design.
 """
 from __future__ import annotations
 
-from .paths import SessionRoot, windows_root
+from .paths import SessionRoot, local_root
 from .wsl import wsl_roots
 
 __all__ = ['root_for_origin', 'session_roots']
@@ -30,11 +30,12 @@ def session_roots() -> list[SessionRoot]:
     Returns
     -------
     list[SessionRoot]
-        The native Windows root, always first, followed by one entry per
-        running WSL distro with a ``.claude`` directory (see
-        :func:`wsl.wsl_roots` for the discovery gates and ordering).
+        The local root, always first, followed - on a Windows host - by one
+        entry per running WSL distro with a ``.claude`` directory (see
+        :func:`wsl.wsl_roots` for the discovery gates and ordering).  On Linux
+        there is only ever the local root.
     """
-    return [windows_root(), *wsl_roots()]
+    return [local_root(), *wsl_roots()]
 
 
 def root_for_origin(origin: object) -> SessionRoot | None:
