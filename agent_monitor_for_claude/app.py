@@ -24,8 +24,9 @@ from . import __version__
 from .clipboard import copy_text as _copy_text
 from .history import list_history
 from .i18n import T
-from .paths import config_dir, projects_dir, scratchpad_dir, windows_root, wsl_path_to_windows
+from .paths import config_dir, host_path, local_root, projects_dir, scratchpad_dir
 from .paths import transcript_path as _transcript_path
+from .platforms import prepare_gui_environment, storage_dir
 from .pricing import load_pricing
 from .process_probe import process_stats
 from .roots import root_for_origin
@@ -38,7 +39,7 @@ from .tasks import list_tasks
 from .tasks import read_task_output as _read_task_output
 from .verbose import print_runtime_diagnostics
 from .window_background import apply_native_background, window_background_color
-from .window_focus import focus_session_window, focus_terminal_window, open_directory, open_vscode_session, reveal_in_explorer
+from .window_focus import focus_session_window, focus_terminal_window, open_directory, open_vscode_session, reveal_in_file_manager
 from .wsl import wsl_process_stats
 
 __all__ = ['run']
@@ -158,17 +159,17 @@ class _MonitorApi:
 
         return list_history(window)
 
-    def get_process_stats(self, pid: object, origin: object = 'windows') -> list[dict[str, Any]]:
+    def get_process_stats(self, pid: object, origin: object = 'local') -> list[dict[str, Any]]:
         """Return live CPU / memory / uptime for one session's descendant processes.
 
         Called only while the process panel is open, on a per-second timer.  The
         session's recorded process start time is looked up from the registry so
         a recycled PID is rejected.  Reports only resource numbers and process
         names - never a command line.  A WSL session's descendants live inside
-        the distro's own ``/proc``, not the Windows process table, so a WSL
+        the distro's own ``/proc``, not the host's process table, so a WSL
         origin is routed to ``wsl_process_stats`` instead, with the start-time
         lookup read from that same WSL root's own registry records rather than
-        the Windows one.
+        the local one.
         """
         if isinstance(pid, bool) or not isinstance(pid, (int, float, str)):
             return []
@@ -189,7 +190,7 @@ class _MonitorApi:
             proc_start_ticks = _proc_start_ticks_for(list_sessions(root), pid_value)
             stats = wsl_process_stats(root, pid_value, proc_start_ticks)
         else:
-            proc_start_ticks = _proc_start_ticks_for(list_sessions(windows_root()), pid_value)
+            proc_start_ticks = _proc_start_ticks_for(list_sessions(local_root()), pid_value)
             stats = process_stats(pid_value, proc_start_ticks)
 
         return [
@@ -200,7 +201,7 @@ class _MonitorApi:
             for stat in stats
         ]
 
-    def get_tasks(self, session_id: object, cwd: object, max_age: object = None, origin: object = 'windows') -> dict[str, Any]:
+    def get_tasks(self, session_id: object, cwd: object, max_age: object = None, origin: object = 'local') -> dict[str, Any]:
         """Return the session's recent background tasks (metadata, plus labels).
 
         Enumeration reads no output content - only each file's name, size, and
@@ -238,7 +239,7 @@ class _MonitorApi:
             'total': total,
         }
 
-    def read_task_output(self, session_id: object, cwd: object, task_id: object, origin: object = 'windows') -> str | None:
+    def read_task_output(self, session_id: object, cwd: object, task_id: object, origin: object = 'local') -> str | None:
         """Return the tail of one background task's live output (user-initiated).
 
         The one bridge method that surfaces process output text.  Reached only
@@ -325,20 +326,26 @@ class _MonitorApi:
             'ids': list(matches), 'done': done, 'error': error,
         })
         try:
-            window.evaluate_js('window.__amcSearchPush && window.__amcSearchPush(' + payload + ')')
+            # run_js, not evaluate_js: the latter wraps the script in an eval()
+            # only so it can hand a value back, and nothing here needs one.  The
+            # page's policy does permit that wrapper - the host's own bridge
+            # cannot work without it (see index.html) - but this is the one place
+            # the application itself pushes code into the page, and it has no
+            # reason to lean on the relaxation.
+            window.run_js('window.__amcSearchPush && window.__amcSearchPush(' + payload + ')')
         except Exception:
             # The window may be closing, or the bridge briefly unavailable - a
             # dropped progress update is harmless.
             pass
 
-    def delete_session(self, session_id: object, cwd: object, origin: object = 'windows') -> bool:
+    def delete_session(self, session_id: object, cwd: object, origin: object = 'local') -> bool:
         """Delete a past session's transcript and subagent folder (user-initiated).
 
         Only ever invoked from the history listing's per-row action, after an
         in-UI confirmation.  All safety guards live in ``session_delete``: a UUID
         check, a refusal for any session with a live process, and path
         confinement to ``projects/``.  ``origin`` names the session root the row
-        was tagged with (``'windows'`` or ``'wsl:<distro>'``) and is passed
+        was tagged with (``'local'`` or ``'wsl:<distro>'``) and is passed
         straight through to ``session_delete.delete_session``, which resolves it
         and refuses an origin that no longer names a currently available root.
         """
@@ -357,14 +364,14 @@ class _MonitorApi:
 
         return _copy_text(text)
 
-    def open_path(self, path: object, origin: object = 'windows') -> bool:
-        """Open a session's project directory in Windows Explorer (user-initiated).
+    def open_path(self, path: object, origin: object = 'local') -> bool:
+        """Open a session's project directory in the file manager (user-initiated).
 
         ``origin`` resolves to the session's root; the path is translated
-        through it first (``paths.wsl_path_to_windows``) - a WSL session may
-        report a POSIX path, which is translated to its Windows-readable UNC
-        form before it ever reaches the shell.  An origin naming no currently
-        available root refuses with False.
+        through it first (``paths.host_path``) - on a Windows host a WSL session
+        reports a POSIX path, which becomes a readable UNC path before it ever
+        reaches the shell.  An origin naming no currently available root refuses
+        with False.
         """
         if not isinstance(path, str) or not path:
             return False
@@ -376,20 +383,20 @@ class _MonitorApi:
         if root is None:
             return False
 
-        return open_directory(wsl_path_to_windows(root, path))
+        return open_directory(host_path(root, path))
 
-    def reveal_path(self, path: object, origin: object = 'windows') -> bool:
-        """Show a session file in Windows Explorer, selected in its folder (user-initiated).
+    def reveal_path(self, path: object, origin: object = 'local') -> bool:
+        """Show a session file in the file manager, selected in its folder (user-initiated).
 
         The file counterpart of ``open_path``, driving the row menu's "show
-        transcript in Explorer" action.  The file is shown, never opened:
-        ``window_focus.reveal_in_explorer`` raises an Explorer window with the item
-        selected and refuses anything that is not an existing file, so no program
-        is ever launched for it.  The path the UI hands over comes from
+        transcript" action.  The file is shown, never opened:
+        ``window_focus.reveal_in_file_manager`` raises a file-manager window with the
+        item selected and refuses anything that is not an existing file, so no
+        program is ever launched for it.  The path the UI hands over comes from
         ``transcript_path``, which is where the ``projects/`` confinement lives.
-        ``origin`` resolves to the session's root and translates a POSIX path a WSL
-        session reported into its Windows-readable UNC form, exactly as
-        ``open_path`` does.
+        ``origin`` resolves to the session's root and translates a path a WSL
+        session reported into one this host can read, exactly as ``open_path``
+        does.
         """
         if not isinstance(path, str) or not path:
             return False
@@ -401,17 +408,17 @@ class _MonitorApi:
         if root is None:
             return False
 
-        return reveal_in_explorer(wsl_path_to_windows(root, path))
+        return reveal_in_file_manager(host_path(root, path))
 
-    def scratchpad_path(self, session_id: object, cwd: object, origin: object = 'windows') -> str:
+    def scratchpad_path(self, session_id: object, cwd: object, origin: object = 'local') -> str:
         """Return the session's scratchpad directory if it exists, else ''.
 
         Checked on demand when the row menu opens (so no per-poll cost), so the
-        UI can offer a "show scratchpad in Explorer" entry only when there is one.  The
+        UI can offer a "show scratchpad" entry only when there is one.  The
         returned path is validated again by ``open_path`` before the shell sees
         it.  ``origin`` resolves to the session's root; for a WSL root the
-        directory is already a Windows-readable UNC path (built from that
-        root's own ``temp_dir``), so no further translation is needed.  An
+        directory is already a path the host can read (built from that root's
+        own ``claude_temp_dir``), so no further translation is needed.  An
         origin naming no currently available root refuses with ''.
         """
         if not isinstance(session_id, str) or not _SESSION_UUID.match(session_id) or not isinstance(cwd, str) or not cwd:
@@ -430,7 +437,7 @@ class _MonitorApi:
         except OSError:
             return ''
 
-    def transcript_path(self, session_id: object, cwd: object, origin: object = 'windows') -> str:
+    def transcript_path(self, session_id: object, cwd: object, origin: object = 'local') -> str:
         """Return the session's transcript file if it exists, else ''.
 
         Checked on demand when the row menu opens (so no per-poll cost), so the UI
@@ -463,7 +470,7 @@ class _MonitorApi:
             return ''
 
     def focus_session(self, pid: object, project_name: object = '', session_id: object = '', vscode_deeplink: object = False,
-                      session_title: object = '', origin: object = 'windows') -> bool:
+                      session_title: object = '', origin: object = 'local') -> bool:
         """Jump to a session: raise its hosting window, then focus its tab if possible.
 
         For sessions of the VS Code extension the official deep link
@@ -472,12 +479,12 @@ class _MonitorApi:
         the deep link to the currently focused window.  For a session running in
         an external terminal, *session_title* lets its terminal window be found
         when no window sits on the process chain.  A session running inside a
-        WSL distribution (*origin* starting with ``'wsl:'``) has no Windows
+        WSL distribution (*origin* starting with ``'wsl:'``) has no host-side
         process at all, so *pid* is never even inspected for one: the window is
         found purely by *session_title* (``focus_terminal_window``), never
-        through the pid-based search - a Linux pid must never reach a Windows
-        process API, since Windows could have reused that same number for an
-        unrelated process.
+        through the pid-based search - a pid from inside a distro must never
+        reach the host's process API, which could have reused that same number
+        for an unrelated process.
         """
         title = session_title if isinstance(session_title, str) else ''
 
@@ -524,10 +531,12 @@ class _MonitorApi:
 def run(verbose: bool = False) -> None:
     """Create the window and start the pywebview event loop (blocking).
 
-    The WebView2 profile is persistent (``private_mode=False``) so that UI
+    The browser profile is persistent (``private_mode=False``) so that UI
     preferences kept in localStorage - theme, filter, collapsed panels -
     survive restarts.  pywebview's default private mode would reset them on
-    every launch.
+    every launch.  ``prepare_gui_environment`` runs first, before pywebview
+    touches the toolkit, for the environment defaults one system needs set by
+    then.
 
     Parameters
     ----------
@@ -536,6 +545,8 @@ def run(verbose: bool = False) -> None:
         backend) once the event loop is running.  These are only available
         after the CLR/WebView2 has loaded, so they run as the post-start hook.
     """
+    prepare_gui_environment()
+
     api = _MonitorApi()
 
     ui_dir = _ui_dir()
@@ -553,7 +564,7 @@ def run(verbose: bool = False) -> None:
     # Let the bridge push streaming search results back into this window.
     api.attach_window(window)
     on_started = print_runtime_diagnostics if verbose else None
-    webview.start(on_started, private_mode=False, storage_path=str(_storage_dir()), icon=_icon_path())
+    webview.start(on_started, private_mode=False, storage_path=str(storage_dir()), icon=_icon_path())
 
 
 def _default_effort() -> str:
@@ -576,22 +587,16 @@ def _icon_path() -> str | None:
 
     A frozen build carries the icon inside the executable, so pywebview's
     fallback (extracting it from ``sys.executable``) already shows the right
-    one.  When running from source, ``sys.executable`` is ``python.exe`` and
+    one.  When running from source, ``sys.executable`` is the interpreter and
     that fallback yields the Python icon, so the bundled ``.ico`` at the
-    project root is handed to pywebview explicitly.
+    project root is handed to pywebview explicitly - which is every Linux run,
+    where the app is not frozen at all.
     """
     if getattr(sys, 'frozen', False):
         return None
 
     candidate = Path(__file__).parent.parent / 'agent_monitor_for_claude.ico'
     return str(candidate) if candidate.is_file() else None
-
-
-def _storage_dir() -> Path:
-    """Return the WebView2 profile directory used for UI preference storage."""
-    base = os.environ.get('LOCALAPPDATA')
-    root = Path(base) if base else Path.home() / 'AppData' / 'Local'
-    return root / 'AgentMonitorForClaude'
 
 
 def _asset_version(ui_dir: Path) -> str:

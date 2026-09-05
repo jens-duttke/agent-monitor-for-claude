@@ -1228,13 +1228,13 @@ function hostLabel(detected, entrypoint) {
     return null;
 }
 
-// The record's origin: 'windows' (the default - a native session, or an older
-// record with no origin field at all) or 'wsl:<distro>' for a session whose
+// The record's origin: 'local' (the default - a session on this machine, or an
+// older record with no origin field at all) or 'wsl:<distro>' for a session whose
 // process runs inside that WSL distribution. Defaulting a non-string value
 // here keeps every caller - buildSession, searchScopeRefs - origin-safe
 // without its own null check.
 function sessionOrigin(raw) {
-    return typeof raw.origin === 'string' ? raw.origin : 'windows';
+    return typeof raw.origin === 'string' ? raw.origin : 'local';
 }
 
 function isWslOrigin(origin) {
@@ -1287,7 +1287,7 @@ function isVscodeDeeplink(raw) {
 // must not share a panel - nor its open-folder target or collapse state.
 function groupKey(cwd, origin) {
     const path = String(cwd).replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
-    return (typeof origin === 'string' && origin ? origin : 'windows') + '|' + path;
+    return (typeof origin === 'string' && origin ? origin : 'local') + '|' + path;
 }
 
 function displayCwd(cwd) {

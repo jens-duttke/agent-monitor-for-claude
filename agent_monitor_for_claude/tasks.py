@@ -33,7 +33,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .paths import SessionRoot, scratchpad_dir, task_output_dir, task_output_path, transcript_path, wsl_path_to_windows
+from .paths import SessionRoot, host_path, scratchpad_dir, task_output_dir, task_output_path, transcript_path
 
 __all__ = ['TaskInfo', 'list_tasks', 'read_task_output']
 
@@ -244,27 +244,27 @@ def _resolve_redirect(command: str, root: SessionRoot, session_id: str, cwd: str
     """Return the command's output-redirect file if it is a real, in-bounds file.
 
     The target is confined to the session's scratchpad or its project directory, both resolved
-    under *root*; a WSL path (an ``/mnt/<drive>/`` mount, or - on a WSL root - any other absolute
-    POSIX path) is translated to its Windows-readable form first.  Any target outside both roots, or
-    that is not an existing file, yields ``None``.
+    under *root*; on a Windows host a WSL path (an ``/mnt/<drive>/`` mount, or - on a WSL root - any
+    other absolute POSIX path) is translated into a form that host can read first.  Any target
+    outside both roots, or that is not an existing file, yields ``None``.
     """
     target = _parse_redirect_target(command)
     if not target:
         return None
 
     # A relative target was written relative to the task's working directory;
-    # resolve it against the session cwd as seen from Windows (best effort - the
+    # resolve it against the session cwd as this host sees it (best effort - the
     # confinement check below still gates it) rather than the monitor's own cwd.
-    cwd_windows = Path(wsl_path_to_windows(root, cwd))
-    candidate = Path(wsl_path_to_windows(root, target))
+    session_cwd = Path(host_path(root, cwd))
+    candidate = Path(host_path(root, target))
     if not candidate.is_absolute():
-        candidate = cwd_windows / candidate
+        candidate = session_cwd / candidate
     try:
         resolved = candidate.resolve()
     except (OSError, ValueError):
         return None
 
-    confinement_roots = (scratchpad_dir(root, session_id, cwd), cwd_windows)
+    confinement_roots = (scratchpad_dir(root, session_id, cwd), session_cwd)
     for confinement_root in confinement_roots:
         try:
             resolved.relative_to(confinement_root.resolve())

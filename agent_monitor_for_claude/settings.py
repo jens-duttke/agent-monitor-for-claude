@@ -16,12 +16,13 @@ The app never creates this file - users place it manually.
 """
 from __future__ import annotations
 
-import ctypes
 import json
 import os
 import sys
 from pathlib import Path
 from typing import Any
+
+from .platforms import show_error_box
 
 __all__ = [
     'SETTINGS_FILENAME',
@@ -129,8 +130,8 @@ def _validate(data: dict[str, Any], path: Path) -> dict[str, Any]:
 
 
 def _error_dialog(message: str) -> None:
-    """Show a modal error dialog (Windows message box)."""
-    ctypes.windll.user32.MessageBoxW(0, message, 'Agent Monitor for Claude - Settings Error', 0x30)
+    """Show a modal error dialog naming the settings file that could not be used."""
+    show_error_box(message, 'Agent Monitor for Claude - Settings Error')
 
 
 _S = _load_settings()

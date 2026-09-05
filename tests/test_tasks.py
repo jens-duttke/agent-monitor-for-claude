@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_monitor_for_claude.paths import SessionRoot, cwd_to_slug, task_output_dir, transcript_path, windows_root, wsl_path_to_windows
+from agent_monitor_for_claude.paths import SessionRoot, cwd_to_slug, local_root, task_output_dir, transcript_path
 from agent_monitor_for_claude.tasks import list_tasks, read_task_output, _parse_redirect_target
 
 _SESSION = '6e22e66f-6298-442a-9762-2a5b65052389'
@@ -27,9 +27,6 @@ class TasksTest(unittest.TestCase):
         patcher = mock.patch('tempfile.gettempdir', return_value=self._tmp)
         patcher.start()
         self.addCleanup(patcher.stop)
-        self._dir = Path(self._tmp) / 'claude' / cwd_to_slug(_CWD) / _SESSION / 'tasks'
-        self._dir.mkdir(parents=True, exist_ok=True)
-
         # A separate config dir so the transcript (used only for task labels)
         # resolves into a temp tree, not the real ~/.claude.
         self._config = tempfile.mkdtemp()
@@ -39,9 +36,13 @@ class TasksTest(unittest.TestCase):
         self._transcript = Path(self._config) / 'projects' / cwd_to_slug(_CWD) / f'{_SESSION}.jsonl'
         self._transcript.parent.mkdir(parents=True, exist_ok=True)
 
-        # Built after the tempdir/config patches above, so its temp_dir/config_dir
-        # match the fixture paths this class writes into.
-        self._root = windows_root()
+        # Built after the tempdir/config patches above, so its claude_temp_dir and
+        # config_dir match the fixture paths this class writes into.  The temp
+        # directory's own name differs per system ('claude' vs 'claude-<uid>'), so
+        # every fixture path below is derived from the root rather than spelled out.
+        self._root = local_root()
+        self._dir = self._root.claude_temp_dir / cwd_to_slug(_CWD) / _SESSION / 'tasks'
+        self._dir.mkdir(parents=True, exist_ok=True)
 
     def _write_transcript(self, task_id: str, description: str, command: str = 'run it') -> None:
         use = {
@@ -148,7 +149,7 @@ class TasksTest(unittest.TestCase):
         # The capture file is empty because the command redirected its output to
         # a file in the session scratchpad; that file's content is shown instead.
         self._write('redir01.output', '', age_seconds=5)
-        scratch = Path(self._tmp) / 'claude' / cwd_to_slug(_CWD) / _SESSION / 'scratchpad'
+        scratch = self._root.claude_temp_dir / cwd_to_slug(_CWD) / _SESSION / 'scratchpad'
         scratch.mkdir(parents=True, exist_ok=True)
         log = scratch / 'run.log'
         log.write_text('progress 42/100\n', encoding='utf-8', newline='')
@@ -163,7 +164,7 @@ class TasksTest(unittest.TestCase):
         # task ran), not the monitor's cwd, and is read when it lands in-bounds.
         realcwd = tempfile.mkdtemp()
         slug = cwd_to_slug(realcwd)
-        tasks = Path(self._tmp) / 'claude' / slug / _SESSION / 'tasks'
+        tasks = self._root.claude_temp_dir / slug / _SESSION / 'tasks'
         tasks.mkdir(parents=True, exist_ok=True)
         (tasks / 'relc01.output').write_text('', encoding='utf-8', newline='')
         (Path(realcwd) / 'build.log').write_text('compiling...\n', encoding='utf-8', newline='')
@@ -196,7 +197,7 @@ class TasksTest(unittest.TestCase):
         # If the task's own capture file has content, it is used - the redirect
         # target is not consulted.
         self._write('redir03.output', 'captured\n', age_seconds=5)
-        scratch = Path(self._tmp) / 'claude' / cwd_to_slug(_CWD) / _SESSION / 'scratchpad'
+        scratch = self._root.claude_temp_dir / cwd_to_slug(_CWD) / _SESSION / 'scratchpad'
         scratch.mkdir(parents=True, exist_ok=True)
         (scratch / 'other.log').write_text('redirected\n', encoding='utf-8', newline='')
         self._write_transcript('redir03', 'Both', command=f'bash job.sh > {scratch / "other.log"} 2>&1')
@@ -209,7 +210,7 @@ class WslRootTasksTest(unittest.TestCase):
 
     ``config_dir``/``proc_dir``/``temp_dir`` are plain temp directories standing in for the
     ``\\\\wsl.localhost\\<distro>\\...`` UNC tree a real WSL root would use (see ``wsl.wsl_roots``);
-    every path below is derived from this fake root alone, never from ``windows_root()``.
+    every path below is derived from this fake root alone, never from ``local_root()``.
     """
 
     _SESSION = 'a1b2c3d4-5e6f-4789-9abc-def012345678'
@@ -219,7 +220,7 @@ class WslRootTasksTest(unittest.TestCase):
         base = Path(tempfile.mkdtemp())
         self._root = SessionRoot(
             origin='wsl:U', label='U',
-            config_dir=base / 'home' / 'dev' / '.claude', proc_dir=base / 'proc', temp_dir=base / 'tmp',
+            config_dir=base / 'home' / 'dev' / '.claude', proc_dir=base / 'proc', claude_temp_dir=base / 'tmp',
         )
         self._dir = task_output_dir(self._root, self._SESSION, self._CWD)
         self._dir.mkdir(parents=True, exist_ok=True)
@@ -237,7 +238,7 @@ class WslRootRedirectTest(unittest.TestCase):
     """Redirect-following under a WSL root.
 
     A real ``\\\\wsl.localhost\\...`` UNC path does not exist on the test machine, so - the same way
-    the rest of this suite solves confinement tests - only ``wsl_path_to_windows`` itself is faked
+    the rest of this suite solves confinement tests - only ``host_path`` itself is faked
     (mapping an absolute POSIX path onto a real temp directory); everything downstream, including the
     confinement check, runs unmodified against that real tree.
     """
@@ -249,7 +250,7 @@ class WslRootRedirectTest(unittest.TestCase):
         self._base = Path(tempfile.mkdtemp())
         self._root = SessionRoot(
             origin='wsl:U', label='U',
-            config_dir=self._base / 'home' / 'dev' / '.claude', proc_dir=self._base / 'proc', temp_dir=self._base / 'tmp',
+            config_dir=self._base / 'home' / 'dev' / '.claude', proc_dir=self._base / 'proc', claude_temp_dir=self._base / 'tmp',
         )
         self._dir = task_output_dir(self._root, self._SESSION, self._CWD)
         self._dir.mkdir(parents=True, exist_ok=True)
@@ -259,7 +260,7 @@ class WslRootRedirectTest(unittest.TestCase):
                 return str(self._base.joinpath(*text.strip('/').split('/')))
             return text
 
-        patcher = mock.patch('agent_monitor_for_claude.tasks.wsl_path_to_windows', side_effect=fake_translate)
+        patcher = mock.patch('agent_monitor_for_claude.tasks.host_path', side_effect=fake_translate)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -311,11 +312,8 @@ class WslRootRedirectTest(unittest.TestCase):
 
 
 class RedirectParsingTest(unittest.TestCase):
-    def test_wsl_path_translation(self) -> None:
-        root = windows_root()
-        self.assertEqual(wsl_path_to_windows(root, '/mnt/c/Users/jens/x.log'), r'C:\Users\jens\x.log')
-        self.assertEqual(wsl_path_to_windows(root, '/mnt/d/build/out'), r'D:\build\out')
-        self.assertEqual(wsl_path_to_windows(root, r'C:\already\windows'), r'C:\already\windows')
+    # How a reported path is translated for this host is host_path's own contract,
+    # covered per system in test_paths.py; this class covers only the parsing.
 
     def test_parse_redirect_target(self) -> None:
         self.assertEqual(_parse_redirect_target('bash x.sh > out.log 2>&1'), 'out.log')

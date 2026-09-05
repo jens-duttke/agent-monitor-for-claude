@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Linux support** - Agent Monitor now runs on Linux as well as Windows. The overview, search, history, process and task panels, session deletion, and the jump to an agent's window all work there; see the [README](README.md#linux) for the packages it needs. There is no prebuilt binary - the app runs from source against the GTK and WebKit libraries your desktop ships.
+- On Linux, an `agent-monitor-for-claude` launcher script in the checkout starts the app from any directory without activating the virtual environment first. Symlink it into `~/.local/bin` for a global command.
+- On Linux the app needs one file where Windows uses a named mutex: a lock file in the session's runtime directory that keeps a second window from starting. [PRIVACY.md](PRIVACY.md) lists everything the app touches, per system.
 - A background agent's row menu copies its `claude attach` command. That command is the only way back into a session that runs under the agent daemon with no window of its own.
 - An agent whose Auto mode has been put on hold now says so. Claude Code stops trusting its safety classifier after three blocked calls in a row and prompts you about everything again - the row now shows a paused badge next to the mode, with the session's number of blocked calls on hover.
 - The released `AgentMonitorForClaude.exe` is now code signed, so Windows can name its publisher instead of reporting an unknown one. Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Every release is built by a GitHub Actions workflow from the tagged source in this repository - never on a developer machine - and signed only after a manual approval; see the code signing policy in the README.
@@ -15,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Background agents started with `claude --bg` are now shown as such. Their host column read a raw `bg`, and clicking one tried to raise a window it does not have - which could bring an unrelated terminal to the front.
 - A session in *Auto* mode no longer claims to be working for five minutes while a permission prompt waits. Auto mode does still ask - an explicit ask rule, an MCP tool that needs your input, or the pause Claude Code falls back to after repeated classifier blocks - so a pending call with nothing running behind it now reads "Waiting for you" after 90 seconds. A call with a live process, subagent or workflow behind it keeps reading "Working".
+- On Linux, the app now starts from a terminal inside a Snap-packaged application - VS Code from the Snap Store, most likely - instead of dying with `symbol lookup error: ... libpthread.so.0`. Such a terminal points every program it starts at the Snap's own GTK libraries, which the app now steps out of before opening its window. That also keeps your interface preferences in `~/.local/share` rather than inside the Snap.
+- A WSL session's background-task output and scratchpad are found again. They were looked for under `\\wsl.localhost\<distro>\tmp\claude\...`, but Claude Code appends the owner's user id on Linux, so the task panel stayed empty and the row menu never offered the scratchpad.
 - Replacing a running instance no longer looks like a crash to whatever started it. The replaced instance was ended with an error exit code, so a launcher waiting on it - a tray tool that starts Agent Monitor on double-click - reported the replace as a failed command.
 - A session that hands its whole turn to a subagent no longer ages as though it had gone quiet. Its last-activity time kept climbing while the subagent worked, sinking the project panel down the list; the running subagent's activity now counts as the session's.
 - The last-activity time is no longer refreshed by Claude Code's own bookkeeping records. One of those is written whenever any tool writes a file, which could make an untouched session look as if the conversation had just moved on.
@@ -22,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - The `dontAsk` permission mode now shows as *Don't ask* instead of its raw configuration name.
 - A session whose transcript holds no conversation turn yet reads *Quiet* instead of *Idle*, so it no longer sits under *Needs you* claiming a reply is owed.
+- The menu entries that reveal a folder or file now read *Show in file manager* rather than naming Windows Explorer, since the file manager differs per system.
 
 ## [0.7.0] - 2026-08-19
 

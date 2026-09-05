@@ -9,7 +9,7 @@ from unittest import mock
 
 from agent_monitor_for_claude import app
 from agent_monitor_for_claude.app import _LOG_MAX_LEN, _MonitorApi, _sanitize_log
-from agent_monitor_for_claude.paths import SessionRoot, cwd_to_slug, windows_root
+from agent_monitor_for_claude.paths import SessionRoot, cwd_to_slug, local_root
 from agent_monitor_for_claude.process_probe import ChildProcessStat
 from agent_monitor_for_claude.tasks import TaskInfo
 
@@ -50,14 +50,13 @@ class ScratchpadPathTest(unittest.TestCase):
         patcher = mock.patch('tempfile.gettempdir', return_value=self._tmp)
         patcher.start()
         self.addCleanup(patcher.stop)
-        self._scratch = Path(self._tmp) / 'claude' / cwd_to_slug(self._CWD) / self._SESSION / 'scratchpad'
-
-        # Pin origin resolution to this fixture's own windows_root() (built after the
-        # tempdir patch above, so its temp_dir matches self._scratch) - without this,
-        # scratchpad_path's now-real root_for_origin('windows') call would reach the
-        # real roots.session_roots() and thus real WSL discovery on every test here.
-        self._windows_root = windows_root()
-        root_patcher = mock.patch.object(app, 'root_for_origin', side_effect=lambda origin: self._windows_root if origin == 'windows' else None)
+        # Pin origin resolution to this fixture's own local_root() (built after the
+        # tempdir patch above, so its claude_temp_dir matches self._scratch) - without
+        # this, scratchpad_path's now-real root_for_origin('local') call would reach
+        # the real roots.session_roots() and thus real WSL discovery on every test here.
+        self._local_root = local_root()
+        self._scratch = self._local_root.claude_temp_dir / cwd_to_slug(self._CWD) / self._SESSION / 'scratchpad'
+        root_patcher = mock.patch.object(app, 'root_for_origin', side_effect=lambda origin: self._local_root if origin == 'local' else None)
         root_patcher.start()
         self.addCleanup(root_patcher.stop)
 
@@ -88,12 +87,12 @@ class TranscriptPathTest(unittest.TestCase):
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self._root = SessionRoot('windows', None, Path(tmp.name) / '.claude', None, Path(tmp.name) / 'temp')
+        self._root = SessionRoot('local', None, Path(tmp.name) / '.claude', None, Path(tmp.name) / 'temp')
         self._transcript = self._root.config_dir / 'projects' / cwd_to_slug(self._CWD) / f'{self._SESSION}.jsonl'
 
         # Pin origin resolution to this fixture's root, so the real roots.session_roots()
         # - and with it real WSL discovery - is never reached from a test.
-        patcher = mock.patch.object(app, 'root_for_origin', side_effect=lambda origin: self._root if origin == 'windows' else None)
+        patcher = mock.patch.object(app, 'root_for_origin', side_effect=lambda origin: self._root if origin == 'local' else None)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -270,7 +269,7 @@ class DeleteSessionOriginTest(unittest.TestCase):
         with mock.patch.object(app, '_delete_session', return_value=True) as delete_mock:
             api.delete_session('6e22e66f-6298-442a-9762-2a5b65052389', r'D:\proj')
 
-        delete_mock.assert_called_once_with('6e22e66f-6298-442a-9762-2a5b65052389', r'D:\proj', 'windows')
+        delete_mock.assert_called_once_with('6e22e66f-6298-442a-9762-2a5b65052389', r'D:\proj', 'local')
 
     def test_non_str_origin_is_refused_without_calling_delete(self) -> None:
         api = _MonitorApi()
@@ -371,7 +370,7 @@ class WslOriginTasksTest(unittest.TestCase):
     _CWD = '/home/dev/proj'
 
     def _wsl_root(self) -> SessionRoot:
-        return SessionRoot(origin='wsl:U', label='U', config_dir=Path('cfg'), proc_dir=Path('proc'), temp_dir=Path('tmp'))
+        return SessionRoot(origin='wsl:U', label='U', config_dir=Path('cfg'), proc_dir=Path('proc'), claude_temp_dir=Path('tmp'))
 
     def test_get_tasks_calls_list_tasks_with_the_resolved_root(self) -> None:
         api = _MonitorApi()
@@ -399,7 +398,7 @@ class WslOriginProcessStatsTest(unittest.TestCase):
     """As of Task 13, a WSL origin's get_process_stats routes to wsl_process_stats instead of degrading."""
 
     def _wsl_root(self) -> SessionRoot:
-        return SessionRoot(origin='wsl:U', label='U', config_dir=Path('cfg'), proc_dir=Path('proc'), temp_dir=Path('tmp'))
+        return SessionRoot(origin='wsl:U', label='U', config_dir=Path('cfg'), proc_dir=Path('proc'), claude_temp_dir=Path('tmp'))
 
     def test_get_process_stats_calls_wsl_process_stats_with_registry_ticks(self) -> None:
         api = _MonitorApi()
@@ -426,13 +425,13 @@ class WslOriginProcessStatsTest(unittest.TestCase):
 
 
 class WindowsOriginPassthroughTest(unittest.TestCase):
-    """The default 'windows' origin must still resolve and call through, exactly as before Task 10."""
+    """The default 'local' origin must still resolve and call through, exactly as before Task 10."""
 
     _SESSION = '6e22e66f-6298-442a-9762-2a5b65052389'
     _CWD = r'D:\proj'
 
     def _windows_root(self) -> SessionRoot:
-        return SessionRoot(origin='windows', label=None, config_dir=Path('cfg'), proc_dir=None, temp_dir=Path('tmp'))
+        return SessionRoot(origin='local', label=None, config_dir=Path('cfg'), proc_dir=None, claude_temp_dir=Path('tmp'))
 
     def test_get_tasks_calls_list_tasks(self) -> None:
         api = _MonitorApi()
@@ -464,9 +463,9 @@ class WindowsOriginPassthroughTest(unittest.TestCase):
             result = api.get_process_stats(4242)
 
         self.assertEqual(result, [{'pid': 99, 'name': 'node.exe', 'cpu': 1.0, 'rss': 2048, 'uptime': 5.0, 'kind': 'process'}])
-        # The registry lookup always uses the standalone windows_root(), independent of the
-        # resolved origin root object - its .origin must be the real 'windows' constant.
-        self.assertEqual(list_sessions_mock.call_args[0][0].origin, 'windows')
+        # The registry lookup always uses the standalone local_root(), independent of the
+        # resolved origin root object - its .origin must be the real 'local' constant.
+        self.assertEqual(list_sessions_mock.call_args[0][0].origin, 'local')
         process_stats_mock.assert_called_once_with(4242, 999)
 
 

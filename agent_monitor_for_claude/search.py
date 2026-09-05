@@ -236,10 +236,9 @@ def _ordered_transcripts(sessions: object) -> list[tuple[Path, str]]:
 def _valid_refs(sessions: object) -> list[tuple[str, str, str]]:
     """Extract distinct ``(session_id, cwd, origin)`` triples from the caller's list.
 
-    ``origin`` defaults to ``'windows'`` when absent or not a string, so a
+    ``origin`` defaults to ``'local'`` when absent or not a string, so a
     caller that does not yet tag its sessions with an origin - every ref shape
-    from before origin-tagging existed - is treated as the native Windows root,
-    same as before.
+    from before origin-tagging existed - is treated as this machine's own root.
     """
     if not isinstance(sessions, list):
         return []
@@ -257,7 +256,7 @@ def _valid_refs(sessions: object) -> list[tuple[str, str, str]]:
 
         origin = item.get('origin')
         if not isinstance(origin, str):
-            origin = 'windows'
+            origin = 'local'
 
         triple = (session_id, cwd, origin)
         if triple not in seen:

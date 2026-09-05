@@ -50,7 +50,7 @@ __all__ = ['delete_session']
 _SESSION_ID_PATTERN = re.compile(r'\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z')
 
 
-def delete_session(session_id: str, cwd: str, origin: str = 'windows') -> bool:
+def delete_session(session_id: str, cwd: str, origin: str = 'local') -> bool:
     """Delete a past session's transcript and subagent folder (user-initiated).
 
     Refuses - returning ``False`` without touching anything - when the session
@@ -67,9 +67,9 @@ def delete_session(session_id: str, cwd: str, origin: str = 'windows') -> bool:
     cwd : str
         The session's working directory, used to locate its project folder.
     origin : str
-        The session root the row was tagged with (``'windows'`` or
+        The session root the row was tagged with (``'local'`` or
         ``'wsl:<distro>'`` - see ``paths.SessionRoot.origin``); defaults to
-        ``'windows'`` for callers that predate multi-root support.
+        ``'local'`` for callers that predate multi-root support.
 
     Returns
     -------

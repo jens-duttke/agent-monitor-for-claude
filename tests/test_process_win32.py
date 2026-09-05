@@ -1,23 +1,33 @@
-"""Tests for the process probe's PID-recycling detection."""
+"""
+Tests for the Windows process backend's PID-recycling detection and host classification.
+
+Skipped as a whole off Windows: the backend reaches Toolhelp and psutil handles
+against a Windows process table.  The Linux counterpart is
+``test_process_linux.py``.
+"""
 from __future__ import annotations
 
 import os
+import sys
 import time
 import unittest
 from datetime import datetime, timedelta
 
 import psutil
 
-from agent_monitor_for_claude.process_probe import (
-    TERMINAL_WINDOW_OWNERS,
-    probe,
-    process_stats,
-    _classify_ancestry,
-    _is_child_link_real,
-    _meaningful_children,
-    _sample_process,
-    _ticks_match_epoch,
-)
+_WINDOWS_ONLY = unittest.skipUnless(sys.platform == 'win32', 'Windows process backend')
+
+if sys.platform == 'win32':
+    from agent_monitor_for_claude.platforms.process_win32 import (
+        TERMINAL_WINDOW_OWNERS,
+        process_stats,
+        _classify_ancestry,
+        _is_child_link_real,
+        _meaningful_children,
+        _sample_process,
+        _ticks_match_epoch,
+    )
+    from agent_monitor_for_claude.process_probe import probe
 
 
 def _to_ticks(moment: datetime) -> int:
@@ -30,6 +40,7 @@ def _to_filetime(epoch_seconds: float) -> int:
     return int((epoch_seconds + 11_644_473_600) * 10_000_000)
 
 
+@_WINDOWS_ONLY
 class TicksMatchTest(unittest.TestCase):
     """Both procStart formats Claude Code writes must be recognized.
 
@@ -79,6 +90,7 @@ class TicksMatchTest(unittest.TestCase):
         self.assertFalse(_ticks_match_epoch(10 ** 400, time.time()))
 
 
+@_WINDOWS_ONLY
 class ClassifyAncestryTest(unittest.TestCase):
     def test_extension_session_is_plain_vscode(self) -> None:
         self.assertEqual(_classify_ancestry(['code.exe', 'code.exe', 'explorer.exe']), ('VS Code', False))
@@ -99,6 +111,7 @@ class ClassifyAncestryTest(unittest.TestCase):
         self.assertEqual(_classify_ancestry([]), (None, False))
 
 
+@_WINDOWS_ONLY
 class TerminalWindowOwnersTest(unittest.TestCase):
     """The title fallback only raises windows owned by a terminal or console host."""
 
@@ -111,6 +124,7 @@ class TerminalWindowOwnersTest(unittest.TestCase):
             self.assertNotIn(editor, TERMINAL_WINDOW_OWNERS)
 
 
+@_WINDOWS_ONLY
 class MeaningfulChildrenTest(unittest.TestCase):
     """The descendant walk must reject stale parent links from PID reuse."""
 
@@ -200,6 +214,7 @@ class MeaningfulChildrenTest(unittest.TestCase):
         self.assertEqual(sorted(self._walk(table, cache)), [(1001, 'bash.exe'), (1002, 'bash.exe')])
 
 
+@_WINDOWS_ONLY
 class ChildLinkTest(unittest.TestCase):
     def test_child_started_after_parent_is_real(self) -> None:
         self.assertTrue(_is_child_link_real(1, 2, {1: 10.0, 2: 11.0}))
@@ -212,6 +227,7 @@ class ChildLinkTest(unittest.TestCase):
         self.assertFalse(_is_child_link_real(1, 2, {1: None, 2: 11.0}))
 
 
+@_WINDOWS_ONLY
 class ProbeRecyclingTest(unittest.TestCase):
     def test_probe_accepts_matching_start_time(self) -> None:
         pid = os.getpid()
@@ -243,6 +259,7 @@ class ProbeRecyclingTest(unittest.TestCase):
         self.assertTrue(probe(os.getpid()).alive)
 
 
+@_WINDOWS_ONLY
 class ProcessStatsTest(unittest.TestCase):
     def test_unknown_pid_returns_empty(self) -> None:
         # A PID not in the process table yields no stats, never a crash.

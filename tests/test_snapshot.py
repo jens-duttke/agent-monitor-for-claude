@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_monitor_for_claude import snapshot as snapshot_mod
-from agent_monitor_for_claude.paths import SessionRoot, transcript_path, windows_root
+from agent_monitor_for_claude.paths import SessionRoot, transcript_path, local_root
 from agent_monitor_for_claude.snapshot import build_snapshot, live_or_recent_ids, registry_fingerprint
 
 _END_TURN = json.dumps({
@@ -73,7 +73,7 @@ class _RegistryFixture(unittest.TestCase):
         os.environ['CLAUDE_CONFIG_DIR'] = self._temp.name
         (Path(self._temp.name) / 'sessions').mkdir()
 
-        roots_patcher = mock.patch.object(snapshot_mod, 'session_roots', return_value=[windows_root()])
+        roots_patcher = mock.patch.object(snapshot_mod, 'session_roots', return_value=[local_root()])
         roots_patcher.start()
         self.addCleanup(roots_patcher.stop)
 
@@ -94,7 +94,7 @@ class _RegistryFixture(unittest.TestCase):
             json.dumps({'pid': pid, 'sessionId': session_id, 'cwd': cwd, 'name': session_id, 'kind': 'interactive'}),
             encoding='utf-8',
         )
-        path = transcript_path(windows_root(), session_id, cwd)
+        path = transcript_path(local_root(), session_id, cwd)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(transcript, encoding='utf-8')
 
@@ -146,7 +146,7 @@ class RawSnapshotTest(_RegistryFixture):
                         'kind': 'interactive', 'status': 'waiting', 'waitingFor': 'permission prompt'}),
             encoding='utf-8',
         )
-        path = transcript_path(windows_root(), 'w', 'd:\\x')
+        path = transcript_path(local_root(), 'w', 'd:\\x')
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(_END_TURN, encoding='utf-8')
 
@@ -205,7 +205,7 @@ class EndedRetentionTest(_RegistryFixture):
                         'kind': 'interactive', 'procStart': '1'}),
             encoding='utf-8',
         )
-        path = transcript_path(windows_root(), session_id, 'd:\\x')
+        path = transcript_path(local_root(), session_id, 'd:\\x')
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(self._STALE_TURN, encoding='utf-8')
 
@@ -237,7 +237,7 @@ class EndedRetentionTest(_RegistryFixture):
 
         build_snapshot()
 
-        self.assertIsNotNone(snapshot_mod.seconds_since_alive('windows', 'a'))
+        self.assertIsNotNone(snapshot_mod.seconds_since_alive('local', 'a'))
 
     def test_sightings_are_pruned_with_the_registry(self) -> None:
         self._add_session('a', 'd:\\WebDev\\one')
@@ -246,7 +246,7 @@ class EndedRetentionTest(_RegistryFixture):
         (Path(self._temp.name) / 'sessions' / 'a.json').unlink()
         build_snapshot()
 
-        self.assertIsNone(snapshot_mod.seconds_since_alive('windows', 'a'))
+        self.assertIsNone(snapshot_mod.seconds_since_alive('local', 'a'))
 
 
 class PerRecordIsolationTest(_RegistryFixture):
@@ -289,7 +289,7 @@ class SubagentRawTest(_RegistryFixture):
     def test_running_subagent_counted(self) -> None:
         self._add_session('s', 'd:\\WebDev\\proj')
 
-        subagents = transcript_path(windows_root(), 's', 'd:\\WebDev\\proj').parent / 's' / 'subagents'
+        subagents = transcript_path(local_root(), 's', 'd:\\WebDev\\proj').parent / 's' / 'subagents'
         subagents.mkdir(parents=True, exist_ok=True)
         (subagents / 'agent-1.jsonl').write_text(_SUBAGENT_RUNNING, encoding='utf-8')
 
@@ -308,7 +308,7 @@ class DelegatedTurnAgeTest(_RegistryFixture):
     """
 
     def _add_subagent(self, session_id: str, cwd: str, body: str, age_seconds: float) -> None:
-        directory = transcript_path(windows_root(), session_id, cwd).parent / session_id / 'subagents'
+        directory = transcript_path(local_root(), session_id, cwd).parent / session_id / 'subagents'
         directory.mkdir(parents=True, exist_ok=True)
 
         agent = directory / 'agent-1.jsonl'
@@ -365,7 +365,7 @@ class DelegatedTurnAgeTest(_RegistryFixture):
             json.dumps({'pid': os.getpid(), 'sessionId': 'g', 'cwd': cwd, 'kind': 'interactive', 'procStart': '1'}),
             encoding='utf-8',
         )
-        path = transcript_path(windows_root(), 'g', cwd)
+        path = transcript_path(local_root(), 'g', cwd)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(_END_TURN, encoding='utf-8')
         self._add_subagent('g', cwd, _SUBAGENT_RUNNING, age_seconds=5)
@@ -386,7 +386,7 @@ class FingerprintTest(_RegistryFixture):
         self._add_session('a', 'd:\\WebDev\\one')
         before = registry_fingerprint()
 
-        path = transcript_path(windows_root(), 'a', 'd:\\WebDev\\one')
+        path = transcript_path(local_root(), 'a', 'd:\\WebDev\\one')
         with path.open('a', encoding='utf-8') as handle:
             handle.write('\n' + _END_TURN)
 
@@ -447,12 +447,12 @@ class MultiRootSnapshotTest(_RegistryFixture):
             origin='wsl:U', label='U',
             config_dir=Path(wsl_temp.name) / 'cfg',
             proc_dir=Path(wsl_temp.name) / 'proc',
-            temp_dir=Path(wsl_temp.name) / 'tmp',
+            claude_temp_dir=Path(wsl_temp.name) / 'tmp',
         )
         (self._wsl_root.config_dir / 'sessions').mkdir(parents=True)
 
     def _roots(self) -> list[SessionRoot]:
-        return [windows_root(), self._wsl_root]
+        return [local_root(), self._wsl_root]
 
     def _add_wsl_session(self, session_id: str, cwd: str, pid: int, transcript: str = _END_TURN) -> None:
         # procStart here is Linux ticks-since-boot (matching /proc/<pid>/stat
@@ -519,7 +519,7 @@ class MultiRootSnapshotTest(_RegistryFixture):
             before = registry_fingerprint()
 
             parts = before.split('|')
-            self.assertTrue(any(part.startswith('windows:') for part in parts))
+            self.assertTrue(any(part.startswith('local:') for part in parts))
             self.assertTrue(any(part.startswith('wsl:U:') for part in parts))
 
             path = transcript_path(self._wsl_root, self._WSL_SESSION_ID, self._WSL_CWD)

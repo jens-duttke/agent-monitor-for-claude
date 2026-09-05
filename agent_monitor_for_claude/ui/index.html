@@ -10,9 +10,18 @@
          with no inline script allowed - which is why the bootstrap lives in
          boot.js and boot-scripts.js instead of inline blocks. Holds for both
          origins this page runs under: the app's 127.0.0.1 asset server, and a
-         file:// page in the no-bridge browser preview. -->
+         file:// page in the no-bridge browser preview.
+
+         'unsafe-eval' is there for the host's own bridge, never for this page's
+         code: pywebview builds each window.pywebview.api.* method with
+         new Function(), and hands every return value back through an eval().
+         WebView2 exempts host-injected script from the page policy, WebKitGTK
+         does not - so without it the whole bridge silently fails to appear on
+         Linux and nothing ever loads. It permits code generation; it does not
+         admit a single new script source, and no application code here calls
+         eval, new Function, or a string-bodied timer. -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'none';
-        script-src 'self'; style-src 'self'; img-src 'self';
+        script-src 'self' 'unsafe-eval'; style-src 'self'; img-src 'self';
         connect-src 'none'; base-uri 'none'; form-action 'none'">
     <title>Agent Monitor for Claude</title>
     <script src="boot.js"></script>

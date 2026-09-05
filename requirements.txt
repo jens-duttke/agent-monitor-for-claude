@@ -1,2 +1,7 @@
 pywebview
 psutil
+
+# Linux additionally needs PyGObject and WebKitGTK, which pip cannot install
+# usefully - they come from the distribution (see the README's Linux section)
+# and are reached through a virtual environment created with
+# --system-site-packages.

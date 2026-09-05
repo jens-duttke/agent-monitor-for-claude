@@ -1,11 +1,20 @@
-"""Tests for the single-instance replace path (stale-holder-PID guard)."""
+"""
+Tests for the Windows single-instance replace path (stale-holder-PID guard).
+
+Skipped as a whole off Windows: the guard is built on a named mutex and a
+shared-memory block that exist only there.  The Linux guard, and the contract
+both share, are covered in ``test_instance_linux.py``.
+"""
 from __future__ import annotations
 
-import ctypes
+import sys
 import unittest
 from unittest import mock
 
-from agent_monitor_for_claude import single_instance
+_WINDOWS_ONLY = unittest.skipUnless(sys.platform == 'win32', 'Windows single-instance guard')
+
+if sys.platform == 'win32':
+    from agent_monitor_for_claude.platforms import instance_win32 as single_instance
 
 _IDYES = 6
 _IDNO = 7
@@ -14,6 +23,7 @@ _IDNO = 7
 _FAKE_PROCESS_HANDLE = 0x222
 
 
+@_WINDOWS_ONLY
 class ReplacePathTest(unittest.TestCase):
     """The 'replace running instance' flow must never terminate a stale PID.
 
@@ -51,7 +61,7 @@ class ReplacePathTest(unittest.TestCase):
              mock.patch.object(single_instance, '_store_holder_info', store), \
              mock.patch.dict(single_instance.T, translations, clear=True), \
              mock.patch.object(ctypes, 'get_last_error', side_effect=fake_last_error), \
-             mock.patch.object(ctypes.windll.user32, 'MessageBoxW', return_value=answer):
+             mock.patch.object(single_instance, 'ask_yes_no', return_value=answer == _IDYES):
             result = single_instance.ensure_single_instance()
 
         return result, terminated, store.called
@@ -94,6 +104,7 @@ class ReplacePathTest(unittest.TestCase):
         self.assertFalse(stored, 'a failed replace must not claim the holder record')
 
 
+@_WINDOWS_ONLY
 class TerminatePidTest(unittest.TestCase):
     """Terminating the previous holder: exit code, wait, and handle release.
 
@@ -135,6 +146,7 @@ class TerminatePidTest(unittest.TestCase):
         fake_kernel.CloseHandle.assert_called_once_with(_FAKE_PROCESS_HANDLE)
 
 
+@_WINDOWS_ONLY
 class MutexCreationFailureTest(unittest.TestCase):
     """A failed CreateMutexW must be distinguished from a fresh creation."""
 

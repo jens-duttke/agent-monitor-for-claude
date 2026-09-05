@@ -16,7 +16,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_monitor_for_claude import search
-from agent_monitor_for_claude.paths import SessionRoot, config_dir, transcript_path, windows_root
+from agent_monitor_for_claude.paths import SessionRoot, config_dir, transcript_path, local_root
 
 _CWD = 'c:\\Temp\\search-proj'
 
@@ -26,10 +26,10 @@ WSL_SID = '8d49a52c-4ac7-43ec-a7e1-773be955bf59'
 
 
 def _windows_only_root(origin: object) -> SessionRoot | None:
-    """Stand in for ``roots.root_for_origin``, resolving only the ``'windows'`` origin.
+    """Stand in for ``roots.root_for_origin``, resolving only the ``'local'`` origin.
 
     Pinned onto ``search.root_for_origin`` for every ``SearchEnvTest`` case: a
-    plain ref with no explicit ``'origin'`` key defaults to ``'windows'`` (see
+    plain ref with no explicit ``'origin'`` key defaults to ``'local'`` (see
     ``search._valid_refs``), which would otherwise resolve through the real
     ``roots.root_for_origin`` - and its live WSL discovery via
     ``roots.session_roots()`` - on every single search in this file. Origin
@@ -37,7 +37,7 @@ def _windows_only_root(origin: object) -> SessionRoot | None:
     the dedicated ``SearchOriginTest`` cases below, which patch
     ``search.root_for_origin`` again for their own narrower scope.
     """
-    return windows_root() if origin == 'windows' else None
+    return local_root() if origin == 'local' else None
 
 
 class SearchEnvTest(unittest.TestCase):
@@ -58,7 +58,7 @@ class SearchEnvTest(unittest.TestCase):
         self._temp.cleanup()
 
     def _write(self, session_id: str, cwd: str, text: str, mtime: float | None = None) -> None:
-        path = transcript_path(windows_root(), session_id, cwd)
+        path = transcript_path(local_root(), session_id, cwd)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding='utf-8')
         if mtime is not None:
@@ -249,7 +249,7 @@ class SearchOriginTest(SearchEnvTest):
     def _wsl_root_with_transcript(self, base: str, text: str) -> SessionRoot:
         root = SessionRoot(
             origin='wsl:U', label='U', config_dir=Path(base) / 'cfg',
-            proc_dir=None, temp_dir=Path(base) / 'tmp',
+            proc_dir=None, claude_temp_dir=Path(base) / 'tmp',
         )
         project = root.config_dir / 'projects' / '-home-dev-proj'
         project.mkdir(parents=True)
@@ -299,7 +299,7 @@ class SearchOriginTest(SearchEnvTest):
         with tempfile.TemporaryDirectory() as base:
             root = self._wsl_root_with_transcript(base, 'needle-in-wsl')
             refs = [
-                {'session_id': 'win-id', 'cwd': _CWD, 'origin': 'windows'},
+                {'session_id': 'win-id', 'cwd': _CWD, 'origin': 'local'},
                 {'session_id': WSL_SID, 'cwd': '/home/dev/proj', 'origin': 'wsl:U'},
             ]
 

@@ -22,7 +22,7 @@ from unittest import mock
 
 from agent_monitor_for_claude import history, snapshot
 from agent_monitor_for_claude.history import list_history
-from agent_monitor_for_claude.paths import SessionRoot, windows_root
+from agent_monitor_for_claude.paths import SessionRoot, local_root
 
 _LIVE_PID = 424242
 
@@ -42,8 +42,8 @@ class HistoryEnvTest(unittest.TestCase):
         self._temp = tempfile.TemporaryDirectory()
         os.environ['CLAUDE_CONFIG_DIR'] = self._temp.name
 
-        self.windows_root = windows_root()
-        roots_patcher = mock.patch.object(history, 'session_roots', return_value=[self.windows_root])
+        self.local_root = local_root()
+        roots_patcher = mock.patch.object(history, 'session_roots', return_value=[self.local_root])
         roots_patcher.start()
         self.addCleanup(roots_patcher.stop)
 
@@ -365,7 +365,7 @@ class MultiRootHistoryTest(HistoryEnvTest):
         with tempfile.TemporaryDirectory() as base:
             wsl_root = SessionRoot(
                 origin='wsl:U', label='U', config_dir=Path(base) / 'cfg',
-                proc_dir=Path(base) / 'proc', temp_dir=Path(base) / 'tmp',
+                proc_dir=Path(base) / 'proc', claude_temp_dir=Path(base) / 'tmp',
             )
             project = wsl_root.config_dir / 'projects' / '-home-dev-proj'
             project.mkdir(parents=True)
@@ -373,7 +373,7 @@ class MultiRootHistoryTest(HistoryEnvTest):
                 json.dumps({'type': 'user', 'cwd': '/home/dev/proj', 'timestamp': '2026-07-01T10:00:00Z',
                             'message': {'content': 'hello wsl'}}) + '\n', encoding='utf-8')
 
-            with mock.patch.object(history, 'session_roots', return_value=[self.windows_root, wsl_root]), \
+            with mock.patch.object(history, 'session_roots', return_value=[self.local_root, wsl_root]), \
                  mock.patch.object(history, 'live_or_recent_ids', return_value=set()):
                 records = history.list_history()
 
@@ -398,14 +398,14 @@ class MultiRootHistoryTest(HistoryEnvTest):
         with tempfile.TemporaryDirectory() as base:
             wsl_root = SessionRoot(
                 origin='wsl:U', label='U', config_dir=Path(base) / 'cfg',
-                proc_dir=Path(base) / 'proc', temp_dir=Path(base) / 'tmp',
+                proc_dir=Path(base) / 'proc', claude_temp_dir=Path(base) / 'tmp',
             )
             project = wsl_root.config_dir / 'projects' / slug
             project.mkdir(parents=True)
             (project / 'cccccccc-1111-2222-3333-444444444444.jsonl').write_text(
                 json.dumps({'type': 'summary', 'operation': 'compact', 'sessionId': 'x'}) + '\n', encoding='utf-8')
 
-            with mock.patch.object(history, 'session_roots', return_value=[self.windows_root, wsl_root]), \
+            with mock.patch.object(history, 'session_roots', return_value=[self.local_root, wsl_root]), \
                  mock.patch.object(history, 'live_or_recent_ids', return_value=set()):
                 records = history.list_history()
 

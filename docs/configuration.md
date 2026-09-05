@@ -6,7 +6,7 @@ All settings are optional. Agent Monitor works out of the box; a settings file o
 
 Create `agent-monitor-settings.json`. The app never creates or writes this file - you place it manually. It is read from the first of these locations that exists:
 
-1. Next to the executable (or the project root when running from source)
+1. Next to the executable (or the project root when running from source, which is how it runs on Linux)
 2. `$CLAUDE_CONFIG_DIR/agent-monitor-settings.json` (if `CLAUDE_CONFIG_DIR` is set and differs from `~/.claude/`)
 3. `~/.claude/agent-monitor-settings.json`
 
@@ -19,7 +19,7 @@ Invalid JSON or invalid values are reported in a dialog; invalid individual entr
 | `poll_interval` | integer (>= 1) | `5` | Seconds between full refreshes of the overview. A session or transcript that changes in between is picked up within about a second, whatever this is set to. |
 | `ended_max_age` | integer (>= 0) | `3600` | How long (seconds) a finished agent stays visible after its process exits, counted from the last refresh that saw the process running. If the session had already ended before Agent Monitor was started, its last transcript activity is used instead. |
 | `include_completed` | boolean | `false` | Show finished agents regardless of `ended_max_age`. |
-| `wsl` | boolean | `true` | Discover and monitor Claude Code sessions running inside WSL distributions, alongside native Windows sessions. Set to `false` to turn this off entirely - no `wsl.exe` call and no `\\wsl.localhost` read ever happens. |
+| `wsl` | boolean | `true` | Windows only. Discover and monitor Claude Code sessions running inside WSL distributions, alongside native Windows sessions. Set to `false` to turn this off entirely - no `wsl.exe` call and no `\\wsl.localhost` read ever happens. On Linux nothing here runs, whatever it is set to. |
 | `subagent_recent_seconds` | integer (>= 1) | `900` | How long (seconds) a subagent transcript is still counted as part of the current run - as running until it ends, then as recently finished. Older ones are ignored. |
 | `window_width` | integer (>= 320) | `920` | Initial window width in logical pixels. |
 | `window_height` | integer (>= 240) | `680` | Initial window height in logical pixels. |
@@ -46,7 +46,7 @@ The light/dark appearance is not a settings-file option. Set it with the toggle 
 
 ## Token pricing
 
-The per-session cost estimate is computed from `pricing.json` (at the repo root, next to the executable when packaged). This tool never fetches prices - the file is a hand-maintained snapshot of Anthropic's pricing page. Edit it to keep costs accurate.
+The per-session cost estimate is computed from `pricing.json` (at the repo root, and next to the executable in the packaged Windows build). This tool never fetches prices - the file is a hand-maintained snapshot of Anthropic's pricing page. Edit it to keep costs accurate.
 
 Top-level keys are **effective-from dates** (`YYYY-MM-DD`). The schedule with the latest date on or before today applies, so a future price change can be entered ahead of time and takes effect automatically on that day. Each date holds a complete table of `model -> rates`, where every rate is in US dollars per million tokens (MTok):
 

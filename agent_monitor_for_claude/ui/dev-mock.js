@@ -391,7 +391,7 @@ window.__MOCK_TASK_OUTPUT__ = {
     ].join('\n'),
 };
 
-// Sessions whose row menu should offer "Show scratchpad in Explorer" - a
+// Sessions whose row menu should offer "Show scratchpad in file manager" - a
 // non-empty path is all the check needs (showing it is a no-op without a bridge).
 window.__MOCK_SCRATCHPADS__ = {
     h2b: 'D:\\Projects\\helios-renderer\\.scratch',
@@ -399,7 +399,7 @@ window.__MOCK_SCRATCHPADS__ = {
     c2j: 'D:\\Projects\\cipher-vault\\.scratch',
 };
 
-// Same for "Show transcript in Explorer": the sessions that already wrote a
+// Same for "Show transcript in file manager": the sessions that already wrote a
 // transcript. A couple of rows deliberately have one without a scratchpad, so
 // the preview shows the menu in both shapes.
 window.__MOCK_TRANSCRIPTS__ = {

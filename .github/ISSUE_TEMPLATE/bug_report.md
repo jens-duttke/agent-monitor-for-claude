@@ -16,9 +16,10 @@ Steps to reproduce the behavior.
 What you expected to happen.
 
 **Environment**
-- Windows version:
+- Operating system and version (Windows 11, Ubuntu 24.04, ...):
+- Desktop environment and session type, on Linux (GNOME/KDE, X11/Wayland):
 - Agent Monitor version:
-- WebView2 runtime version (from `AgentMonitorForClaude.exe --verbose`, if it starts):
+- Runtime versions - the `Runtimes` section of `--verbose`, if it starts (WebView2 on Windows, GTK and WebKitGTK on Linux):
 
 **Additional context**
 Screenshots or notes. Please do not include any conversation content from your sessions.

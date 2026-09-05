@@ -9,12 +9,13 @@ label formatting, grouping or sorting - all of that derivation lives in the UI
 (``agent_monitor_for_claude/ui/logic.js``).  Python's role is purely to provide
 data and to keep conversation content out of it.
 
-Every session root (the native Windows install, plus one per running WSL
-distro - see ``roots.session_roots``) is assembled here: each record carries
-its root's ``origin``/``origin_label`` through untouched, and liveness is
-probed per root kind - ``process_probe.probe_all`` for the Windows root,
-``wsl.probe_wsl_sessions`` for a WSL root - so a pid from one root is never
-looked up against another root's process table.
+Every session root (the install on this machine, plus - on a Windows host - one
+per running WSL distro; see ``roots.session_roots``) is assembled here: each
+record carries its root's ``origin``/``origin_label`` through untouched, and
+liveness is probed per root kind - ``process_probe.probe_all`` for the local
+root, whichever system it runs on, ``wsl.probe_wsl_sessions`` for a WSL root -
+so a pid from one root is never looked up against another root's process
+table.
 
 Everything returned is JSON-serializable and free of conversation content.
 """
@@ -182,9 +183,9 @@ def registry_fingerprint() -> str:
     requests a full snapshot when the fingerprint changes, which keeps idle
     cost minimal while reacting to real changes within about a second.  Each
     part is prefixed with its root's ``origin`` so the same pid or session id
-    reused across two roots (a Windows process and an unrelated WSL one) never
+    reused across two roots (a local process and an unrelated WSL one) never
     collapses two different parts into one, and roots are visited in
-    ``session_roots()`` order (Windows first, WSL distros sorted) for a
+    ``session_roots()`` order (the local root first, WSL distros sorted) for a
     fingerprint that is stable across polls when nothing changed.
     """
     parts: list[str] = []
@@ -226,13 +227,14 @@ def _collect_pairs() -> list[tuple[SessionRoot, dict[str, Any]]]:
 def _probe_map(pairs: list[tuple[SessionRoot, dict[str, Any]]]) -> dict[tuple[str, int], ProcessInfo]:
     """Probe every session's liveness, one process-table scan per root.
 
-    Windows sessions share one ``probe_all`` scan of the native process table,
-    exactly as before WSL support existed; each WSL root gets its own
-    ``probe_wsl_sessions`` scan of its own ``/proc``, so a Linux pid is never
-    looked up against the Windows table. The result is keyed by
-    ``(root.origin, pid)``, so two roots that happen to report the same raw
-    pid number - a native Windows process and an unrelated Linux one inside a
-    WSL distro - can never collide or read each other's liveness. A root whose
+    Local sessions share one ``probe_all`` scan of the running system's own
+    process table; each WSL root gets its own ``probe_wsl_sessions`` scan of its
+    own ``/proc``, so a pid inside a distro is never looked up against the
+    host's table. Which of the two applies is decided by ``root.proc_dir``,
+    which is set only for a root read through a *foreign* procfs. The result is
+    keyed by ``(root.origin, pid)``, so two roots that happen to report the same
+    raw pid number - a local process and an unrelated one inside a WSL distro -
+    can never collide or read each other's liveness. A root whose
     probe itself raises an unexpected error is skipped entirely: none of its
     sessions get an entry here, so the per-record lookup drops them rather
     than blanking every other root's sessions.

@@ -2,69 +2,26 @@
 Clipboard
 =========
 
-Copies text to the Windows clipboard via Win32.  A write surface used only on
-an explicit user action (the "copy session ID" menu item), never automatically.
+Copies text to the system clipboard.  A write surface used only on an explicit
+user action (the "copy session ID" menu item), never automatically.  The
+platform layer performs the write - Win32 on Windows, GTK on Linux; this module
+holds the one guard both share.
 """
 from __future__ import annotations
 
-import ctypes
+from .platforms import copy_text as _platform_copy_text
 
 __all__ = ['copy_text']
 
-_CF_UNICODETEXT = 13
-_GMEM_MOVEABLE = 0x0002
-
-_kernel32 = ctypes.windll.kernel32
-_user32 = ctypes.windll.user32
-
-_kernel32.GlobalAlloc.restype = ctypes.c_void_p
-_kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
-_kernel32.GlobalFree.restype = ctypes.c_void_p
-_kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
-_kernel32.GlobalLock.restype = ctypes.c_void_p
-_kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
-_kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
-_user32.SetClipboardData.restype = ctypes.c_void_p
-_user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
-
 
 def copy_text(text: str) -> bool:
-    """Place *text* on the clipboard as Unicode; return True on success."""
+    """Place *text* on the clipboard; return True on success.
+
+    An empty or non-string value is refused outright rather than handed to the
+    platform: it can only come from a malformed bridge call, and emptying the
+    user's clipboard is not what a failed copy should do.
+    """
     if not isinstance(text, str) or not text:
         return False
 
-    # Encode before touching the clipboard: a lone UTF-16 surrogate (which can
-    # survive json.loads over the bridge) raises here, and doing it first keeps
-    # the operation atomic - a failed copy must not have already emptied the
-    # existing clipboard contents.
-    try:
-        data = text.encode('utf-16-le') + b'\x00\x00'
-    except UnicodeEncodeError:
-        return False
-
-    if not _user32.OpenClipboard(None):
-        return False
-
-    try:
-        _user32.EmptyClipboard()
-        handle = _kernel32.GlobalAlloc(_GMEM_MOVEABLE, len(data))
-        if not handle:
-            return False
-
-        pointer = _kernel32.GlobalLock(handle)
-        if not pointer:
-            _kernel32.GlobalFree(handle)
-            return False
-
-        ctypes.memmove(pointer, data, len(data))
-        _kernel32.GlobalUnlock(handle)
-
-        # On success the system takes ownership of the handle; on failure it does
-        # not, so the buffer must be freed here rather than leaked.
-        if not _user32.SetClipboardData(_CF_UNICODETEXT, handle):
-            _kernel32.GlobalFree(handle)
-            return False
-
-        return True
-    finally:
-        _user32.CloseClipboard()
+    return _platform_copy_text(text)

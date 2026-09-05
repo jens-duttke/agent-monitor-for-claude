@@ -2,6 +2,11 @@
 """
 PyInstaller spec file for Agent Monitor for Claude.
 
+Windows only: the standalone executable bundles the Python runtime, the UI
+assets and the WebView2 host.  There is no Linux equivalent - PyInstaller
+cannot reliably bundle GTK and WebKitGTK, so the app runs from source there
+(see the README).
+
 Build:
   pyinstaller agent_monitor_for_claude.spec
 """
@@ -23,6 +28,11 @@ a = Analysis(
         # preview's fabricated session data and must never ship in the app.
     ],
     hiddenimports=[
+        # The platform layer dispatches on sys.platform, which PyInstaller
+        # cannot follow, so each Windows backend is named explicitly.
+        'agent_monitor_for_claude.platforms.win32',
+        'agent_monitor_for_claude.platforms.instance_win32',
+        'agent_monitor_for_claude.platforms.process_win32',
         'webview',
         'webview.platforms.edgechromium',
         'clr_loader',
@@ -33,6 +43,14 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
+        # PyInstaller walks both branches of the platform dispatch; excluding the
+        # Linux backends keeps the EXE small and avoids pulling in POSIX-only
+        # modules (fcntl) and the GTK bindings (gi) that never exist here.
+        'agent_monitor_for_claude.platforms.linux',
+        'agent_monitor_for_claude.platforms.instance_linux',
+        'agent_monitor_for_claude.platforms.process_linux',
+        'agent_monitor_for_claude.platforms.x11',
+        'fcntl', 'gi',
         'unittest', 'test',
         'tkinter', '_tkinter',
         'pydoc', 'xmlrpc',

@@ -5,20 +5,24 @@ sessions running on your own machine. To do that it reads Claude Code's local se
 include your conversation transcripts. This document states exactly what it reads, what it keeps, what
 it shows, what it writes, and what it never does.
 
-Last reviewed: 2026-08-18
+It runs on Windows and Linux. Where the two differ - which programs are run, what is written, how a
+window is raised - each is stated separately below rather than merged into a claim that would only be
+true on one of them.
+
+Last reviewed: 2026-09-02
 
 ## At a glance
 
 | Question | Answer |
 | --- | --- |
 | Does the application connect to the internet? | No. It has no HTTP client and no network client import in any of its own modules. It carries exactly one remote address - a link to Claude Code's public changelog - which it never requests itself; clicking it opens your normal browser. See [Network Communication](#network-communication). The embedded Microsoft browser engine it renders in is a separate matter, stated there too. |
-| Does it run any other program? | Yes, exactly one, and only to list which WSL distributions are currently running: `wsl.exe --list --running --quiet`, invoked by its absolute `System32` path so no same-named file elsewhere can ever be run in its place. Nothing is ever run *inside* a distribution. See [Programs it runs](#programs-it-runs). |
+| Does it run any other program? | On Windows, exactly one, and only to list which WSL distributions are currently running: `wsl.exe --list --running --quiet`, invoked by its absolute `System32` path so no same-named file elsewhere can ever be run in its place. Nothing is ever run *inside* a distribution. On Linux it runs no program at all. See [Programs it runs](#programs-it-runs). |
 | Does it read your credentials? | No. It never opens `.credentials.json` and never reads a token, key, or cookie. |
 | Does it send telemetry, analytics, or crash reports? | No. None, of any kind. |
 | Does it send your data anywhere? | No. It never transmits anything it reads, and the page it renders declares a Content-Security-Policy that forbids network requests outright, so the browser engine would refuse one even if the code asked. |
 | Does it read your conversations? | It scans transcript files for control metadata, and takes three short display fields out of them, plus one line of Claude Code's own error text. Two on-demand features go further: the content search, and the background-task console. |
 | Does it display conversation text? | Three short fields: the session title, each subagent's task description, and a background task's label. Nothing else from a conversation is ever shown. One further line comes from Claude Code itself rather than from a conversation: the message of a turn that stopped on an API error, shown in that session's status tooltip. |
-| Does it write to disk? | Only its own files, in three places: the browser profile that stores your interface preferences, a session deletion you explicitly confirm, and its own program bundle unpacked into your temp folder at startup. |
+| Does it write to disk? | Only its own files. On Windows in three places: the browser profile that stores your interface preferences, a session deletion you explicitly confirm, and its own program bundle unpacked into your temp folder at startup. On Linux the profile and the deletion, plus a lock file in the session's runtime directory; there is no bundle to unpack, since the app runs from source there. |
 | Does it modify your Claude Code data? | Never. The only removal is the session deletion you confirm yourself. |
 
 ## Data Collection
@@ -41,7 +45,7 @@ address does and does not mean:
 - **The changelog link.** Each session's row can show which Claude Code version wrote it, and that
   version number is a link to its section of Claude Code's public changelog on GitHub
   (`https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md`, the only URL in the code). The
-  application never requests it. Clicking it hands the address to Windows, which opens it in your
+  application never requests it. Clicking it hands the address to the system, which opens it in your
   normal browser, in a new tab of its own - the same thing that happens when you click a link in any
   document. Nothing about your sessions travels with it: the address is a fixed page plus a `#`
   fragment naming the version, and a fragment is resolved by the browser and never sent to the server,
@@ -56,25 +60,26 @@ will find them:
   to the loopback interface (`127.0.0.1`) on a fixed port, so nothing on your network can reach it.
   The fixed port keeps the browser origin stable across restarts, which is what lets the interface
   remember your preferences. Its document root is the interface folder; pywebview additionally
-  registers one route of its own for a JavaScript bridge, which goes unused on Windows because the
-  WebView2 host provides a native bridge instead. This is the only socket the application itself
-  opens, and it stops when you close the window.
-- **An embedded browser engine.** The interface is rendered by the Microsoft Edge WebView2 runtime
-  that Windows ships. It is a full Chromium engine, and it brings its own machinery with it: its
-  profile folder shows the usual Chromium components for Safe Browsing, SmartScreen, certificate
-  revocation lists, field trials, and crash reporting, each with its own network behaviour. Those
-  belong to Microsoft's runtime, are governed by Microsoft's terms, and behave the same in any
-  WebView2 application on your system. What this application controls is what it puts *into* that
-  engine: only the local interface files, plus the session data the window displays, handed over
-  WebView2's in-process bridge. It never navigates the engine to a remote address, and nothing it
-  reads is ever placed into a network request - the interface code contains no `fetch`,
-  `XMLHttpRequest`, `WebSocket`, or remote resource reference at all. That is not left to good
-  behaviour: the page declares a **Content-Security-Policy** that forbids it structurally -
-  `default-src 'none'` with `connect-src 'none'`, so `fetch`, `XMLHttpRequest`, `WebSocket`, and
-  `EventSource` have nowhere to go, and scripts, styles, and images may come from this page's own
-  origin only. A remote address in the interface would be refused by the engine, not merely absent
-  from the code. If you want the runtime's own machinery off, WebView2 is a Windows component and is
-  configured at the Windows level, not by this application.
+  registers one route of its own for a JavaScript bridge, which goes unused because both window hosts
+  provide a native bridge instead. This is the only socket the application itself opens, and it stops
+  when you close the window.
+- **An embedded browser engine.** The interface is rendered by the engine your system provides: the
+  Microsoft Edge WebView2 runtime on Windows, WebKitGTK on Linux. Either brings its own machinery with
+  it - a WebView2 profile folder shows the usual Chromium components for Safe Browsing, SmartScreen,
+  certificate revocation lists, field trials, and crash reporting, each with its own network behaviour.
+  Those belong to the runtime, are governed by its own terms, and behave the same in any application
+  using it. What this application controls is what it puts *into* that engine: only the local interface
+  files, plus the session data the window displays, handed over the engine's in-process bridge. It never
+  navigates the engine to a remote address, and nothing it reads is ever placed into a network request -
+  the interface code contains no `fetch`, `XMLHttpRequest`, `WebSocket`, or remote resource reference at
+  all. That is not left to good behaviour: the page declares a **Content-Security-Policy** that forbids
+  it structurally - `default-src 'none'` with `connect-src 'none'`, so `fetch`, `XMLHttpRequest`,
+  `WebSocket`, and `EventSource` have nowhere to go, and scripts, styles, and images may come from this
+  page's own origin only. A remote address in the interface would be refused by the engine, not merely
+  absent from the code. The policy does carry one relaxation, `'unsafe-eval'`, which the window host's
+  own bridge needs and which admits no script source - see [Verify it
+  yourself](#verify-it-yourself). If you want the runtime's own machinery off, that is configured at
+  the system level, not by this application.
 
 ## Credentials
 
@@ -91,7 +96,12 @@ displayed.
 ## Programs it runs
 
 Everything described so far is about reading files and probing the process table - not running other
-software. Exactly one external program is ever run, and only when a WSL distribution might be involved:
+software. **On Linux no external program is ever run**: WSL is a Windows feature, and the actions that
+open a folder or a link there go through the desktop's own interfaces rather than a command line (see
+[Actions performed on your behalf](#actions-performed-on-your-behalf)).
+
+On Windows exactly one external program is ever run, and only when a WSL distribution might be
+involved:
 
 `wsl.exe --list --running --quiet` - Windows' own command, invoked by its absolute path
 (`%SystemRoot%\System32\wsl.exe`, so nothing planted next to the application or in its working
@@ -229,8 +239,10 @@ Expanding a background task's row shows that task's live console output. This su
 output** - what a build, test run, or script printed - and never conversation content. It is read only
 while you have that row expanded, never in the background, and only the tail of the file.
 
-The file read is the output file Claude Code writes for the task, under the system temp directory. If
-that file is empty because the command redirected its output elsewhere (`... > run.log 2>&1`), the
+The file read is the output file Claude Code writes for the task, in the per-session tree it keeps
+under the system temp directory (`<temp>\claude\...` on Windows, `<temp>/claude-<uid>/...` on Linux,
+where the temp directory is shared between users). If that file is empty because the command redirected
+its output elsewhere (`... > run.log 2>&1`), the
 redirect target parsed from the recorded command is read instead - but only when that target resolves
 inside the session's own scratchpad directory or its project directory. A redirect pointing anywhere
 else on your disk is ignored.
@@ -242,29 +254,35 @@ a fixed internal list. Output cannot introduce an element, an attribute, or a sc
 ### Processes and windows
 
 To tell a live session from a finished one and to count its background work, each refresh takes one
-snapshot of the Windows process table. That snapshot is machine-wide by nature - it yields the process
-id, parent process id, and executable name of every running process - and the application uses it to
-walk the ancestry and descendants of the session processes. Nothing else about a process is read: no
-command line, no environment, no open handles, no memory contents. For the sessions on screen it
-additionally samples CPU, memory, and start time; when you open the process panel for a **Windows**
+snapshot of the process table - the Windows process table on Windows, the `/proc` directory on Linux,
+where only each process's own `stat` file is opened. Either snapshot is machine-wide by nature - it
+yields the process id, parent process id, and name of every running process - and the application uses
+it to walk the ancestry and descendants of the session processes. Nothing else about a process is
+read: no command line, no environment, no open handles, no memory contents. For the sessions on screen
+it additionally samples CPU, memory, and start time; when you open the process panel for a **Windows**
 session whose tools run through the `wsl.exe`/`wslhost.exe` relay, the shared WSL virtual machine's CPU
 and memory are sampled too, which the panel labels as machine-wide because that figure is not specific to
 your session. (This is not the same as a session running natively inside a WSL distribution - see
 [Sessions running inside WSL](#sessions-running-inside-wsl) below.)
 
 When you click a session, the titles of all visible top-level windows are enumerated in memory to find
-the right window to raise. Those titles are compared and discarded - never stored, logged, or shown.
+the right window to raise - through the standard Windows calls, or on Linux by reading the window
+manager's own list from the X server (`_NET_CLIENT_LIST`, and each window's owning process id and
+title). Those titles are compared and discarded - never stored, logged, or shown. A window belonging to
+a native Wayland client is not in that list and cannot be raised; no protocol exposes one to another
+application, and nothing is done to work around that.
 
 ### Configuration and appearance
 
 Its own optional settings file (`agent-monitor-settings.json`, read-only), its bundled translation and
-price files, and one registry value under `HKEY_CURRENT_USER` that reports whether Windows is in light
-or dark mode.
+price files, and one system preference telling it whether you are in light or dark mode: a registry
+value under `HKEY_CURRENT_USER` on Windows, the desktop portal's `color-scheme` setting on Linux.
 
-Started with `--verbose`, it prints environment diagnostics to the console: this reads the registry
-entries recording the installed WebView2 runtime (under both `HKEY_CURRENT_USER` and
-`HKEY_LOCAL_MACHINE`) and the installed .NET Framework release, plus the version metadata of its own
-Python packages. That console output also carries interface error messages, which can quote a session
+Started with `--verbose`, it prints environment diagnostics to the console. On Windows this reads the
+registry entries recording the installed WebView2 runtime (under both `HKEY_CURRENT_USER` and
+`HKEY_LOCAL_MACHINE`) and the installed .NET Framework release; on Linux it reads `/etc/os-release`
+and the versions of the GTK and WebKitGTK libraries in use. Either way it also reports the version
+metadata of its own Python packages. That console output also carries interface error messages, which can quote a session
 title. It goes to the console you launched from, and nowhere else - unless you redirect it to a file
 yourself.
 
@@ -312,8 +330,8 @@ not a stand-in for work happening elsewhere.
 
 The background-task output console reads the same way for a WSL session, from the distribution's own
 temporary directory instead of the Windows one -
-`\\wsl.localhost\<distro>\tmp\claude\<project-slug>\<session-id>\tasks\<task-id>.output` - read only while
-that task's row is expanded, exactly as described under [Background-task
+`\\wsl.localhost\<distro>\tmp\claude-<uid>\<project-slug>\<session-id>\tasks\<task-id>.output` - read only
+while that task's row is expanded, exactly as described under [Background-task
 output](#background-task-output-on-demand). A redirected task's output is followed under the identical
 rule, confined to that session's own scratchpad or project directory; both are resolved against the
 distribution's own filesystem, with a `/mnt/<drive>/...` path, or any other absolute path inside the
@@ -321,79 +339,103 @@ distribution, translated to its Windows-readable form before that confinement ch
 
 ## What the application writes
 
-Three places on disk, all of them the application's own: two that the application itself writes, and
-one that the launcher of the single-file build unpacks before any of its code runs. None of them holds
-a copy of your conversations.
+All of it is the application's own, and none of it holds a copy of your conversations. Windows has
+three places: two the application itself writes, and one the launcher of the single-file build unpacks
+before any of its code runs. Linux has three as well: the same two, plus the lock file that keeps a
+second window from starting - and no bundle to unpack, since the application runs from source there.
 
-1. **Its interface-preference profile**, in `%LOCALAPPDATA%\AgentMonitorForClaude`. This is a WebView2
-   browser profile, and the application uses it for one purpose: so the window can remember your
-   choices in `localStorage`. The current version stores seven values there - theme, which filter
+1. **Its interface-preference profile**, in `%LOCALAPPDATA%\AgentMonitorForClaude` on Windows and
+   `~/.local/share/agent-monitor-for-claude` on Linux (or below `$XDG_DATA_HOME` when you have set
+   it). This is the browser profile of the engine the window renders in - WebView2 or WebKitGTK - and
+   the application uses it for one purpose: so the window can remember your choices in `localStorage`. The current version stores seven values there - theme, which filter
    chips are on, sort field and direction, whether priority ordering is on, your three search toggles,
    and which project panels you collapsed. The collapsed-panel entry stores project directory paths,
    since that is what identifies a panel; the others are short flags. (An older version's leftover key
    may still sit there unused.)
 
-   Be aware that the rest of that folder is WebView2's own, and it looks like what it is - a browser
-   profile. Like any Chromium profile it keeps HTTP, code, GPU, and shader caches, its own logs, and
+   Be aware that the rest of that folder is the engine's own, and it looks like what it is - a browser
+   profile. A Chromium profile keeps HTTP, code, GPU, and shader caches, its own logs, and
    crash-report scaffolding there, and it also creates the empty database files a browser would use
-   for saved passwords, browsing history, and cookies. Chromium creates those in every profile; this
-   application never navigates to a website and never logs in anywhere, so there is nothing for them
-   to record. All of it is written by Microsoft's runtime, not by this application, and none of it
-   contains your session data. Deleting the folder is safe: WebView2 rebuilds it and your interface
-   preferences start from their defaults.
+   for saved passwords, browsing history, and cookies; a WebKitGTK profile keeps its own smaller set
+   of caches and databases. Either engine creates those in every profile; this application never
+   navigates to a website and never logs in anywhere, so there is nothing for them to record. All of
+   it is written by the engine, not by this application, and none of it contains your session data.
+   Deleting the folder is safe: the engine rebuilds it and your interface preferences start from their
+   defaults.
 2. **A session deletion you ask for.** A past session's row menu offers to permanently delete that
    session's transcript file and its subagent folder. It happens only on your click, after an
    in-application confirmation, and it is guarded three ways: the session id must be a well-formed
    UUID, both target paths must resolve inside the `projects/` folder, and the session registry is
    re-checked immediately before deleting so that a session with a live process is refused outright. A
    running conversation's files are never touched.
-3. **Its own program bundle, unpacked at startup.** The released build is a single-file executable, so
-   its launcher extracts the bundled Python runtime, libraries, and interface files into a temporary
-   folder (`%TEMP%\_MEIxxxxxx`) before any of the application's own code runs. It contains only the
-   application's own files, never your data, and is removed when the application exits normally. A hard
-   termination leaves one behind, which is safe to delete - including when you use the application's own
-   "replace the running instance" prompt, since that terminates the old process outright. Running from
-   source does not do this.
+3. **Its own program bundle, unpacked at startup (Windows only).** The released build is a single-file
+   executable, so its launcher extracts the bundled Python runtime, libraries, and interface files into a
+   temporary folder (`%TEMP%\_MEIxxxxxx`) before any of the application's own code runs. It contains only
+   the application's own files, never your data, and is removed when the application exits normally. A
+   hard termination leaves one behind, which is safe to delete - including when you use the application's
+   own "replace the running instance" prompt, since that terminates the old process outright. Running from
+   source does not do this, which on Linux is the only way it runs.
+4. **A lock file that keeps a second window from starting (Linux only).**
+   `$XDG_RUNTIME_DIR/agent-monitor-for-claude.lock`, created with owner-only permissions (`0600`) and
+   holding two lines: this process's own id and version number, nothing else. It lives in the session's
+   runtime directory, which the system clears at logout, and the file itself is deliberately left in
+   place when the application exits - the lock lives in the open file handle, which the kernel releases,
+   so the next start takes it without resistance. Windows needs no file for this: it uses a named mutex
+   and a named shared-memory block instead, neither of which touches your disk.
 
 Nothing else is written to disk, moved, or deleted. Your transcripts, session registry, and Claude
 Code settings are never modified. The application writes no log file of its own and keeps no copy of
-anything it reads. Two writes exist that do not touch your disk at all - the clipboard, and a small
-named shared-memory block used to find an already-running window - and both are described in the next
-section.
+anything it reads. Three changes exist that do not touch your disk at all - the clipboard, a small
+named shared-memory block used to find an already-running window, and, on Linux, an adjustment the
+application makes to **its own** process environment at start-up. The first two are described in the
+next section; the third undoes what a Snap-packaged launcher imposed on it - a terminal inside one
+points every program it starts at that Snap's graphics libraries, which a system Python cannot load,
+and redirects `XDG_DATA_HOME` into the Snap, which is where the profile above would otherwise land.
+It affects this process only, lasts as long as it runs, and changes nothing in the terminal you
+started it from.
 
 ## Actions performed on your behalf
 
 These are the ways the application reaches outside its own window. Each happens only in response to
 something you did:
 
-- **Raising a window.** Standard Windows calls bring a session's host window to the foreground. When
-  Windows refuses the foreground change - it does so in some states - the documented workaround is
+- **Raising a window.** On Windows, standard calls bring a session's host window to the foreground.
+  When Windows refuses the foreground change - it does so in some states - the documented workaround is
   used: a synthetic Alt key press and release, which lifts the restriction. That is the only input the
-  application ever synthesizes. It installs no hook and reads no keyboard state, so no keystroke of
+  application ever synthesizes. On Linux the equivalent is one standard request to the X server
+  (`_NET_ACTIVE_WINDOW`), which asks the window manager to raise the window; nothing is synthesized
+  there at all. On neither system does it install a hook or read keyboard state, so no keystroke of
   yours is ever observed or recorded.
 - **Focusing a session tab.** Launching the Claude Code VS Code extension's official deep link,
   `vscode://anthropic.claude-code/open?session=<uuid>`. The session id is validated as a UUID first,
-  and this is the only URI the application itself launches.
+  and this is the only URI the application itself launches. The launch goes through the system's own
+  "open this" entry point - the Windows shell, or GIO's default-handler call on Linux - so the desktop,
+  not this application, decides what runs.
 - **Opening the changelog.** Clicking a version number in the CLI-version column follows an ordinary
   link, which the window host passes to your default browser (see [Network
   Communication](#network-communication)). The link is only built when the version reads as a plain
   release number - three groups of digits separated by dots - so the address can never hold anything
   but digits and dots, whatever a transcript claims its version is.
 - **Opening a folder, or showing a file in one.** Opening a session's project folder or its scratchpad
-  in Windows Explorer, and showing a session's transcript file selected in its folder. A folder path is
-  verified to be an existing directory, a file path to be an existing file, before the shell sees it, so
-  nothing else can be launched through it. A file is only ever *shown*: the shell is asked to raise an
-  Explorer window with the item selected, never to open the file, so no program is started for it and
-  its content is not handed to anything. That is the same kind of shell call as opening a folder: the
-  application hands Windows a path and lets it decide what opens, and starts no program of its own.
+  in your file manager, and showing a session's transcript file selected in its folder. A folder path is
+  verified to be an existing directory, a file path to be an existing file, before anything else sees it,
+  so nothing else can be launched through it. A file is only ever *shown*: the desktop is asked to raise
+  a file-manager window with the item selected, never to open the file, so no program is started for it
+  and its content is not handed to anything. On Windows both go through the shell; on Linux the folder
+  goes through GIO's default-handler call and the file through the standard
+  `org.freedesktop.FileManager1` interface, which is a message to the file manager you already run.
+  Either way the application hands over a path and lets the desktop decide what opens, and starts no
+  program of its own.
 - **Copying a session id.** The row menu's copy action places the session id on your clipboard. It is
   the only thing ever copied there, and only when you ask for it. Like any clipboard write it replaces
   what was there before.
-- **Replacing an already-running instance.** Only one window may run at a time. A second launch finds
-  the first through a named mutex, and a named shared-memory block - holding this application's own
-  process id and version, nothing else - identifies it. You are then asked, in a Yes/No dialog, whether
-  to replace the running instance; only if you say yes is that process terminated. No other process is
-  ever touched.
+- **Replacing an already-running instance.** Only one window may run at a time. On Windows a second
+  launch finds the first through a named mutex, and a named shared-memory block - holding this
+  application's own process id and version, nothing else - identifies it; on Linux the same two facts
+  live in the lock file described above. You are then asked, in a Yes/No dialog, whether to replace the
+  running instance; only if you say yes is that process terminated. It is terminated only while it is
+  still the process the record names, so a process id the system has since handed to something else is
+  never signalled. No other process is ever touched.
 
 ## Third-Party Services
 
@@ -402,9 +444,11 @@ no telemetry, no crash reporting, no update check, no remote configuration. Mode
 a hand-maintained local `pricing.json` in the installation, never fetched from anywhere.
 
 It has two direct Python dependencies, `pywebview` and `psutil`. Through pywebview it also uses
-`bottle` (the loopback file server described above) and `pythonnet`/`clr_loader` (the .NET bridge to
-the window host, which the application calls directly to keep the window background in step with your
-theme). Rendering is done by the Microsoft Edge WebView2 runtime that Windows provides.
+`bottle` (the loopback file server described above) and, on Windows, `pythonnet`/`clr_loader` (the .NET
+bridge to the window host, which the application calls directly to keep the window background in step
+with your theme). On Linux the same role is filled by PyGObject, the GTK bindings your distribution
+ships. Rendering is done by the browser engine your system provides: Microsoft Edge WebView2 on
+Windows, WebKitGTK on Linux.
 
 ## Verify it yourself
 
@@ -423,7 +467,7 @@ grep -rn "https\?://" agent_monitor_for_claude/ --include=*.py --include=*.js --
 grep -rni "credential" agent_monitor_for_claude/ --exclude-dir=__pycache__
 
 # Every disk write and delete in the application code
-grep -rnE "write_text|open\([^)]*['\"][wax]|\.unlink\(|shutil\.rmtree|os\.remove" agent_monitor_for_claude/ --exclude-dir=__pycache__
+grep -rnE "write_text|write_bytes|open\([^)]*['\"][wax]|os\.open|os\.write|os\.ftruncate|\.unlink\(|shutil\.rmtree|os\.remove|\.mkdir\(" agent_monitor_for_claude/ --exclude-dir=__pycache__
 
 # No dynamic code execution
 grep -rnE "\b(eval|exec)\s*\(|__import__|b64decode" agent_monitor_for_claude/ --exclude-dir=__pycache__
@@ -432,30 +476,46 @@ grep -rnE "\b(eval|exec)\s*\(|__import__|b64decode" agent_monitor_for_claude/ --
 grep -n -A 3 "Content-Security-Policy" agent_monitor_for_claude/ui/index.html
 ```
 
-The first two commands find nothing at all, and the last one prints the policy quoted above. The
-remaining three find a handful of lines, and every one of them is accounted for here, so that nothing
-looks like a hidden exception:
+The first command finds nothing at all, and the last one prints the policy quoted above. The remaining
+four find a handful of lines, and every one of them is accounted for here, so that nothing looks like a
+hidden exception:
 
+- The remote-address search finds exactly one hit, the changelog link named in the comment above it.
 - The credential search matches two docstrings, both stating that no credentials are read.
 - The write search matches the two deletion calls in
   [session_delete.py](agent_monitor_for_claude/session_delete.py) - the confirmed session deletion
-  described above - and two `open('CONOUT$', 'w')` calls in
-  [verbose.py](agent_monitor_for_claude/verbose.py). `CONOUT$` is the Windows console screen buffer,
-  not a file: those two lines attach a console so `--verbose` diagnostics have somewhere to print.
-  Nothing is created on disk. The other two disk surfaces do not appear in this search because the
-  application code does not perform them: the preference folder is created and filled by pywebview and
-  WebView2, which [app.py](agent_monitor_for_claude/app.py) points at that location, and the temp
-  extraction is done by the single-file launcher before any application code runs.
-- The dynamic-execution search matches one line in `ui/logic.js`, a regular expression's `.exec()`
-  call used to strip terminal color codes. There is no `eval`, no `exec`, no `__import__`, and no
-  encoded payload anywhere in the application. (`compile` does occur, as `re.compile`, which builds a
-  regular expression and cannot execute code.) One related call deserves naming: the backend uses
-  pywebview's `evaluate_js` in exactly one place, to hand the interface the list of matching session
-  ids during a search. That one statement is a fixed function call whose only interpolated value is a
-  `json.dumps` payload of session ids; no user-supplied text is ever placed into it.
+  described above - two `open('CONOUT$', 'w')` calls in
+  [platforms/win32.py](agent_monitor_for_claude/platforms/win32.py), and four lines in
+  [platforms/instance_linux.py](agent_monitor_for_claude/platforms/instance_linux.py). `CONOUT$` is the
+  Windows console screen buffer, not a file: those two lines attach a console so `--verbose`
+  diagnostics have somewhere to print, and nothing is created on disk. The four Linux lines are the
+  lock file described above - the directory it sits in, opening it with owner-only permissions, and
+  writing this process's id and version into it. The remaining disk surfaces do not appear in this
+  search because the application code does not perform them: the preference folder is created and
+  filled by the browser engine, which [app.py](agent_monitor_for_claude/app.py) points at that
+  location, and the temp extraction is done by the single-file launcher before any application code
+  runs.
+- The dynamic-execution search matches one line of code and two comments. The line of code is in
+  `ui/logic.js`: a regular expression's `.exec()` call used to strip terminal color codes. The two
+  comments, in `ui/index.html` and `app.py`, are the ones explaining the `'unsafe-eval'` in the page's
+  policy - see below. There is no `eval`, no `exec`, no `__import__`, and no encoded payload anywhere
+  in the application. (`compile` does occur, as `re.compile`, which builds a regular expression and
+  cannot execute code.)
+
+The page's policy carries `'unsafe-eval'`, which deserves naming rather than glossing over. It is
+there for the window host's own bridge, not for this application's code: pywebview builds each of the
+methods the page calls with `new Function()`, and hands every return value back through an `eval()`.
+WebView2 exempts host-injected script from the page's policy and WebKitGTK does not, so without it the
+bridge never appears on Linux and the window stays empty. It permits code generation; it admits no new
+script source, and no line of this application's own code calls `eval`, `new Function`, or a
+string-bodied timer - which is what the search above checks. The one place the backend pushes code
+into the page is a fixed function call handing over the matching session ids during a search, whose
+only interpolated value is a `json.dumps` payload of those ids; no user-supplied text is ever placed
+into it.
 
 One more guarantee is worth checking directly: that the one external program this application ever runs
-is invoked from exactly one place, and that the module owning it never spawns a process any other way.
+on Windows is invoked from exactly one place, and that the module owning it never spawns a process any
+other way. (On Linux there is nothing to check here - no program is run at all.)
 
 ```sh
 # Where wsl.exe is actually invoked, across the whole application
@@ -465,13 +525,13 @@ grep -rn "_WSL_EXE" agent_monitor_for_claude/ --include=*.py
 grep -nE "subprocess\.[A-Za-z_]*\(|os\.system|os\.popen|Popen\(|ShellExecute|CreateProcess|os\.exec" agent_monitor_for_claude/wsl.py
 ```
 
-The first command prints exactly two lines, both in `wsl.py`: line 55, where the absolute path is built
+The first command prints exactly two lines, both in `wsl.py`: line 63, where the absolute path is built
 (`_WSL_EXE = str(Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32' / 'wsl.exe')`), and
-line 179, the `[_WSL_EXE, '--list', '--running', '--quiet']` argument list - the single place in the
+line 189, the `[_WSL_EXE, '--list', '--running', '--quiet']` argument list - the single place in the
 entire codebase where that command line is used. The absolute path matters: a relative `wsl.exe` would
 resolve through the Win32 process-creation search order, which checks the application's own directory
 and the current directory before System32, so a same-named file planted next to the executable could
-otherwise be run in its place. The second command prints exactly one line, `wsl.py:178`,
+otherwise be run in its place. The second command prints exactly one line, `wsl.py:188`,
 `result = subprocess.run(` - the only process-spawning call anywhere in the file. (`process_probe.py`
 separately holds the string `'wsl.exe'` too, but only as a name to *recognize* an already-running
 Windows process as a WSL relay child, never to invoke anything - a broader
@@ -484,6 +544,9 @@ The boundaries are also enforced by tests, which run without any network access:
 python -m unittest discover -s tests   # backend, including the privacy tests
 node --test tests/js/logic.test.js tests/js/global-scope.test.js     # interface logic + the shared-global-scope guard
 ```
+
+Both suites run on either system. The tests for the *other* operating system's backend skip themselves,
+so a green run means everything applicable to your system passed.
 
 - [tests/test_transcript_privacy.py](tests/test_transcript_privacy.py) plants marker strings in the
   message text, thinking blocks, tool inputs, and tool results of a synthetic transcript, then asserts
@@ -528,6 +591,14 @@ node --test tests/js/logic.test.js tests/js/global-scope.test.js     # interface
   guards to WSL: `test_refuses_unknown_origin`, `test_refuses_live_wsl_session`, and
   `test_treats_a_naming_roots_probe_error_as_live` (a root that cannot be probed is treated as live, never
   as a silent "safe to delete").
+- [tests/test_instance_linux.py](tests/test_instance_linux.py) guards the one file the application writes
+  on Linux: `test_the_lock_file_is_owner_only` asserts its `0600` permissions,
+  `test_releasing_leaves_the_file_but_frees_the_lock` asserts that only the lock is released and nothing
+  is deleted, and `test_a_holder_that_exited_during_the_dialog_is_not_killed` asserts that a process id
+  the system may since have reused is never signalled.
+- [tests/test_platforms_linux.py](tests/test_platforms_linux.py) asserts that the Linux backend imports
+  and answers with no GUI toolkit present at all - staged in a fresh interpreter, not with a mock - and
+  that each surface reports a plain refusal rather than reaching for something that is not there.
 
 If you find any statement in this document that the code does not support, please report it as an
 issue - that is a bug in the same sense as any other.
