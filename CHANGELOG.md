@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replacing a running instance no longer looks like a crash to whatever started it. The replaced instance was ended with an error exit code, so a launcher waiting on it - a tray tool that starts Agent Monitor on double-click - reported the replace as a failed command.
 - A session that hands its whole turn to a subagent no longer ages as though it had gone quiet. Its last-activity time kept climbing while the subagent worked, sinking the project panel down the list; the running subagent's activity now counts as the session's.
 - The last-activity time is no longer refreshed by Claude Code's own bookkeeping records. One of those is written whenever any tool writes a file, which could make an untouched session look as if the conversation had just moved on.
+- A session reopened after its previous Claude Code process ended no longer reads *Working* - or *Permission needed* - on the strength of a turn that process never finished. It reads *Idle* until you send the next prompt.
 
 ### Changed
 - The `dontAsk` permission mode now shows as *Don't ask* instead of its raw configuration name.

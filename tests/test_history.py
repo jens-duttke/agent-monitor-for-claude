@@ -91,6 +91,9 @@ class ListHistoryTest(HistoryEnvTest):
             self.assertTrue(record['is_history'])
             self.assertFalse(record['alive'])
             self.assertTrue(record['has_transcript'])
+            # A past session has no process, so the UI's reopen comparison has
+            # nothing to compare against.
+            self.assertIsNone(record['process_age_seconds'])
 
     def test_excludes_sessions_present_in_the_registry(self) -> None:
         # The live session's registry PID is genuinely alive, so the live snapshot

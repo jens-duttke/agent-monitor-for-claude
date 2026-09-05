@@ -91,13 +91,16 @@ def _build_session_record(
             return None
 
     subagents = count_subagents(root, record['session_id'], record['cwd'])
+    process_age = _process_age(record['started_at'])
 
     # Subagents run in-process, so one cannot outlive its session: a "running"
     # agent under a dead process is a phantom the recent window has yet to
     # clear, and its file age must not make an ended session look freshly
-    # active.  The same reading the UI applies to the running *count* after a
-    # force-stopped turn.
-    subagent_age = subagents.running_age if info.alive else None
+    # active.  An agent file last written before the live process started is
+    # the same phantom under a new process - the session was reopened after
+    # the process that ran the agent ended.  The same reading the UI applies
+    # to the running *count* after a force-stopped turn or a reopen.
+    subagent_age = subagents.running_age if info.alive and not _older_than_process(subagents.running_age, process_age) else None
 
     return {
         'pid': record['pid'],
@@ -141,7 +144,8 @@ def _build_session_record(
             {'run_id': workflow.run_id, 'total': workflow.total, 'done': workflow.done, 'active': workflow.active}
             for workflow in subagents.workflows
         ],
-        'age_seconds': _display_age(transcript_state.age_seconds, subagent_age, record['started_at']),
+        'process_age_seconds': process_age,
+        'age_seconds': _display_age(transcript_state.age_seconds, subagent_age, process_age),
     }
 
 
@@ -256,7 +260,7 @@ def _probe_map(pairs: list[tuple[SessionRoot, dict[str, Any]]]) -> dict[tuple[st
     return probe_map
 
 
-def _display_age(transcript_age: float | None, subagent_age: float | None, started_at_ms: float | None) -> float | None:
+def _display_age(transcript_age: float | None, subagent_age: float | None, process_age: float | None) -> float | None:
     """Age for display: the freshest activity anywhere in the session, else time since the window opened.
 
     A session that delegates its whole turn to a subagent appends nothing to its
@@ -266,7 +270,7 @@ def _display_age(transcript_age: float | None, subagent_age: float | None, start
     evidence, so whichever of the two is fresher wins.  Only a *running* agent
     contributes (see ``SubagentInfo.running_age``).
 
-    The ``started_at`` fallback gives never-used ("new") sessions a meaningful
+    The ``process_age`` fallback gives never-used ("new") sessions a meaningful
     timestamp instead of an empty column.
 
     Parameters
@@ -275,18 +279,41 @@ def _display_age(transcript_age: float | None, subagent_age: float | None, start
         Seconds since the session transcript's newest conversational turn.
     subagent_age : float or None
         Seconds since the most recently written running subagent transcript.
-    started_at_ms : float or None
-        Registry start time in epoch milliseconds, used only when neither age
-        is known.
+    process_age : float or None
+        Seconds since the registry recorded the process start (see
+        ``_process_age``), used only when neither age is known.
     """
     ages = [age for age in (transcript_age, subagent_age) if age is not None]
     if ages:
         return min(ages)
 
+    return process_age
+
+
+def _process_age(started_at_ms: float | None) -> float | None:
+    """Seconds since the registry recorded the session's process start, or None without a ``startedAt``.
+
+    Shipped raw as ``process_age_seconds``: the UI compares it with the
+    transcript age to tell a turn this process wrote from one an earlier
+    process left behind in the same session (a reopened session), and it is
+    the fallback age of a never-used session.  Clamped at 0 against clock
+    skew, like every other age here.
+    """
     if started_at_ms is None:
         return None
 
     return max(0.0, time.time() - started_at_ms / 1000)
+
+
+def _older_than_process(age: float | None, process_age: float | None) -> bool:
+    """Return True if something *age* seconds old was last written before the live process started.
+
+    An unknown age on either side is no evidence, so it reads as not older.
+    """
+    if age is None or process_age is None:
+        return False
+
+    return age > process_age
 
 
 def _include_ended(age_seconds: float | None, ended_seconds: float | None) -> bool:

@@ -93,6 +93,47 @@ test('classify: an API error overrides an unresolved pending tool', () => {
     assert.equal(logic.classify(raw({ last_entry_kind: 'api_error', pending_tool: true, pending_blocking: true })), 'errored');
 });
 
+test('classify: a turn older than the process holding the session is idle, not working', () => {
+    // The session was reopened after an earlier process ended mid-turn: the
+    // reply that process owed, the call it left open and the dialog it showed
+    // all died with it, and this process has not taken a turn yet - so the
+    // session waits for you, whatever the dangling entry says.
+    assert.equal(logic.classify(raw({ last_entry_kind: 'user_text', turn_predates_process: true })), 'awaiting_input');
+    assert.equal(logic.classify(raw({ last_entry_kind: 'tool_result', last_stop_reason: 'tool_use', turn_predates_process: true })), 'awaiting_input');
+    assert.equal(logic.classify(raw({ last_entry_kind: 'assistant', last_stop_reason: 'tool_use', turn_predates_process: true })), 'awaiting_input');
+    assert.equal(logic.classify(raw({ pending_tool: true, pending_blocking: true, turn_predates_process: true })), 'awaiting_input');
+});
+
+test('classify: a reopen never demotes the definitive stops, a fresh window or an ended process', () => {
+    // An interrupt is still an interrupt after a reopen, an error still an
+    // error, a window with no transcript still new, and a dead process finished.
+    assert.equal(logic.classify(raw({ last_entry_kind: 'user_interrupt', turn_predates_process: true })), 'interrupted');
+    assert.equal(logic.classify(raw({ last_entry_kind: 'api_error', turn_predates_process: true })), 'errored');
+    assert.equal(logic.classify(raw({ has_transcript: false, has_activity: false, turn_predates_process: true })), 'new');
+    assert.equal(logic.classify(raw({ alive: false, turn_predates_process: true })), 'completed');
+});
+
+test('turnPredatesProcess: fires only on a turn clearly older than the live process', () => {
+    const at = (overrides) => logic.turnPredatesProcess(raw(overrides));
+
+    assert.equal(at({ age_seconds: 400000, process_age_seconds: 60000 }), true);
+    assert.equal(at({ age_seconds: '400000', process_age_seconds: '60000' }), true);
+    // Within the slack the turn and the process start belong to one start-up.
+    assert.equal(at({ age_seconds: 100 + logic.PROCESS_START_SLACK_SECONDS, process_age_seconds: 100 }), false);
+    assert.equal(at({ age_seconds: 100, process_age_seconds: 100 }), false);
+    assert.equal(at({ age_seconds: 50, process_age_seconds: 100 }), false);
+    // A transcript with no turn has nothing to predate.
+    assert.equal(at({ has_activity: false, age_seconds: 400000, process_age_seconds: 60000 }), false);
+    // A missing or unusable age on either side is no evidence - and null must
+    // not read as a zero-second process age (Number(null) is 0).
+    assert.equal(at({ age_seconds: 400000 }), false);
+    assert.equal(at({ age_seconds: 400000, process_age_seconds: null }), false);
+    assert.equal(at({ age_seconds: null, process_age_seconds: 60000 }), false);
+    assert.equal(at({ age_seconds: 'old', process_age_seconds: 60000 }), false);
+    assert.equal(at({ age_seconds: Infinity, process_age_seconds: 60000 }), false);
+    assert.equal(at({ age_seconds: 400000, process_age_seconds: NaN }), false);
+});
+
 test('classify: unrecognized entry with activity awaits input', () => {
     assert.equal(logic.classify(raw({ last_entry_kind: null, last_stop_reason: null })), 'awaiting_input');
 });
@@ -223,6 +264,33 @@ test('deriveStatus: an errored session with a phantom subagent stays errored, no
         last_entry_kind: 'api_error', native_status: null, subagents_running: 1, child_count: 0,
     }));
     assert.equal(status, 'errored');
+});
+
+test('deriveStatus: a reopened session reads idle on the strength of its process start', () => {
+    // A VS Code window reopened a session four days after its last turn (a
+    // user entry no reply ever followed): the process that would have replied
+    // is gone, and the one holding the session now has not taken a turn.
+    // Without this the dangling user turn read "working" for good.
+    const reopened = raw({
+        last_entry_kind: 'user_text', native_status: null, child_count: 0,
+        age_seconds: 400000, process_age_seconds: 60000,
+    });
+    assert.equal(logic.deriveStatus(reopened), 'awaiting_input');
+    // The same turn under the process that wrote it is a thinking session.
+    assert.equal(logic.deriveStatus(Object.assign({}, reopened, { process_age_seconds: 500000 })), 'working');
+});
+
+test('deriveStatus: a reopened session ignores the earlier process\'s phantom subagents and workflows', () => {
+    // In-process work died with the earlier process; only an OS child process
+    // can survive it, and the registry stays free to say the new process is busy.
+    const reopened = { last_entry_kind: 'user_text', native_status: null, age_seconds: 400000, process_age_seconds: 60000 };
+
+    assert.equal(logic.deriveStatus(raw(Object.assign({}, reopened, { subagents_running: 1, child_count: 0 }))), 'awaiting_input');
+    assert.equal(logic.deriveStatus(raw(Object.assign({}, reopened, {
+        child_count: 0, workflows: [{ run_id: 'w', total: 4, done: 1, active: true }],
+    }))), 'awaiting_input');
+    assert.equal(logic.deriveStatus(raw(Object.assign({}, reopened, { child_count: 1 }))), 'processing');
+    assert.equal(logic.deriveStatus(raw(Object.assign({}, reopened, { native_status: 'busy', child_count: 0 }))), 'working');
 });
 
 test('deriveStatus: a finished turn with an active workflow is processing (bridges the fan-out gap)', () => {
@@ -961,6 +1029,9 @@ test('autoModePaused reads a paused auto mode off the block streak', () => {
     assert.equal(at({ auto_denials_consecutive: NaN }), false);
     assert.equal(at({ auto_denials_consecutive: Infinity }), false);
     assert.equal(at({ auto_denials_consecutive: String(logic.AUTO_PAUSE_STREAK) }), true);
+    // The counter lives in the process that ran the streak up; a reopened
+    // session's new process starts at zero.
+    assert.equal(at({ auto_denials_consecutive: logic.AUTO_PAUSE_STREAK, age_seconds: 400000, process_age_seconds: 60000 }), false);
 });
 
 test('buildSession carries the paused auto mode and the block total', () => {
@@ -1248,6 +1319,20 @@ test('buildSession: an interrupt reads as interrupted and clears the phantom sub
     assert.equal(session.status_label, 'Interrupted');
     assert.equal(session.subagents_running, 0);
     assert.deepEqual(session.subagents_labels, []);
+});
+
+test('buildSession: a reopened session reads idle and clears the phantom subagent and workflow badges', () => {
+    const session = logic.buildSession({
+        session_id: 's', pid: 1, cwd: 'd:\\x', short_name: 's', alive: true, has_transcript: true, has_activity: true,
+        last_entry_kind: 'user_text', native_status: null, usage: {},
+        age_seconds: 400000, process_age_seconds: 60000,
+        subagents_running: 1, subagents_labels: ['general-purpose'], child_count: 0,
+        workflows: [{ run_id: 'w', total: 4, done: 1, active: true }],
+    }, {}, {});
+    assert.equal(session.status, 'awaiting_input');
+    assert.equal(session.subagents_running, 0);
+    assert.deepEqual(session.subagents_labels, []);
+    assert.equal(session.workflow_total, 0);
 });
 
 test('buildSession: a usage limit reads as errored, is named specifically, and clears the phantom subagent badge', () => {

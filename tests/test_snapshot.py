@@ -36,6 +36,14 @@ _SUBAGENT_RUNNING = json.dumps({
     'message': {'stop_reason': 'tool_use', 'content': [{'type': 'text', 'text': 'x'}]},
 })
 
+# A subagent mid tool call: a trailing tool_use block with nothing after it
+# reads as running for the whole recent window, however long ago it was written.
+_SUBAGENT_MID_TOOL = json.dumps({
+    'type': 'assistant',
+    'timestamp': '2026-07-11T10:54:06Z',
+    'message': {'stop_reason': 'tool_use', 'content': [{'type': 'tool_use', 'id': 't1', 'name': 'Bash', 'input': {}}]},
+})
+
 # The tail Claude Code writes for a local (`!` or slash) command: an injected
 # isMeta "DO NOT respond" caveat, the command entry, and the system execution
 # record. The model owes no reply, so the newest kind must read local_command.
@@ -87,13 +95,13 @@ class _RegistryFixture(unittest.TestCase):
     def _add_session(self, session_id: str, cwd: str) -> None:
         self._add_session_with_transcript(session_id, cwd, _END_TURN)
 
-    def _add_session_with_transcript(self, session_id: str, cwd: str, transcript: str) -> None:
+    def _add_session_with_transcript(self, session_id: str, cwd: str, transcript: str, started_at_ms: float | None = None) -> None:
         pid = os.getpid()
         sessions = Path(self._temp.name) / 'sessions'
-        (sessions / f'{session_id}.json').write_text(
-            json.dumps({'pid': pid, 'sessionId': session_id, 'cwd': cwd, 'name': session_id, 'kind': 'interactive'}),
-            encoding='utf-8',
-        )
+        record: dict[str, object] = {'pid': pid, 'sessionId': session_id, 'cwd': cwd, 'name': session_id, 'kind': 'interactive'}
+        if started_at_ms is not None:
+            record['startedAt'] = started_at_ms
+        (sessions / f'{session_id}.json').write_text(json.dumps(record), encoding='utf-8')
         path = transcript_path(local_root(), session_id, cwd)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(transcript, encoding='utf-8')
@@ -125,6 +133,18 @@ class RawSnapshotTest(_RegistryFixture):
         # No derived fields leak in from the old formatting layer.
         self.assertNotIn('status', session)
         self.assertNotIn('status_label', session)
+
+    def test_record_carries_the_process_age(self) -> None:
+        # The registry's startedAt reaches the UI as an age beside the transcript
+        # age, so the UI can tell a turn this process wrote from one an earlier
+        # process left behind. Without a startedAt there is no age to ship.
+        self._add_session('a', 'd:\\WebDev\\one')
+        self._add_session_with_transcript('b', 'd:\\WebDev\\two', _END_TURN, started_at_ms=(time.time() - 90) * 1000)
+
+        records = {session['session_id']: session for session in build_snapshot()['sessions']}
+
+        self.assertIsNone(records['a']['process_age_seconds'])
+        self.assertTrue(80 <= records['b']['process_age_seconds'] <= 100)
 
     def test_record_carries_the_api_error_fields(self) -> None:
         # All three fields an errored session's status is built from have to reach
@@ -375,6 +395,32 @@ class DelegatedTurnAgeTest(_RegistryFixture):
 
         self.assertFalse(session['alive'])
         self.assertGreater(session['age_seconds'], 3600)
+
+    def test_a_phantom_subagent_under_a_newer_process_does_not_refresh_the_age(self) -> None:
+        # The session was reopened after the process that ran the agent ended:
+        # an agent file last written before the live process started is the
+        # same phantom as one under a dead process, and must not make the
+        # reopened session look freshly active. The raw count still ships
+        # (the UI discounts it); only the age fold is gated here.
+        cwd = 'd:\\WebDev\\proj5'
+        self._add_session_with_transcript('h', cwd, _END_TURN, started_at_ms=(time.time() - 60) * 1000)
+        self._add_subagent('h', cwd, _SUBAGENT_MID_TOOL, age_seconds=300)
+
+        session = build_snapshot()['sessions'][0]
+
+        self.assertTrue(session['alive'])
+        self.assertEqual(session['subagents_running'], 1)
+        self.assertGreater(session['age_seconds'], 3600)
+
+    def test_a_subagent_younger_than_the_process_still_refreshes_the_age(self) -> None:
+        # The counterpart: an agent this process started is genuine evidence.
+        cwd = 'd:\\WebDev\\proj6'
+        self._add_session_with_transcript('i', cwd, _END_TURN, started_at_ms=(time.time() - 60) * 1000)
+        self._add_subagent('i', cwd, _SUBAGENT_RUNNING, age_seconds=5)
+
+        session = build_snapshot()['sessions'][0]
+
+        self.assertLess(session['age_seconds'], 60)
 
 
 class FingerprintTest(_RegistryFixture):

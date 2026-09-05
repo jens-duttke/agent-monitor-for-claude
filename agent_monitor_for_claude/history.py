@@ -302,6 +302,8 @@ def _build_history_record(path: Path) -> dict[str, Any] | None:
         'subagents_running': 0,
         'subagents_done': 0,
         'subagents_labels': [],
+        # A past session has no process, so nothing here can predate one.
+        'process_age_seconds': None,
         'age_seconds': state.age_seconds,
     }
 

@@ -181,6 +181,18 @@ function classify(raw) {
     if (raw.last_entry_kind === 'api_error') {
         return 'errored';
     }
+    // The newest turn was written before the process now holding the session
+    // started: the session was reopened after an earlier process ended. Nothing
+    // that process began is still running - the reply it owed, the tool call it
+    // left open or the dialog it showed died with it - and this process has not
+    // taken a turn yet, so the session waits for you. Checked before the
+    // pending-tool rule for the same reason as the two stops above: a dangling
+    // tool_use here is a call that will never be answered, neither executing nor
+    // prompting. The two stops themselves stay definitive (an interrupt is still
+    // an interrupt after a reopen). See turnPredatesProcess for the comparison.
+    if (raw.turn_predates_process) {
+        return 'awaiting_input';
+    }
     if (raw.pending_tool) {
         return raw.pending_blocking ? 'awaiting_permission' : 'working';
     }
@@ -664,18 +676,19 @@ function deriveStatus(raw) {
         pending_blocking: pendingBlockReason(raw) !== null,
         has_activity: raw.has_activity,
         last_entry_kind: raw.last_entry_kind,
+        turn_predates_process: turnPredatesProcess(raw),
     });
 
     if (raw.alive) {
         status = refineWithNative(status, raw.native_status, raw.waiting_for);
-        // A force-stopped turn (an interrupt, or an API error such as a usage
-        // limit) tears down in-process subagents and workflows, so a still-"running"
-        // count or a still-"active" workflow is a phantom until the recent window
-        // clears it - it must not promote the session to "processing". A detached
-        // OS child process (a build or server) can outlive the stop, so it counts.
-        const turnStopped = raw.last_entry_kind === 'user_interrupt' || raw.last_entry_kind === 'api_error';
-        const subagentsRunning = turnStopped ? 0 : (raw.subagents_running || 0);
-        const workflowRunning = !turnStopped && activeWorkflows(raw.workflows).length > 0;
+        // A stopped turn (see turnStopped) tore down its in-process subagents and
+        // workflows, so a still-"running" count or a still-"active" workflow is a
+        // phantom until the recent window clears it - it must not promote the
+        // session to "processing". A detached OS child process (a build or
+        // server) can outlive the stop, so it counts.
+        const stopped = turnStopped(raw);
+        const subagentsRunning = stopped ? 0 : (raw.subagents_running || 0);
+        const workflowRunning = !stopped && activeWorkflows(raw.workflows).length > 0;
         const backgroundWork = subagentsRunning > 0 || childRunning(raw) || workflowRunning;
         status = refineWithBackgroundWork(status, backgroundWork);
     }
@@ -753,11 +766,13 @@ const AUTO_PAUSE_STREAK = 3;
 
 // Whether auto mode has put itself on hold on this session. Live sessions only:
 // the hold belongs to a running CLI, and the streak an ended session stopped on
-// describes nothing that is still true.
+// describes nothing that is still true - nor does one an earlier process ran up
+// before the session was reopened: the counter lives in that process's memory,
+// and a new process starts at zero.
 function autoModePaused(raw) {
     const streak = Number(raw.auto_denials_consecutive);
 
-    return Boolean(raw.alive) && Number.isFinite(streak) && streak >= AUTO_PAUSE_STREAK;
+    return Boolean(raw.alive) && !turnPredatesProcess(raw) && Number.isFinite(streak) && streak >= AUTO_PAUSE_STREAK;
 }
 
 function pendingIsBlocking(toolName, permissionMode) {
@@ -839,6 +854,45 @@ function pendingIsStalled(ageSeconds, permissionMode) {
 // standstill is the ordinary kind.
 function stalledPendingWindow(permissionMode) {
     return permissionMode === 'auto' ? AUTO_STALLED_PENDING_SECONDS : STALLED_PENDING_SECONDS;
+}
+
+// The slack turnPredatesProcess allows between a turn's timestamp and the
+// registry's process start. Both are written by the same process within a second
+// of each other when a session starts (the registry first, as observed, though
+// the slack does not depend on that order), whereas a real reopen puts the old
+// turn seconds to days behind the new process. Not a freshness window: the two
+// ages grow at the same rate, so their difference is fixed for a given turn and
+// process, and the reading changes only when a new turn is appended.
+const PROCESS_START_SLACK_SECONDS = 5;
+
+// Whether the newest turn was written before the process now holding the session
+// started - the session was reopened after an earlier process ended, and this one
+// has not taken a turn yet. Structural, not time-based: see the slack above. The
+// display age is exact enough for the comparison even though a running subagent
+// can freshen it: a genuine subagent presupposes a Task call this process wrote
+// (a younger turn), and a phantom one from the earlier process is itself older
+// than this process. A missing or unusable age on either side is no evidence and
+// reads as not reopened - null is checked explicitly, since Number(null) is 0 and
+// would read a missing process age as a process that started just now. So does a
+// transcript with no turn at all, which has nothing to predate.
+function turnPredatesProcess(raw) {
+    if (!raw.has_activity) {
+        return false;
+    }
+    const age = raw.age_seconds == null ? NaN : Number(raw.age_seconds);
+    const processAge = raw.process_age_seconds == null ? NaN : Number(raw.process_age_seconds);
+
+    return Number.isFinite(age) && Number.isFinite(processAge) && age - processAge > PROCESS_START_SLACK_SECONDS;
+}
+
+// Whether the newest turn is over with nothing it started in-process surviving:
+// a force stop (an interrupt, or an API error such as a usage limit) tears down
+// subagents and workflows, and so does the end of a reopened session's earlier
+// process. Read where a still-"running" count or "active" workflow must neither
+// promote nor badge the session; a detached OS child process can outlive all
+// three, so child_count is not gated on it.
+function turnStopped(raw) {
+    return raw.last_entry_kind === 'user_interrupt' || raw.last_entry_kind === 'api_error' || turnPredatesProcess(raw);
 }
 
 function modeLabel(permissionMode) {
@@ -1415,14 +1469,15 @@ function buildSession(raw, labels, prices) {
     const originLabel = (typeof raw.origin_label === 'string' && raw.origin_label) ? raw.origin_label : null;
 
     // In-process subagents and workflows die when the turn is force-stopped - by
-    // an interrupt or an API error (a usage limit stops the whole CLI) - so any
+    // an interrupt or an API error (a usage limit stops the whole CLI) - and with
+    // the earlier process of a reopened session (see turnStopped), so any
     // still-"running" count or "active" workflow is a phantom the recent window
     // has yet to clear. Hide them here too, so the row does not show a running
-    // subagent or workflow badge next to a stopped status.
-    const turnStopped = raw.last_entry_kind === 'user_interrupt' || raw.last_entry_kind === 'api_error';
-    const subagentsRunning = turnStopped ? 0 : (raw.subagents_running || 0);
-    const subagentsLabels = turnStopped ? [] : (raw.subagents_labels || []);
-    const workflows = turnStopped ? [] : activeWorkflows(raw.workflows);
+    // subagent or workflow badge next to a stopped or idle status.
+    const stopped = turnStopped(raw);
+    const subagentsRunning = stopped ? 0 : (raw.subagents_running || 0);
+    const subagentsLabels = stopped ? [] : (raw.subagents_labels || []);
+    const workflows = stopped ? [] : activeWorkflows(raw.workflows);
     const workflowTotal = workflows.reduce((sum, workflow) => sum + (workflow.total || 0), 0);
     const workflowDone = workflows.reduce((sum, workflow) => sum + (workflow.done || 0), 0);
 
@@ -1683,6 +1738,9 @@ const AMC_LOGIC = {
     pendingIsStalled,
     STALLED_PENDING_SECONDS,
     AUTO_STALLED_PENDING_SECONDS,
+    PROCESS_START_SLACK_SECONDS,
+    turnPredatesProcess,
+    turnStopped,
     AUTO_PAUSE_STREAK,
     autoModePaused,
     modeLabel,
