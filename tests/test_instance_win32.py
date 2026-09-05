@@ -7,6 +7,7 @@ both share, are covered in ``test_instance_linux.py``.
 """
 from __future__ import annotations
 
+import ctypes
 import sys
 import unittest
 from unittest import mock

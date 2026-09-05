@@ -59,6 +59,10 @@ class DiscoverRootsTests(unittest.TestCase):
             claude = Path(base) / 'Ubuntu' / 'home' / 'dev' / '.claude'
             claude.mkdir(parents=True)
             (Path(base) / 'Ubuntu' / 'root').mkdir(parents=True)
+            # A distro's temp tree carries its owner's uid, and discovery has to
+            # resolve it by looking - naming it plainly is what left the task
+            # panel empty for every WSL session.
+            (Path(base) / 'Ubuntu' / 'tmp' / 'claude-1000').mkdir(parents=True)
             (Path(base) / 'docker-desktop').mkdir()  # no .claude anywhere
             roots = wsl._discover_roots(['Ubuntu', 'docker-desktop'], Path(base))
             self.assertEqual(len(roots), 1)
@@ -66,7 +70,7 @@ class DiscoverRootsTests(unittest.TestCase):
             self.assertEqual(roots[0].label, 'Ubuntu')
             self.assertEqual(roots[0].config_dir, claude)
             self.assertEqual(roots[0].proc_dir, Path(base) / 'Ubuntu' / 'proc')
-            self.assertEqual(roots[0].temp_dir, Path(base) / 'Ubuntu' / 'tmp')
+            self.assertEqual(roots[0].claude_temp_dir, Path(base) / 'Ubuntu' / 'tmp' / 'claude-1000')
 
     def test_stopped_distro_never_globbed(self) -> None:
         with tempfile.TemporaryDirectory() as base:
