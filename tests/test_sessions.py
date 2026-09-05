@@ -60,6 +60,24 @@ class SessionsTest(unittest.TestCase):
         self.assertIsNone(record['native_status'])
         self.assertIsNone(record['waiting_for'])
 
+    def test_parses_the_background_job_id(self) -> None:
+        # Only a `claude --bg` session carries one, and it is that session's only
+        # handle: it runs under the daemon with no window to raise.
+        self._write('1234.json', {
+            'pid': 1234, 'sessionId': 'abc-def', 'cwd': 'd:\Dev\proj',
+            'kind': 'bg', 'entrypoint': 'cli', 'jobId': '95dc95aa',
+        })
+        record = list_sessions(self.root)[0]
+        self.assertEqual(record['kind'], 'bg')
+        self.assertEqual(record['job_id'], '95dc95aa')
+
+    def test_missing_or_mistyped_job_id_is_none(self) -> None:
+        self._write('1234.json', {'pid': 1234, 'sessionId': 'abc-def', 'cwd': 'd:\Dev\proj'})
+        self._write('5678.json', {'pid': 5678, 'sessionId': 'ghi-jkl', 'cwd': 'd:\Dev\proj', 'jobId': 17})
+        self._write('9012.json', {'pid': 9012, 'sessionId': 'mno-pqr', 'cwd': 'd:\Dev\proj', 'jobId': ''})
+        for record in list_sessions(self.root):
+            self.assertIsNone(record['job_id'])
+
     def test_name_defaults_to_session_prefix(self) -> None:
         self._write('9.json', {'pid': 9, 'sessionId': 'abcdefghij', 'cwd': 'd:\\x'})
         records = list_sessions(self.root)

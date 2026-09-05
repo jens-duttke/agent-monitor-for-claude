@@ -32,8 +32,8 @@ def list_sessions(root: SessionRoot) -> list[dict[str, Any]]:
     """Return normalized session records from *root*'s on-disk registry.
 
     Each record has ``session_id``, ``pid``, ``cwd``, ``name``, ``kind``,
-    ``started_at``, ``origin``, and ``origin_label``.  Records that cannot be
-    parsed are omitted.
+    ``job_id``, ``started_at``, ``origin``, and ``origin_label``.  Records that
+    cannot be parsed are omitted.
 
     Parameters
     ----------
@@ -90,6 +90,10 @@ def _normalize(data: Any) -> dict[str, Any] | None:
     entrypoint = data.get('entrypoint')
     native_status = data.get('status')
     waiting_for = data.get('waitingFor')
+    # Only a background session carries one: the short id `claude attach`,
+    # `logs` and `stop` take, which is the only handle such a session has - it
+    # runs under the daemon with no window to raise.
+    job_id = data.get('jobId')
 
     return {
         'native_status': native_status if isinstance(native_status, str) else None,
@@ -101,6 +105,7 @@ def _normalize(data: Any) -> dict[str, Any] | None:
         'name': name if isinstance(name, str) and name else session_id[:8],
         'kind': kind if isinstance(kind, str) else 'interactive',
         'entrypoint': entrypoint if isinstance(entrypoint, str) else None,
+        'job_id': job_id if isinstance(job_id, str) and job_id else None,
         'started_at': _parse_started_at(data.get('startedAt')),
     }
 

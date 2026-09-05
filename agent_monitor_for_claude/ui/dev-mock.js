@@ -43,6 +43,7 @@ function rawSession(overrides) {
         child_count: 0, host: null, via_cli: false,
         has_transcript: true, has_activity: true, last_entry_kind: 'assistant', last_stop_reason: 'end_turn',
         pending_tool: false, last_tool_name: null, permission_mode: null,
+        auto_denials_consecutive: 0, auto_denials_total: 0, job_id: null,
         api_error_kind: null, api_error_status: null, api_error_detail: null,
         model_id: null, usage: {}, usage_by_model: {}, model_timeline: [], title: null,
         // Every session runs the current CLI unless it says otherwise; the two
@@ -71,6 +72,22 @@ window.__MOCK_SNAPSHOT__ = {
             ...priced('claude-opus-4-8[1m]', {
                 input_tokens: 96400, output_tokens: 18200, cache_read_input_tokens: 58300000,
                 cache_creation_input_tokens: 2100000, cache_creation_5m_input_tokens: 1400000, cache_creation_1h_input_tokens: 500000,
+            }),
+        }),
+        // Auto mode that stopped trusting its classifier: three blocked calls in a
+        // row put it on hold, so Claude Code prompts again and the call it is
+        // sitting on goes unanswered. Nothing about that reaches the transcript,
+        // which is why the row reads "Waiting for you" off the standstill and the
+        // paused badge next to the mode chip says why.
+        rawSession({
+            session_id: 'h2p', short_name: 'helios-shader-cache', pid: 27140, entrypoint: 'claude-vscode', host: 'VS Code',
+            title: 'Warm the pipeline cache on first frame', permission_mode: 'auto',
+            last_stop_reason: 'tool_use', pending_tool: true, last_tool_name: 'Bash',
+            auto_denials_consecutive: 3, auto_denials_total: 7,
+            age_seconds: 145,
+            ...priced('claude-opus-4-8[1m]', {
+                input_tokens: 21700, output_tokens: 4300, cache_read_input_tokens: 12600000,
+                cache_creation_input_tokens: 480000, cache_creation_5m_input_tokens: 310000, cache_creation_1h_input_tokens: 170000,
             }),
         }),
         rawSession({
@@ -120,6 +137,23 @@ window.__MOCK_SNAPSHOT__ = {
             ...priced('claude-opus-4-8[1m]', {
                 input_tokens: 38000, output_tokens: 8200, cache_read_input_tokens: 28000000,
                 cache_creation_input_tokens: 1100000, cache_creation_5m_input_tokens: 700000, cache_creation_1h_input_tokens: 400000,
+            }),
+        }),
+
+        // A background session: started with `claude --bg`, it runs under the
+        // agent daemon with no terminal and no window, so it shows "Background"
+        // instead of a CLI marker and its row is not a click-to-focus target.
+        // Its handle is the attach command in the row menu. Unlike a VS Code
+        // session it does report a native status, which is what "idle" is here.
+        rawSession({
+            session_id: 'h5b', short_name: 'helios-nightly-bake', pid: 44120,
+            kind: 'bg', entrypoint: 'cli', job_id: '95dc95aa', native_status: 'idle',
+            title: 'Bake the irradiance probes overnight', permission_mode: 'bypassPermissions',
+            last_entry_kind: 'assistant', last_stop_reason: 'end_turn',
+            age_seconds: 1870,
+            ...priced('claude-haiku-4-5', {
+                input_tokens: 9800, output_tokens: 2600, cache_read_input_tokens: 4100000,
+                cache_creation_input_tokens: 220000, cache_creation_5m_input_tokens: 220000,
             }),
         }),
 

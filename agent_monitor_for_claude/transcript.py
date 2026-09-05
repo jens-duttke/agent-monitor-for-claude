@@ -117,6 +117,22 @@ _PERMISSION_MODE_MARKER = b'permissionMode'
 _CWD_MARKER = b'"cwd"'
 _USER_MARKER = b'"user"'
 
+# The two markers behind the auto-mode denial streak.  Claude Code records why a
+# tool call was refused in its own field, so the streak is read from a control
+# value rather than from the refusal's wording.  The tool-result marker is used
+# on the raw bytes alone, never parsed: it only has to recognize that *some*
+# tool ran, and a transcript's bulk is tool results - parsing each one to learn
+# nothing else would cost far more than the byte scan.
+_DENIAL_KIND_MARKER = b'"toolDenialKind"'
+_TOOL_RESULT_MARKER = b'"tool_result"'
+
+# The one denial kind that counts.  Claude Code writes several (`user-rejected`,
+# `permission-rule`, `cancelled`, `automode-unavailable`), and only a classifier
+# block counts towards the pause: a denial raised when a safety check refuses
+# the classifier's own request is documented as not counting, and the others are
+# not the classifier's verdict at all.
+_AUTO_MODE_DENIAL_KIND = 'automode-blocked'
+
 # Display length cap for the first-prompt fallback title.
 _TITLE_MAX_CHARS = 80
 
@@ -166,6 +182,11 @@ class _ScanState:
     first_prompt: str | None = None
     first_command_prompt: str | None = None
     permission_mode: str | None = None
+    # Consecutive and total classifier blocks (see _absorb_line).  Two plain
+    # counts: whether they add up to a paused auto mode is a classification and
+    # therefore the UI's to make.
+    auto_denials_consecutive: int = 0
+    auto_denials_total: int = 0
     # Memoized run-compressed timelines, one per value field, each kept with the
     # event count it was built from.  Deliberately the last field, so the
     # positional ``copy()`` below stays correct without carrying it over - a copy
@@ -210,6 +231,7 @@ class _ScanState:
             list(self.model_events),
             list(self.cli_events),
             self.ai_title, self.custom_title, self.first_prompt, self.first_command_prompt, self.permission_mode,
+            self.auto_denials_consecutive, self.auto_denials_total,
         )
 
 
@@ -223,6 +245,8 @@ class _ScanResult:
     cli_timeline: list[dict[str, str]]
     title: str | None
     permission_mode: str | None
+    auto_denials_consecutive: int
+    auto_denials_total: int
 
 
 # The first poll reads the whole file once; afterwards only newly appended
@@ -303,6 +327,11 @@ class TranscriptState:
     model_timeline: list[dict[str, str]] | None = None
     cli_timeline: list[dict[str, str]] | None = None
     permission_mode: str | None = None
+    # How many tool calls the auto-mode classifier blocked in a row, and in the
+    # session overall.  Counted from the denial entries' own ``toolDenialKind``
+    # field; no part of the refusal's text is read.
+    auto_denials_consecutive: int = 0
+    auto_denials_total: int = 0
 
 
 @dataclass(frozen=True)
@@ -341,7 +370,9 @@ def state_for(root: SessionRoot, session_id: str, cwd: str) -> TranscriptState:
     age_seconds = _activity_age(state.last_timestamp, mtime)
     return replace(state, age_seconds=age_seconds, usage=scan.usage, usage_by_model=scan.usage_by_model,
                    model_timeline=scan.model_timeline, cli_timeline=scan.cli_timeline,
-                   title=scan.title, permission_mode=scan.permission_mode)
+                   title=scan.title, permission_mode=scan.permission_mode,
+                   auto_denials_consecutive=scan.auto_denials_consecutive,
+                   auto_denials_total=scan.auto_denials_total)
 
 
 def history_state_for(path: Path) -> HistoryState:
@@ -858,6 +889,8 @@ def _scan_result(state: _ScanState) -> _ScanResult:
         cli_timeline=state.timeline(_CLI_VERSION_KEY, state.cli_events),
         title=state.title(),
         permission_mode=state.permission_mode,
+        auto_denials_consecutive=state.auto_denials_consecutive,
+        auto_denials_total=state.auto_denials_total,
     )
 
 
@@ -898,11 +931,24 @@ def _add_usage(totals: dict[str, int], key: str, value: object) -> None:
 
 
 def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
-    """Fold one transcript line into the scan state (usage, title, mode)."""
+    """Fold one transcript line into the scan state (usage, title, mode, denials)."""
+    # A tool result that is not a denial means a tool ran, which ends the streak
+    # (Claude Code resets the consecutive count on any allowed action).  Decided
+    # on the raw bytes and settled before the pre-filter below, because the reset
+    # has to see every tool result while the pre-filter is there precisely to
+    # leave them unparsed.  The looseness is one-directional and deliberate: a
+    # sidechain's tool result resets the main streak too, and a match is not
+    # proof the entry parses - both can only clear a streak early, never invent
+    # one, and an unnoticed pause is the calmer failure.
+    denial_line = _DENIAL_KIND_MARKER in raw_line
+    if not denial_line and _TOOL_RESULT_MARKER in raw_line:
+        state.auto_denials_consecutive = 0
+
     # Marker pre-filtering skips irrelevant lines cheaply - except while the
     # first prompt is still unknown, when user entries must be inspected too.
     interesting = (
-        _USAGE_MARKER in raw_line
+        denial_line
+        or _USAGE_MARKER in raw_line
         or _AI_TITLE_MARKER in raw_line
         or _CUSTOM_TITLE_MARKER in raw_line
         or _PERMISSION_MODE_MARKER in raw_line
@@ -926,6 +972,15 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
         permission_mode = entry.get('permissionMode')
         if isinstance(permission_mode, str) and permission_mode:
             state.permission_mode = permission_mode
+
+    # A classifier block, read from the denial's own control field.  Sidechain
+    # entries are skipped as everywhere else: a subagent's refusal is not the
+    # main conversation's streak.  Every other denial kind - a rejection by the
+    # user, a deny rule, a cancelled call - neither counts nor resets, matching
+    # the documented rule that only an *allowed* action clears the streak.
+    if entry.get('toolDenialKind') == _AUTO_MODE_DENIAL_KIND and entry.get('isSidechain') is not True:
+        state.auto_denials_consecutive += 1
+        state.auto_denials_total += 1
 
     entry_type = entry.get('type')
 

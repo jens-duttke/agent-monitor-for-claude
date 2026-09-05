@@ -645,6 +645,27 @@ class PrivacyTest(TranscriptEnvTest):
         for secret in _SECRETS:
             self.assertNotIn(secret, serialized)
 
+    def test_a_classifier_denial_is_counted_never_quoted(self) -> None:
+        # The denial streak is read from the entry's own toolDenialKind field.
+        # The refusal Claude Code writes alongside it is text - a long one - and
+        # must stay unread: only the count crosses into the state.
+        self._write_transcript(_SESSION_ID, _CWD, [
+            json.dumps({
+                'type': 'user', 'timestamp': '2026-07-11T13:19:14Z',
+                'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't1',
+                                         'content': 'SECRET_RESULT', 'is_error': True}]},
+                'toolUseResult': 'SECRET_TEXT',
+                'toolDenialKind': 'automode-blocked',
+            }),
+        ])
+        state = state_for(windows_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual(state.auto_denials_consecutive, 1)
+        self.assertEqual(state.auto_denials_total, 1)
+        serialized = json.dumps(asdict(state))
+        for secret in _SECRETS:
+            self.assertNotIn(secret, serialized)
+
     def test_only_the_error_message_first_line_is_read(self) -> None:
         # The sanctioned, bounded exception: an API-error turn's own message line
         # is read for the status tooltip, because it names what the structural

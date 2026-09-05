@@ -173,6 +173,7 @@ const DEFAULT_LABELS = {
     tool_running: 'tool running',
     kind_interactive: 'Interactive',
     kind_background: 'Background',
+    copy_attach_command: 'Copy attach command',
     filter_needs: 'Needs you',
     filter_errored: 'Error',
     filter_interrupted: 'Interrupted',
@@ -198,6 +199,8 @@ const DEFAULT_LABELS = {
     token_cache_1h: '{cache_1h} 1h write',
     token_cache_write: '{cache_write} cache write',
     effort_badge: 'Default effort: {level}',
+    auto_paused: 'Auto mode paused - Claude Code is asking you again',
+    auto_denials: 'Calls blocked by the classifier: {count}',
     subagents_running: 'Running subagents: {count}',
     subagents_finished: 'Recently finished: {count}',
     subagents_workflow: 'Workflow: {done}/{total} agents',
@@ -572,7 +575,11 @@ const SORT_VALUES = {
     activity: (session) => (session.age_seconds == null ? Infinity : session.age_seconds),
     usage: (session) => session.usage_total || 0,
     model: (session) => logic.modelRank(session.model),
-    host: (session) => ((session.host || '￿') + (session.via_cli ? ' cli' : '')).toLowerCase(),
+    // Sorted by the text the host column actually shows, so the order matches
+    // what is read there - a background session sorts under "Background", not
+    // under the empty-host sentinel its null `host` would put it in. The
+    // sentinel still sends a session with no host at all to the end.
+    host: (session) => (hostText(session) || '￿').toLowerCase(),
     status: (session) => logic.STATUS_ORDER[session.status] ?? 99,
 };
 
@@ -2342,7 +2349,8 @@ function hostText(session) {
         text = text ? text + ' › CLI' : 'CLI';
     }
     if (session.kind && session.kind !== 'interactive') {
-        const kindLabel = state.labels['kind_' + session.kind] || session.kind;
+        const labelKey = logic.kindLabelKey(session.kind);
+        const kindLabel = (labelKey && state.labels[labelKey]) || session.kind;
         text = text ? text + ' · ' + kindLabel : kindLabel;
     }
     return text;
@@ -2416,6 +2424,18 @@ function nameCellHtml(session) {
 
     if (session.mode) {
         html += '<span class="mode-chip">' + esc(session.mode) + '</span>';
+    }
+
+    // Auto mode puts itself on hold after a run of classifier blocks and starts
+    // prompting for everything again. Called out next to the mode chip it
+    // contradicts: without it the session reads "Auto" while asking about every
+    // step, which is exactly the state that looks like a misconfigured setting.
+    if (session.auto_paused) {
+        const lines = [labels.auto_paused];
+        if (session.auto_denials_total > 0) {
+            lines.push(fmt(labels.auto_denials, { count: session.auto_denials_total }));
+        }
+        html += '<span class="auto-paused-badge"' + attr('data-tip', lines.join('\n')) + '>⏸</span>';
     }
 
     // Running-subagent badge with a tooltip listing what each one is doing. For a
@@ -2510,7 +2530,11 @@ function updateRow(row, session, projectName) {
     row.dataset.origin = session.origin || 'windows';
     // A history session has no live process, so it is not a focus target (no
     // data-pid); the click-to-focus handler keys on .row[data-pid].
-    if (session.is_history) {
+    // A background session is the second row without a focus target: it runs
+    // under the daemon with no window of its own, and the title fallback in
+    // focus_session_window could otherwise raise an unrelated terminal that
+    // happens to match. Its handle is the attach command in the row menu.
+    if (session.is_history || session.background) {
         delete row.dataset.pid;
     } else {
         row.dataset.pid = Number(session.pid);
@@ -2567,6 +2591,11 @@ function updateRow(row, session, projectName) {
     menuBtn.dataset.session = session.session_id || '';
     menuBtn.dataset.cwd = session.cwd || '';
     menuBtn.dataset.origin = session.origin || 'windows';
+    if (session.job_id) {
+        menuBtn.dataset.job = session.job_id;
+    } else {
+        delete menuBtn.dataset.job;
+    }
     // Only a history row (a past, non-live session with no registry record) may
     // be deleted; the menu adds its delete item off this flag.
     if (session.is_history) {
@@ -2801,6 +2830,10 @@ async function openRowMenu(menuBtn) {
     }
 
     const items = [{ key: 'copy-id', label: state.labels.copy_session_id }];
+    const jobId = menuBtn.dataset.job || '';
+    if (jobId) {
+        items.push({ key: 'copy-attach', label: state.labels.copy_attach_command });
+    }
     if (transcript) {
         items.push({ key: 'transcript', label: state.labels.show_transcript });
     }
@@ -2814,6 +2847,8 @@ async function openRowMenu(menuBtn) {
     openMenu(menuBtn, items, (key) => {
         if (key === 'copy-id') {
             copyToClipboard(sessionId);
+        } else if (key === 'copy-attach') {
+            copyToClipboard('claude attach ' + jobId);
         } else if (key === 'transcript') {
             revealPath(transcript, origin);
         } else if (key === 'scratchpad') {

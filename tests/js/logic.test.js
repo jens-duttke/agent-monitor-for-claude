@@ -334,7 +334,9 @@ test('pendingIsBlocking: acceptEdits waives the prompt for edits only', () => {
         assert.equal(logic.pendingIsBlocking(tool, 'acceptEdits'), true);
     }
     // The modes that genuinely never prompt stay untouched, edits or not.
-    for (const mode of ['auto', 'bypassPermissions', 'plan', null, undefined]) {
+    // `dontAsk` is one of them: it denies what would have prompted instead of
+    // showing it, so nothing there ever waits on you.
+    for (const mode of ['auto', 'bypassPermissions', 'plan', 'dontAsk', null, undefined]) {
         assert.equal(logic.pendingIsBlocking('Bash', mode), false);
     }
 });
@@ -342,6 +344,7 @@ test('pendingIsBlocking: acceptEdits waives the prompt for edits only', () => {
 /* --- a pending tool that stopped going anywhere --- */
 
 const STALE = logic.STALLED_PENDING_SECONDS + 1;
+const AUTO_STALE = logic.AUTO_STALLED_PENDING_SECONDS + 1;
 
 test('deriveStatus: a pending tool with no child and a long-still transcript stops reading as working', () => {
     // A session abandoned mid-call: the tool_use is in the transcript, no
@@ -437,6 +440,33 @@ test('pendingBlockReason names why the pending tool blocks', () => {
     assert.equal(at({ last_tool_name: 'Bash', permission_mode: 'auto', age_seconds: STALE }), 'stalled');
     assert.equal(at({ last_tool_name: 'Bash', permission_mode: 'auto', age_seconds: 5 }), null);
     assert.equal(logic.pendingBlockReason(raw({ pending_tool: false, age_seconds: STALE })), null);
+});
+
+test('pendingBlockReason: auto mode gives a standing-still call a shorter window', () => {
+    // Auto mode hands the approval to a classifier that answers in seconds, and
+    // it still prompts in cases no mode table predicts (an ask rule, an MCP tool
+    // needing interaction, the pause after repeated classifier blocks). None of
+    // that is written to disk while the dialog waits, so the shorter window is
+    // the only thing that catches it - five minutes on "working" was permanent,
+    // since nothing is appended to correct it.
+    assert.ok(logic.AUTO_STALLED_PENDING_SECONDS < logic.STALLED_PENDING_SECONDS);
+
+    const at = (overrides) => logic.pendingBlockReason(raw(Object.assign({
+        pending_tool: true, last_tool_name: 'Bash', child_count: 0,
+    }, overrides)));
+
+    assert.equal(at({ permission_mode: 'auto', age_seconds: AUTO_STALE }), 'stalled');
+    // Every other non-prompting mode keeps the long window at the same age.
+    for (const mode of ['plan', 'bypassPermissions', 'dontAsk']) {
+        assert.equal(at({ permission_mode: mode, age_seconds: AUTO_STALE }), null);
+        assert.equal(at({ permission_mode: mode, age_seconds: STALE }), 'stalled');
+    }
+    // Both guards survive the shorter window: a live child process means a tool
+    // is genuinely running, and an unusable age is no evidence at all.
+    assert.equal(at({ permission_mode: 'auto', age_seconds: AUTO_STALE, child_count: 1 }), null);
+    assert.equal(at({ permission_mode: 'auto', age_seconds: AUTO_STALE, subagents_running: 1 }), null);
+    assert.equal(at({ permission_mode: 'auto', age_seconds: NaN }), null);
+    assert.equal(at({ permission_mode: 'auto', age_seconds: Infinity }), null);
 });
 
 test('buildSession: a stalled call stays neutral, a real prompt still names itself', () => {
@@ -913,9 +943,94 @@ test('settleCall: an onError that itself throws is swallowed', async () => {
     await logic.settleCall(() => Promise.reject(new Error('x')), () => { throw new Error('cleanup boom'); });
 });
 
+test('autoModePaused reads a paused auto mode off the block streak', () => {
+    // Claude Code stops deferring to the classifier after this many blocks in a
+    // row and prompts for everything again - the state that makes a session look
+    // misconfigured while its mode chip still reads "Auto".
+    const at = (overrides) => logic.autoModePaused(raw(overrides));
+
+    assert.equal(at({ auto_denials_consecutive: logic.AUTO_PAUSE_STREAK }), true);
+    assert.equal(at({ auto_denials_consecutive: logic.AUTO_PAUSE_STREAK - 1 }), false);
+    assert.equal(at({}), false);
+    // An ended session's last streak describes nothing that is still true.
+    assert.equal(at({ alive: false, auto_denials_consecutive: logic.AUTO_PAUSE_STREAK }), false);
+    // A missing or unusable count must never read as paused; a numeric string
+    // is a usable one and reads as the number it spells.
+    assert.equal(at({ auto_denials_consecutive: null }), false);
+    assert.equal(at({ auto_denials_consecutive: 'lots' }), false);
+    assert.equal(at({ auto_denials_consecutive: NaN }), false);
+    assert.equal(at({ auto_denials_consecutive: Infinity }), false);
+    assert.equal(at({ auto_denials_consecutive: String(logic.AUTO_PAUSE_STREAK) }), true);
+});
+
+test('buildSession carries the paused auto mode and the block total', () => {
+    const build = (overrides) => logic.buildSession(raw(Object.assign({ session_id: 's' }, overrides)), {}, {});
+
+    const paused = build({ auto_denials_consecutive: 4, auto_denials_total: 9 });
+    assert.equal(paused.auto_paused, true);
+    assert.equal(paused.auto_denials_total, 9);
+
+    const running = build({ auto_denials_consecutive: 0, auto_denials_total: 9 });
+    assert.equal(running.auto_paused, false);
+    // The total keeps standing on its own: the streak ends with the next allowed
+    // call, but what the session spent on blocked ones does not.
+    assert.equal(running.auto_denials_total, 9);
+    assert.equal(build({}).auto_denials_total, 0);
+    // The total is interpolated into a label, so a number is what has to arrive.
+    assert.equal(build({ auto_denials_total: 'many' }).auto_denials_total, 0);
+    assert.equal(build({ auto_denials_total: '9' }).auto_denials_total, 9);
+});
+
+test('a background session is told apart from a terminal one', () => {
+    // `claude --bg` starts from a terminal that then goes away: the entrypoint
+    // still reads `cli` while no terminal and no window remain. Marking it "CLI"
+    // would promise a window to raise, and the click handler would go looking.
+    const build = (overrides) => logic.buildSession(raw(Object.assign({ session_id: 's' }, overrides)), {}, {});
+
+    const background = build({ kind: 'bg', entrypoint: 'cli', job_id: '95dc95aa' });
+    assert.equal(background.background, true);
+    assert.equal(background.via_cli, false);
+    assert.equal(background.job_id, '95dc95aa');
+
+    // A real terminal session keeps both.
+    const terminal = build({ kind: 'interactive', entrypoint: 'cli' });
+    assert.equal(terminal.background, false);
+    assert.equal(terminal.via_cli, true);
+    assert.equal(terminal.job_id, '');
+    // A mistyped handle must never reach the copied command.
+    assert.equal(build({ kind: 'bg', job_id: 17 }).job_id, '');
+});
+
+test('the on-disk label lookups cannot answer with an inherited value', () => {
+    // The permission mode and the entrypoint are untrusted values off disk, and
+    // an object lookup resolves 'constructor' or 'toString' to a function, which
+    // would then be rendered into the mode chip or the host cell.
+    for (const key of ['constructor', 'toString', 'valueOf', '__proto__', 'hasOwnProperty']) {
+        assert.equal(typeof logic.modeLabel(key), 'string');
+        assert.equal(logic.modeLabel(key), key);
+        assert.equal(logic.hostLabel(null, key), null);
+        assert.equal(logic.kindLabelKey(key), null);
+    }
+    // The real values still resolve.
+    assert.equal(logic.modeLabel('auto'), 'Auto');
+    assert.equal(logic.hostLabel(null, 'claude-vscode'), 'VS Code');
+});
+
+test('kindLabelKey names the kinds and leaves an unknown one alone', () => {
+    // The registry writes `bg`, not `background` - the mismatch that put a bare
+    // "bg" in the host column while the label for it went unused.
+    assert.equal(logic.kindLabelKey('bg'), 'kind_background');
+    assert.equal(logic.kindLabelKey('interactive'), 'kind_interactive');
+    assert.equal(logic.kindLabelKey('something-new'), null);
+    // The map must not answer for anything inherited from Object.prototype.
+    assert.equal(logic.kindLabelKey('constructor'), null);
+    assert.equal(logic.kindLabelKey('toString'), null);
+});
+
 test('modeLabel', () => {
     assert.equal(logic.modeLabel('default'), 'Manual');
     assert.equal(logic.modeLabel('acceptEdits'), 'Auto-edit');
+    assert.equal(logic.modeLabel('dontAsk'), "Don't ask");
     assert.equal(logic.modeLabel(null), null);
 });
 

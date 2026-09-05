@@ -695,6 +695,9 @@ const DIALOG_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode', 'EnterPlanMode'
 // allow left a session sitting on an unanswered permission prompt reading
 // "working" - and permanently, since nothing is appended while the prompt waits
 // (only the stalled fallback eventually caught it, five minutes late).
+// `dontAsk` is deliberately absent for the opposite reason: it auto-denies
+// whatever would have prompted, so that session never waits for you at all and
+// a call pending there is one that is executing.
 const PROMPTING_MODES = new Set(['default', 'acceptEdits']);
 
 // The tools whose prompt `acceptEdits` waives - the ones that change a file.
@@ -715,13 +718,47 @@ const AUTO_EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 // "working", where nothing is ever appended to clear it.
 const STALLED_PENDING_SECONDS = 300;
 
-const MODE_LABELS = {
-    default: 'Manual',
-    acceptEdits: 'Auto-edit',
-    auto: 'Auto',
-    plan: 'Plan',
-    bypassPermissions: 'Bypass',
-};
+// The same window in `auto` mode, where the standstill means something else.
+// Auto mode replaces your approval with a classifier that answers in seconds,
+// so a call still unanswered long after that is no longer plausibly under
+// review - and auto mode does prompt: an explicit ask rule, an MCP tool that
+// requires interaction, and the pause Claude Code falls back to after repeated
+// classifier blocks all put a dialog on the screen that no mode table predicts.
+// None of it is marked on disk - measured over an open dialog, the registry
+// file is not rewritten and the transcript grows by nothing - so this shorter
+// window is all that stands between such a session and five minutes of
+// claiming to work. It buys that at the known cost of the long window, only
+// sooner: an in-process call with no child process that legitimately outlives
+// it reads as blocked.
+const AUTO_STALLED_PENDING_SECONDS = 90;
+
+// A `Map`, not an object, for the same reason the API-error maps are: the mode
+// is untrusted on-disk data, and an object lookup would answer `constructor` or
+// `toString` with an inherited function - which then reaches the mode chip.
+const MODE_LABELS = new Map([
+    ['default', 'Manual'],
+    ['acceptEdits', 'Auto-edit'],
+    ['auto', 'Auto'],
+    ['plan', 'Plan'],
+    ['dontAsk', "Don't ask"],
+    ['bypassPermissions', 'Bypass'],
+]);
+
+// How many classifier blocks in a row put auto mode on hold. Claude Code's own
+// threshold, and the reason a session in `auto` can start asking about
+// everything: past this run it stops deferring to the classifier and prompts
+// you again, until you approve one. Python ships the raw count; reading a
+// paused mode out of it is a classification, so it happens here.
+const AUTO_PAUSE_STREAK = 3;
+
+// Whether auto mode has put itself on hold on this session. Live sessions only:
+// the hold belongs to a running CLI, and the streak an ended session stopped on
+// describes nothing that is still true.
+function autoModePaused(raw) {
+    const streak = Number(raw.auto_denials_consecutive);
+
+    return Boolean(raw.alive) && Number.isFinite(streak) && streak >= AUTO_PAUSE_STREAK;
+}
 
 function pendingIsBlocking(toolName, permissionMode) {
     if (DIALOG_TOOLS.has(toolName)) {
@@ -780,7 +817,7 @@ function pendingBlockReason(raw) {
     if (pendingIsBlocking(raw.last_tool_name, raw.permission_mode)) {
         return 'prompt';
     }
-    return pendingIsStalled(raw.age_seconds) ? 'stalled' : null;
+    return pendingIsStalled(raw.age_seconds, raw.permission_mode) ? 'stalled' : null;
 }
 
 // A pending tool_use whose transcript has stood still this long is not running.
@@ -790,17 +827,25 @@ function pendingBlockReason(raw) {
 // evidence at all, so it degrades to the calmer reading - the session keeps
 // whatever the structural rule said - rather than raising attention on a
 // number the snapshot could not supply.
-function pendingIsStalled(ageSeconds) {
+function pendingIsStalled(ageSeconds, permissionMode) {
     const age = Number(ageSeconds);
 
-    return Number.isFinite(age) && age >= STALLED_PENDING_SECONDS;
+    return Number.isFinite(age) && age >= stalledPendingWindow(permissionMode);
+}
+
+// How long a pending call may stand still before it stops counting as running.
+// Only `auto` shortens it; every other mode keeps the long window, `dontAsk`
+// included - a would-be prompt is denied there rather than shown, so its
+// standstill is the ordinary kind.
+function stalledPendingWindow(permissionMode) {
+    return permissionMode === 'auto' ? AUTO_STALLED_PENDING_SECONDS : STALLED_PENDING_SECONDS;
 }
 
 function modeLabel(permissionMode) {
     if (!permissionMode) {
         return null;
     }
-    return MODE_LABELS[permissionMode] || permissionMode;
+    return MODE_LABELS.get(permissionMode) || permissionMode;
 }
 
 /* --- label formatting (ported from formatting.py) --- */
@@ -1169,14 +1214,16 @@ function usageTotalTokens(usage) {
 
 /* --- host / entrypoint (ported from snapshot.py) --- */
 
-const ENTRYPOINT_HOSTS = { 'claude-vscode': 'VS Code' };
+// A `Map` for the reason MODE_LABELS is one: the entrypoint comes off disk, and
+// an object lookup would resolve `constructor` to an inherited function.
+const ENTRYPOINT_HOSTS = new Map([['claude-vscode', 'VS Code']]);
 
 function hostLabel(detected, entrypoint) {
     if (detected) {
         return detected;
     }
     if (entrypoint) {
-        return ENTRYPOINT_HOSTS[entrypoint] || null;
+        return ENTRYPOINT_HOSTS.get(entrypoint) || null;
     }
     return null;
 }
@@ -1201,6 +1248,28 @@ function isWslOrigin(origin) {
 function wslHostLabel(originLabel) {
     const label = originLabel || 'WSL';
     return label === 'WSL' ? 'WSL' : label + ' (WSL)';
+}
+
+// The registry's session kinds, mapped to their label keys. The tokens are
+// Claude Code's, and they are not the words to show: a background session is
+// written as `bg`, which is what leaked into the host column as a bare "bg"
+// while the label for it sat unused. An unknown kind has no key - the caller
+// falls back to the raw token, which is still better than nothing.
+const KIND_LABEL_KEYS = new Map([
+    ['interactive', 'kind_interactive'],
+    ['bg', 'kind_background'],
+]);
+
+function kindLabelKey(kind) {
+    return KIND_LABEL_KEYS.get(kind) || null;
+}
+
+// A session started with `claude --bg`: it runs under the background-agent
+// daemon with no terminal and no window of its own, which is why it is told
+// apart from every other session at all - neither the CLI marker nor the
+// click-to-raise-its-window applies to it.
+function isBackground(raw) {
+    return raw.kind === 'bg';
 }
 
 function isViaCli(raw) {
@@ -1430,8 +1499,16 @@ function buildSession(raw, labels, prices) {
         wsl: wsl,
         origin_label: originLabel,
         host: wsl ? wslHostLabel(originLabel) : hostLabel(raw.host, raw.entrypoint),
-        via_cli: isViaCli(raw),
+        // `claude --bg` starts the session from a terminal that then goes away,
+        // so the entrypoint says `cli` while no terminal is attached. Marking it
+        // "CLI" would promise a terminal window to raise; the kind says what it
+        // really is.
+        via_cli: !isBackground(raw) && isViaCli(raw),
+        background: isBackground(raw),
+        job_id: typeof raw.job_id === 'string' ? raw.job_id : '',
         mode: modeLabel(raw.permission_mode),
+        auto_paused: autoModePaused(raw),
+        auto_denials_total: Number(raw.auto_denials_total) || 0,
         vscode_deeplink: isVscodeDeeplink(raw),
         age_seconds: raw.age_seconds == null ? null : Math.floor(raw.age_seconds),
     };
@@ -1605,6 +1682,9 @@ const AMC_LOGIC = {
     pendingBlockReason,
     pendingIsStalled,
     STALLED_PENDING_SECONDS,
+    AUTO_STALLED_PENDING_SECONDS,
+    AUTO_PAUSE_STREAK,
+    autoModePaused,
     modeLabel,
     statusLabel,
     apiErrorLabel,
@@ -1627,6 +1707,8 @@ const AMC_LOGIC = {
     cliColumnRelevant,
     hostLabel,
     isViaCli,
+    isBackground,
+    kindLabelKey,
     isVscodeDeeplink,
     groupKey,
     displayCwd,

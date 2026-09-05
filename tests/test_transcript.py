@@ -410,6 +410,100 @@ class ModelEventGuardTest(unittest.TestCase):
         self.assertEqual(state.model_events, [('2026-07-11T10:00:00Z', 'claude-opus-4-8')])
 
 
+class AutoModeDenialStreakTest(unittest.TestCase):
+    """The classifier-block streak behind the paused-auto-mode badge."""
+
+    @staticmethod
+    def _absorb(state, entry):
+        _absorb_line(json.dumps(entry).encode('utf-8'), state)
+
+    @staticmethod
+    def _denial(kind):
+        return {
+            'type': 'user',
+            'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'abc', 'is_error': True}]},
+            'toolDenialKind': kind,
+        }
+
+    @staticmethod
+    def _tool_result():
+        return {'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'abc'}]}}
+
+    def test_consecutive_blocks_are_counted(self) -> None:
+        state = _ScanState()
+        for _ in range(3):
+            self._absorb(state, self._denial('automode-blocked'))
+        self.assertEqual(state.auto_denials_consecutive, 3)
+        self.assertEqual(state.auto_denials_total, 3)
+
+    def test_an_allowed_tool_result_ends_the_streak_but_not_the_total(self) -> None:
+        state = _ScanState()
+        self._absorb(state, self._denial('automode-blocked'))
+        self._absorb(state, self._denial('automode-blocked'))
+        self._absorb(state, self._tool_result())
+        self._absorb(state, self._denial('automode-blocked'))
+        self.assertEqual(state.auto_denials_consecutive, 1)
+        self.assertEqual(state.auto_denials_total, 3)
+
+    def test_other_denial_kinds_neither_count_nor_reset(self) -> None:
+        # Only a classifier verdict counts towards the pause: a rejection by the
+        # user or a deny rule is not one, and a denial raised when a safety check
+        # refuses the classifier's own request is documented as not counting.
+        # None of them is an *allowed* action either, so none clears the streak.
+        state = _ScanState()
+        self._absorb(state, self._denial('automode-blocked'))
+        for kind in ('user-rejected', 'permission-rule', 'automode-unavailable', 'cancelled'):
+            self._absorb(state, self._denial(kind))
+        self._absorb(state, self._denial('automode-blocked'))
+        self.assertEqual(state.auto_denials_consecutive, 2)
+        self.assertEqual(state.auto_denials_total, 2)
+
+    def test_a_subagents_denial_is_not_the_main_conversations_streak(self) -> None:
+        state = _ScanState()
+        denial = self._denial('automode-blocked')
+        denial['isSidechain'] = True
+        self._absorb(state, denial)
+        self.assertEqual(state.auto_denials_consecutive, 0)
+        self.assertEqual(state.auto_denials_total, 0)
+
+    def test_an_ordinary_turn_leaves_the_streak_standing(self) -> None:
+        # Only a tool result says a tool ran. An assistant turn between two
+        # blocked calls is the model reacting to the block, not an allowed action.
+        state = _ScanState()
+        self._absorb(state, self._denial('automode-blocked'))
+        self._absorb(state, {
+            'type': 'assistant', 'timestamp': '2026-07-11T10:00:00Z',
+            'message': {'stop_reason': 'tool_use', 'model': 'claude-opus-4-8', 'usage': {'input_tokens': 5}},
+        })
+        self.assertEqual(state.auto_denials_consecutive, 1)
+
+    def test_the_counts_survive_a_partial_trailing_line(self) -> None:
+        # _scan_appended copies the state to absorb a half-written line; the copy
+        # is positional, so a field left out of it silently reports zero.
+        state = _ScanState()
+        self._absorb(state, self._denial('automode-blocked'))
+        self.assertEqual(state.copy().auto_denials_consecutive, 1)
+        self.assertEqual(state.copy().auto_denials_total, 1)
+
+    def test_a_scan_reports_the_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session.jsonl'
+            path.write_text(
+                ''.join(json.dumps(entry) + '\n' for entry in (
+                    self._denial('automode-blocked'),
+                    self._denial('automode-blocked'),
+                )),
+                encoding='utf-8',
+            )
+            tmod._scan_cache.clear()
+            try:
+                result = tmod._scan_appended(path)
+            finally:
+                tmod._scan_cache.clear()
+            self.assertEqual(result.auto_denials_consecutive, 2)
+            self.assertEqual(result.auto_denials_total, 2)
+
+
 class ModelTimelineOrderTest(unittest.TestCase):
     def test_sorts_chronologically_not_lexicographically(self) -> None:
         # '...07.500Z' is chronologically LATER than '...07Z' but sorts BEFORE it

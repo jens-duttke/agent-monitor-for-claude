@@ -1329,6 +1329,21 @@ body {
     letter-spacing: 0.3px;
 }
 
+/* Auto mode on hold after a run of classifier blocks. Carries the same colour
+   as the "Needs you" dot, because that is what it means: the CLI has gone back
+   to asking you about every step. */
+.auto-paused-badge {
+    flex: none;
+    font-size: 11px;
+    color: var(--c-awaiting_permission);
+    background: color-mix(in srgb, var(--c-awaiting_permission) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--c-awaiting_permission) 32%, transparent);
+    border-radius: 999px;
+    padding: 1px 7px;
+    white-space: nowrap;
+    cursor: help;
+}
+
 .proc-badge {
     flex: none;
     font-size: 11px;

@@ -270,6 +270,7 @@ def _build_history_record(path: Path) -> dict[str, Any] | None:
         'short_name': state.session_id[:8],
         'kind': 'interactive',
         'entrypoint': None,
+        'job_id': None,
         'native_status': None,
         'waiting_for': None,
         'child_count': 0,
@@ -284,6 +285,10 @@ def _build_history_record(path: Path) -> dict[str, Any] | None:
         'pending_tool': False,
         'last_tool_name': None,
         'permission_mode': None,
+        # The denial streak comes from the same full scan the CLI timeline does,
+        # so a history entry - which reads only its tail - carries neither.
+        'auto_denials_consecutive': 0,
+        'auto_denials_total': 0,
         'model_id': state.model,
         'cli_version': state.cli_version,
         'usage': {},

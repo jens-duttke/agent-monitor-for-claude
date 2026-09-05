@@ -136,7 +136,8 @@ this section is explicit about both:
 
 `~/.claude/sessions/*.json` (or `$CLAUDE_CONFIG_DIR/sessions/`) - the records Claude Code writes for
 each running session. Fields taken: session id, process id, working directory, project name, session
-kind and entry point, the native status and its waiting reason, and two timestamps. No conversation
+kind and entry point, the native status and its waiting reason, the background-agent job id, and two
+timestamps. No conversation
 data is in these files.
 
 ### Transcripts, for status metadata
@@ -150,7 +151,10 @@ What it **takes** from that scan is control-flow metadata: entry types, stop rea
 tool names, timestamps, the model id, the Claude Code version stamped on each entry, token-usage
 numbers, the permission mode, and the flags that distinguish a real turn from a sidechain, an injected
 notice, or an API error - plus, on an API error, the short error token and HTTP status code that entry
-carries, which is what lets the status name the cause ("Error: servers overloaded"). Message text,
+carries, which is what lets the status name the cause ("Error: servers overloaded"), and, on a refused
+tool call, the one-word reason Claude Code records for the refusal, which is what lets a session say
+that auto mode has put itself on hold. The refusal's own wording is not read - only that one field, and
+only as a count. Message text,
 thinking blocks, tool inputs, and tool results are not taken, with these deliberate exceptions - four
 that are displayed to you, and two that are reduced to a flag or an id and never shown:
 

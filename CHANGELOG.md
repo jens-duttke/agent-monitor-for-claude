@@ -8,14 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- A background agent's row menu copies its `claude attach` command. That command is the only way back into a session that runs under the agent daemon with no window of its own.
+- An agent whose Auto mode has been put on hold now says so. Claude Code stops trusting its safety classifier after three blocked calls in a row and prompts you about everything again - the row now shows a paused badge next to the mode, with the session's number of blocked calls on hover.
 - The released `AgentMonitorForClaude.exe` is now code signed, so Windows can name its publisher instead of reporting an unknown one. Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Every release is built by a GitHub Actions workflow from the tagged source in this repository - never on a developer machine - and signed only after a manual approval; see the code signing policy in the README.
 
 ### Fixed
+- Background agents started with `claude --bg` are now shown as such. Their host column read a raw `bg`, and clicking one tried to raise a window it does not have - which could bring an unrelated terminal to the front.
+- A session in *Auto* mode no longer claims to be working for five minutes while a permission prompt waits. Auto mode does still ask - an explicit ask rule, an MCP tool that needs your input, or the pause Claude Code falls back to after repeated classifier blocks - so a pending call with nothing running behind it now reads "Waiting for you" after 90 seconds. A call with a live process, subagent or workflow behind it keeps reading "Working".
 - Replacing a running instance no longer looks like a crash to whatever started it. The replaced instance was ended with an error exit code, so a launcher waiting on it - a tray tool that starts Agent Monitor on double-click - reported the replace as a failed command.
 - A session that hands its whole turn to a subagent no longer ages as though it had gone quiet. Its last-activity time kept climbing while the subagent worked, sinking the project panel down the list; the running subagent's activity now counts as the session's.
 - The last-activity time is no longer refreshed by Claude Code's own bookkeeping records. One of those is written whenever any tool writes a file, which could make an untouched session look as if the conversation had just moved on.
 
 ### Changed
+- The `dontAsk` permission mode now shows as *Don't ask* instead of its raw configuration name.
 - A session whose transcript holds no conversation turn yet reads *Quiet* instead of *Idle*, so it no longer sits under *Needs you* claiming a reply is owed.
 
 ## [0.7.0] - 2026-08-19
