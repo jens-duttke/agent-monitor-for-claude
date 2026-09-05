@@ -1080,6 +1080,7 @@ test('the on-disk label lookups cannot answer with an inherited value', () => {
         assert.equal(typeof logic.modeLabel(key), 'string');
         assert.equal(logic.modeLabel(key), key);
         assert.equal(logic.hostLabel(null, key), null);
+        assert.equal(logic.entrypointLabel(key), key);
         assert.equal(logic.kindLabelKey(key), null);
     }
     // The real values still resolve.
@@ -1514,16 +1515,36 @@ test('buildSession flags a model switch and builds the history', () => {
     assert.equal(single.model_switched, false);
 });
 
-test('cliHistory keeps the backend order and drops unusable entries', () => {
+test('cliHistory keeps the backend order, names where each run was written from, and drops unusable entries', () => {
+    // A terminal and a VS Code window holding the same session: the origin is
+    // what makes the version flipping between the two legible.
     const timeline = [
-        { time: '2026-07-11T09:00:00Z', version: '2.1.224' },
-        { time: '2026-07-11T13:00:00Z', version: '2.1.228' },
+        { time: '2026-07-11T09:00:00Z', version: '2.1.224', entrypoint: 'claude-vscode' },
+        { time: '2026-07-11T13:00:00Z', version: '2.1.228', entrypoint: 'cli' },
+        { time: '2026-07-11T14:00:00Z', version: '2.1.224', entrypoint: 'claude-vscode' },
+        { time: '2026-07-11T15:00:00Z', version: '2.1.228' },
     ];
-    assert.deepEqual(logic.cliHistory(timeline), timeline);
+    assert.deepEqual(logic.cliHistory(timeline), [
+        { time: '2026-07-11T09:00:00Z', version: '2.1.224', origin: 'VS Code' },
+        { time: '2026-07-11T13:00:00Z', version: '2.1.228', origin: 'CLI' },
+        { time: '2026-07-11T14:00:00Z', version: '2.1.224', origin: 'VS Code' },
+        { time: '2026-07-11T15:00:00Z', version: '2.1.228', origin: null },
+    ]);
     // A renamed or mistyped field must not reach the renderer as an entry.
     assert.deepEqual(logic.cliHistory([{ time: 'x', version: 7 }, { time: 'y' }, null]), []);
     assert.deepEqual(logic.cliHistory([]), []);
     assert.deepEqual(logic.cliHistory(null), []);
+});
+
+test('entrypointLabel names the known origins and falls back to the token', () => {
+    assert.equal(logic.entrypointLabel('claude-vscode'), 'VS Code');
+    assert.equal(logic.entrypointLabel('cli'), 'CLI');
+    // A token this build does not know is still a name of sorts.
+    assert.equal(logic.entrypointLabel('sdk-ts'), 'sdk-ts');
+    // Nothing usable names nothing.
+    assert.equal(logic.entrypointLabel(''), null);
+    assert.equal(logic.entrypointLabel(7), null);
+    assert.equal(logic.entrypointLabel(undefined), null);
 });
 
 test('cliColumnRelevant only when the version says something', () => {

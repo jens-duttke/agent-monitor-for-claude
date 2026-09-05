@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A session reopened after its previous Claude Code process ended no longer reads *Working* - or *Permission needed* - on the strength of a turn that process never finished. It reads *Idle* until you send the next prompt.
 
 ### Changed
+- The version badge's list now says where each run was written from - VS Code or the CLI. A version flipping back and forth every few seconds is two Claude Code processes holding the same session at once, which the list can now show.
 - The `dontAsk` permission mode now shows as *Don't ask* instead of its raw configuration name.
 - A session whose transcript holds no conversation turn yet reads *Quiet* instead of *Idle*, so it no longer sits under *Needs you* claiming a reply is owed.
 - The menu entries that reveal a folder or file now read *Show in file manager* rather than naming Windows Explorer, since the file manager differs per system.

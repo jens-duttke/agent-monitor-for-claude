@@ -26,7 +26,7 @@ import os
 import re
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,9 +59,10 @@ _USAGE_TOTAL_KEYS = _USAGE_KEYS + tuple(_CACHE_TTL_KEYS.values())
 # history.
 _SYNTHETIC_MODEL = '<synthetic>'
 
-# The two switch logs the scan keeps, named by the field each entry reports its
-# value under.  Both are wire format - the UI reads `entry.model` / `entry.version`
-# off the snapshot - and both double as the timeline cache's key.
+# The two switch logs the scan keeps, named by the fields each entry reports its
+# values under.  All three names are wire format - the UI reads `entry.model`,
+# `entry.version` and `entry.entrypoint` off the snapshot - and each log's key
+# tuple doubles as the timeline cache's key.
 #
 # The model log answers "which model was answering, when": a model used, left,
 # and returned to appears once per run, so the last entry is the current model
@@ -69,9 +70,18 @@ _SYNTHETIC_MODEL = '<synthetic>'
 # the Claude Code build that wrote each turn - a long session resumed after an
 # upgrade spans several, which dates a mid-session change in behaviour.  Nothing
 # assumes a version only moves forward; runs are reported as the timestamps order
-# them.
+# them.  The version log carries a second value, the entrypoint the writing
+# process stamped on the entry (``cli``, ``claude-vscode``), and a run is a
+# stretch where *both* stay the same: two Claude Code processes can hold one
+# session at once - a VS Code window and a terminal that resumed it, observed on
+# different versions - and their interleaved turns read as the version flipping
+# back and forth every few seconds, which only the writer beside each run
+# explains.  An entry without an entrypoint stores '' and reports none.
 _MODEL_KEY = 'model'
 _CLI_VERSION_KEY = 'version'
+_CLI_ENTRYPOINT_KEY = 'entrypoint'
+_MODEL_KEYS = (_MODEL_KEY,)
+_CLI_KEYS = (_CLI_VERSION_KEY, _CLI_ENTRYPOINT_KEY)
 
 # Fixed marker Claude Code writes as a user turn when the user interrupts a
 # running turn.  On disk it is indistinguishable from a fresh prompt, yet it
@@ -176,7 +186,7 @@ class _ScanState:
     totals: dict[str, int] = field(default_factory=lambda: {key: 0 for key in _USAGE_TOTAL_KEYS})
     by_model: dict[str, dict[str, int]] = field(default_factory=dict)
     model_events: list[tuple[str, str]] = field(default_factory=list)
-    cli_events: list[tuple[str, str]] = field(default_factory=list)
+    cli_events: list[tuple[str, str, str]] = field(default_factory=list)
     ai_title: str | None = None
     custom_title: str | None = None
     first_prompt: str | None = None
@@ -191,14 +201,14 @@ class _ScanState:
     # event count it was built from.  Deliberately the last field, so the
     # positional ``copy()`` below stays correct without carrying it over - a copy
     # exists to absorb one more line, so its timelines have to be rebuilt anyway.
-    timeline_cache: dict[str, tuple[int, list[dict[str, str]]]] = field(default_factory=dict)
+    timeline_cache: dict[tuple[str, ...], tuple[int, list[dict[str, str]]]] = field(default_factory=dict)
 
     def title(self) -> str | None:
         # The housekeeping-command name is the last resort: anything later that
         # can actually name the session (a prompt, a meaningful command) wins.
         return self.custom_title or self.ai_title or self.first_prompt or self.first_command_prompt
 
-    def timeline(self, value_key: str, events: list[tuple[str, str]]) -> list[dict[str, str]]:
+    def timeline(self, keys: tuple[str, ...], events: Sequence[tuple[str, ...]]) -> list[dict[str, str]]:
         """Return the run-compressed timeline for *events*, rebuilt only when they have grown.
 
         ``_scan_result`` runs on every poll, but a transcript has usually not
@@ -211,15 +221,15 @@ class _ScanState:
 
         Parameters
         ----------
-        value_key : str
-            Name the value is reported under in each entry, and the cache key.
-        events : list of (str, str)
-            The ``(timestamp, value)`` events accumulated so far.
+        keys : tuple of str
+            Names the values are reported under in each entry, and the cache key.
+        events : sequence of tuple of str
+            The ``(timestamp, *values)`` events accumulated so far.
         """
-        cached = self.timeline_cache.get(value_key)
+        cached = self.timeline_cache.get(keys)
         if cached is None or cached[0] != len(events):
-            cached = (len(events), _run_timeline(events, value_key))
-            self.timeline_cache[value_key] = cached
+            cached = (len(events), _run_timeline(events, keys))
+            self.timeline_cache[keys] = cached
 
         return [dict(entry) for entry in cached[1]]
 
@@ -885,8 +895,8 @@ def _scan_result(state: _ScanState) -> _ScanResult:
     return _ScanResult(
         usage=dict(state.totals),
         usage_by_model=by_model,
-        model_timeline=state.timeline(_MODEL_KEY, state.model_events),
-        cli_timeline=state.timeline(_CLI_VERSION_KEY, state.cli_events),
+        model_timeline=state.timeline(_MODEL_KEYS, state.model_events),
+        cli_timeline=state.timeline(_CLI_KEYS, state.cli_events),
         title=state.title(),
         permission_mode=state.permission_mode,
         auto_denials_consecutive=state.auto_denials_consecutive,
@@ -894,22 +904,23 @@ def _scan_result(state: _ScanState) -> _ScanResult:
     )
 
 
-def _run_timeline(events: list[tuple[str, str]], value_key: str) -> list[dict[str, str]]:
-    """Sort ``(timestamp, value)`` events by time and collapse equal-value runs.
+def _run_timeline(events: Sequence[tuple[str, ...]], keys: tuple[str, ...]) -> list[dict[str, str]]:
+    """Sort ``(timestamp, *values)`` events by time and collapse runs of equal values.
 
     Transcript entries are not strictly ordered on disk, so the events are sorted
-    by time first, then runs of the same value are collapsed to a single entry
+    by time first, then runs of the same values are collapsed to a single entry
     carrying the moment that run began.  The result is a chronological switch
     log: one entry per *run*, so a value used, left, and returned to appears more
-    than once - and the final entry is the value in use, with the time it was
-    last switched to.
+    than once - and the final entry is the values in use, with the time they were
+    last switched to.  A run ends when *any* of the values changes.
 
     Parameters
     ----------
-    events : list of (str, str)
+    events : sequence of tuple of str
         Raw events in on-disk order, which is not necessarily chronological.
-    value_key : str
-        Name the value is reported under in each resulting entry.
+    keys : tuple of str
+        Names the values are reported under in each resulting entry, in the
+        order the events hold them.  An empty value is left out of its entry.
     """
     # Sort by parsed epoch, not the raw string: lexicographic order matches
     # chronological order only while every timestamp has an identical shape, but
@@ -917,9 +928,15 @@ def _run_timeline(events: list[tuple[str, str]], value_key: str) -> list[dict[st
     # ('...07Z') though it is later, and an explicit offset mis-sorts against 'Z'.
     # The raw string is kept for display; it breaks ties for equal epochs.
     timeline: list[dict[str, str]] = []
-    for timestamp, value in sorted(events, key=lambda event: (_timestamp_epoch(event[0]) or 0.0, event[0])):
-        if not timeline or timeline[-1][value_key] != value:
-            timeline.append({'time': timestamp, value_key: value})
+    last_values: tuple[str, ...] | None = None
+    for event in sorted(events, key=lambda event: (_timestamp_epoch(event[0]) or 0.0, event[0])):
+        values = event[1:]
+        if values == last_values:
+            continue
+        entry = {'time': event[0]}
+        entry.update((key, value) for key, value in zip(keys, values) if value)
+        timeline.append(entry)
+        last_values = values
 
     return timeline
 
@@ -1014,7 +1031,7 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
                         _add_usage(bucket, total_key, value)
 
             # Record each assistant turn in the MAIN conversation as an event for
-            # the two switch logs (see _MODEL_KEY / _CLI_VERSION_KEY). Ordering is
+            # the two switch logs (see _MODEL_KEYS / _CLI_KEYS). Ordering is
             # resolved in _run_timeline, not here, because transcript entries are
             # not strictly ordered on disk. The model excludes the synthetic
             # sentinel; the version does not.
@@ -1029,7 +1046,11 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
             # evidence.
             version = entry.get('version')
             if main_turn and isinstance(version, str) and version:
-                state.cli_events.append((timestamp, version))
+                # The writer goes in beside the version (see _CLI_KEYS); a
+                # missing or mistyped entrypoint is stored as '' and left out
+                # of the reported entry.
+                entrypoint = entry.get('entrypoint')
+                state.cli_events.append((timestamp, version, entrypoint if isinstance(entrypoint, str) else ''))
 
     elif entry_type == 'ai-title':
         value = entry.get('aiTitle')

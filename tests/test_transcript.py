@@ -512,12 +512,12 @@ class ModelTimelineOrderTest(unittest.TestCase):
         timeline = _run_timeline([
             ('2026-07-11T10:53:07Z', 'opus'),
             ('2026-07-11T10:53:07.500Z', 'sonnet'),
-        ], 'model')
+        ], ('model',))
         self.assertEqual([entry['model'] for entry in timeline], ['opus', 'sonnet'])
         self.assertEqual(timeline[-1]['time'], '2026-07-11T10:53:07.500Z')
 
     def test_unparseable_timestamps_do_not_crash(self) -> None:
-        timeline = _run_timeline([('not-a-timestamp', 'opus'), ('2026-07-11T10:00:00Z', 'sonnet')], 'model')
+        timeline = _run_timeline([('not-a-timestamp', 'opus'), ('2026-07-11T10:00:00Z', 'sonnet')], ('model',))
         self.assertEqual({entry['model'] for entry in timeline}, {'opus', 'sonnet'})
 
 
@@ -559,7 +559,28 @@ class CliVersionTest(unittest.TestCase):
         ):
             _absorb_line(json.dumps(entry).encode('utf-8'), state)
 
-        self.assertEqual(state.cli_events, [('2026-07-11T10:00:00Z', '2.1.224')])
+        self.assertEqual(state.cli_events, [('2026-07-11T10:00:00Z', '2.1.224', '')])
+
+    def test_events_carry_the_writers_entrypoint(self) -> None:
+        # The entrypoint stamped on the entry says where the process that wrote
+        # it ran - the one thing that makes two processes sharing a session
+        # legible in the version history. A mistyped one is stored as none.
+        state = _ScanState()
+        for entry in (
+            {'type': 'assistant', 'timestamp': '2026-07-11T10:00:00Z', 'version': '2.1.241', 'entrypoint': 'claude-vscode',
+             'message': {'stop_reason': 'tool_use', 'model': 'claude-opus-5', 'usage': {}}},
+            {'type': 'assistant', 'timestamp': '2026-07-11T10:00:30Z', 'version': '2.1.246', 'entrypoint': 'cli',
+             'message': {'stop_reason': 'tool_use', 'model': 'claude-opus-5', 'usage': {}}},
+            {'type': 'assistant', 'timestamp': '2026-07-11T10:01:00Z', 'version': '2.1.246', 'entrypoint': 7,
+             'message': {'stop_reason': 'end_turn', 'model': 'claude-opus-5', 'usage': {}}},
+        ):
+            _absorb_line(json.dumps(entry).encode('utf-8'), state)
+
+        self.assertEqual(state.cli_events, [
+            ('2026-07-11T10:00:00Z', '2.1.241', 'claude-vscode'),
+            ('2026-07-11T10:00:30Z', '2.1.246', 'cli'),
+            ('2026-07-11T10:01:00Z', '2.1.246', ''),
+        ])
 
     def test_synthetic_model_turn_still_reports_its_version(self) -> None:
         # The synthetic sentinel means "no real model", not "no real CLI": the
@@ -571,7 +592,7 @@ class CliVersionTest(unittest.TestCase):
             'message': {'stop_reason': 'end_turn', 'model': '<synthetic>', 'usage': {}},
         }).encode('utf-8'), state)
         self.assertEqual(state.model_events, [])
-        self.assertEqual(state.cli_events, [('2026-07-11T10:00:00Z', '2.1.228')])
+        self.assertEqual(state.cli_events, [('2026-07-11T10:00:00Z', '2.1.228', '')])
 
     def test_timeline_compresses_runs_and_keeps_a_returned_version(self) -> None:
         # Same run-length compression as the model timeline: consecutive equal
@@ -582,7 +603,7 @@ class CliVersionTest(unittest.TestCase):
             ('2026-07-11T09:30:00Z', '2.1.224'),
             ('2026-07-11T11:00:00Z', '2.1.228'),
             ('2026-07-11T13:00:00Z', '2.1.224'),
-        ], 'version')
+        ], ('version',))
         self.assertEqual(timeline, [
             {'time': '2026-07-11T09:00:00Z', 'version': '2.1.224'},
             {'time': '2026-07-11T11:00:00Z', 'version': '2.1.228'},
@@ -595,8 +616,31 @@ class CliVersionTest(unittest.TestCase):
         timeline = _run_timeline([
             ('2026-07-11T10:53:07.500Z', '2.1.228'),
             ('2026-07-11T10:53:07Z', '2.1.224'),
-        ], 'version')
+        ], ('version',))
         self.assertEqual([entry['version'] for entry in timeline], ['2.1.224', '2.1.228'])
+
+    def test_timeline_breaks_a_run_on_a_change_of_writer(self) -> None:
+        # Two processes holding one session write interleaved turns, each on
+        # its own version and entrypoint: every handover starts a run, and so
+        # does a handover on the same version. The on-disk order is resolved
+        # first (the 09:03:16 turn sits after the 09:03:19 one on disk and still
+        # collapses into the first run), and an entry without an entrypoint
+        # reports none rather than an empty field.
+        timeline = _run_timeline([
+            ('2026-07-26T09:02:44Z', '2.1.241', 'claude-vscode'),
+            ('2026-07-26T09:03:19Z', '2.1.246', 'cli'),
+            ('2026-07-26T09:03:16Z', '2.1.241', 'claude-vscode'),
+            ('2026-07-26T09:04:05Z', '2.1.241', 'claude-vscode'),
+            ('2026-07-26T09:05:00Z', '2.1.241', 'cli'),
+            ('2026-07-26T09:06:00Z', '2.1.241', ''),
+        ], ('version', 'entrypoint'))
+        self.assertEqual(timeline, [
+            {'time': '2026-07-26T09:02:44Z', 'version': '2.1.241', 'entrypoint': 'claude-vscode'},
+            {'time': '2026-07-26T09:03:19Z', 'version': '2.1.246', 'entrypoint': 'cli'},
+            {'time': '2026-07-26T09:04:05Z', 'version': '2.1.241', 'entrypoint': 'claude-vscode'},
+            {'time': '2026-07-26T09:05:00Z', 'version': '2.1.241', 'entrypoint': 'cli'},
+            {'time': '2026-07-26T09:06:00Z', 'version': '2.1.241'},
+        ])
 
     def test_history_state_reports_the_version_from_the_tail(self) -> None:
         entries = [

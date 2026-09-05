@@ -36,6 +36,7 @@ def _transcript_lines() -> list[str]:
             'type': 'assistant',
             'timestamp': '2026-07-11T10:53:07Z',
             'version': '2.1.224',
+            'entrypoint': 'claude-vscode',
             'message': {
                 'stop_reason': 'tool_use',
                 'model': 'claude-opus-4-8[1m]',
@@ -57,6 +58,7 @@ def _transcript_lines() -> list[str]:
             'type': 'assistant',
             'timestamp': '2026-07-11T10:54:06Z',
             'version': '2.1.226',
+            'entrypoint': 'cli',
             'message': {
                 'stop_reason': 'end_turn',
                 'model': 'claude-opus-4-8[1m]',
@@ -203,16 +205,17 @@ class ParseTest(TranscriptEnvTest):
         ])
 
     def test_cli_version_is_metadata_read_end_to_end(self) -> None:
-        # The Claude Code version is control metadata (which build wrote the turn),
-        # not conversation content: read deliberately, and - like the model - both
+        # The Claude Code version and the entrypoint of the process that wrote
+        # the turn are control metadata (which build wrote it, from where), not
+        # conversation content: read deliberately, and - like the model - both
         # as the current value and as the run-compressed upgrade log.
         self._write_transcript(_SESSION_ID, _CWD, _transcript_lines())
         state = state_for(local_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.cli_version, '2.1.226')
         self.assertEqual(state.cli_timeline, [
-            {'time': '2026-07-11T10:53:07Z', 'version': '2.1.224'},
-            {'time': '2026-07-11T10:54:06Z', 'version': '2.1.226'},
+            {'time': '2026-07-11T10:53:07Z', 'version': '2.1.224', 'entrypoint': 'claude-vscode'},
+            {'time': '2026-07-11T10:54:06Z', 'version': '2.1.226', 'entrypoint': 'cli'},
         ])
 
     def test_synthetic_model_is_excluded_from_split_and_history(self) -> None:

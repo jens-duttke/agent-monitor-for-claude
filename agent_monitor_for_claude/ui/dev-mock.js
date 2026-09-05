@@ -179,12 +179,14 @@ window.__MOCK_SNAPSHOT__ = {
                 { time: '2026-07-11T16:30:42Z', model: 'claude-opus-4-8[1m]' },
             ],
             // A session long enough to have outlived two CLI updates: its own
-            // "+N" badge dates each version, next to the model's.
+            // "+N" badge dates each version, next to the model's, and names
+            // where each run was written from (started in a terminal, carried
+            // on in VS Code).
             cli_version: '2.1.228',
             cli_timeline: [
-                { time: '2026-07-11T09:25:21Z', version: '2.1.224' },
-                { time: '2026-07-11T13:41:02Z', version: '2.1.226' },
-                { time: '2026-07-11T17:12:35Z', version: '2.1.228' },
+                { time: '2026-07-11T09:25:21Z', version: '2.1.224', entrypoint: 'cli' },
+                { time: '2026-07-11T13:41:02Z', version: '2.1.226', entrypoint: 'claude-vscode' },
+                { time: '2026-07-11T17:12:35Z', version: '2.1.228', entrypoint: 'claude-vscode' },
             ],
         }),
 

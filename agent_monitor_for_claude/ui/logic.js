@@ -1282,6 +1282,21 @@ function hostLabel(detected, entrypoint) {
     return null;
 }
 
+// Names for the entrypoint token stamped on each transcript entry, for the
+// version history: the host map plus the one token the host column never
+// names, since a CLI session is named there by its detected terminal and marked
+// by the CLI chip - a "CLI" fallback in hostLabel would double up. An unknown
+// token is still a name of sorts and falls back to itself (a `Map` lookup, so an
+// inherited property name cannot answer); no token names nothing.
+const ENTRYPOINT_LABELS = new Map([...ENTRYPOINT_HOSTS, ['cli', 'CLI']]);
+
+function entrypointLabel(entrypoint) {
+    if (typeof entrypoint !== 'string' || !entrypoint) {
+        return null;
+    }
+    return ENTRYPOINT_LABELS.get(entrypoint) || entrypoint;
+}
+
 // The record's origin: 'local' (the default - a session on this machine, or an
 // older record with no origin field at all) or 'wsl:<distro>' for a session whose
 // process runs inside that WSL distribution. Defaulting a non-string value
@@ -1386,15 +1401,19 @@ function modelHistory(timeline) {
 }
 
 // The Claude Code version timeline, same shape and ordering as modelHistory: one
-// entry per contiguous run of a version, the last one being the version in use.
-// A long session resumed after an upgrade spans more than one, which is what
-// dates a mid-session change in the agent's behaviour.
+// entry per contiguous run of a version written from one place, the last one
+// being the version in use. A long session resumed after an upgrade spans more
+// than one, which is what dates a mid-session change in the agent's behaviour.
+// Each run also names its origin - where the process that wrote it ran (VS
+// Code, the CLI) - because a version flipping back and forth every few seconds
+// is two processes holding the same session at once, and only the origin beside
+// each run makes that legible.
 function cliHistory(timeline) {
     const entries = Array.isArray(timeline) ? timeline : [];
     const history = [];
     for (const entry of entries) {
         if (entry && typeof entry.version === 'string' && entry.version) {
-            history.push({ time: entry.time, version: entry.version });
+            history.push({ time: entry.time, version: entry.version, origin: entrypointLabel(entry.entrypoint) });
         }
     }
 
@@ -1425,9 +1444,10 @@ function changelogUrl(version) {
 
 // Whether the CLI-version column carries information for the sessions currently
 // in view - the condition for showing it at all. True once the versions differ
-// across sessions, or one session itself spans more than one: with every session
-// on the same single version the column would repeat one value per row, which is
-// why it is left out entirely instead.
+// across sessions, or one session itself spans more than one run (an update, or
+// a handover to a process elsewhere): with every session on the same single
+// version the column would repeat one value per row, which is why it is left out
+// entirely instead.
 function cliColumnRelevant(sessions) {
     const list = Array.isArray(sessions) ? sessions : [];
     const seen = new Set();
@@ -1764,6 +1784,7 @@ const AMC_LOGIC = {
     changelogUrl,
     cliColumnRelevant,
     hostLabel,
+    entrypointLabel,
     isViaCli,
     isBackground,
     kindLabelKey,

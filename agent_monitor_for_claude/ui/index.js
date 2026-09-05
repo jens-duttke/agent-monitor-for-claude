@@ -2388,7 +2388,9 @@ function modelCellHtml(session) {
 // The Claude Code version column, shown only while more than one version is in
 // view (see cliColumnRelevant). The version text links to its own changelog
 // section, and a "+N" badge - the model column's, one column over - lists the
-// versions a session spanned when it outlived a CLI update.
+// versions a session spanned when it outlived a CLI update, each with where it
+// was written from, which is what tells an update apart from two processes
+// writing the same session at once.
 function cliCellHtml(session) {
     const version = session.cli_version || '';
     if (!version) {
@@ -2414,7 +2416,7 @@ function cliCellHtml(session) {
     }
 
     const history = session.cli_history || [];
-    const lines = history.map((entry) => fmtDateTime(entry.time) + '  ' + entry.version);
+    const lines = history.map((entry) => fmtDateTime(entry.time) + '  ' + entry.version + (entry.origin ? ' · ' + entry.origin : ''));
     return html + '<span class="cli-more"' + attr('data-tip', lines.join('\n')) + '>+' + esc(history.length - 1) + '</span>';
 }
 
