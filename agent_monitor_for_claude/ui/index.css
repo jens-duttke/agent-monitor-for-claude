@@ -1291,6 +1291,84 @@ body {
     }
 }
 
+/* --- Search hits under a matched row ---
+
+   A second grid line under the row's own cells, starting in the title column so
+   the passages sit under the session they were found in. Empty on every row
+   until a search matches it, and `display: none` while empty so no row pays the
+   grid gap for a block it is not showing. The block is the one part of a row
+   that is meant to be read and selected rather than clicked, hence the text
+   cursor and the click exemption in index.js. */
+.row-hits {
+    grid-column: 2 / -1;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 11.5px;
+    line-height: 1.5;
+    cursor: text;
+    user-select: text;
+
+    &:empty {
+        display: none;
+    }
+
+    .hit-count,
+    .hit-more {
+        color: var(--fg-dim);
+        font-variant-numeric: tabular-nums;
+    }
+
+    .hit-more {
+        font-style: italic;
+    }
+
+    /* Source label and text on one line, the label keeping its width so the
+       excerpts line up under each other however long the names are. */
+    .hit {
+        display: flex;
+        align-items: baseline;
+        gap: 9px;
+        min-width: 0;
+    }
+
+    /* The lower bound lines the excerpts up under each other; the upper one is
+       what keeps an MCP tool's long `mcp__server__tool` name from eating the
+       row - it is context for the excerpt, never the point of it, so it
+       ellipsizes rather than pushing the passage off the right edge. */
+    .hit-source {
+        flex: none;
+        min-width: 62px;
+        max-width: 116px;
+        color: var(--fg-dim);
+        opacity: 0.8;
+        text-align: right;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    /* One line per hit, clipped rather than wrapped: the excerpt is already
+       bounded by the backend, and a wrapping one would push the next row down
+       by an amount that depends on the window width. */
+    .hit-text {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--fg-dim);
+        font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+    }
+
+    mark {
+        background: color-mix(in srgb, var(--c-awaiting_permission) 32%, transparent);
+        color: var(--fg-heading);
+        border-radius: 2px;
+        padding: 0 1px;
+    }
+}
+
 .status-working .dot,
 .status-processing .dot {
     animation: pulse 1.8s ease-out infinite;

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On Linux the app needs one file where Windows uses a named mutex: a lock file in the session's runtime directory that keeps a second window from starting. [PRIVACY.md](PRIVACY.md) lists everything the app touches, per system.
 - A background agent's row menu copies its `claude attach` command. That command is the only way back into a session that runs under the agent daemon with no window of its own.
 - An agent whose Auto mode has been put on hold now says so. Claude Code stops trusting its safety classifier after three blocked calls in a row and prompts you about everything again - the row now shows a paused badge next to the mode, with the session's number of blocked calls on hover.
+- Search results now show what was found. A matching session's row lists how many hits its transcript holds, plus up to five excerpts with the hit in the middle and the surrounding text either side, each labelled with where it came from - you, Claude, its reasoning, or a named tool.
 - The released `AgentMonitorForClaude.exe` is now code signed, so Windows can name its publisher instead of reporting an unknown one. Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Every release is built by a GitHub Actions workflow from the tagged source in this repository - never on a developer machine - and signed only after a manual approval; see the code signing policy in the README.
 
 ### Fixed
@@ -26,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A session reopened after its previous Claude Code process ended no longer reads *Working* - or *Permission needed* - on the strength of a turn that process never finished. It reads *Idle* until you send the next prompt.
 
 ### Changed
+- The content search now matches the conversation text rather than the raw transcript file, so a hit is always something written or read - a search no longer matches session identifiers, timestamps, or the project path that sits on every line. Counting the hits means reading each file to the end, so a search across a very large history window takes noticeably longer than before.
 - The version badge's list now says where each run was written from - VS Code or the CLI. A version flipping back and forth every few seconds is two Claude Code processes holding the same session at once, which the list can now show.
 - The `dontAsk` permission mode now shows as *Don't ask* instead of its raw configuration name.
 - A session whose transcript holds no conversation turn yet reads *Quiet* instead of *Idle*, so it no longer sits under *Needs you* claiming a reply is owed.

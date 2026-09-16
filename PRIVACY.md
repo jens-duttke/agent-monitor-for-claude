@@ -20,8 +20,8 @@ Last reviewed: 2026-09-02
 | Does it read your credentials? | No. It never opens `.credentials.json` and never reads a token, key, or cookie. |
 | Does it send telemetry, analytics, or crash reports? | No. None, of any kind. |
 | Does it send your data anywhere? | No. It never transmits anything it reads, and the page it renders declares a Content-Security-Policy that forbids network requests outright, so the browser engine would refuse one even if the code asked. |
-| Does it read your conversations? | It scans transcript files for control metadata, and takes three short display fields out of them, plus one line of Claude Code's own error text. Two on-demand features go further: the content search, and the background-task console. |
-| Does it display conversation text? | Three short fields: the session title, each subagent's task description, and a background task's label. Nothing else from a conversation is ever shown. One further line comes from Claude Code itself rather than from a conversation: the message of a turn that stopped on an API error, shown in that session's status tooltip. |
+| Does it read your conversations? | It scans transcript files for control metadata, and takes three short display fields out of them, plus one line of Claude Code's own error text. Two on-demand features read more: the content search, which matches your query against conversation text and shows short excerpts of what it found, and the background-task console. |
+| Does it display conversation text? | Three short fields: the session title, each subagent's task description, and a background task's label. Beyond those, only what a search you typed found: a matching session's row lists up to five short excerpts around the hits, each clipped to about 60 characters either side. One further line comes from Claude Code itself rather than from a conversation: the message of a turn that stopped on an API error, shown in that session's status tooltip. |
 | Does it write to disk? | Only its own files. On Windows in three places: the browser profile that stores your interface preferences, a session deletion you explicitly confirm, and its own program bundle unpacked into your temp folder at startup. On Linux the profile and the deletion, plus a lock file in the session's runtime directory; there is no bundle to unpack, since the app runs from source there. |
 | Does it modify your Claude Code data? | Never. The only removal is the session deletion you confirm yourself. |
 
@@ -225,11 +225,17 @@ feature that matches conversation text against something you supplied, so it is 
   time - and each click adds exactly that one step for exactly that one query. Nothing widens on its
   own. It narrows back the moment you edit the search text, or immediately when you use the "Reset"
   control on the line above the results.
-- It answers one question per file - does this transcript contain the string - and abandons the file
-  at the first hit.
-- It reports back **only the ids of the matching sessions**. Not a line, not a snippet, not a
-  character of matched text ever leaves the search code, reaches the interface, or is stored
-  anywhere.
+- It matches against the **readable text** of each entry - what was written or read: message text,
+  reasoning, tool inputs, tool results, and compaction summaries. The control fields around them
+  (identifiers, timestamps, the project path on every line) are not searched, so a hit is always a
+  passage rather than a piece of bookkeeping.
+- It reports back the matching session ids, **how many hits** each transcript holds, and **up to five
+  short excerpts** per session. Each excerpt carries the hit plus at most 60 characters either side of
+  it, cut at the hit's own line - enough to recognize the passage, and bounded so it can never grow
+  into a dump of the conversation. Everything past those five excerpts stays in the file.
+- Excerpts are shown in the interface and held only for as long as the search results are. They are
+  never written to disk, and - there being no network anywhere in this application - they never leave
+  your machine.
 - Your query itself is not saved. The three search toggles (match case, whole word, regular
   expression) are remembered; the text you searched for is not.
 
@@ -509,9 +515,9 @@ WebView2 exempts host-injected script from the page's policy and WebKitGTK does 
 bridge never appears on Linux and the window stays empty. It permits code generation; it admits no new
 script source, and no line of this application's own code calls `eval`, `new Function`, or a
 string-bodied timer - which is what the search above checks. The one place the backend pushes code
-into the page is a fixed function call handing over the matching session ids during a search, whose
-only interpolated value is a `json.dumps` payload of those ids; no user-supplied text is ever placed
-into it.
+into the page is a fixed function call handing over a search's results, whose only interpolated value
+is a `json.dumps` payload of those results - the matching ids, their hit counts, and the bounded
+excerpts described above. The call itself is a constant; nothing is ever assembled into code.
 
 One more guarantee is worth checking directly: that the one external program this application ever runs
 on Windows is invoked from exactly one place, and that the module owning it never spawns a process any
@@ -554,8 +560,11 @@ so a green run means everything applicable to your system passed.
   from the first prompt and that a later message's text never appears in that data, and that an API
   error's message is read no further than its first line - a second line, a further block, and every
   ordinary turn stay unread.
-- [tests/test_search.py](tests/test_search.py) asserts that the content search returns session ids
-  only, and that a crafted session id cannot point it outside the `projects/` folder.
+- [tests/test_search.py](tests/test_search.py) asserts the search boundary: that a session reports at
+  most five excerpts however many hits it holds, that text beyond the context window either side of a
+  hit is never reported, that a greedy regular expression still cannot return more than its clipped
+  match, that matching runs on readable text rather than on identifiers, timestamps or the project
+  path, and that a crafted session id cannot point the read outside the `projects/` folder.
 - [tests/test_tasks.py](tests/test_tasks.py) asserts the task-output boundary: id validation, path
   confinement, redirect confinement, and tail-only reads.
 - [tests/test_session_delete.py](tests/test_session_delete.py) asserts the deletion guards: that a

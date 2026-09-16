@@ -264,10 +264,11 @@ class _MonitorApi:
     def start_search(self, query: object, sessions: object, options: object, seq: object) -> bool:
         """Start a streaming content search over the given in-view sessions.
 
-        Content-based but strictly encapsulated (see ``search``): the scan reads
-        transcripts locally and pushes back only matching session ids and
-        progress counts - never any conversation text.  ``options`` carries the
-        editor toggles (match case, whole word, regular expression).  Returns
+        Content-based and encapsulated (see ``search``): the scan reads
+        transcripts locally and pushes back each matching session's id, its hit
+        count, and a few short excerpts around the first hits - bounded in
+        number and length there, and never leaving this machine.  ``options``
+        carries the editor toggles (match case, whole word, regex).  Returns
         immediately; the scan runs on its own daemon thread and reports through
         ``window.__amcSearchPush`` as it goes, so results and the progress bar
         fill in live.  ``seq`` is the UI's monotonic search id: starting a new
@@ -297,7 +298,7 @@ class _MonitorApi:
         def cancelled() -> bool:
             return self._search_seq != seq
 
-        def on_update(processed: int, total: int, matches: list[str], done: bool, error: bool) -> None:
+        def on_update(processed: int, total: int, matches: list[dict[str, Any]], done: bool, error: bool) -> None:
             self._push_search(seq, processed, total, matches, done, error)
 
         try:
@@ -310,12 +311,13 @@ class _MonitorApi:
             if not cancelled():
                 self._push_search(seq, 0, 0, [], True, True)
 
-    def _push_search(self, seq: int, processed: int, total: int, matches: list[str], done: bool, error: bool) -> None:
+    def _push_search(self, seq: int, processed: int, total: int, matches: list[dict[str, Any]], done: bool, error: bool) -> None:
         """Push one search update into the page via the window bridge.
 
         A superseded search (its id no longer current) is dropped, so a stale
-        scan cannot write results over a newer one.  Only ids, counts, and an
-        error flag cross the bridge - never conversation content.
+        scan cannot write results over a newer one.  What crosses is each
+        match's id, hit count and short excerpts, all shaped and bounded by
+        ``search`` - this end neither adds to them nor reads them.
         """
         window = self._window
         if window is None or self._search_seq != seq:
@@ -323,7 +325,7 @@ class _MonitorApi:
 
         payload = json.dumps({
             'seq': seq, 'processed': processed, 'total': total,
-            'ids': list(matches), 'done': done, 'error': error,
+            'matches': list(matches), 'done': done, 'error': error,
         })
         try:
             # run_js, not evaluate_js: the latter wraps the script in an eval()

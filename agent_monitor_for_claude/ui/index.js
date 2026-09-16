@@ -54,9 +54,10 @@ const state = {
     // Free-text search over the session CONTENT (transcript text), in-session
     // only (deliberately not persisted, so a restart never hides everything
     // behind a stale query). The match is computed by the Python bridge, which
-    // reads the transcripts and returns only the matching session ids - no
-    // content ever reaches the UI. `searchMatches` holds that id set; null means
-    // no content filter is active yet.
+    // reads the transcripts and returns each hit session's id, its hit count and
+    // a few short excerpts - bounded there, and all this side ever holds.
+    // `searchMatches` is that Map, keyed by session id; null means no content
+    // filter is active yet.
     search: '',
     searchMatches: null,
     searchLoading: false,
@@ -2119,7 +2120,7 @@ function runSearch() {
         return;
     }
 
-    state.searchMatches = new Set();
+    state.searchMatches = new Map();
     state.searchLoading = true;
     state.searchProcessed = 0;
     state.searchTotal = 0;
@@ -2166,7 +2167,7 @@ function rescanForNewMatches() {
     if (query.length < SEARCH_MIN_CHARS || state.searchError || state.searchLoading) {
         return;
     }
-    if (!(state.searchMatches instanceof Set)) {
+    if (!(state.searchMatches instanceof Map)) {
         return;
     }
 
@@ -2238,18 +2239,19 @@ function widenSearch(step) {
 function resetWidenedSearch() {
     state.searchIncludeHidden = false;
 
-    if (state.searchMatches instanceof Set) {
+    if (state.searchMatches instanceof Map) {
         const inScope = new Set(collectSearchRefs(true).map((ref) => ref.session_id));
-        state.searchMatches = new Set([...state.searchMatches].filter((id) => inScope.has(id)));
+        state.searchMatches = new Map([...state.searchMatches].filter(([id]) => inScope.has(id)));
     }
     if (state.last) {
         render(state.last);
     }
 }
 
-// One streaming update from the backend: {seq, processed, total, ids, done, error}.
-// A stale seq (a newer search has started) is ignored. Pure progress ticks only
-// move the bar; a re-render happens when new matches arrive or the scan ends.
+// One streaming update from the backend: {seq, processed, total, matches, done,
+// error}, each match {session_id, count, snippets, partial?}. A stale seq (a
+// newer search has started) is ignored. Pure progress ticks only move the bar; a
+// re-render happens when new matches arrive or the scan ends.
 function onSearchPush(payload) {
     if (!payload || payload.seq !== state.searchSeq) {
         return;
@@ -2273,15 +2275,19 @@ function onSearchPush(payload) {
     state.searchTotal = payload.total || 0;
 
     let changed = false;
-    if (Array.isArray(payload.ids) && payload.ids.length) {
-        if (!(state.searchMatches instanceof Set)) {
-            state.searchMatches = new Set();
+    if (Array.isArray(payload.matches) && payload.matches.length) {
+        if (!(state.searchMatches instanceof Map)) {
+            state.searchMatches = new Map();
         }
-        for (const id of payload.ids) {
-            if (!state.searchMatches.has(id)) {
-                state.searchMatches.add(id);
-                changed = true;
+        for (const match of payload.matches) {
+            // A match without an id cannot be attached to a row; a session
+            // already matched keeps the first result, since a delta rescan only
+            // ever re-reads sessions that were not matched before.
+            if (!match || !match.session_id || state.searchMatches.has(match.session_id)) {
+                continue;
             }
+            state.searchMatches.set(match.session_id, match);
+            changed = true;
         }
     }
     if (payload.done) {
@@ -2318,20 +2324,34 @@ function updateSearchProgress() {
 
 // Preview-only fallback (no bridge, so no transcript access): match the query
 // against the mock records' visible fields, over the same in-view scope the real
-// search uses. Never used in the packaged app.
+// search uses. The hits it fabricates have the shape the backend sends, so the
+// preview exercises the excerpt rendering too. Never used in the packaged app.
 function mockSearchMatches(query) {
     const needle = query.toLowerCase();
     const scope = new Set(currentSessionRefs().map((ref) => ref.session_id));
-    const matches = new Set();
+    const matches = new Map();
     const scan = (list) => {
         for (const raw of list || []) {
             if (!scope.has(raw.session_id)) {
                 continue;
             }
-            const hay = [raw.title, raw.short_name, raw.cwd, raw.model_id].filter(Boolean).join(' ').toLowerCase();
-            if (hay.includes(needle)) {
-                matches.add(raw.session_id);
+            const hay = [raw.title, raw.short_name, raw.cwd, raw.model_id].filter(Boolean).join(' ');
+            const at = hay.toLowerCase().indexOf(needle);
+            if (at < 0) {
+                continue;
             }
+            matches.set(raw.session_id, {
+                session_id: raw.session_id,
+                count: 3,
+                snippets: [{
+                    kind: 'user',
+                    before: hay.slice(Math.max(0, at - 40), at),
+                    match: hay.slice(at, at + needle.length),
+                    after: hay.slice(at + needle.length, at + needle.length + 40),
+                    clipped_before: at > 40,
+                    clipped_after: hay.length > at + needle.length + 40,
+                }],
+            });
         }
     };
     scan(state.last ? state.last.sessions : []);
@@ -2498,7 +2518,12 @@ function createRow() {
         + '<span class="cli-cell"></span>'
         + '<span class="host-cell"></span>'
         + '<span class="age"></span>'
-        + '<button class="row-menu-btn" type="button">&#8943;</button>';
+        + '<button class="row-menu-btn" type="button">&#8943;</button>'
+        // Where a content search lists what it found in this session. Always in
+        // the DOM so reconciliation reuses it; empty (and out of the grid flow)
+        // for every row with no hits to show, which is every row until a search
+        // runs.
+        + '<div class="row-hits"></div>';
 
     bindUsageHover(row.querySelector('.usage-cell'));
     return row;
@@ -2606,6 +2631,33 @@ function updateRow(row, session, projectName) {
         delete menuBtn.dataset.history;
     }
     menuBtn.setAttribute('aria-label', labels.row_menu || 'More actions');
+
+    // The passages a content search found in this session, if one is active and
+    // has settled on this row. Cleared for every other row, so an old result
+    // never lingers under a session the current query did not match.
+    //
+    // Rewritten only when the result itself is a different object, the way the
+    // task console diffs its raw text and for the same two reasons: the excerpts
+    // are meant to be selected and copied, and rewriting them on the per-second
+    // poll would drop the selection mid-drag - and a match is never mutated in
+    // place (onSearchPush keeps the first result per session), so identity is an
+    // exact test rather than an approximation of one.
+    const hitsEl = row.querySelector('.row-hits');
+    const hit = searchHitFor(session.session_id);
+    if (hitsEl.__searchHit !== hit) {
+        hitsEl.__searchHit = hit;
+        hitsEl.innerHTML = logic.searchHitsMarkup(hit, labels);
+    }
+}
+
+// This session's search result, or null when no search matched it. A row only
+// appears once its own match has arrived, so a result is complete whenever there
+// is a row to put it under - a running scan adds rows, it never fills in old ones.
+function searchHitFor(sessionId) {
+    if (!(state.searchMatches instanceof Map)) {
+        return null;
+    }
+    return state.searchMatches.get(sessionId) || null;
 }
 
 function topStatus(sessions) {
@@ -2956,6 +3008,12 @@ function onContentClick(event) {
         return;
     }
 
+    // The found passages are there to be read and copied, so a click that lands
+    // in them must not raise the session's window out from under a selection.
+    if (event.target.closest('.row-hits')) {
+        return;
+    }
+
     const focusEl = event.target.closest('.row[data-pid], .hero-link[data-pid]');
     if (focusEl) {
         focusSession(focusEl);
@@ -3055,7 +3113,7 @@ function render(snapshot) {
     // every hidden session.
     const widened = searchActive && state.searchIncludeHidden;
     const isWidenedHit = (session) => widened
-        && state.searchMatches instanceof Set
+        && state.searchMatches instanceof Map
         && state.searchMatches.has(session.session_id);
 
     // The past sessions the current window covers, minus any that came back to

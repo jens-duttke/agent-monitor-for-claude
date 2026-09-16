@@ -962,6 +962,88 @@ test('widenedNoticeMarkup: a plural-invariant count, plus the way back', () => {
     assert.match(logic.widenedNoticeMarkup(1), /class="search-notice"/);
 });
 
+const HIT_LABELS = {
+    search_hits_count: 'Found: {count}',
+    search_hits_more: 'Not shown: {count}',
+    search_hit_user: 'You',
+    search_hit_thinking: 'Thinking',
+    search_hit_tool_result: 'Result',
+};
+
+test('searchHitsMarkup: the count leads, the excerpts follow, the remainder is named', () => {
+    const html = logic.searchHitsMarkup({
+        session_id: 'a',
+        count: 4,
+        snippets: [
+            { kind: 'user', before: 'left ', match: 'needle', after: ' right' },
+            { kind: 'thinking', before: 'cut off', match: 'needle', after: '', clipped_before: true },
+        ],
+    }, HIT_LABELS);
+
+    assert.match(html, /Found: 4/);
+    assert.match(html, /<mark>needle<\/mark>/);
+    assert.match(html, />You</);
+    assert.match(html, />Thinking</);
+    // Two of four hits are shown, so the rest is stated rather than left to be
+    // inferred from the two numbers not matching.
+    assert.match(html, /Not shown: 2/);
+    // The clip marker sits on the side text was dropped from, and only there.
+    assert.match(html, /…cut off<mark>/);
+});
+
+test('searchHitsMarkup: both counts are plural-invariant', () => {
+    // The label carries no counted noun and the number comes last, so a single
+    // hit cannot read "1 hits" - the same idiom as every other counted label.
+    const one = logic.searchHitsMarkup({ count: 1, snippets: [{ kind: 'user', match: 'x' }] }, HIT_LABELS);
+    assert.match(one, /Found: 1/);
+
+    const many = logic.searchHitsMarkup({ count: 9, snippets: [{ kind: 'user', match: 'x' }] }, HIT_LABELS);
+    assert.match(many, /Found: 9/);
+    assert.match(many, /Not shown: 8/);
+});
+
+test('searchHitsMarkup: a count the backend stopped short of is marked, not rounded', () => {
+    // The scan gives up counting past its cap, so the figure is a floor. Saying
+    // "500" flat would claim a total it never established.
+    const html = logic.searchHitsMarkup({
+        count: 500, partial: true, snippets: [{ kind: 'user', match: 'x' }],
+    }, HIT_LABELS);
+
+    assert.match(html, /Found: 500\+/);
+    assert.match(html, /Not shown: 499\+/);
+});
+
+test('searchHitsMarkup: a tool call names the tool, an unknown kind names nothing', () => {
+    const html = logic.searchHitsMarkup({
+        count: 2,
+        snippets: [
+            { kind: 'tool_use', tool: 'Bash', before: '', match: 'grep', after: '' },
+            { kind: 'not-a-kind', before: '', match: 'grep', after: '' },
+        ],
+    }, HIT_LABELS);
+
+    // "Bash" says far more than "Tool" would.
+    assert.match(html, />Bash</);
+    // An unknown kind still renders its excerpt - just without a source label.
+    assert.equal((html.match(/<mark>grep<\/mark>/g) || []).length, 2);
+    assert.equal((html.match(/hit-source/g) || []).length, 1);
+});
+
+test('searchHitsMarkup: nothing to report yields no markup at all', () => {
+    // An empty string keeps the row's hits container out of the grid flow, so a
+    // row with no hits pays neither the gap nor an empty line.
+    assert.equal(logic.searchHitsMarkup(null, HIT_LABELS), '');
+    assert.equal(logic.searchHitsMarkup({ count: 0 }, HIT_LABELS), '');
+    assert.equal(logic.searchHitsMarkup({ count: 'lots' }, HIT_LABELS), '');
+
+    // Every hit shown: no remainder line, which would read as hidden hits.
+    const complete = logic.searchHitsMarkup({ count: 1, snippets: [{ kind: 'user', match: 'x' }] }, HIT_LABELS);
+    assert.ok(!complete.includes('hit-more'));
+
+    // Missing labels must still produce the block, not throw.
+    assert.match(logic.searchHitsMarkup({ count: 1, snippets: [] }), /class="row-hits"/);
+});
+
 test('searchScopeRefs: refs carry the session origin, defaulting to windows', () => {
     // The scoped refs are what the origin-aware start_search bridge call
     // receives, so each ref needs to know which root to search.
@@ -1950,4 +2032,53 @@ test('empty-state and notice markup keep hostile label text out of the markup', 
     // The tooltip's quote is escaped, so it cannot close the attribute it sits in.
     assert.ok(!notice.includes('" onmouseover='));
     assert.match(notice, /data-tip="&quot; onmouseover=&quot;alert\(1\)"/);
+});
+
+test('search-hit markup keeps transcript text and tool names out of the markup', () => {
+    // This is the one place transcript text reaches the page, so every piece of
+    // it is hostile input: the excerpt is whatever the conversation contained,
+    // the tool name is whatever the entry called itself, and the count is
+    // interpolated like any other value.
+    const html = logic.searchHitsMarkup({
+        count: 2,
+        snippets: [
+            {
+                kind: 'user',
+                before: '</span><script>x</script>',
+                match: '<img src=x onerror=alert(1)>',
+                after: '" onmouseover="alert(1)',
+            },
+            { kind: 'tool_use', tool: '<svg onload=alert(1)>', before: '', match: 'y', after: '' },
+        ],
+    }, { search_hits_count: 'Found: {count}', search_hit_user: 'You' });
+
+    assert.ok(!html.includes('<script'));
+    assert.ok(!html.includes('<img'));
+    assert.ok(!html.includes('<svg'));
+    assert.ok(!html.includes('" onmouseover='));
+    // The excerpt's own closing tag is escaped rather than closing the span it
+    // sits in - the renderer's own </span> is the only real one in the output.
+    assert.match(html, /&lt;\/span&gt;&lt;script&gt;/);
+    // The only markup around a hit is the <mark> the renderer itself writes.
+    assert.match(html, /<mark>&lt;img src=x onerror=alert\(1\)&gt;<\/mark>/);
+
+    // The count is the one interpolated value that never reaches esc as given:
+    // anything but a real number produces no block at all, which is a stronger
+    // guarantee than escaping it would be.
+    assert.equal(logic.searchHitsMarkup({ count: '<b>2</b>', snippets: [] }, {}), '');
+});
+
+test('the search-hit kind lookup cannot answer with an inherited value', () => {
+    // `kind` is backend data like every other on-disk token here, so the lookup
+    // is a Map: an object would resolve `constructor` to an inherited value and
+    // render a function into the row.
+    const html = logic.searchHitsMarkup({
+        count: 1,
+        snippets: [{ kind: 'constructor', before: '', match: 'x', after: '' }],
+    }, { search_hits_count: 'Found: {count}' });
+
+    assert.ok(!html.includes('function'));
+    assert.ok(!html.includes('Object'));
+    assert.ok(!html.includes('hit-source'));
+    assert.match(html, /<mark>x<\/mark>/);
 });

@@ -624,7 +624,7 @@ function defaultFilterKeys(filterDefs) {
 // Whether a session passes the content-search filter. A null match set means no
 // search has produced results yet - a fresh query still inside its typing
 // debounce, or a cleared/invalid one - so nothing is filtered and every session
-// shows. An empty Set means a search actually ran and matched nothing, so it
+// shows. An empty Map means a search actually ran and matched nothing, so it
 // correctly hides everything. Without the null case a just-typed query would
 // briefly hide every row and flash a false "nothing matches".
 function sessionMatchesSearch(sessionId, searchActive, searchMatches) {
@@ -632,6 +632,86 @@ function sessionMatchesSearch(sessionId, searchActive, searchMatches) {
         return true;
     }
     return searchMatches.has(sessionId);
+}
+
+/* --- search hits --- */
+
+// What each excerpt's `kind` token is called. A Map, not an object, because the
+// token is backend data: an object lookup would resolve `constructor` to an
+// inherited value and render a function into the row. An unknown kind names no
+// source at all - the excerpt still reads fine without one.
+const SEARCH_HIT_LABEL_KEYS = new Map([
+    ['user', 'search_hit_user'],
+    ['assistant', 'search_hit_assistant'],
+    ['thinking', 'search_hit_thinking'],
+    ['tool_use', 'search_hit_tool'],
+    ['tool_result', 'search_hit_tool_result'],
+    ['system', 'search_hit_system'],
+    ['summary', 'search_hit_summary'],
+]);
+
+// The found passages beneath a matched row: how many hits the transcript holds,
+// then the excerpts the backend sent for the first few of them. Only those
+// excerpts exist here - the rest of the transcript never reached the interface -
+// so "not shown" is a real remainder, not a collapsed section.
+//
+// Both counts are plural-invariant by construction: the label carries no counted
+// noun and the number comes last, like every other counted label here. A count
+// the backend had to stop short of is suffixed "+", which needs no wording of
+// its own in any language.
+function searchHitsMarkup(hit, labels) {
+    const count = hit ? Number(hit.count) : 0;
+    if (!Number.isFinite(count) || count <= 0) {
+        return '';
+    }
+
+    const strings = labels || {};
+    const snippets = Array.isArray(hit.snippets) ? hit.snippets : [];
+    const partial = hit.partial ? '+' : '';
+
+    let html = '<div class="row-hits">'
+        + '<span class="hit-count">' + esc(fmt(strings.search_hits_count, { count: count + partial })) + '</span>';
+
+    for (const snippet of snippets) {
+        html += searchHitMarkup(snippet, strings);
+    }
+
+    const remaining = count - snippets.length;
+    if (remaining > 0) {
+        html += '<span class="hit-more">' + esc(fmt(strings.search_hits_more, { count: remaining + partial })) + '</span>';
+    }
+
+    return html + '</div>';
+}
+
+// One excerpt: where it came from, then the text with the hit marked. The three
+// text pieces are escaped separately so the <mark> around the hit is the only
+// markup in the line - nothing from a transcript can contribute a tag.
+function searchHitMarkup(snippet, labels) {
+    if (!snippet || typeof snippet !== 'object') {
+        return '';
+    }
+
+    const source = searchHitSource(snippet, labels);
+    const before = (snippet.clipped_before ? '…' : '') + String(snippet.before == null ? '' : snippet.before);
+    const after = String(snippet.after == null ? '' : snippet.after) + (snippet.clipped_after ? '…' : '');
+
+    return '<span class="hit">'
+        + (source ? '<span class="hit-source">' + esc(source) + '</span>' : '')
+        + '<span class="hit-text">' + esc(before) + '<mark>' + esc(snippet.match) + '</mark>' + esc(after) + '</span>'
+        + '</span>';
+}
+
+// A tool call names the tool itself - "Bash" says far more than "Tool" - and
+// everything else takes its kind's label. The name is on-disk data, so it is
+// passed on as text and escaped by the caller, never looked up as a key.
+function searchHitSource(snippet, labels) {
+    if (typeof snippet.tool === 'string' && snippet.tool) {
+        return snippet.tool;
+    }
+
+    const key = SEARCH_HIT_LABEL_KEYS.get(snippet.kind);
+    return key ? (labels[key] || '') : '';
 }
 
 // A fire-and-forget bridge call returns a promise, so a Python-side rejection
@@ -1751,6 +1831,7 @@ const AMC_LOGIC = {
     emptyStateMarkup,
     widenedNoticeMarkup,
     sessionMatchesSearch,
+    searchHitsMarkup,
     defaultFilterKeys,
     settleCall,
     pendingIsBlocking,
