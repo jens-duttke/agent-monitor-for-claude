@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-16
+
 ### Added
 - **Linux support** - Agent Monitor now runs on Linux as well as Windows. The overview, search, history, process and task panels, session deletion, and the jump to an agent's window all work there; see the [README](README.md#linux) for the packages it needs. There is no prebuilt binary - the app runs from source against the GTK and WebKit libraries your desktop ships.
 - On Linux, an `agent-monitor-for-claude` launcher script in the checkout starts the app from any directory without activating the virtual environment first. Symlink it into `~/.local/bin` for a global command.
@@ -182,7 +184,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 13 languages, auto-detected from the system locale.
 - Optional settings file to tune the poll interval and window size.
 
-[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.5.0...v0.6.0
