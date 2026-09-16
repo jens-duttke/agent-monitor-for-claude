@@ -12,7 +12,16 @@ from __future__ import annotations
 
 import sys
 
-from agent_monitor_for_claude.app import run
+MIN_PYTHON = (3, 10)
+
+# Checked before the package imports, which pull in pywebview and fail there with an ImportError
+# that names a typing helper rather than the Python version behind it.
+if sys.version_info < MIN_PYTHON:
+    _required = '.'.join(str(part) for part in MIN_PYTHON)
+    _running = '.'.join(str(part) for part in sys.version_info[:3])
+    raise SystemExit(f'Agent Monitor for Claude needs Python {_required} or newer, but is running on {_running} ({sys.executable}).')
+
+from agent_monitor_for_claude.app import run  # noqa: E402  # the version guard above has to run first
 from agent_monitor_for_claude.platforms import prepare_gui_environment
 from agent_monitor_for_claude.single_instance import ensure_single_instance, release_instance_lock
 from agent_monitor_for_claude.verbose import print_startup_diagnostics, setup_console

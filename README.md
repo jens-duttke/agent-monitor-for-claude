@@ -50,13 +50,30 @@ If you run many Claude Code agents across several projects, you cannot tell from
 ### Windows
 Download `AgentMonitorForClaude.exe` from the [latest release](https://github.com/jens-duttke/agent-monitor-for-claude/releases) and run it. No installation.
 
-To run it from source instead:
+To run it from source instead, check which Python you have first - it has to be 3.10 or newer:
+
+```sh
+python --version
+```
+
+Then:
 
 ```sh
 python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python -m pip install -r requirements.txt
 .venv\Scripts\python -m agent_monitor_for_claude
 ```
+
+If `python --version` reports an older release, install a current one from
+[python.org](https://www.python.org/downloads/windows/) and create the environment with its full
+path, for example:
+
+```sh
+C:\Users\you\AppData\Local\Programs\Python\Python313\python.exe -m venv .venv
+```
+
+Do not reach for `py -3` instead - an outdated launcher picks the wrong installation. Delete an
+existing `.venv` before you start again: a virtual environment keeps the Python it was created with.
 
 ### Linux
 There is no prebuilt binary: PyInstaller cannot bundle GTK and WebKit reliably, so the app runs from source against the libraries your desktop already ships. Tested on Ubuntu with GNOME.
