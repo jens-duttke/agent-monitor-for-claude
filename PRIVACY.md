@@ -15,7 +15,7 @@ Last reviewed: 2026-09-02
 
 | Question | Answer |
 | --- | --- |
-| Does the application connect to the internet? | No. It has no HTTP client and no network client import in any of its own modules. It carries exactly one remote address - a link to Claude Code's public changelog - which it never requests itself; clicking it opens your normal browser. See [Network Communication](#network-communication). The embedded Microsoft browser engine it renders in is a separate matter, stated there too. |
+| Does the application connect to the internet? | No. It has no HTTP client in any of its own modules, and opens no connection of any kind - its one use of a network socket binds a port on your own machine to check that the interface server can have it. It carries exactly one remote address - a link to Claude Code's public changelog - which it never requests itself; clicking it opens your normal browser. See [Network Communication](#network-communication). The embedded Microsoft browser engine it renders in is a separate matter, stated there too. |
 | Does it run any other program? | On Windows, exactly one, and only to list which WSL distributions are currently running: `wsl.exe --list --running --quiet`, invoked by its absolute `System32` path so no same-named file elsewhere can ever be run in its place. Nothing is ever run *inside* a distribution. On Linux it runs no program at all. See [Programs it runs](#programs-it-runs). |
 | Does it read your credentials? | No. It never opens `.credentials.json` and never reads a token, key, or cookie. |
 | Does it send telemetry, analytics, or crash reports? | No. None, of any kind. |
@@ -36,8 +36,10 @@ writes](#what-the-application-writes).
 ## Network Communication
 
 The **application** makes no outbound network connections. Its own code contains no HTTP client: no
-`requests`, no `urllib`, no `socket`, no `http.client` import anywhere in its modules. There is no code
-path that could transmit anything it reads.
+`requests`, no `urllib`, no `http.client` import anywhere in its modules. It imports `socket` in
+exactly one place, and never to connect: before the interface server starts, it asks the system
+whether a port on the loopback interface is free by binding it and releasing it again. There is no
+code path that could transmit anything it reads.
 
 Its code does contain exactly **one** remote address, and it is worth being precise about what that
 address does and does not mean:
@@ -59,10 +61,12 @@ will find them:
   files. pywebview serves those files to the application's own window over a small HTTP server bound
   to the loopback interface (`127.0.0.1`) on a fixed port, so nothing on your network can reach it.
   The fixed port keeps the browser origin stable across restarts, which is what lets the interface
-  remember your preferences. Its document root is the interface folder; pywebview additionally
-  registers one route of its own for a JavaScript bridge, which goes unused because both window hosts
-  provide a native bridge instead. This is the only socket the application itself opens, and it stops
-  when you close the window.
+  remember your preferences. If that port is unavailable - Windows reserves whole blocks of ports for
+  its virtual-machine networking - the next one on a short fixed list is used instead, which the
+  application picks by briefly binding each candidate on `127.0.0.1` to see which one is free. Its
+  document root is the interface folder; pywebview additionally registers one route of its own for a
+  JavaScript bridge, which goes unused because both window hosts provide a native bridge instead. This
+  server is the only socket the application keeps open, and it stops when you close the window.
 - **An embedded browser engine.** The interface is rendered by the engine your system provides: the
   Microsoft Edge WebView2 runtime on Windows, WebKitGTK on Linux. Either brings its own machinery with
   it - a WebView2 profile folder shows the usual Chromium components for Safe Browsing, SmartScreen,
@@ -461,7 +465,9 @@ Windows, WebKitGTK on Linux.
 These guarantees are meant to be checked, not taken on faith. In a clone of the repository:
 
 ```sh
-# No network client anywhere in the application code
+# No network client anywhere in the application code. Exactly one hit, the
+# free-port check described above:
+#   app.py: import socket
 grep -rnE "^\s*(import|from)\s+(requests|urllib|http|socket|ssl)\b" agent_monitor_for_claude/
 
 # Every remote address in the application code - interface files included, not
@@ -482,10 +488,14 @@ grep -rnE "\b(eval|exec)\s*\(|__import__|b64decode" agent_monitor_for_claude/ --
 grep -n -A 3 "Content-Security-Policy" agent_monitor_for_claude/ui/index.html
 ```
 
-The first command finds nothing at all, and the last one prints the policy quoted above. The remaining
-four find a handful of lines, and every one of them is accounted for here, so that nothing looks like a
-hidden exception:
+The last command prints the policy quoted above. The other five find a handful of lines, and every one
+of them is accounted for here, so that nothing looks like a hidden exception:
 
+- The network-client search finds exactly one hit, the `socket` import in
+  [app.py](agent_monitor_for_claude/app.py). It is used in one function, which binds a loopback port
+  to find out whether the interface server can have it and closes it again. The only address it names
+  is `127.0.0.1`, and all it does with the socket is bind it and read back which port it got - there
+  is no connect, and nothing is ever sent or received.
 - The remote-address search finds exactly one hit, the changelog link named in the comment above it.
 - The credential search matches two docstrings, both stating that no credentials are read.
 - The write search matches the two deletion calls in

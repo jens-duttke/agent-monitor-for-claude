@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import socket
 import sys
 import threading
 import time
@@ -49,6 +50,12 @@ _LOG_MAX_LEN = 2000
 
 # Session ids are UUIDs; validated before a session id is built into a path.
 _SESSION_UUID = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+
+# Ports offered to pywebview's own asset server, in order.  The first is the one it would
+# pick by itself; the rest sit far apart because Windows reserves whole contiguous blocks
+# (4096 ports at a time) for Hyper-V/WSL, and a port inside such a block cannot be bound
+# at all - neighbouring fallbacks would share its fate.
+_HTTP_PORT_CANDIDATES = (42001, 38401, 31517, 24029)
 
 
 def _sanitize_log(message: object) -> str:
@@ -566,7 +573,71 @@ def run(verbose: bool = False) -> None:
     # Let the bridge push streaming search results back into this window.
     api.attach_window(window)
     on_started = print_runtime_diagnostics if verbose else None
-    webview.start(on_started, private_mode=False, storage_path=str(storage_dir()), icon=_icon_path())
+    webview.start(on_started, private_mode=False, storage_path=str(storage_dir()), icon=_icon_path(), http_port=_http_port())
+
+
+def _http_port() -> int | None:
+    """Return the localhost port pywebview should serve the UI assets from.
+
+    The port decides the page's origin and therefore which localStorage the UI
+    preferences live in, so the first candidate that binds wins and the order
+    stays fixed - a given machine keeps the same origin across restarts.  When
+    every candidate is taken or reserved, the system picks a free port instead:
+    the preferences start empty that launch, which still beats a window that
+    never opens.  Handing ``None`` back to pywebview would *not* do that - with
+    ``private_mode=False`` it substitutes its own default, which is the first
+    candidate and therefore the port that just failed - so ``None`` means only
+    that no port could be bound at all.
+
+    Returns
+    -------
+    int or None
+        A port that binds right now, or ``None`` when none does.
+    """
+    for port in _HTTP_PORT_CANDIDATES:
+        if _bindable_port(port) is None:
+            continue
+
+        if port != _HTTP_PORT_CANDIDATES[0]:
+            print(f'[AMC] Port {_HTTP_PORT_CANDIDATES[0]} unavailable, serving the UI on {port}', file=sys.stderr, flush=True)
+
+        return port
+
+    fallback = _bindable_port(0)
+    where = f'serving the UI on {fallback}' if fallback is not None else 'no port could be bound at all'
+    print(f'[AMC] None of the preferred ports is available, {where}', file=sys.stderr, flush=True)
+
+    return fallback
+
+
+def _bindable_port(port: int) -> int | None:
+    """Bind a localhost TCP port to see whether it is free, and release it again.
+
+    The probe sets ``SO_REUSEADDR`` because the asset server does too: without
+    it a restart could trip over its own previous connections still in
+    ``TIME_WAIT`` and move to a different port for no reason.  A port inside a
+    reserved block fails either way.
+
+    Parameters
+    ----------
+    port
+        TCP port to test on the loopback interface; ``0`` asks the system for
+        any free port.
+
+    Returns
+    -------
+    int or None
+        The port that bound - the system's choice when ``port`` is 0 - or
+        ``None`` when it could not be bound.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(('127.0.0.1', port))
+
+            return int(sock.getsockname()[1])
+    except OSError:
+        return None
 
 
 def _default_effort() -> str:

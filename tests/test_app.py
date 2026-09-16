@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from unittest import mock
 
@@ -498,6 +499,71 @@ class StartSearchSeqTest(unittest.TestCase):
 
         api.start_search('q', [], {}, 1)
         self.assertEqual(api._search_seq, 1)
+
+
+class HttpPortTest(unittest.TestCase):
+    """The asset server's port decides the origin the UI preferences live in."""
+
+    _SYSTEM_PORT = 51234  # what the system hands out for a bind on port 0
+
+    def setUp(self) -> None:
+        patcher = mock.patch.object(app.sys, 'stderr', io.StringIO())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _probe(self, *reserved: int) -> Callable[[int], int | None]:
+        """Stand in for the real bind probe: everything binds but the reserved ports."""
+        def probe(port: int) -> int | None:
+            if port in reserved:
+                return None
+
+            return port or self._SYSTEM_PORT
+
+        return probe
+
+    def test_the_first_candidate_is_preferred(self) -> None:
+        # It is pywebview's own default, so the usual machine keeps the origin
+        # it would have had without any of this.
+        with mock.patch.object(app, '_bindable_port', side_effect=self._probe()):
+            self.assertEqual(app._http_port(), app._HTTP_PORT_CANDIDATES[0])
+
+    def test_a_reserved_port_falls_through_to_the_next_candidate(self) -> None:
+        with mock.patch.object(app, '_bindable_port', side_effect=self._probe(app._HTTP_PORT_CANDIDATES[0])):
+            self.assertEqual(app._http_port(), app._HTTP_PORT_CANDIDATES[1])
+
+    def test_every_candidate_reserved_falls_back_to_a_system_chosen_port(self) -> None:
+        # Returning None here would hand the choice back to pywebview, which with
+        # private_mode=False substitutes its own default - the first candidate,
+        # i.e. the very port that just failed.
+        with mock.patch.object(app, '_bindable_port', side_effect=self._probe(*app._HTTP_PORT_CANDIDATES)):
+            port = app._http_port()
+
+        self.assertEqual(port, self._SYSTEM_PORT)
+        self.assertNotIn(port, app._HTTP_PORT_CANDIDATES)
+
+    def test_no_bindable_port_at_all_reports_none(self) -> None:
+        with mock.patch.object(app, '_bindable_port', return_value=None):
+            self.assertIsNone(app._http_port())
+
+
+class BindablePortTest(unittest.TestCase):
+    def test_zero_asks_the_system_for_a_free_port(self) -> None:
+        port = app._bindable_port(0)
+        self.assertIsInstance(port, int)
+        self.assertGreater(port, 0)
+
+    def test_a_free_port_reports_itself_and_is_released_again(self) -> None:
+        free = app._bindable_port(0)
+        self.assertIsNotNone(free)
+        self.assertEqual(app._bindable_port(free), free)
+
+    def test_a_refused_bind_reports_none_instead_of_raising(self) -> None:
+        # A port inside a Windows reservation fails with WSAEACCES; startup must
+        # read that as "try the next one", not crash.
+        sock = mock.MagicMock()
+        sock.__enter__.return_value.bind.side_effect = OSError(13, 'access denied')
+        with mock.patch.object(app.socket, 'socket', return_value=sock):
+            self.assertIsNone(app._bindable_port(app._HTTP_PORT_CANDIDATES[0]))
 
 
 if __name__ == '__main__':
