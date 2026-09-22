@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-22
+
 ### Changed
 - The released `AgentMonitorForClaude.exe` is now code signed, so Windows names the publisher instead of reporting an unknown one. It is built on the maintainer's machine again rather than by a GitHub Actions workflow, because the signing certificate lives on a hardware token no hosted runner can reach.
 
@@ -187,7 +189,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 13 languages, auto-detected from the system locale.
 - Optional settings file to tune the poll interval and window size.
 
-[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.6.0...v0.6.1
