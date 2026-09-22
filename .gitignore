@@ -27,6 +27,9 @@ dist/
 # User settings
 agent-monitor-settings.json
 
+# Code signing - which certificate build.py signs with, on this machine only
+signing.env
+
 # OS
 Thumbs.db
 Desktop.ini

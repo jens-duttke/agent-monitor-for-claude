@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The released `AgentMonitorForClaude.exe` is now code signed, so Windows names the publisher instead of reporting an unknown one. It is built on the maintainer's machine again rather than by a GitHub Actions workflow, because the signing certificate lives on a hardware token no hosted runner can reach.
+
 ## [0.8.0] - 2026-09-16
 
 ### Added
@@ -16,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A background agent's row menu copies its `claude attach` command. That command is the only way back into a session that runs under the agent daemon with no window of its own.
 - An agent whose Auto mode has been put on hold now says so. Claude Code stops trusting its safety classifier after three blocked calls in a row and prompts you about everything again - the row now shows a paused badge next to the mode, with the session's number of blocked calls on hover.
 - Search results now show what was found. A matching session's row lists how many hits its transcript holds, plus up to five excerpts with the hit in the middle and the surrounding text either side, each labelled with where it came from - you, Claude, its reasoning, or a named tool.
-- The released `AgentMonitorForClaude.exe` is now built by a GitHub Actions workflow from the tagged source in this repository, never on a developer machine. Code signing through [SignPath.io](https://about.signpath.io/) is set up but not active yet - the certificate has still to be issued - so Windows keeps reporting an unknown publisher.
+- The released `AgentMonitorForClaude.exe` is now built by a GitHub Actions workflow from the tagged source in this repository, never on a developer machine.
 
 ### Fixed
 - Starting the app on a Python older than 3.10 now says so, naming the version and the interpreter it found, instead of failing with an `ImportError` about a `typing` helper. The README's Windows setup now shows how to check the version first, and what to do when it is too old.

@@ -49,6 +49,7 @@ If you run many Claude Code agents across several projects, you cannot tell from
 
 ### Windows
 Download `AgentMonitorForClaude.exe` from the [latest release](https://github.com/jens-duttke/agent-monitor-for-claude/releases) and run it. No installation.
+The executable is code signed, so Windows names *Jens Duttke* as its publisher - the file properties show the signature under *Digital Signatures*.
 
 To run it from source instead, check which Python you have first - it has to be 3.10 or newer:
 
@@ -129,6 +130,8 @@ The standalone executable is a Windows build; it additionally needs PyInstaller,
 .venv\Scripts\python build.py
 ```
 Produces `dist/AgentMonitorForClaude.exe`. There is no Linux equivalent - run the app from source there.
+
+Your own build is unsigned. To sign it, install the Windows SDK signing tools and put a `signing.env` next to `build.py` with `SIGNING_THUMBPRINT` (a code signing certificate in your Windows certificate store) and `SIGNING_TIMESTAMP_URL`. The build then signs the executable and verifies the result, and a failure of either stops it.
 
 ## Developing
 
