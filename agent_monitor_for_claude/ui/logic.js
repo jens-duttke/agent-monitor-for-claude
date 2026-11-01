@@ -1665,7 +1665,24 @@ function buildSession(raw, labels, prices) {
         auto_paused: autoModePaused(raw),
         auto_denials_total: Number(raw.auto_denials_total) || 0,
         vscode_deeplink: isVscodeDeeplink(raw),
+        worktree: worktreeOf(raw),
         age_seconds: raw.age_seconds == null ? null : Math.floor(raw.age_seconds),
+    };
+}
+
+// A session that switched into a git worktree is grouped under the project it
+// was launched in - the backend files it there, beside its transcript - so the
+// directory it actually works in has to be shown on the row itself. Null for
+// every other session.
+function worktreeOf(raw) {
+    const path = typeof raw.worktree_cwd === 'string' ? raw.worktree_cwd : '';
+    if (!path) {
+        return null;
+    }
+    return {
+        name: projectName(path),
+        path: displayCwd(path),
+        branch: typeof raw.worktree_branch === 'string' ? raw.worktree_branch : '',
     };
 }
 

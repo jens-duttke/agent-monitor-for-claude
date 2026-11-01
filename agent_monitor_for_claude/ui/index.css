@@ -1410,6 +1410,24 @@ body {
 /* Auto mode on hold after a run of classifier blocks. Carries the same colour
    as the "Needs you" dot, because that is what it means: the CLI has gone back
    to asking you about every step. */
+/* Shrinks after the title does (its flex-shrink is lower), then ellipsizes - a
+   long worktree name must never push the badges after it out of the row. */
+.worktree-badge {
+    flex: 0 0.2 auto;
+    min-width: 3em;
+    max-width: 16em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 11px;
+    color: var(--fg-dim);
+    background: var(--chip-bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 8px;
+    white-space: nowrap;
+    cursor: help;
+}
+
 .auto-paused-badge {
     flex: none;
     font-size: 11px;

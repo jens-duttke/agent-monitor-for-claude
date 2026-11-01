@@ -82,6 +82,8 @@
     "effort_badge": "Standard-Effort: {level}",
     "auto_paused": "Auto-Modus pausiert - Claude Code fragt dich wieder",
     "auto_denials": "Vom Classifier blockierte Aufrufe: {count}",
+    "worktree_tip": "Arbeitet in einem Git-Worktree",
+    "worktree_branch": "Branch: {branch}",
     "subagents_running": "Laufende Subagenten: {count}",
     "subagents_finished": "Kürzlich abgeschlossen: {count}",
     "subagents_workflow": "Workflow: {done}/{total} Agenten",

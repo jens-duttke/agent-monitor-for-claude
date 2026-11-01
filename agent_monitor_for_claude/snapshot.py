@@ -33,6 +33,7 @@ from .sessions import list_sessions
 from .settings import ENDED_MAX_AGE, INCLUDE_COMPLETED
 from .subagents import count_subagents
 from .transcript import prune_scan_cache, state_for
+from .worktrees import prune_worktree_cache, resolve_worktree
 from .wsl import probe_wsl_sessions
 
 __all__ = ['build_snapshot', 'live_or_recent_ids', 'registry_fingerprint']
@@ -61,6 +62,7 @@ def build_snapshot() -> dict[str, Any]:
     # cache does not grow unbounded over a long-running monitor.
     prune_scan_cache((root, record['session_id'], record['cwd']) for root, record in pairs)
     prune_last_seen((record['origin'], record['session_id']) for _, record in pairs)
+    prune_worktree_cache((root.origin, record['session_id'], record.get('worktree_cwd') or record['cwd']) for root, record in pairs)
 
     return {
         'generated_at': datetime.now().astimezone().isoformat(timespec='seconds'),
@@ -106,6 +108,8 @@ def _build_session_record(
         'pid': record['pid'],
         'session_id': record['session_id'],
         'cwd': record['cwd'],
+        'worktree_cwd': record.get('worktree_cwd'),
+        'worktree_branch': record.get('worktree_branch'),
         'short_name': record['name'],
         'kind': record['kind'],
         'entrypoint': record.get('entrypoint'),
@@ -215,6 +219,10 @@ def _collect_pairs() -> list[tuple[SessionRoot, dict[str, Any]]]:
     entirely - its sessions are simply absent from this poll, never blanking
     the other roots' sessions (the same last-resort isolation ``build_snapshot``
     applies per record, one level up).
+
+    A session working in a git worktree is filed back under the project it was
+    launched in here (see :mod:`worktrees`), so every caller - the snapshot,
+    the change fingerprint, the history dedupe - finds its files alike.
     """
     pairs: list[tuple[SessionRoot, dict[str, Any]]] = []
     for root in session_roots():
@@ -223,9 +231,22 @@ def _collect_pairs() -> list[tuple[SessionRoot, dict[str, Any]]]:
         except Exception:
             continue
 
-        pairs.extend((root, record) for record in records)
+        pairs.extend((root, _resolve_worktree_safely(root, record)) for record in records)
 
     return pairs
+
+
+def _resolve_worktree_safely(root: SessionRoot, record: dict[str, Any]) -> dict[str, Any]:
+    """Return ``worktrees.resolve_worktree``'s record, or *record* unchanged if the lookup fails unexpectedly.
+
+    The lookup degrades on every failure it anticipates; this is the same
+    last-resort isolation the callers apply, so one odd record can at worst
+    stay where the registry put it.
+    """
+    try:
+        return resolve_worktree(root, record)
+    except Exception:
+        return record
 
 
 def _probe_map(pairs: list[tuple[SessionRoot, dict[str, Any]]]) -> dict[tuple[str, int], ProcessInfo]:

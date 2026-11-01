@@ -504,6 +504,71 @@ class AutoModeDenialStreakTest(unittest.TestCase):
             self.assertEqual(result.auto_denials_total, 2)
 
 
+class WorktreeStateTest(unittest.TestCase):
+    """The worktree a session switched into, read from Claude Code's worktree-state entries."""
+
+    @staticmethod
+    def _absorb(state, entry):
+        _absorb_line(json.dumps(entry).encode('utf-8'), state)
+
+    @staticmethod
+    def _entered(name, **extra):
+        session = {
+            'originalCwd': 'D:\\WebDev\\app', 'preEnterOriginalCwd': 'd:\\WebDev\\app',
+            'worktreeName': name, 'worktreePath': f'D:\\WebDev\\app-worktrees\\{name}',
+        }
+        session.update(extra)
+        return {'type': 'worktree-state', 'sessionId': 'x', 'worktreeSession': session}
+
+    def test_the_newest_entry_wins(self) -> None:
+        state = _ScanState()
+        self._absorb(state, self._entered('first'))
+        self._absorb(state, self._entered('second', worktreeBranch='wt/second'))
+        self.assertEqual(state.worktree.path, 'D:\\WebDev\\app-worktrees\\second')
+        self.assertEqual(state.worktree.branch, 'wt/second')
+        # Both launch directories, originalCwd first: they differ only in the
+        # drive letter's case, which decides which one matches the folder slug.
+        self.assertEqual(state.worktree.launch_cwds, ('D:\\WebDev\\app', 'd:\\WebDev\\app'))
+
+    def test_leaving_the_worktree_clears_it(self) -> None:
+        state = _ScanState()
+        self._absorb(state, self._entered('first'))
+        self._absorb(state, {'type': 'worktree-state', 'sessionId': 'x', 'worktreeSession': None})
+        self.assertIsNone(state.worktree)
+
+    def test_an_unexpected_shape_leaves_the_previous_one(self) -> None:
+        state = _ScanState()
+        self._absorb(state, self._entered('first'))
+        for broken in ('nope', 42, {'worktreePath': 'D:\\x'}, {'originalCwd': 'D:\\x'}, {'originalCwd': 7, 'worktreePath': 'D:\\x'}):
+            self._absorb(state, {'type': 'worktree-state', 'worktreeSession': broken})
+        self._absorb(state, {'type': 'worktree-state'})
+        self.assertEqual(state.worktree.path, 'D:\\WebDev\\app-worktrees\\first')
+
+    def test_a_prompt_quoting_a_worktree_state_is_not_one(self) -> None:
+        # The byte marker admits any line that mentions the type; only an entry
+        # of that type may set the worktree.
+        state = _ScanState()
+        self._absorb(state, {'type': 'user', 'message': {'role': 'user', 'content': json.dumps(self._entered('quoted'))}})
+        self.assertIsNone(state.worktree)
+
+    def test_the_worktree_survives_a_partial_trailing_line(self) -> None:
+        state = _ScanState()
+        self._absorb(state, self._entered('first'))
+        self.assertEqual(state.copy().worktree, state.worktree)
+
+    def test_worktree_for_reports_it_and_warms_the_scan_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session.jsonl'
+            path.write_text(json.dumps(self._entered('first')) + '\n', encoding='utf-8')
+            tmod._scan_cache.clear()
+            try:
+                worktree = tmod.worktree_for(path)
+                self.assertIn(os.path.normcase(str(path)), tmod._scan_cache)
+            finally:
+                tmod._scan_cache.clear()
+            self.assertEqual(worktree.path, 'D:\\WebDev\\app-worktrees\\first')
+
+
 class ModelTimelineOrderTest(unittest.TestCase):
     def test_sorts_chronologically_not_lexicographically(self) -> None:
         # '...07.500Z' is chronologically LATER than '...07Z' but sorts BEFORE it

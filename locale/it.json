@@ -82,6 +82,8 @@
     "effort_badge": "Sforzo predefinito: {level}",
     "auto_paused": "Modalità automatica in pausa - Claude Code chiede di nuovo",
     "auto_denials": "Chiamate bloccate dal classificatore: {count}",
+    "worktree_tip": "Lavora in un worktree git",
+    "worktree_branch": "Branch: {branch}",
     "subagents_running": "Subagent in esecuzione: {count}",
     "subagents_finished": "Completati di recente: {count}",
     "subagents_workflow": "Workflow: {done}/{total} agenti",

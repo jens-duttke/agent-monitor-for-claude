@@ -82,6 +82,8 @@
     "effort_badge": "默认努力程度: {level}",
     "auto_paused": "自动模式已暂停 - Claude Code 会再次询问你",
     "auto_denials": "被分类器拦截的调用：{count}",
+    "worktree_tip": "在 git worktree 中工作",
+    "worktree_branch": "分支：{branch}",
     "subagents_running": "运行中的子智能体: {count}",
     "subagents_finished": "最近完成: {count}",
     "subagents_workflow": "工作流：{done}/{total} 个智能体",

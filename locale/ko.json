@@ -82,6 +82,8 @@
     "effort_badge": "기본 노력 수준: {level}",
     "auto_paused": "자동 모드 일시 중지 - Claude Code가 다시 물어봅니다",
     "auto_denials": "분류기가 차단한 호출: {count}",
+    "worktree_tip": "git worktree에서 작업 중",
+    "worktree_branch": "브랜치: {branch}",
     "subagents_running": "실행 중인 서브에이전트: {count}",
     "subagents_finished": "최근 완료: {count}",
     "subagents_workflow": "워크플로: 에이전트 {done}/{total}개",

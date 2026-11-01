@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- An agent working in a git worktree carries a badge naming the worktree, with its path and branch on hover.
+
+### Fixed
+- An agent that switched into a git worktree showed up as a new, empty session in a panel of its own - without title, status, cost, background tasks or search hits. It is now listed under the project it was started in, with all of these.
+
 ## [0.9.0] - 2026-09-22
 
 ### Changed

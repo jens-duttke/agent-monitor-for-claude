@@ -1134,6 +1134,30 @@ test('buildSession carries the paused auto mode and the block total', () => {
     assert.equal(build({ auto_denials_total: '9' }).auto_denials_total, 9);
 });
 
+test('buildSession names the worktree a session works in, and only then', () => {
+    const build = (overrides) => logic.buildSession(raw(Object.assign({ session_id: 's', cwd: 'd:\\WebDev\\app' }, overrides)), {}, {});
+
+    const inWorktree = build({ worktree_cwd: 'd:\\WebDev\\app-worktrees\\feature\\', worktree_branch: 'wt/feature' });
+    // The project stays the launch directory - that is what groups the row.
+    assert.equal(inWorktree.cwd, 'd:\\WebDev\\app');
+    assert.deepEqual(inWorktree.worktree, { name: 'feature', path: 'D:\\WebDev\\app-worktrees\\feature\\', branch: 'wt/feature' });
+
+    assert.equal(build({ worktree_cwd: 'D:\\x\\feature', worktree_branch: null }).worktree.branch, '');
+    assert.equal(build({}).worktree, null);
+    assert.equal(build({ worktree_cwd: null }).worktree, null);
+    assert.equal(build({ worktree_cwd: 42 }).worktree, null);
+});
+
+test('a worktree session is grouped under the project it was launched in', () => {
+    const projects = logic.groupProjects([
+        raw({ session_id: 'a', cwd: 'd:\\WebDev\\app' }),
+        raw({ session_id: 'b', cwd: 'D:\\WebDev\\app', worktree_cwd: 'D:\\WebDev\\app-worktrees\\feature' }),
+    ], {}, {});
+
+    assert.equal(projects.length, 1);
+    assert.equal(projects[0].sessions.length, 2);
+});
+
 test('a background session is told apart from a terminal one', () => {
     // `claude --bg` starts from a terminal that then goes away: the entrypoint
     // still reads `cli` while no terminal and no window remain. Marking it "CLI"

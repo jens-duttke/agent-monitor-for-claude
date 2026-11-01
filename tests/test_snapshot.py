@@ -459,6 +459,51 @@ class FingerprintTest(_RegistryFixture):
         self.assertNotEqual(before, registry_fingerprint())
 
 
+class WorktreeSessionTest(_RegistryFixture):
+    """A session that entered a git worktree: the registry names the worktree, the transcript stays with the project."""
+
+    _ID = '2ee860e9-a20e-4a39-bc18-3c87e9c6ec19'
+    _LAUNCH = 'd:\\WebDev\\app'
+    _WORKTREE = 'D:\\WebDev\\app-worktrees\\feature'
+
+    def setUp(self) -> None:
+        super().setUp()
+        worktree_state = json.dumps({'type': 'worktree-state', 'sessionId': self._ID, 'worktreeSession': {
+            'originalCwd': self._LAUNCH, 'worktreeName': 'feature', 'worktreePath': self._WORKTREE, 'worktreeBranch': 'wt/feature',
+        }})
+        # Registered under the launch directory, then moved: the registry follows
+        # the session into the worktree, the transcript does not.
+        self._add_session_with_transcript(self._ID, self._LAUNCH, worktree_state + '\n' + _END_TURN + '\n')
+        registry = Path(self._temp.name) / 'sessions' / f'{self._ID}.json'
+        record = json.loads(registry.read_text(encoding='utf-8'))
+        registry.write_text(json.dumps({**record, 'cwd': self._WORKTREE}), encoding='utf-8')
+
+    def test_the_session_is_read_from_its_project_and_names_its_worktree(self) -> None:
+        session = next(s for s in build_snapshot()['sessions'] if s['session_id'] == self._ID)
+
+        self.assertTrue(session['has_transcript'])
+        self.assertEqual(session['last_stop_reason'], 'end_turn')
+        self.assertEqual(session['cwd'], self._LAUNCH)
+        self.assertEqual(session['worktree_cwd'], self._WORKTREE)
+        self.assertEqual(session['worktree_branch'], 'wt/feature')
+
+    def test_an_ordinary_session_names_no_worktree(self) -> None:
+        self._add_session('a', 'd:\\WebDev\\one')
+
+        session = next(s for s in build_snapshot()['sessions'] if s['session_id'] == 'a')
+
+        self.assertIsNone(session['worktree_cwd'])
+        self.assertIsNone(session['worktree_branch'])
+
+    def test_the_fingerprint_follows_the_transcript_it_is_read_from(self) -> None:
+        before = registry_fingerprint()
+
+        with transcript_path(local_root(), self._ID, self._LAUNCH).open('a', encoding='utf-8') as handle:
+            handle.write(_END_TURN + '\n')
+
+        self.assertNotEqual(before, registry_fingerprint())
+
+
 def _write_stat(proc_dir: Path, pid: int, comm: str, ppid: int, starttime: int) -> None:
     """Write a synthetic ``/proc/<pid>/stat`` entry (mirrors ``tests/test_wsl.py``'s helper)."""
     entry = proc_dir / str(pid)

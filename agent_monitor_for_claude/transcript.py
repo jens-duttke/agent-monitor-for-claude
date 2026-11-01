@@ -8,9 +8,11 @@ IDs (to detect an unanswered request), the last tool's name, whether the newest
 user turn is Claude Code's interrupt marker, whether a trailing turn is an API
 error (and whether that error is a usage/session limit), timestamps, the model
 name, the Claude Code version that wrote each turn, aggregated token-usage
-numbers, and the session title (the ``aiTitle`` Claude Code generates for its own
+numbers, the session title (the ``aiTitle`` Claude Code generates for its own
 session list, or the ``customTitle`` the user set by renaming the session -
-display metadata, not conversation content).
+display metadata, not conversation content), and the worktree the session
+switched into (directory paths and a branch name from Claude Code's own
+``worktree-state`` entry).
 
 This module is the privacy boundary of the application.  It must never read,
 return, store, or expose conversation content - message ``text``, ``thinking``
@@ -33,7 +35,7 @@ from pathlib import Path
 
 from .paths import SessionRoot, transcript_path
 
-__all__ = ['TranscriptState', 'HistoryState', 'state_for', 'history_state_for', 'prune_scan_cache']
+__all__ = ['TranscriptState', 'HistoryState', 'WorktreeState', 'state_for', 'history_state_for', 'worktree_for', 'prune_scan_cache']
 
 # Bytes read from the end of the transcript.  Large enough to contain the last
 # several turns without loading a multi-megabyte file on every poll.  When a
@@ -127,6 +129,13 @@ _PERMISSION_MODE_MARKER = b'permissionMode'
 _CWD_MARKER = b'"cwd"'
 _USER_MARKER = b'"user"'
 
+# Claude Code records a switch into a git worktree (and back out, as a null
+# ``worktreeSession``) as an entry of this type.  The session keeps writing its
+# transcript under the project it was launched in, while the registry's ``cwd``
+# follows it into the worktree - this entry is what ties the two together.
+_WORKTREE_STATE_MARKER = b'worktree-state'
+_WORKTREE_STATE_TYPE = 'worktree-state'
+
 # The two markers behind the auto-mode denial streak.  Claude Code records why a
 # tool call was refused in its own field, so the streak is read from a control
 # value rather than from the refusal's wording.  The tool-result marker is used
@@ -197,6 +206,9 @@ class _ScanState:
     # therefore the UI's to make.
     auto_denials_consecutive: int = 0
     auto_denials_total: int = 0
+    # The newest worktree-state entry; None before any, and again after the
+    # session left its worktree.
+    worktree: WorktreeState | None = None
     # Memoized run-compressed timelines, one per value field, each kept with the
     # event count it was built from.  Deliberately the last field, so the
     # positional ``copy()`` below stays correct without carrying it over - a copy
@@ -241,7 +253,7 @@ class _ScanState:
             list(self.model_events),
             list(self.cli_events),
             self.ai_title, self.custom_title, self.first_prompt, self.first_command_prompt, self.permission_mode,
-            self.auto_denials_consecutive, self.auto_denials_total,
+            self.auto_denials_consecutive, self.auto_denials_total, self.worktree,
         )
 
 
@@ -257,6 +269,29 @@ class _ScanResult:
     permission_mode: str | None
     auto_denials_consecutive: int
     auto_denials_total: int
+    worktree: WorktreeState | None
+
+
+@dataclass(frozen=True)
+class WorktreeState:
+    """The git worktree a session switched into, as its newest ``worktree-state`` entry records it.
+
+    Attributes
+    ----------
+    launch_cwds : tuple of str
+        The directories the session was launched from, as Claude Code records
+        them (``originalCwd``, then ``preEnterOriginalCwd``) - the project the
+        transcript stays filed under.  The two usually differ only in the case
+        of a drive letter, which matters when matching a project-folder slug.
+    path : str
+        The worktree directory the session works in.
+    branch : str or None
+        The worktree's branch, when the entry names one.
+    """
+
+    launch_cwds: tuple[str, ...]
+    path: str
+    branch: str | None = None
 
 
 # The first poll reads the whole file once; afterwards only newly appended
@@ -383,6 +418,16 @@ def state_for(root: SessionRoot, session_id: str, cwd: str) -> TranscriptState:
                    title=scan.title, permission_mode=scan.permission_mode,
                    auto_denials_consecutive=scan.auto_denials_consecutive,
                    auto_denials_total=scan.auto_denials_total)
+
+
+def worktree_for(path: Path) -> WorktreeState | None:
+    """Return the worktree the session behind transcript *path* currently works in, or None.
+
+    Runs the same incremental scan :func:`state_for` uses, so the file is read
+    in full once and the scan cache it leaves behind serves the next
+    :func:`state_for` call for the same file.
+    """
+    return _scan_appended(path).worktree
 
 
 def history_state_for(path: Path) -> HistoryState:
@@ -901,6 +946,7 @@ def _scan_result(state: _ScanState) -> _ScanResult:
         permission_mode=state.permission_mode,
         auto_denials_consecutive=state.auto_denials_consecutive,
         auto_denials_total=state.auto_denials_total,
+        worktree=state.worktree,
     )
 
 
@@ -969,6 +1015,7 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
         or _AI_TITLE_MARKER in raw_line
         or _CUSTOM_TITLE_MARKER in raw_line
         or _PERMISSION_MODE_MARKER in raw_line
+        or _WORKTREE_STATE_MARKER in raw_line
     )
     if not interesting and (state.first_prompt is not None or b'"user"' not in raw_line):
         return
@@ -1062,6 +1109,17 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
         if isinstance(value, str) and value:
             state.custom_title = value
 
+    elif entry_type == _WORKTREE_STATE_TYPE:
+        # An explicit null is the session leaving its worktree; a missing field or
+        # a value of any other unexpected shape says nothing and leaves the
+        # previous one.
+        if 'worktreeSession' in entry and entry['worktreeSession'] is None:
+            state.worktree = None
+        else:
+            worktree = _worktree_state(entry.get('worktreeSession'))
+            if worktree is not None:
+                state.worktree = worktree
+
     elif (entry_type == 'user' and state.first_prompt is None
             and entry.get('isSidechain') is not True and entry.get('isMeta') is not True):
         # Skip injected isMeta entries (a continuation summary), mirroring _parse:
@@ -1073,6 +1131,23 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
                 state.first_command_prompt = text
         else:
             state.first_prompt = text
+
+
+def _worktree_state(session: object) -> WorktreeState | None:
+    """Parse a ``worktreeSession`` value, or None when it lacks a worktree path or a launch directory."""
+    if not isinstance(session, dict):
+        return None
+
+    path = session.get('worktreePath')
+    launch_cwds = tuple(
+        value for value in (session.get('originalCwd'), session.get('preEnterOriginalCwd'))
+        if isinstance(value, str) and value
+    )
+    if not isinstance(path, str) or not path or not launch_cwds:
+        return None
+
+    branch = session.get('worktreeBranch')
+    return WorktreeState(launch_cwds=launch_cwds, path=path, branch=branch if isinstance(branch, str) and branch else None)
 
 
 def _prompt_display_parts(entry: dict) -> tuple[str | None, bool]:

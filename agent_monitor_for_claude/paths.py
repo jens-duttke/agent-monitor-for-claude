@@ -27,10 +27,11 @@ from .platforms import IS_WINDOWS
 
 __all__ = [
     'SessionRoot', 'local_root', 'claude_temp_dir', 'config_dir', 'sessions_dir', 'projects_dir', 'cwd_to_slug',
-    'transcript_path', 'task_output_dir', 'task_output_path', 'scratchpad_dir', 'host_path',
+    'transcript_path', 'find_transcript', 'task_output_dir', 'task_output_path', 'scratchpad_dir', 'host_path',
 ]
 
 _NON_ALNUM_PATTERN = re.compile(r'[^A-Za-z0-9]')
+_SESSION_UUID_PATTERN = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
 
 # Directory Claude Code keeps its per-session temp tree in, below the system
 # temp directory.  Windows' temp directory is already per-user, so the name is
@@ -166,6 +167,39 @@ def transcript_path(root: SessionRoot, session_id: str, cwd: str) -> Path:
     callers must check.
     """
     return projects_dir(root) / cwd_to_slug(cwd) / f'{session_id}.jsonl'
+
+
+def find_transcript(root: SessionRoot, session_id: str) -> Path | None:
+    """Return the transcript of *session_id* in whichever project folder under *root* holds it, or None.
+
+    A transcript stays filed under the project its session was launched in,
+    while the registry's ``cwd`` follows the session into a git worktree - so
+    :func:`transcript_path` misses it there.  This looks for the file by its
+    name alone, one ``stat()`` per project folder, never reading one.
+
+    Parameters
+    ----------
+    root : SessionRoot
+        The root whose ``projects/`` folders are searched.
+    session_id : str
+        The session's id; anything but a UUID finds nothing, so it can never
+        name a path outside a project folder.
+    """
+    if not _SESSION_UUID_PATTERN.match(session_id):
+        return None
+
+    try:
+        entries = list(os.scandir(projects_dir(root)))
+    except OSError:
+        return None
+
+    file_name = f'{session_id}.jsonl'
+    for entry in entries:
+        candidate = Path(entry.path) / file_name
+        if candidate.is_file():
+            return candidate
+
+    return None
 
 
 def task_output_dir(root: SessionRoot, session_id: str, cwd: str) -> Path:

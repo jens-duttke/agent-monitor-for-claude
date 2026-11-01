@@ -161,11 +161,18 @@ this session doing right now", the application scans each transcript: the whole 
 first sees it, and from then on only what has been appended since. Every line passes through its
 parser.
 
+A session that switched into a git worktree reports the worktree as its directory, while its
+transcript stays in the folder of the project it was launched in. If no transcript sits under the
+reported directory, the application looks for the file by its name (the session id) in each project
+folder - a file-existence check per folder, nothing opened - and then reads it like any other.
+
 What it **takes** from that scan is control-flow metadata: entry types, stop reasons, tool ids and
 tool names, timestamps, the model id, the Claude Code version stamped on each entry, token-usage
-numbers, the permission mode, and the flags that distinguish a real turn from a sidechain, an injected
-notice, or an API error - plus, on an API error, the short error token and HTTP status code that entry
-carries, which is what lets the status name the cause ("Error: servers overloaded"), and, on a refused
+numbers, the permission mode, the git worktree a session switched into (its directory, the directory
+the session was launched from, and its branch when Claude Code recorded one), and the flags that
+distinguish a real turn from a sidechain, an injected notice, or an API error - plus, on an API
+error, the short error token and HTTP status code that entry carries, which is what lets the status
+name the cause ("Error: servers overloaded"), and, on a refused
 tool call, the one-word reason Claude Code records for the refusal, which is what lets a session say
 that auto mode has put itself on hold. The refusal's own wording is not read - only that one field, and
 only as a count. Message text,

@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_monitor_for_claude.paths import (
-    SessionRoot, claude_temp_dir, cwd_to_slug, host_path, local_root, task_output_dir, transcript_path,
+    SessionRoot, claude_temp_dir, cwd_to_slug, find_transcript, host_path, local_root, task_output_dir, transcript_path,
 )
 
 _WINDOWS_ONLY = unittest.skipUnless(sys.platform == 'win32', 'Windows host behaviour')
@@ -72,6 +72,35 @@ class SessionRootTests(unittest.TestCase):
         root = _wsl_root()
         path = transcript_path(root, 'abc', '/home/dev/proj')
         self.assertEqual(path, root.config_dir / 'projects' / '-home-dev-proj' / 'abc.jsonl')
+
+    def test_find_transcript_looks_in_every_project_folder(self) -> None:
+        session_id = '2ee860e9-a20e-4a39-bc18-3c87e9c6ec19'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = SessionRoot(origin='local', label=None, config_dir=Path(tmp), proc_dir=None, claude_temp_dir=Path(tmp))
+            (Path(tmp) / 'projects' / 'd--other').mkdir(parents=True)
+            target = Path(tmp) / 'projects' / 'd--WebDev-app' / f'{session_id}.jsonl'
+            target.parent.mkdir()
+            target.write_text('', encoding='utf-8')
+
+            self.assertEqual(find_transcript(root, session_id), target)
+            self.assertIsNone(find_transcript(root, '7e24b201-48d5-4f1a-92b7-0d6676e4e643'))
+
+    def test_find_transcript_takes_nothing_but_a_uuid(self) -> None:
+        # The id becomes a file name; a crafted one must never name a path
+        # outside a project folder, so anything but a UUID finds nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = SessionRoot(origin='local', label=None, config_dir=Path(tmp), proc_dir=None, claude_temp_dir=Path(tmp))
+            (Path(tmp) / 'projects' / 'd--WebDev-app').mkdir(parents=True)
+            (Path(tmp) / 'projects' / 'secret.jsonl').write_text('', encoding='utf-8')
+            (Path(tmp) / 'projects' / 'd--WebDev-app' / 'abc.jsonl').write_text('', encoding='utf-8')
+
+            self.assertIsNone(find_transcript(root, '../secret'))
+            self.assertIsNone(find_transcript(root, 'abc'))
+
+    def test_find_transcript_without_a_projects_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = SessionRoot(origin='local', label=None, config_dir=Path(tmp), proc_dir=None, claude_temp_dir=Path(tmp))
+            self.assertIsNone(find_transcript(root, '2ee860e9-a20e-4a39-bc18-3c87e9c6ec19'))
 
     def test_task_output_dir_uses_root_temp(self) -> None:
         root = _wsl_root()

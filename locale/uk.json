@@ -82,6 +82,8 @@
     "effort_badge": "Типове зусилля: {level}",
     "auto_paused": "Автоматичний режим призупинено - Claude Code знову запитує",
     "auto_denials": "Викликів заблоковано класифікатором: {count}",
+    "worktree_tip": "Працює в git worktree",
+    "worktree_branch": "Гілка: {branch}",
     "subagents_running": "Активні субагенти: {count}",
     "subagents_finished": "Нещодавно завершені: {count}",
     "subagents_workflow": "Робочий процес: {done}/{total} агентів",

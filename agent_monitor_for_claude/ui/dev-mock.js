@@ -235,6 +235,7 @@ window.__MOCK_SNAPSHOT__ = {
         }),
         rawSession({
             session_id: 'a2e', short_name: 'aurora-realtime-9f', pid: 22976, cwd: 'D:\\Projects\\aurora-realtime',
+            worktree_cwd: 'D:\\Projects\\aurora-realtime\\.claude\\worktrees\\cursor-drift', worktree_branch: 'wt/cursor-drift',
             entrypoint: 'cli', host: 'Windows Terminal', via_cli: true,
             title: 'Fix cursor drift on high-latency connections',
             last_entry_kind: 'assistant', last_stop_reason: 'end_turn',

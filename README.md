@@ -16,7 +16,7 @@ If you run many Claude Code agents across several projects, you cannot tell from
 - **Zero configuration** - it finds your Claude config directory automatically (honors `CLAUDE_CONFIG_DIR`).
 
 ### What you see every day
-- **Live agent overview** - every running Claude Code agent, grouped by the project it belongs to, refreshed every few seconds.
+- **Live agent overview** - every running Claude Code agent, grouped by the project it belongs to, refreshed every few seconds. An agent that switched into a git worktree stays under the project it was started in, with a badge naming the worktree (its path, and the branch when Claude Code recorded one, on hover).
 - **WSL sessions too** - on Windows, Claude Code agents running inside WSL distributions appear alongside your native agents, read over `\\wsl.localhost` with nothing ever executed inside the distro. The distro shows as the session's host, and its background processes and task output appear in the same panel as any other agent's (see below).
 - **Know who needs you** - a banner lists the agents blocked on a question, plan review, or permission prompt, with a one-click jump to each, so you never leave one hanging.
 - **Status at a glance** - each agent shows *working*, *waiting for you*, *permission needed*, *interrupted* (you stopped it mid-turn), *error* (the turn hit a usage/session limit or other API error and cannot continue - named as far as the error says, e.g. *usage limit reached* or *error: servers overloaded*, with the error's own message line under it when you hover the status dot), or *finished*, with the time since its last activity.

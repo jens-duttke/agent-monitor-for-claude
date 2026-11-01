@@ -82,6 +82,8 @@
     "effort_badge": "Upaya bawaan: {level}",
     "auto_paused": "Mode otomatis dijeda - Claude Code bertanya lagi",
     "auto_denials": "Panggilan yang diblokir classifier: {count}",
+    "worktree_tip": "Bekerja di git worktree",
+    "worktree_branch": "Branch: {branch}",
     "subagents_running": "Subagen berjalan: {count}",
     "subagents_finished": "Baru selesai: {count}",
     "subagents_workflow": "Alur kerja: {done}/{total} agen",

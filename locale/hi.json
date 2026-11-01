@@ -82,6 +82,8 @@
     "effort_badge": "डिफ़ॉल्ट प्रयास: {level}",
     "auto_paused": "ऑटो मोड रुका है - Claude Code फिर से पूछ रहा है",
     "auto_denials": "क्लासिफ़ायर द्वारा रोके गए कॉल: {count}",
+    "worktree_tip": "git worktree में काम कर रहा है",
+    "worktree_branch": "ब्रांच: {branch}",
     "subagents_running": "चल रहे सबएजेंट: {count}",
     "subagents_finished": "हाल ही में पूर्ण: {count}",
     "subagents_workflow": "वर्कफ़्लो: {done}/{total} एजेंट",
