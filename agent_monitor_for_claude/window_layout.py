@@ -7,7 +7,9 @@ the window to ``COMPACT_WIDTH`` (keeping its height) and lowers the minimum size
 the user can drag it to; leaving it restores the size the window had before and
 the normal minimum, which the full layout needs to fit its controls.
 
-Side effects are limited to sizing the application's own window - no file,
+It also keeps the window above all others on request (:func:`keep_on_top`).
+
+Side effects are limited to sizing and stacking the application's own window - no file,
 registry, or network writes.  Sizes are logical pixels throughout, which is
 what pywebview's ``width``/``height``/``resize`` speak; the platform layer's
 ``set_min_window_size`` converts where the toolkit needs physical ones.
@@ -16,9 +18,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from .platforms import set_min_window_size
+from .platforms import set_keep_on_top, set_min_window_size
 
-__all__ = ['COMPACT_WIDTH', 'NORMAL_MIN_SIZE', 'enter_compact', 'leave_compact']
+__all__ = ['COMPACT_WIDTH', 'NORMAL_MIN_SIZE', 'enter_compact', 'keep_on_top', 'leave_compact']
 
 # Smallest window the full layout fits into: below this the header and the two
 # toolbar dropdowns overflow.  Passed to create_window as min_size too.
@@ -92,3 +94,19 @@ def leave_compact(window: Any, previous: tuple[int, int] | None) -> bool:
     set_min_window_size(getattr(window, 'native', None), min_width, min_height)
 
     return resized
+
+
+def keep_on_top(window: Any, on_top: bool) -> bool:
+    """Keep *window* above all others, or release it.
+
+    Goes through the platform layer rather than pywebview's ``on_top``, which
+    assigns the toolkit property from the calling thread - on Windows that
+    deadlocks against any other bridge call running on the UI thread at the same
+    moment (see the Windows backend's ``set_keep_on_top``).
+
+    Returns
+    -------
+    bool
+        True if the flag was applied.
+    """
+    return set_keep_on_top(getattr(window, 'native', None), on_top)

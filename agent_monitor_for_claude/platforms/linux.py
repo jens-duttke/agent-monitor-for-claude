@@ -37,7 +37,7 @@ __all__ = [
     'DIAGNOSTIC_PACKAGES', 'activate_window', 'ask_yes_no', 'apply_native_background', 'copy_text', 'diagnostic_display_rows',
     'diagnostic_post_init_rows', 'diagnostic_runtime_rows', 'diagnostic_system_rows', 'enum_windows',
     'no_window_kwargs', 'open_path', 'open_uri', 'paint_window', 'prepare_gui_environment', 'reveal_file',
-    'set_min_window_size', 'setup_console', 'show_error_box', 'storage_dir', 'window_background_color',
+    'set_keep_on_top', 'set_min_window_size', 'setup_console', 'show_error_box', 'storage_dir', 'window_background_color',
 ]
 
 # Third-party packages worth reporting in the diagnostics output.  pythonnet and
@@ -479,6 +479,57 @@ def set_min_window_size(native: object, width: int, height: int) -> bool:
         nonlocal applied
         try:
             native.set_size_request(width, height)
+            applied = True
+        except Exception:  # noqa: BLE001  # a toolkit failure must not raise into the bridge
+            applied = False
+        finally:
+            done.set()
+
+        return False
+
+    GLib.idle_add(_assign)
+    done.wait(_MAIN_LOOP_TIMEOUT)
+
+    return applied
+
+
+def set_keep_on_top(native: object, on_top: bool) -> bool:
+    """Keep a live GTK window above all others, or release it.
+
+    Marshalled onto the GTK main loop, since the bridge call arrives on a
+    worker thread and GTK is single-threaded.  The window manager has the final
+    say: ``set_keep_above`` is a request, which a Wayland compositor in
+    particular is free to ignore.
+
+    Parameters
+    ----------
+    native : object
+        pywebview's native window (the ``Gtk.ApplicationWindow``).
+    on_top : bool
+        Whether the window stays above all others.
+
+    Returns
+    -------
+    bool
+        True if the request was made.  Best-effort otherwise: any failure (no
+        GTK, no running main loop) is swallowed and reported as False.
+    """
+    gi = _import_gi()
+    if native is None or gi is None:
+        return False
+
+    try:
+        from gi.repository import GLib
+    except ImportError:
+        return False
+
+    done = threading.Event()
+    applied = False
+
+    def _assign() -> bool:
+        nonlocal applied
+        try:
+            native.set_keep_above(on_top)
             applied = True
         except Exception:  # noqa: BLE001  # a toolkit failure must not raise into the bridge
             applied = False

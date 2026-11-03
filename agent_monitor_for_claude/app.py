@@ -41,7 +41,7 @@ from .tasks import read_task_output as _read_task_output
 from .verbose import print_runtime_diagnostics
 from .window_background import apply_native_background, window_background_color
 from .window_focus import focus_session_window, focus_terminal_window, open_directory, open_vscode_session, reveal_in_file_manager
-from .window_layout import NORMAL_MIN_SIZE, enter_compact, leave_compact
+from .window_layout import NORMAL_MIN_SIZE, enter_compact, keep_on_top, leave_compact
 from .wsl import wsl_process_stats
 
 __all__ = ['run']
@@ -161,12 +161,7 @@ class _MonitorApi:
         if window is None or not isinstance(enabled, bool):
             return False
 
-        try:
-            window.on_top = enabled
-        except Exception:  # noqa: BLE001  # a window that is closing
-            return False
-
-        return True
+        return keep_on_top(window, enabled)
 
     def log(self, message: object) -> None:
         """Forward a UI-side diagnostic message to stderr.

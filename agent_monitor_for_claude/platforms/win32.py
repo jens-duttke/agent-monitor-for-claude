@@ -31,7 +31,7 @@ __all__ = [
     'DIAGNOSTIC_PACKAGES', 'activate_window', 'ask_yes_no', 'apply_native_background', 'copy_text', 'diagnostic_display_rows',
     'diagnostic_post_init_rows', 'diagnostic_runtime_rows', 'diagnostic_system_rows', 'enum_windows',
     'no_window_kwargs', 'open_path', 'open_uri', 'paint_window', 'prepare_gui_environment', 'reveal_file',
-    'set_min_window_size', 'setup_console', 'show_error_box', 'storage_dir', 'window_background_color',
+    'set_keep_on_top', 'set_min_window_size', 'setup_console', 'show_error_box', 'storage_dir', 'window_background_color',
 ]
 
 # Third-party packages worth reporting in the diagnostics output.  pythonnet and
@@ -454,6 +454,51 @@ def set_min_window_size(native: object, width: int, height: int) -> bool:
 
         def _assign() -> None:
             native.MinimumSize = Size(int(width * scale), int(height * scale))
+
+        if native.InvokeRequired:
+            native.Invoke(Action(_assign))
+        else:
+            _assign()
+
+        return True
+    except Exception:  # noqa: BLE001  # .NET interop only present at runtime
+        return False
+
+
+def set_keep_on_top(native: object, on_top: bool) -> bool:
+    """Keep a live WinForms window above all others, or release it.
+
+    Never assigned from the calling thread, which is what pywebview's own
+    ``on_top`` does: ``TopMost`` is a property, and pythonnet keeps the GIL
+    across a property assignment, while the assignment sends a message to the
+    UI thread and waits for it.  A UI thread that is meanwhile running Python -
+    another bridge call's ``Invoke``, such as the window background's - waits
+    for the GIL in turn, and the whole application hangs.  ``Invoke`` is a
+    method call, across which pythonnet releases the GIL.
+
+    Parameters
+    ----------
+    native : object
+        pywebview's native window (the WinForms ``BrowserForm``).
+    on_top : bool
+        Whether the window stays above all others.
+
+    Returns
+    -------
+    bool
+        True if the flag was applied.  Best-effort otherwise: the .NET interop
+        only exists inside a running WebView2 host, so any failure (including
+        off a real window) is swallowed and reported as False.
+    """
+    if native is None:
+        return False
+
+    try:
+        # Imported lazily for the same reason as in apply_native_background.
+        from System import Action
+
+        def _assign() -> None:
+            native.TopMost = on_top
 
         if native.InvokeRequired:
             native.Invoke(Action(_assign))

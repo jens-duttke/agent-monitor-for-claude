@@ -28,19 +28,19 @@ if IS_WINDOWS:
         DIAGNOSTIC_PACKAGES, activate_window, apply_native_background, ask_yes_no, copy_text, diagnostic_display_rows,
         diagnostic_post_init_rows, diagnostic_runtime_rows, diagnostic_system_rows, enum_windows,
         no_window_kwargs, open_path, open_uri, paint_window, prepare_gui_environment, reveal_file,
-        set_min_window_size, setup_console, show_error_box, storage_dir, window_background_color,
+        set_keep_on_top, set_min_window_size, setup_console, show_error_box, storage_dir, window_background_color,
     )
 else:
     from .linux import (
         DIAGNOSTIC_PACKAGES, activate_window, apply_native_background, ask_yes_no, copy_text, diagnostic_display_rows,
         diagnostic_post_init_rows, diagnostic_runtime_rows, diagnostic_system_rows, enum_windows,
         no_window_kwargs, open_path, open_uri, paint_window, prepare_gui_environment, reveal_file,
-        set_min_window_size, setup_console, show_error_box, storage_dir, window_background_color,
+        set_keep_on_top, set_min_window_size, setup_console, show_error_box, storage_dir, window_background_color,
     )
 
 __all__ = [
     'DIAGNOSTIC_PACKAGES', 'IS_WINDOWS', 'activate_window', 'apply_native_background', 'ask_yes_no', 'copy_text',
     'diagnostic_display_rows', 'diagnostic_post_init_rows', 'diagnostic_runtime_rows', 'diagnostic_system_rows',
     'enum_windows', 'no_window_kwargs', 'open_path', 'open_uri', 'paint_window', 'prepare_gui_environment',
-    'reveal_file', 'set_min_window_size', 'setup_console', 'show_error_box', 'storage_dir', 'window_background_color',
+    'reveal_file', 'set_keep_on_top', 'set_min_window_size', 'setup_console', 'show_error_box', 'storage_dir', 'window_background_color',
 ]

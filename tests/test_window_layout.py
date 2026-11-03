@@ -140,25 +140,42 @@ class SetCompactBridgeTest(unittest.TestCase):
         self.assertFalse(_MonitorApi().set_compact(True))
 
 
+class _NoOnTopWindow(_FakeWindow):
+    """A window whose pywebview ``on_top`` must never be assigned."""
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name == 'on_top' and 'on_top' in self.__dict__:
+            raise AssertionError('pywebview on_top assigned from the calling thread')
+        super().__setattr__(name, value)
+
+
 class SetOnTopBridgeTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.window = _FakeWindow()
+        patcher = mock.patch.object(window_layout, 'set_keep_on_top', return_value=True)
+        self.set_keep_on_top = patcher.start()
+        self.addCleanup(patcher.stop)
+
+        self.window = _NoOnTopWindow()
         self.api = _MonitorApi()
         self.api.attach_window(self.window)
 
-    def test_sets_and_clears_the_flag(self) -> None:
+    def test_goes_through_the_platform_layer(self) -> None:
+        # pywebview's own on_top assigns WinForms' TopMost from the bridge
+        # thread while holding the GIL; with another bridge call running on the
+        # UI thread at that moment, the whole application hung at start-up.
         self.assertTrue(self.api.set_on_top(True))
-        self.assertTrue(self.window.on_top)
-
         self.assertTrue(self.api.set_on_top(False))
+
+        self.assertEqual(self.set_keep_on_top.call_args_list, [mock.call(self.window.native, True), mock.call(self.window.native, False)])
         self.assertFalse(self.window.on_top)
 
     def test_non_bool_is_refused(self) -> None:
         self.assertFalse(self.api.set_on_top('yes'))
-        self.assertFalse(self.window.on_top)
+        self.set_keep_on_top.assert_not_called()
 
     def test_without_a_window_it_is_a_no_op(self) -> None:
         self.assertFalse(_MonitorApi().set_on_top(True))
+        self.set_keep_on_top.assert_not_called()
 
 
 if __name__ == '__main__':
