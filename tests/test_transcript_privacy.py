@@ -15,7 +15,9 @@ import unittest
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
+from agent_monitor_for_claude import transcript
 from agent_monitor_for_claude.paths import transcript_path, local_root
 from agent_monitor_for_claude.snapshot import build_snapshot
 from agent_monitor_for_claude.transcript import history_state_for, state_for
@@ -644,6 +646,29 @@ class PrivacyTest(TranscriptEnvTest):
         self._write_transcript(_SESSION_ID, _CWD, _transcript_lines())
         state = state_for(local_root(), _SESSION_ID, _CWD)
 
+        serialized = json.dumps(asdict(state))
+        for secret in _SECRETS:
+            self.assertNotIn(secret, serialized)
+
+    def test_pending_state_leaks_no_content(self) -> None:
+        # While a large transcript's first scan runs in the background, the title
+        # and mode are read from near the end of the file instead.  A prompt that
+        # carries the mode passes that read's marker filter and is parsed, yet its
+        # text must stay unread - it is not the session's first prompt.
+        prompt = json.dumps({'type': 'user', 'timestamp': '2026-07-11T10:55:00Z', 'permissionMode': 'default',
+                             'message': {'content': 'SECRET_TEXT'}})
+        self._write_transcript(_SESSION_ID, _CWD, _transcript_lines() + [prompt])
+        try:
+            with mock.patch.object(transcript, '_SYNC_SCAN_BYTES', 0):
+                state = state_for(local_root(), _SESSION_ID, _CWD)
+        finally:
+            worker = transcript._deferred.worker
+            if worker is not None:
+                worker.join(timeout=10)
+
+        self.assertTrue(state.scan_pending)
+        self.assertEqual(state.permission_mode, 'default')
+        self.assertEqual(state.title, 'Session title label')
         serialized = json.dumps(asdict(state))
         for secret in _SECRETS:
             self.assertNotIn(secret, serialized)

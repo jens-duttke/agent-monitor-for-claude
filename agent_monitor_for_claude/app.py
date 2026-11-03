@@ -556,6 +556,11 @@ def run(verbose: bool = False) -> None:
     """
     prepare_gui_environment()
 
+    # The window and its web view take a moment to come up; spending it on the
+    # first snapshot means the page's own first request finds the small
+    # transcripts scanned and the large ones already under way.
+    threading.Thread(target=_warm_up, name='snapshot-warm-up', daemon=True).start()
+
     api = _MonitorApi()
 
     ui_dir = _ui_dir()
@@ -574,6 +579,15 @@ def run(verbose: bool = False) -> None:
     api.attach_window(window)
     on_started = print_runtime_diagnostics if verbose else None
     webview.start(on_started, private_mode=False, storage_path=str(storage_dir()), icon=_icon_path(), http_port=_http_port())
+
+
+def _warm_up() -> None:
+    """Build one snapshot ahead of the page asking for it, discarding the result."""
+    try:
+        build_snapshot()
+    except Exception:
+        # Only a head start: the page's own request reports whatever failed here.
+        pass
 
 
 def _http_port() -> int | None:

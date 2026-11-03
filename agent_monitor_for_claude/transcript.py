@@ -28,14 +28,18 @@ import os
 import re
 import threading
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .paths import SessionRoot, transcript_path
 
-__all__ = ['TranscriptState', 'HistoryState', 'WorktreeState', 'state_for', 'history_state_for', 'worktree_for', 'prune_scan_cache']
+__all__ = [
+    'TranscriptState', 'HistoryState', 'WorktreeState', 'state_for', 'history_state_for', 'worktree_for', 'prune_scan_cache',
+    'completed_background_scans', 'pause_background_scans',
+]
 
 # Bytes read from the end of the transcript.  Large enough to contain the last
 # several turns without loading a multi-megabyte file on every poll.  When a
@@ -43,6 +47,22 @@ __all__ = ['TranscriptState', 'HistoryState', 'WorktreeState', 'state_for', 'his
 # parses, the window escalates so the state never goes blind.
 _TAIL_BYTES = 262144
 _TAIL_ESCALATION = (_TAIL_BYTES, _TAIL_BYTES * 8, _TAIL_BYTES * 64)
+
+# A transcript's first full scan reads the whole file, at roughly 400 MB/s -
+# seconds for the few-hundred-megabyte transcripts long sessions grow into.  Up
+# to this size it runs on the request that needs it; anything larger is handed
+# to a background thread (see _scan_or_defer), so a snapshot never waits on it.
+_SYNC_SCAN_BYTES = 8 * 1024 * 1024
+# Read size of a full scan, which bounds its memory to a chunk plus the longest
+# line instead of the whole file, and how far a background scan runs before it
+# checks whether to give way (a few milliseconds of work).
+_SCAN_CHUNK_BYTES = 1024 * 1024
+# How far back from the end the stand-in for a running background scan looks
+# for the title and permission mode (see _recent_title_and_mode), and in what
+# steps.  Claude Code rewrites the title every few turns; the mode can sit a few
+# megabytes back, behind a long run of tool results.
+_PENDING_LOOKBACK_BYTES = 16 * 1024 * 1024
+_LOOKBACK_CHUNK_BYTES = 1024 * 1024
 
 _USAGE_KEYS = ('input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens')
 
@@ -304,6 +324,55 @@ _scan_cache: dict[str, _ScanState] = {}
 _scan_lock = threading.Lock()
 
 
+@dataclass
+class _DeferredScans:
+    """The first full scans handed to the background thread (see ``_scan_or_defer``).
+
+    ``pending`` maps a scan-cache key to the file's size when it was queued and
+    its path; the size orders the queue smallest first, so as many sessions as
+    possible are complete as early as possible.  ``completed`` counts the scans
+    that stored a result, which is what tells a change fingerprint that a
+    snapshot now has more to show.  ``readers`` counts the callers inside
+    :func:`pause_background_scans`; ``lock`` is a condition so the worker can
+    wait for that count to drop to zero.
+    """
+
+    pending: dict[str, tuple[int, Path]] = field(default_factory=dict)
+    lock: threading.Condition = field(default_factory=threading.Condition)
+    worker: threading.Thread | None = None
+    completed: int = 0
+    readers: int = 0
+
+
+_deferred = _DeferredScans()
+
+
+def completed_background_scans() -> int:
+    """Return how many deferred first scans have stored their result so far."""
+    with _deferred.lock:
+        return _deferred.completed
+
+
+@contextmanager
+def pause_background_scans() -> Iterator[None]:
+    """Hold the background scans at their next chunk boundary while the caller runs.
+
+    The scan is CPU-bound and holds the interpreter lock in long stretches, so
+    a snapshot sharing the interpreter with it waits for the lock after every
+    file access it makes: measured, a snapshot took ~1 s instead of ~0.1 s for
+    as long as a scan ran, the first one ~1.4 s instead of ~0.5 s.  Holding the
+    scan for those few milliseconds costs it nothing it does not make up.
+    """
+    with _deferred.lock:
+        _deferred.readers += 1
+    try:
+        yield
+    finally:
+        with _deferred.lock:
+            _deferred.readers -= 1
+            _deferred.lock.notify_all()
+
+
 def prune_scan_cache(active: Iterable[tuple[SessionRoot, str, str]]) -> None:
     """Drop scan-cache entries for sessions no longer in the registry.
 
@@ -333,6 +402,13 @@ def prune_scan_cache(active: Iterable[tuple[SessionRoot, str, str]]) -> None:
         for key in list(_scan_cache):
             if key not in keep:
                 del _scan_cache[key]
+
+    # A queued scan of a session that has left the registry would only produce
+    # an entry this function drops on its next call.
+    with _deferred.lock:
+        for key in list(_deferred.pending):
+            if key not in keep:
+                del _deferred.pending[key]
 
 
 @dataclass(frozen=True)
@@ -377,6 +453,11 @@ class TranscriptState:
     # field; no part of the refusal's text is read.
     auto_denials_consecutive: int = 0
     auto_denials_total: int = 0
+    # True while the transcript's first full scan still runs in the background:
+    # usage and both timelines are then None - unknown rather than empty - the
+    # denial counts read zero (the calmer reading: no pause badge), and the
+    # title and mode are the newest ones near the end of the file.
+    scan_pending: bool = False
 
 
 @dataclass(frozen=True)
@@ -411,8 +492,12 @@ def state_for(root: SessionRoot, session_id: str, cwd: str) -> TranscriptState:
             break
         state = _parse(_read_tail(path, window))
 
-    scan = _scan_appended(path)
+    scan = _scan_or_defer(path)
     age_seconds = _activity_age(state.last_timestamp, mtime)
+    if scan is None:
+        title, permission_mode = _recent_title_and_mode(path)
+        return replace(state, age_seconds=age_seconds, title=title, permission_mode=permission_mode, scan_pending=True)
+
     return replace(state, age_seconds=age_seconds, usage=scan.usage, usage_by_model=scan.usage_by_model,
                    model_timeline=scan.model_timeline, cli_timeline=scan.cli_timeline,
                    title=scan.title, permission_mode=scan.permission_mode,
@@ -905,21 +990,17 @@ def _scan_appended(path: Path) -> _ScanResult:
         result = state
 
         if size > state.consumed:
+            # A failed read leaves a cached state consistent (see _absorb_file);
+            # a fresh one is simply not stored, so nothing is counted twice.
             try:
-                with path.open('rb') as handle:
-                    handle.seek(state.consumed)
-                    data = handle.read(size - state.consumed)
+                trailing = _absorb_file(path, state, size)
             except OSError:
                 return _scan_result(state)
 
-            lines = data.split(b'\n')
-            # The final chunk may be a line still being written (or a file without
-            # a trailing newline): reflect it in the result, but keep it out of the
-            # cache so it is re-read - never double-counted - on the next poll.
-            trailing = lines.pop()
-            for raw_line in lines:
-                _absorb_line(raw_line, state)
-            state.consumed = size - len(trailing)
+            # The trailing bytes may be a line still being written (or a file
+            # without a trailing newline): reflect them in the result, but keep
+            # them out of the cache so they are re-read - never double-counted -
+            # on the next poll.
             _scan_cache[cache_key] = state
 
             # Only an actual partial line needs the throwaway copy. A transcript
@@ -932,6 +1013,187 @@ def _scan_appended(path: Path) -> _ScanResult:
                 _absorb_line(trailing, result)
 
         return _scan_result(result)
+
+
+def _absorb_file(path: Path, state: _ScanState, end: int, before_chunk: Callable[[], None] | None = None) -> bytes:
+    """Fold the complete lines of *path* between ``state.consumed`` and *end* into *state*.
+
+    Read in bounded chunks, so a transcript of hundreds of megabytes is never
+    held in memory whole.  ``state.consumed`` advances after every chunk to the
+    end of the last complete line folded in, so a read that fails midway leaves
+    it describing exactly what *state* holds.  Returns the partial line left
+    over at *end*, which is not folded in.  Raises ``OSError`` if the file
+    cannot be read.
+
+    *before_chunk*, when given, runs before every chunk is read - the point at
+    which a background scan gives way (see :func:`pause_background_scans`).
+    """
+    remainder = b''
+    with path.open('rb') as handle:
+        position = handle.seek(state.consumed)
+        while position < end:
+            if before_chunk is not None:
+                before_chunk()
+            chunk = handle.read(min(_SCAN_CHUNK_BYTES, end - position))
+            if not chunk:
+                break
+            position += len(chunk)
+
+            lines = (remainder + chunk).split(b'\n')
+            remainder = lines.pop()
+            for raw_line in lines:
+                _absorb_line(raw_line, state)
+            state.consumed = position - len(remainder)
+
+    return remainder
+
+
+def _scan_or_defer(path: Path) -> _ScanResult | None:
+    """Return :func:`_scan_appended`'s result for *path*, or None while its first full scan runs in the background.
+
+    Only the *first* scan of a large transcript is deferred; it is what costs
+    seconds, and every later one parses just the appended bytes.  A snapshot
+    that met the scan synchronously would keep the whole window on its loading
+    skeleton until the largest transcript had been read - the deferred one
+    instead lets it show every session at once and fill in the rest when the
+    scan has stored its result (see ``completed_background_scans``).
+    """
+    cache_key = os.path.normcase(str(path))
+    with _scan_lock:
+        scanned = cache_key in _scan_cache
+
+    if not scanned:
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        if size > _SYNC_SCAN_BYTES:
+            _defer_scan(cache_key, path, size)
+            return None
+
+    return _scan_appended(path)
+
+
+def _defer_scan(cache_key: str, path: Path, size: int) -> None:
+    """Queue the first full scan of *path*, starting the background thread if none is running."""
+    with _deferred.lock:
+        _deferred.pending.setdefault(cache_key, (size, path))
+        if _deferred.worker is None:
+            _deferred.worker = threading.Thread(target=_run_deferred_scans, name='transcript-scan', daemon=True)
+            _deferred.worker.start()
+
+
+def _wait_for_readers() -> None:
+    """Block the background scan while any caller is inside :func:`pause_background_scans`."""
+    with _deferred.lock:
+        _deferred.lock.wait_for(lambda: _deferred.readers == 0)
+
+
+def _run_deferred_scans() -> None:
+    """Work through the deferred first scans, smallest file first, until none is left."""
+    while True:
+        with _deferred.lock:
+            if not _deferred.pending:
+                _deferred.worker = None
+                return
+            cache_key, (_, path) = min(_deferred.pending.items(), key=lambda item: item[1][0])
+
+        try:
+            stored = _first_scan(cache_key, path)
+        except Exception:
+            # Last-resort isolation, like build_snapshot's per record: one odd
+            # file must not stop every scan queued behind it.  Nothing is stored,
+            # so the next snapshot queues it again.
+            stored = False
+
+        with _deferred.lock:
+            _deferred.pending.pop(cache_key, None)
+            if stored:
+                _deferred.completed += 1
+
+
+def _first_scan(cache_key: str, path: Path) -> bool:
+    """Scan *path* in full and store the result under *cache_key*; return True if it was stored.
+
+    The read runs outside ``_scan_lock`` - it can take seconds, and holding the
+    lock would stall every snapshot behind it - which is safe because the state
+    being filled is private until it is stored.  A key some other caller has
+    filled in the meantime (``worktree_for`` scans synchronously) is left as it
+    is: that state has already moved on from where this one would start.
+    """
+    with _scan_lock:
+        if cache_key in _scan_cache:
+            return False
+
+    state = _ScanState()
+    try:
+        _absorb_file(path, state, path.stat().st_size, _wait_for_readers)
+    except OSError:
+        return False
+
+    with _scan_lock:
+        if cache_key in _scan_cache:
+            return False
+        _scan_cache[cache_key] = state
+
+    return True
+
+
+def _recent_title_and_mode(path: Path) -> tuple[str | None, str | None]:
+    """Return the newest title and permission mode within the last ``_PENDING_LOOKBACK_BYTES`` of *path*.
+
+    The stand-in for a first full scan still running in the background.  Both
+    are last-wins fields of that scan, so the newest occurrence is its exact
+    value whenever it lies inside the window, and each candidate line goes
+    through ``_absorb_line`` on a throwaway state, so a value is accepted by the
+    very rules the full scan applies.  What the window cannot see: a manual
+    rename older than it, which leaves the generated title showing until the
+    scan completes, and the first prompt - the window's oldest prompt is not the
+    session's first - so a session named only by its prompt shows its short
+    name until then.
+    """
+    custom_title: str | None = None
+    ai_title: str | None = None
+    permission_mode: str | None = None
+    try:
+        for raw_line in _lines_newest_first(path, _PENDING_LOOKBACK_BYTES):
+            if not (_PERMISSION_MODE_MARKER in raw_line or _AI_TITLE_MARKER in raw_line or _CUSTOM_TITLE_MARKER in raw_line):
+                continue
+
+            # A known first prompt keeps _absorb_line from parsing every user
+            # entry in search of one, which this read has no use for.
+            probe = _ScanState(first_prompt='')
+            _absorb_line(raw_line, probe)
+            custom_title = custom_title or probe.custom_title
+            ai_title = ai_title or probe.ai_title
+            permission_mode = permission_mode or probe.permission_mode
+            # A rename outranks the generated title, so only finding one ends
+            # the search for a title.
+            if custom_title and permission_mode:
+                break
+    except OSError:
+        pass
+
+    return custom_title or ai_title, permission_mode
+
+
+def _lines_newest_first(path: Path, max_bytes: int) -> Iterator[bytes]:
+    """Yield the lines of the last *max_bytes* of *path*, newest first, dropping a leading partial line."""
+    with path.open('rb') as handle:
+        position = handle.seek(0, os.SEEK_END)
+        floor = max(0, position - max_bytes)
+        partial = b''
+        while position > floor:
+            start = max(floor, position - _LOOKBACK_CHUNK_BYTES)
+            handle.seek(start)
+            lines = (handle.read(position - start) + partial).split(b'\n')
+            position = start
+            # The first piece may continue in the chunk before this one.
+            partial = lines.pop(0)
+            yield from reversed(lines)
+
+        if floor == 0:
+            yield partial
 
 
 def _scan_result(state: _ScanState) -> _ScanResult:

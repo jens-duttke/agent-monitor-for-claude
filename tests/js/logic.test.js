@@ -1468,6 +1468,19 @@ test('buildSession: compact is the cost when priced, else a token total', () => 
     assert.equal(unpriced.usage_detail, '2 in · 123 out · 33.0k 1h write ·\u00A0');
 });
 
+test('buildSession: usage still being scanned reads as an ellipsis, never as a zero cost', () => {
+    // A large transcript's first scan runs in the background; until it lands
+    // the usage is unknown, and "<$1" or "0" would be a wrong figure.
+    const session = logic.buildSession({
+        session_id: 's', pid: 1, cwd: 'd:\\x', short_name: 's', alive: true, has_transcript: true,
+        last_entry_kind: 'assistant', last_stop_reason: 'end_turn', model_id: 'claude-opus-4-8',
+        usage: {}, usage_by_model: {}, scan_pending: true,
+    }, { token_summary: '{input} in · {output} out' }, PRICES);
+    assert.equal(session.usage_compact, '…');
+    assert.equal(session.usage_detail, '');
+    assert.equal(session.status, 'awaiting_input');
+});
+
 test('buildSession: an interrupt reads as interrupted and clears the phantom subagent badge', () => {
     const session = logic.buildSession({
         session_id: 's', pid: 1, cwd: 'd:\\x', short_name: 's', alive: true, has_transcript: true,

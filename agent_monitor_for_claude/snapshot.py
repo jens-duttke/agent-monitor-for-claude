@@ -32,7 +32,7 @@ from .roots import session_roots
 from .sessions import list_sessions
 from .settings import ENDED_MAX_AGE, INCLUDE_COMPLETED
 from .subagents import count_subagents
-from .transcript import prune_scan_cache, state_for
+from .transcript import completed_background_scans, pause_background_scans, prune_scan_cache, state_for
 from .worktrees import prune_worktree_cache, resolve_worktree
 from .wsl import probe_wsl_sessions
 
@@ -41,6 +41,12 @@ __all__ = ['build_snapshot', 'live_or_recent_ids', 'registry_fingerprint']
 
 def build_snapshot() -> dict[str, Any]:
     """Return the raw session overview as a flat list of per-session records, across every session root."""
+    with pause_background_scans():
+        return _build_snapshot()
+
+
+def _build_snapshot() -> dict[str, Any]:
+    """Assemble :func:`build_snapshot`'s result."""
     sessions: list[dict[str, Any]] = []
 
     pairs = _collect_pairs()
@@ -141,6 +147,7 @@ def _build_session_record(
         'model_timeline': transcript_state.model_timeline or [],
         'cli_timeline': transcript_state.cli_timeline or [],
         'title': transcript_state.title,
+        'scan_pending': transcript_state.scan_pending,
         'subagents_running': subagents.running,
         'subagents_done': subagents.recent_done,
         'subagents_labels': list(subagents.labels),
@@ -195,19 +202,24 @@ def registry_fingerprint() -> str:
     collapses two different parts into one, and roots are visited in
     ``session_roots()`` order (the local root first, WSL distros sorted) for a
     fingerprint that is stable across polls when nothing changed.
+
+    The count of finished background scans leads it: a large transcript's
+    first scan completes without the file changing, and the snapshot that
+    reported it as pending is outdated from that moment on.
     """
-    parts: list[str] = []
-    for root, record in _collect_pairs():
-        transcript = transcript_path(root, record['session_id'], record['cwd'])
-        try:
-            stat_result = transcript.stat()
-            transcript_mark = f'{stat_result.st_mtime_ns}:{stat_result.st_size}'
-        except OSError:
-            transcript_mark = '-'
-        parts.append(
-            f"{root.origin}:{record['pid']}:{record['session_id']}:{record['native_status']}:"
-            f"{record['waiting_for']}:{transcript_mark}"
-        )
+    parts: list[str] = [f'scans:{completed_background_scans()}']
+    with pause_background_scans():
+        for root, record in _collect_pairs():
+            transcript = transcript_path(root, record['session_id'], record['cwd'])
+            try:
+                stat_result = transcript.stat()
+                transcript_mark = f'{stat_result.st_mtime_ns}:{stat_result.st_size}'
+            except OSError:
+                transcript_mark = '-'
+            parts.append(
+                f"{root.origin}:{record['pid']}:{record['session_id']}:{record['native_status']}:"
+                f"{record['waiting_for']}:{transcript_mark}"
+            )
 
     return '|'.join(parts)
 

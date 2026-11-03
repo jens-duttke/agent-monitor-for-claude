@@ -1650,7 +1650,11 @@ function buildSession(raw, labels, prices) {
     const costText = formatCost(sessionCostUsd(raw.usage_by_model, prices)) || '';
     let usageCompact = '';
     let usageDetail = '';
-    if (breakdown) {
+    if (raw.scan_pending) {
+        // The transcript's first full scan is still running in the background,
+        // so the usage is unknown rather than zero - an ellipsis until it lands.
+        usageCompact = '…';
+    } else if (breakdown) {
         usageCompact = costText || formatTokens(usageTotalTokens(usage));
         // The separator's trailing space sits at the end of .usage-detail (an
         // overflow:hidden flex item), where a normal space is stripped as
