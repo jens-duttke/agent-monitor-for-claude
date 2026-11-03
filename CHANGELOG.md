@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On Linux, `linux/install-desktop-entry` adds Agent Monitor to your desktop's application launcher, with its own icon; `--remove` takes it out again. Its window now shows up in the dock under that icon instead of as *python*.
 
 ### Changed
+- New app icon: the star now sits on the orange tile above a dark band with three status dots, so Agent Monitor no longer looks like Claude Desktop in the taskbar. The logo in the window header matches.
 - The status filters are now one dropdown instead of a row of chips. Collapsed, it names the filters that are on; opened, it lists every status below each other with a checkbox and its session count, and the *Older* time window sits right under its entry.
 - Sorting is now one dropdown as well. It holds the sort field, the order in words that fit the field (*Newest first*, *Highest first*, *A to Z*, ...) instead of an arrow button, and *Priority order* as a checkbox.
 - Sessions now show up within about a second of starting the app, instead of only after every long transcript has been read. A session whose transcript is still being read shows `…` as its cost for a few seconds. Long transcripts also need far less memory while they are read.

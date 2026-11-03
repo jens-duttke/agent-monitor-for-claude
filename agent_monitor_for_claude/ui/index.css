@@ -181,21 +181,12 @@ body {
     }
 }
 
+/* The app icon itself (index.html), the same drawing as agent_monitor_for_claude.ico. */
 .logo {
     width: 36px;
     height: 36px;
-    border-radius: 10px;
-    background: var(--accent);
-    display: grid;
-    place-items: center;
+    display: block;
     flex: none;
-
-    &::after {
-        content: '✳';
-        color: #faf9f5;
-        font-size: 17px;
-        line-height: 1;
-    }
 }
 
 .subtitle {
