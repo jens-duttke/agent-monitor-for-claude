@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-03
+
 ### Added
 - An agent you can reach through Remote Control carries a pointer badge next to its name, like in Claude Desktop.
 - A compact view, switched on from the header: the window narrows and each agent shows only its status dot, title and age, for keeping it beside your editor. Switching back restores the previous window size.
@@ -214,7 +216,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 13 languages, auto-detected from the system locale.
 - Optional settings file to tune the poll interval and window size.
 
-[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.7.0...v0.8.0
