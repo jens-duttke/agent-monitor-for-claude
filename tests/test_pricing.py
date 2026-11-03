@@ -19,6 +19,18 @@ class PricingTest(unittest.TestCase):
         for field in ('input', 'output', 'cache_read', 'cache_write_5m', 'cache_write_1h'):
             self.assertIn(field, opus)
 
+    def test_every_shipped_rate_is_complete_and_numeric(self) -> None:
+        data = pricing.load_pricing()
+
+        for date, schedule in data.items():
+            for model, rates in schedule.items():
+                for field in ('input', 'output', 'cache_read', 'cache_write_5m', 'cache_write_1h'):
+                    with self.subTest(date=date, model=model, field=field):
+                        value = rates.get(field)
+                        self.assertIsInstance(value, (int, float))
+                        self.assertNotIsInstance(value, bool)
+                        self.assertGreaterEqual(value, 0)
+
     def test_missing_file_yields_empty(self) -> None:
         original = pricing.PRICING_PATH
         try:

@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The status filters are now one dropdown instead of a row of chips. Collapsed, it names the filters that are on; opened, it lists every status below each other with a checkbox and its session count, and the *Older* time window sits right under its entry.
 - Sorting is now one dropdown as well. It holds the sort field, the order in words that fit the field (*Newest first*, *Highest first*, *A to Z*, ...) instead of an arrow button, and *Priority order* as a checkbox.
 
+### Fixed
+- Agents on Claude Opus 5.5, Opus 5, Sonnet 5.5, Haiku 5.5, Fable 5.1 and Mythos 5.1 now show an estimated cost instead of only a token total.
+- Claude Sonnet 5 is priced at $2/$10 per million tokens again. Since September 1 it was priced at $3/$15, a price increase that Anthropic cancelled.
+
 ## [0.10.0] - 2026-11-01
 
 ### Added

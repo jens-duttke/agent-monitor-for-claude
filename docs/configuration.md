@@ -48,22 +48,22 @@ The light/dark appearance is not a settings-file option. Set it with the toggle 
 
 The per-session cost estimate is computed from `pricing.json` (at the repo root, and next to the executable in the packaged Windows build). This tool never fetches prices - the file is a hand-maintained snapshot of Anthropic's pricing page. Edit it to keep costs accurate.
 
-Top-level keys are **effective-from dates** (`YYYY-MM-DD`). The schedule with the latest date on or before today applies, so a future price change can be entered ahead of time and takes effect automatically on that day. Each date holds a complete table of `model -> rates`, where every rate is in US dollars per million tokens (MTok):
+Top-level keys are **effective-from dates** (`YYYY-MM-DD`). The schedule with the latest date on or before today applies, so a future price change can be entered ahead of time and takes effect automatically on that day. Each date holds a complete table of `model -> rates`, where every rate is in US dollars per million tokens (MTok). In this example, the second schedule is an invented price change:
 
 ```json
 {
     "1970-01-01": {
-        "opus-4-8":  { "input": 5, "output": 25, "cache_read": 0.50, "cache_write_5m": 6.25, "cache_write_1h": 10 },
+        "opus-5-5":  { "input": 4, "output": 20, "cache_read": 0.20, "cache_write_5m": 5,    "cache_write_1h": 8 },
         "sonnet-5":  { "input": 2, "output": 10, "cache_read": 0.20, "cache_write_5m": 2.50, "cache_write_1h": 4 }
     },
-    "2026-09-01": {
-        "opus-4-8":  { "input": 5, "output": 25, "cache_read": 0.50, "cache_write_5m": 6.25, "cache_write_1h": 10 },
+    "2027-01-01": {
+        "opus-5-5":  { "input": 4, "output": 20, "cache_read": 0.20, "cache_write_5m": 5,    "cache_write_1h": 8 },
         "sonnet-5":  { "input": 3, "output": 15, "cache_read": 0.30, "cache_write_5m": 3.75, "cache_write_1h": 6 }
     }
 }
 ```
 
-- A dated schedule **fully replaces** the previous one. List **every** model you use in each dated table, even the ones whose price did not change (note `opus-4-8` is repeated unchanged above): a model omitted from the active schedule loses its cost estimate once that date takes effect.
+- A dated schedule **fully replaces** the previous one. List **every** model you use in each dated table, even the ones whose price did not change (note `opus-5-5` is repeated unchanged above): a model omitted from the active schedule loses its cost estimate once that date takes effect.
 - **Model keys** are family-version - the model id with `claude-`, any `[tier]`, and a trailing snapshot date removed (e.g. `claude-opus-4-8[1m]` and `claude-haiku-4-5-20251001` both need `opus-4-8` / `haiku-4-5`). Versions can be priced differently, so list each one you use.
 - All five rate fields are explicit - no multipliers are applied, so enter each rate as it is published.
 - If a session uses a model that is not listed, it shows a plain token total instead of a cost - add the model to fix that.
