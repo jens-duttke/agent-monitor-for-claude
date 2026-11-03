@@ -149,5 +149,7 @@
     "delete_confirm_ok": "刪除",
     "cancel": "取消",
     "deleted": "工作階段已刪除",
-    "delete_failed": "無法刪除此工作階段"
+    "delete_failed": "無法刪除此工作階段",
+    "compact_view": "精簡檢視 - 每個代理僅顯示狀態、標題和時間",
+    "keep_on_top": "視窗置頂"
 }

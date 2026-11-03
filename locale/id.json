@@ -149,5 +149,7 @@
     "delete_confirm_ok": "Hapus",
     "cancel": "Batal",
     "deleted": "Sesi dihapus",
-    "delete_failed": "Tidak dapat menghapus sesi"
+    "delete_failed": "Tidak dapat menghapus sesi",
+    "compact_view": "Tampilan ringkas - hanya status, judul, dan waktu tiap agen",
+    "keep_on_top": "Jaga jendela tetap di atas jendela lain"
 }

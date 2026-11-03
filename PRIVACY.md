@@ -364,9 +364,10 @@ second window from starting - and no bundle to unpack, since the application run
 1. **Its interface-preference profile**, in `%LOCALAPPDATA%\AgentMonitorForClaude` on Windows and
    `~/.local/share/agent-monitor-for-claude` on Linux (or below `$XDG_DATA_HOME` when you have set
    it). This is the browser profile of the engine the window renders in - WebView2 or WebKitGTK - and
-   the application uses it for one purpose: so the window can remember your choices in `localStorage`. The current version stores seven values there - theme, which filters
-   are on, sort field and direction, whether priority ordering is on, your three search toggles,
-   and which project panels you collapsed. The collapsed-panel entry stores project directory paths,
+   the application uses it for one purpose: so the window can remember your choices in `localStorage`. The current version stores ten values there - theme, which filters
+   are on and how far back the *Older* filter reaches, sort field and direction, whether priority
+   ordering is on, your three search toggles, whether the compact view and keep-on-top are on, and
+   which project panels you collapsed. The collapsed-panel entry stores project directory paths,
    since that is what identifies a panel; the others are short flags. (An older version's leftover key
    may still sit there unused.)
 
@@ -463,7 +464,7 @@ a hand-maintained local `pricing.json` in the installation, never fetched from a
 It has two direct Python dependencies, `pywebview` and `psutil`. Through pywebview it also uses
 `bottle` (the loopback file server described above) and, on Windows, `pythonnet`/`clr_loader` (the .NET
 bridge to the window host, which the application calls directly to keep the window background in step
-with your theme). On Linux the same role is filled by PyGObject, the GTK bindings your distribution
+with your theme and to let the compact view make the window narrower). On Linux the same role is filled by PyGObject, the GTK bindings your distribution
 ships. Rendering is done by the browser engine your system provides: Microsoft Edge WebView2 on
 Windows, WebKitGTK on Linux.
 

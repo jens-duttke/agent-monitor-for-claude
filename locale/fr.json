@@ -149,5 +149,7 @@
     "delete_confirm_ok": "Supprimer",
     "cancel": "Annuler",
     "deleted": "Session supprimée",
-    "delete_failed": "Impossible de supprimer la session"
+    "delete_failed": "Impossible de supprimer la session",
+    "compact_view": "Vue compacte - uniquement l'état, le titre et l'ancienneté de chaque agent",
+    "keep_on_top": "Garder la fenêtre au-dessus des autres"
 }

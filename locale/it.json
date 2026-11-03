@@ -149,5 +149,7 @@
     "delete_confirm_ok": "Elimina",
     "cancel": "Annulla",
     "deleted": "Sessione eliminata",
-    "delete_failed": "Impossibile eliminare la sessione"
+    "delete_failed": "Impossibile eliminare la sessione",
+    "compact_view": "Vista compatta - solo stato, titolo ed età di ogni agente",
+    "keep_on_top": "Mantieni la finestra sopra le altre"
 }

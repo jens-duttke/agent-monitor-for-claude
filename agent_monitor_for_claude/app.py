@@ -41,6 +41,7 @@ from .tasks import read_task_output as _read_task_output
 from .verbose import print_runtime_diagnostics
 from .window_background import apply_native_background, window_background_color
 from .window_focus import focus_session_window, focus_terminal_window, open_directory, open_vscode_session, reveal_in_file_manager
+from .window_layout import NORMAL_MIN_SIZE, enter_compact, leave_compact
 from .wsl import wsl_process_stats
 
 __all__ = ['run']
@@ -102,6 +103,11 @@ class _MonitorApi:
         self._window: Any = None
         self._search_seq = 0
         self._search_lock = threading.Lock()
+        # Whether the compact view is on, and the size the window had before it
+        # was turned on - restored when it is turned off again.
+        self._compact = False
+        self._normal_size: tuple[int, int] | None = None
+        self._layout_lock = threading.Lock()
 
     def attach_window(self, window: Any) -> None:
         """Bind the pywebview window used to push streaming search results."""
@@ -122,6 +128,45 @@ class _MonitorApi:
 
         native = getattr(window, 'native', None)
         return apply_native_background(native, color)
+
+    def set_compact(self, enabled: object) -> bool:
+        """Narrow the window for the compact view, or restore its previous size.
+
+        The page owns the preference (localStorage) and reports it on load and on
+        every toggle; a repeated report of the state already in force changes
+        nothing, so a reloaded page never records the compact size as the one to
+        restore.  Anything but a bool is refused.
+        """
+        window = self._window
+        if window is None or not isinstance(enabled, bool):
+            return False
+
+        with self._layout_lock:
+            if enabled == self._compact:
+                return True
+
+            if enabled:
+                self._normal_size = enter_compact(window)
+            else:
+                leave_compact(window, self._normal_size)
+                self._normal_size = None
+
+            self._compact = enabled
+
+        return True
+
+    def set_on_top(self, enabled: object) -> bool:
+        """Keep the window above all others, or release it.  Anything but a bool is refused."""
+        window = self._window
+        if window is None or not isinstance(enabled, bool):
+            return False
+
+        try:
+            window.on_top = enabled
+        except Exception:  # noqa: BLE001  # a window that is closing
+            return False
+
+        return True
 
     def log(self, message: object) -> None:
         """Forward a UI-side diagnostic message to stderr.
@@ -572,7 +617,7 @@ def run(verbose: bool = False) -> None:
         js_api=api,
         width=WINDOW_WIDTH,
         height=WINDOW_HEIGHT,
-        min_size=(480, 360),
+        min_size=NORMAL_MIN_SIZE,
         background_color=window_background_color(),
     )
     # Let the bridge push streaming search results back into this window.

@@ -236,6 +236,18 @@ body {
     &:active {
         transform: scale(0.93);
     }
+
+    svg {
+        width: 17px;
+        height: 17px;
+    }
+
+    /* A window toggle that is on (compact view, keep on top). */
+    &.active {
+        background: color-mix(in srgb, var(--accent) 20%, transparent);
+        border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+        color: var(--fg-heading);
+    }
 }
 
 /* --- Filters --- */
@@ -1776,6 +1788,93 @@ body {
         .host-cell { display: none; }
     }
     .panel-path { display: none; }
+}
+
+/* --- Compact view ---
+   A narrow window kept beside the editor: a status dot, the title and the age
+   per row, nothing else. After the responsive blocks on purpose - `body.compact
+   .row` has the same specificity as `body.show-cli .row`, so source order
+   decides. The toolbar goes too: the filters and the sort order still apply,
+   they are only not editable here. The search box stays while it holds a query,
+   so an active search never narrows the view invisibly. */
+body.compact {
+    .app-header {
+        padding: 10px 14px;
+        gap: 10px;
+    }
+
+    .logo,
+    .subtitle,
+    #effort-badge,
+    .filters-row,
+    .panel-path,
+    .search-row:has(#search-input:placeholder-shown) {
+        display: none;
+    }
+
+    .brand-text {
+        min-width: 0;
+    }
+
+    .brand h1 {
+        font-size: 15px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .header-actions {
+        gap: 6px;
+    }
+
+    .icon-btn {
+        width: 30px;
+        height: 30px;
+    }
+
+    .search-row {
+        padding: 0 14px 10px;
+    }
+
+    .content {
+        padding: 12px;
+        gap: 12px;
+    }
+
+    .panel {
+        margin-top: 12px;
+    }
+
+    .hero {
+        padding: 10px 12px;
+    }
+
+    .panel-head {
+        padding: 9px 12px;
+        gap: 8px;
+
+        /* The path is gone, so a long project name is what has to give way. */
+        h2 {
+            flex: 0 1 auto;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+    }
+
+    .row {
+        grid-template-columns: 10px minmax(0, 1fr) 52px 26px;
+        gap: 10px;
+        padding: 8px 12px;
+
+        .usage-cell,
+        .model-cell,
+        .cli-cell,
+        .host-cell,
+        .mode-chip,
+        .worktree-badge {
+            display: none;
+        }
+    }
 }
 
 /* --- confirmation modal (delete a past session) --- */

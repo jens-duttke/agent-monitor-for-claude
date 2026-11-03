@@ -31,7 +31,7 @@ __all__ = [
     'DIAGNOSTIC_PACKAGES', 'activate_window', 'ask_yes_no', 'apply_native_background', 'copy_text', 'diagnostic_display_rows',
     'diagnostic_post_init_rows', 'diagnostic_runtime_rows', 'diagnostic_system_rows', 'enum_windows',
     'no_window_kwargs', 'open_path', 'open_uri', 'paint_window', 'prepare_gui_environment', 'reveal_file',
-    'setup_console', 'show_error_box', 'storage_dir', 'window_background_color',
+    'set_min_window_size', 'setup_console', 'show_error_box', 'storage_dir', 'window_background_color',
 ]
 
 # Third-party packages worth reporting in the diagnostics output.  pythonnet and
@@ -406,6 +406,54 @@ def apply_native_background(native: object, hex_color: str) -> bool:
             handle = getattr(native, 'Handle', None)
             if handle is not None:
                 paint_window(int(handle.ToInt64()), hex_color)
+
+        if native.InvokeRequired:
+            native.Invoke(Action(_assign))
+        else:
+            _assign()
+
+        return True
+    except Exception:  # noqa: BLE001  # .NET interop only present at runtime
+        return False
+
+
+def set_min_window_size(native: object, width: int, height: int) -> bool:
+    """Change the smallest size a live WinForms window can be resized to.
+
+    pywebview fixes the minimum once, at creation; the compact view needs a
+    narrower one only while it is on.  The form's ``MinimumSize`` is in physical
+    pixels, so the logical size is scaled by the window's own DPI factor, and the
+    assignment is marshalled onto the UI thread like every other form property.
+
+    Parameters
+    ----------
+    native : object
+        pywebview's native window (the WinForms ``BrowserForm``).
+    width, height : int
+        New minimum size in logical pixels.
+
+    Returns
+    -------
+    bool
+        True if the minimum was applied.  Best-effort otherwise: the .NET
+        interop only exists inside a running WebView2 host, so any failure
+        (including off a real window) is swallowed and reported as False.
+    """
+    if native is None or width < 1 or height < 1:
+        return False
+
+    try:
+        # Imported lazily for the same reason as in apply_native_background.
+        import clr
+
+        clr.AddReference('System.Drawing')
+        from System import Action
+        from System.Drawing import Size
+
+        scale = float(getattr(native, '_scale', 1.0) or 1.0)
+
+        def _assign() -> None:
+            native.MinimumSize = Size(int(width * scale), int(height * scale))
 
         if native.InvokeRequired:
             native.Invoke(Action(_assign))

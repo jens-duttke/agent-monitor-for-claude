@@ -149,5 +149,7 @@
     "delete_confirm_ok": "削除",
     "cancel": "キャンセル",
     "deleted": "セッションを削除しました",
-    "delete_failed": "セッションを削除できませんでした"
+    "delete_failed": "セッションを削除できませんでした",
+    "compact_view": "コンパクト表示 - 各エージェントの状態・タイトル・経過時間のみ",
+    "keep_on_top": "ウィンドウを常に手前に表示"
 }

@@ -149,5 +149,7 @@
     "delete_confirm_ok": "Excluir",
     "cancel": "Cancelar",
     "deleted": "Sessão excluída",
-    "delete_failed": "Não foi possível excluir a sessão"
+    "delete_failed": "Não foi possível excluir a sessão",
+    "compact_view": "Visualização compacta - apenas status, título e tempo de cada agente",
+    "keep_on_top": "Manter a janela acima das outras"
 }

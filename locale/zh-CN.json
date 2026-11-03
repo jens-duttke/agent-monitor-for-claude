@@ -149,5 +149,7 @@
     "delete_confirm_ok": "删除",
     "cancel": "取消",
     "deleted": "会话已删除",
-    "delete_failed": "无法删除该会话"
+    "delete_failed": "无法删除该会话",
+    "compact_view": "紧凑视图 - 每个代理仅显示状态、标题和时间",
+    "keep_on_top": "窗口置顶"
 }

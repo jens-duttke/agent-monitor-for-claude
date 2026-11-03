@@ -34,6 +34,7 @@ If you run many Claude Code agents across several projects, you cannot tell from
 
 ### Reach and preferences
 - **Light and dark** - follows your system theme, with a one-click toggle in the header.
+- **Compact and on top** - a header button switches to a compact view for keeping the window beside your editor: the window narrows, and each agent shows only its status, title and age. A second button keeps the window above all others. Both are remembered across restarts.
 - **13 languages** - auto-detected from your system locale (English, German, Spanish, French, Hindi, Indonesian, Italian, Japanese, Korean, Brazilian Portuguese, Ukrainian, Simplified and Traditional Chinese).
 - **Customizable** - an optional settings file tunes the poll interval and window size.
 
@@ -107,7 +108,7 @@ Two notes specific to Linux:
 ### Uninstalling
 On Windows, delete the executable. On Linux, delete the checkout and its `.venv`.
 
-What either leaves behind is your interface preferences (theme, filters, collapsed panels), in `%LOCALAPPDATA%\AgentMonitorForClaude` on Windows and `~/.local/share/agent-monitor-for-claude` on Linux - delete that folder to remove those too. Linux additionally leaves a lock file in the session's runtime directory, which the system clears at logout. There is nothing else: no installer, no registry entries, no service. See [PRIVACY.md](PRIVACY.md).
+What either leaves behind is your interface preferences (theme, filters, compact view, collapsed panels), in `%LOCALAPPDATA%\AgentMonitorForClaude` on Windows and `~/.local/share/agent-monitor-for-claude` on Linux - delete that folder to remove those too. Linux additionally leaves a lock file in the session's runtime directory, which the system clears at logout. There is nothing else: no installer, no registry entries, no service. See [PRIVACY.md](PRIVACY.md).
 
 ## Configuration
 

@@ -92,6 +92,19 @@ class ApplyNativeBackgroundTest(unittest.TestCase):
 
 
 @_LINUX_ONLY
+class SetMinWindowSizeTest(unittest.TestCase):
+    def test_none_native_is_a_no_op(self) -> None:
+        self.assertFalse(linux.set_min_window_size(None, 300, 240))
+
+    def test_non_positive_size_is_a_no_op(self) -> None:
+        self.assertFalse(linux.set_min_window_size(object(), 300, 0))
+
+    def test_without_pygobject_it_reports_false(self) -> None:
+        with mock.patch.object(linux, '_import_gi', return_value=None):
+            self.assertFalse(linux.set_min_window_size(object(), 300, 240))
+
+
+@_LINUX_ONLY
 class WidgetShapeTest(unittest.TestCase):
     """pywebview nests the web view inside a scrolled window; anything else must not be mistaken for it."""
 

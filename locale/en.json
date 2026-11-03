@@ -149,5 +149,7 @@
     "delete_confirm_ok": "Delete",
     "cancel": "Cancel",
     "deleted": "Session deleted",
-    "delete_failed": "Could not delete the session"
+    "delete_failed": "Could not delete the session",
+    "compact_view": "Compact view - only status, title and age per agent",
+    "keep_on_top": "Keep the window above other windows"
 }

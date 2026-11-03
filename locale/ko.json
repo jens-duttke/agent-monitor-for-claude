@@ -149,5 +149,7 @@
     "delete_confirm_ok": "삭제",
     "cancel": "취소",
     "deleted": "세션이 삭제되었습니다",
-    "delete_failed": "세션을 삭제할 수 없습니다"
+    "delete_failed": "세션을 삭제할 수 없습니다",
+    "compact_view": "간단히 보기 - 에이전트별 상태, 제목, 경과 시간만 표시",
+    "keep_on_top": "창을 항상 위에 표시"
 }

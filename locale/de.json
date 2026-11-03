@@ -149,5 +149,7 @@
     "delete_confirm_ok": "Löschen",
     "cancel": "Abbrechen",
     "deleted": "Sitzung gelöscht",
-    "delete_failed": "Sitzung konnte nicht gelöscht werden"
+    "delete_failed": "Sitzung konnte nicht gelöscht werden",
+    "compact_view": "Kompaktansicht - pro Agent nur Status, Titel und Alter",
+    "keep_on_top": "Fenster über anderen Fenstern halten"
 }

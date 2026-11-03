@@ -37,7 +37,7 @@ __all__ = [
     'DIAGNOSTIC_PACKAGES', 'activate_window', 'ask_yes_no', 'apply_native_background', 'copy_text', 'diagnostic_display_rows',
     'diagnostic_post_init_rows', 'diagnostic_runtime_rows', 'diagnostic_system_rows', 'enum_windows',
     'no_window_kwargs', 'open_path', 'open_uri', 'paint_window', 'prepare_gui_environment', 'reveal_file',
-    'setup_console', 'show_error_box', 'storage_dir', 'window_background_color',
+    'set_min_window_size', 'setup_console', 'show_error_box', 'storage_dir', 'window_background_color',
 ]
 
 # Third-party packages worth reporting in the diagnostics output.  pythonnet and
@@ -399,6 +399,57 @@ def apply_native_background(native: object, hex_color: str) -> bool:
             if web_view is not None:
                 web_view.set_background_color(rgba)
 
+            applied = True
+        except Exception:  # noqa: BLE001  # a toolkit failure must not raise into the bridge
+            applied = False
+        finally:
+            done.set()
+
+        return False
+
+    GLib.idle_add(_assign)
+    done.wait(_MAIN_LOOP_TIMEOUT)
+
+    return applied
+
+
+def set_min_window_size(native: object, width: int, height: int) -> bool:
+    """Change the smallest size a live GTK window can be resized to.
+
+    pywebview sets the minimum once, at creation, as the window's size request;
+    the compact view needs a narrower one only while it is on.  GTK works in
+    logical pixels already, and the call is marshalled onto the GTK main loop,
+    since the bridge call arrives on a worker thread.
+
+    Parameters
+    ----------
+    native : object
+        pywebview's native window (the ``Gtk.ApplicationWindow``).
+    width, height : int
+        New minimum size in logical pixels.
+
+    Returns
+    -------
+    bool
+        True if the minimum was applied.  Best-effort otherwise: any failure (no
+        GTK, no running main loop) is swallowed and reported as False.
+    """
+    gi = _import_gi()
+    if native is None or gi is None or width < 1 or height < 1:
+        return False
+
+    try:
+        from gi.repository import GLib
+    except ImportError:
+        return False
+
+    done = threading.Event()
+    applied = False
+
+    def _assign() -> bool:
+        nonlocal applied
+        try:
+            native.set_size_request(width, height)
             applied = True
         except Exception:  # noqa: BLE001  # a toolkit failure must not raise into the bridge
             applied = False

@@ -90,6 +90,21 @@ class ApplyNativeBackgroundTest(unittest.TestCase):
 
 
 @_WINDOWS_ONLY
+class SetMinWindowSizeTest(unittest.TestCase):
+    """The guards return before any .NET call; the interop only runs inside a live WebView2 host."""
+
+    def test_none_native_is_a_no_op(self) -> None:
+        self.assertFalse(win32.set_min_window_size(None, 300, 240))
+
+    def test_non_positive_size_is_a_no_op(self) -> None:
+        self.assertFalse(win32.set_min_window_size(object(), 0, 240))
+
+    def test_off_a_live_host_it_reports_false(self) -> None:
+        # A plain object has no MinimumSize or Invoke; the failure is swallowed.
+        self.assertFalse(win32.set_min_window_size(object(), 300, 240))
+
+
+@_WINDOWS_ONLY
 class DotnetVersionTest(unittest.TestCase):
     def test_non_dword_release_does_not_crash(self) -> None:
         # A damaged registry can hold a non-DWORD Release; comparing it against
