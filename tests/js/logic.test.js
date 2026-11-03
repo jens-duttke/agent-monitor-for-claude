@@ -1068,6 +1068,58 @@ test('defaultFilterKeys: excludes off-by-default chips (the history scan opt-out
     assert.deepEqual(logic.defaultFilterKeys(), []);
 });
 
+test('sortDirectionOptions: names each direction in the field\'s own terms, asc first', () => {
+    const labels = { sort_dir_newest: 'Newest first', sort_dir_oldest: 'Oldest first', sort_dir_a_z: 'A to Z', sort_dir_z_a: 'Z to A' };
+
+    assert.deepEqual(logic.sortDirectionOptions('activity', labels), [
+        { dir: 'asc', label: 'Newest first' },
+        { dir: 'desc', label: 'Oldest first' },
+    ]);
+    assert.deepEqual(logic.sortDirectionOptions('host', labels).map((option) => option.label), ['A to Z', 'Z to A']);
+    // An unknown field reads like the activity sort it falls back to; an
+    // inherited object key is not a field (the map is a Map for that reason).
+    assert.equal(logic.sortDirectionOptions('bogus', labels)[0].label, 'Newest first');
+    assert.equal(logic.sortDirectionOptions('constructor', labels)[0].label, 'Newest first');
+    // A missing label falls back to its key rather than to an empty entry.
+    assert.equal(logic.sortDirectionOptions('usage', {})[1].label, 'sort_dir_highest');
+});
+
+test('sortSummary: priority first when on, then the field, then the direction', () => {
+    const labels = { priority_order: 'Priority order', sort_dir_newest: 'Newest first', sort_dir_oldest: 'Oldest first' };
+
+    assert.equal(logic.sortSummary('activity', 'Last activity', 'asc', true, labels), 'Priority order, Last activity, Newest first');
+    assert.equal(logic.sortSummary('activity', 'Last activity', 'desc', false, labels), 'Last activity, Oldest first');
+    // An unknown direction reads as the ascending default the sort applies.
+    assert.equal(logic.sortSummary('activity', 'Last activity', 'sideways', false, labels), 'Last activity, Newest first');
+});
+
+test('filterSummary: names the active filters in definition order, comma-separated', () => {
+    const defs = [
+        { key: 'needs', label: 'filter_needs' },
+        { key: 'idle', label: 'filter_idle' },
+        { key: 'quiet', label: 'filter_quiet' },
+        { key: 'history', label: 'filter_history', offByDefault: true },
+    ];
+    const labels = {
+        filter_needs: 'Needs you', filter_idle: 'Idle', filter_quiet: 'Quiet', filter_history: 'Older',
+        filter_all: 'All current', filter_none: 'Nothing',
+    };
+
+    // Order follows the definitions, not the order the keys were switched on.
+    assert.equal(logic.filterSummary(defs, ['quiet', 'needs'], labels, '24 h'), 'Needs you, Quiet');
+    // Every on-by-default filter collapses to one word ...
+    assert.equal(logic.filterSummary(defs, new Set(['needs', 'idle', 'quiet']), labels, '24 h'), 'All current');
+    // ... while the opt-in one stays named, with its window.
+    assert.equal(logic.filterSummary(defs, ['needs', 'idle', 'quiet', 'history'], labels, '24 h'), 'All current, Older (24 h)');
+    assert.equal(logic.filterSummary(defs, ['history'], labels, '7 days'), 'Older (7 days)');
+    assert.equal(logic.filterSummary(defs, ['history'], labels, ''), 'Older');
+    assert.equal(logic.filterSummary(defs, [], labels, '24 h'), 'Nothing');
+    // A key without a definition is not a filter and is never named.
+    assert.equal(logic.filterSummary(defs, ['bogus'], labels, '24 h'), 'Nothing');
+    // A missing label falls back to the key rather than to an empty entry.
+    assert.equal(logic.filterSummary(defs, ['needs'], {}, ''), 'needs');
+});
+
 test('settleCall: a synchronous throw runs onError, not the caller', () => {
     const errors = [];
     const ret = logic.settleCall(() => { throw new Error('sync'); }, (e) => errors.push(e.message));

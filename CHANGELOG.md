@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The status filters are now one dropdown instead of a row of chips. Collapsed, it names the filters that are on; opened, it lists every status below each other with a checkbox and its session count, and the *Older* time window sits right under its entry.
+- Sorting is now one dropdown as well. It holds the sort field, the order in words that fit the field (*Newest first*, *Highest first*, *A to Z*, ...) instead of an arrow button, and *Priority order* as a checkbox.
+
 ## [0.10.0] - 2026-11-01
 
 ### Added

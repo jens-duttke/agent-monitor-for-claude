@@ -105,6 +105,9 @@ const state = {
     // cache holds nothing yet.
     historyRange: logic.DEFAULT_HISTORY_RANGE,
     historyLoadedSeconds: undefined,
+    // Sessions per filter bucket as of the last render, kept so the filter list
+    // shows its counts the moment it is opened rather than at the next poll.
+    filterCounts: {},
 };
 
 // Sort options: key -> label key. Values are computed per session below.
@@ -153,7 +156,16 @@ const DEFAULT_LABELS = {
     sort_status: 'Status',
     priority_order: 'Priority order',
     priority_order_hint: 'Sort projects by attention - the ones that need you first',
-    sort_direction_hint: 'Switch between ascending and descending order',
+    sort_dir_newest: 'Newest first',
+    sort_dir_oldest: 'Oldest first',
+    sort_dir_lowest: 'Lowest first',
+    sort_dir_highest: 'Highest first',
+    sort_dir_smallest: 'Smallest model first',
+    sort_dir_largest: 'Largest model first',
+    sort_dir_a_z: 'A to Z',
+    sort_dir_z_a: 'Z to A',
+    sort_dir_urgent: 'Most urgent first',
+    sort_dir_calm: 'Least urgent first',
     empty_state: 'No active Claude Code agents.',
     empty_filter: 'No agents match this filter.',
     search_placeholder: 'Search sessions',
@@ -168,7 +180,7 @@ const DEFAULT_LABELS = {
     search_widen_range: 'Search further back ({range})',
     search_widened_note: 'Outside the active filters: {count}',
     search_widened_reset: 'Reset',
-    search_widened_reset_tip: 'Drop the extra hits and search only what your filter chips show. Your search text stays.',
+    search_widened_reset_tip: 'Drop the extra hits and search only what your filters show. Your search text stays.',
     last_activity: 'Last activity {age} ago',
     no_activity: 'No activity yet',
     tool_running: 'tool running',
@@ -182,6 +194,8 @@ const DEFAULT_LABELS = {
     filter_working: 'Working',
     filter_background: 'Background',
     filter_quiet: 'Quiet',
+    filter_all: 'All current',
+    filter_none: 'Nothing selected',
     filter_needs_tip: 'The agent stopped and needs you - to grant a permission, answer a question, or approve a plan.',
     filter_errored_tip: "An API error or usage limit stopped the last run - it can't continue until that's resolved.",
     filter_interrupted_tip: "You stopped the agent mid-task, so it's your turn again - nothing is running.",
@@ -251,11 +265,11 @@ const DEFAULT_LABELS = {
     delete_failed: 'Could not delete the session',
 };
 
-// One chip per status color, attention-first: the states that want you
+// One filter per status color, attention-first: the states that want you
 // (blocked, errored, interrupted, new, idle) come before the ones that don't
-// (busy, background, quiet). Each chip is a checkbox for its status band: all
-// on by default, and unchecking one hides those sessions. Each dot teaches its
-// color, so the chips also serve as the status legend.
+// (busy, background, quiet). Each is a checkbox for its status band: all on by
+// default, and unchecking one hides those sessions. Each dot teaches its color,
+// so the filter list also serves as the status legend.
 const FILTER_DEFS = [
     { key: 'needs', label: 'filter_needs', tip: 'filter_needs_tip', dot: 'dot-needs' },
     { key: 'errored', label: 'filter_errored', tip: 'filter_errored_tip', dot: 'dot-errored' },
@@ -468,9 +482,9 @@ function initTooltips() {
 // leaves the DOM instead dismisses nothing, and the popup stands over content it
 // no longer describes. Two ways that happens, both routine: a render drops the
 // target outright (the widened-search notice on reset), or replaces it with an
-// equivalent node (renderFilters rebuilds its whole chip row every render, after
-// which the later pointerout arrives on the NEW node, fails the `!== tooltipTarget`
-// check, and never fires at all - so that one used to stick indefinitely).
+// equivalent node (a slot re-rendered from markup, after which the later
+// pointerout arrives on the NEW node, fails the `!== tooltipTarget` check, and
+// never fires at all - so such a tooltip would stick indefinitely).
 // Reconciling the popup against a render is what syncOpenMenu and syncProcPanel
 // already do for the menu and the process panel; this is the same for the tooltip.
 function syncTooltip() {
@@ -567,9 +581,8 @@ function applyBootstrap(bootstrap) {
         effortBadge.hidden = true;
     }
 
-    updateSortTrigger();
-    updateSortDirButton();
-    updatePriorityToggle();
+    updateFilterControls();
+    updateSortControls();
 }
 
 /* --- sorting (view-level; uses pure helpers from logic.js) --- */
@@ -609,107 +622,166 @@ function sortSessions(sessions) {
     });
 }
 
-function updateSortDirButton() {
-    const button = document.getElementById('sort-dir');
-    if (!button) {
-        return;
-    }
-    button.innerHTML = state.sortDir === 'desc' ? '&#9660;' : '&#9650;';
-    button.dataset.tip = state.labels.sort_direction_hint || '';
-}
-
 function sortLabel(key) {
     const def = SORT_DEFS.find(([sortKey]) => sortKey === key);
     return def ? (state.labels[def[1]] || key) : key;
 }
 
-function updateSortTrigger() {
-    const trigger = document.getElementById('sort-trigger');
-    if (trigger) {
-        trigger.innerHTML = '<span class="sort-trigger-label">' + esc(sortLabel(state.sort)) + '</span>'
-            + '<svg class="sort-trigger-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
-            + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-            + '<path d="m6 9 6 6 6-6"></path></svg>';
-    }
+// The thin chevron the dropdown triggers share, drawn rather than typed so it
+// stays crisp at any zoom level.
+const CARET_SVG = '<svg class="trigger-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+    + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<path d="m6 9 6 6 6-6"></path></svg>';
+
+// Two arrows, up and down, marking the dropdown as the sort control.
+const SORT_ICON_SVG = '<svg class="trigger-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+    + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<path d="m3 8 4-4 4 4M7 4v16M21 16l-4 4-4-4M17 20V4"></path></svg>';
+
+// Sorting is one dropdown, like the filters. Collapsed, its trigger names the
+// whole ordering (priority, field, direction); open, it lists the fields, the
+// two directions in the chosen field's own words ("newest first" rather than an
+// arrow), and the priority ordering as a checkbox. The list stays open while it
+// is changed and is updated in place, so the direction wording follows a newly
+// picked field on the spot.
+function initSortControls() {
+    initDropdownTrigger(document.getElementById('sort-trigger'), SORT_ICON_SVG, openSortMenu);
+    updateSortControls();
 }
 
-function initSortControls() {
-    const trigger = document.getElementById('sort-trigger');
-    const dirButton = document.getElementById('sort-dir');
-
+// Fill a dropdown trigger (icon, summary slot, chevron) and open its list on
+// click. A keyboard activation (no pointer, so detail 0) moves focus into the
+// list, which is appended to the end of body and out of the tab order.
+function initDropdownTrigger(trigger, iconSvg, openList) {
+    trigger.innerHTML = iconSvg + '<span class="trigger-label"></span>' + CARET_SVG;
     trigger.addEventListener('click', (event) => {
         event.stopPropagation();
-        const items = SORT_DEFS.map(([key, labelKey]) => ({
-            key,
-            label: state.labels[labelKey] || key,
-            active: key === state.sort,
-        }));
-        openMenu(trigger, items, (key) => {
-            state.sort = key;
-            try {
-                localStorage.setItem('amc-sort', state.sort);
-            } catch (e) { /* storage unavailable */ }
-            updateSortTrigger();
-            if (state.last) {
-                render(state.last);
-            }
-        }, { type: 'sort' });
+        openList(trigger, event.detail === 0);
     });
-
-    dirButton.addEventListener('click', () => {
-        state.sortDir = state.sortDir === 'desc' ? 'asc' : 'desc';
-        try {
-            localStorage.setItem('amc-sort-dir', state.sortDir);
-        } catch (e) { /* storage unavailable */ }
-        updateSortDirButton();
-        if (state.last) {
-            render(state.last);
-        }
-    });
-
-    updateSortTrigger();
-    updateSortDirButton();
 }
 
-// Cross-project ordering toggle. When on (the default), projects are grouped
-// into attention bands so the ones that need you sit on top; when off, they are
-// a plain alphabetical list. It is separate from the sort control above, which
-// orders the sessions within each project.
-function updatePriorityToggle() {
-    const button = document.getElementById('priority-toggle');
-    if (!button) {
+function updateSortControls() {
+    const label = document.querySelector('#sort-trigger .trigger-label');
+    if (label) {
+        label.textContent = logic.sortSummary(state.sort, sortLabel(state.sort), state.sortDir, state.priorityOrder, state.labels);
+    }
+    if (openMenuState && openMenuState.type === 'sort') {
+        syncSortMenu(openMenuState.el);
+    }
+}
+
+function openSortMenu(trigger, focusFirst) {
+    if (!claimMenuSlot(trigger)) {
         return;
     }
-    button.textContent = state.labels.priority_order || 'Priority order';
-    button.dataset.tip = state.labels.priority_order_hint || '';
-    button.classList.toggle('active', state.priorityOrder);
-    button.setAttribute('aria-pressed', state.priorityOrder ? 'true' : 'false');
-}
 
-function initPriorityToggle() {
-    const button = document.getElementById('priority-toggle');
-    if (!button) {
-        return;
-    }
-    button.addEventListener('click', () => {
-        state.priorityOrder = !state.priorityOrder;
-        try {
-            localStorage.setItem('amc-priority-order', state.priorityOrder ? '1' : '0');
-        } catch (e) { /* storage unavailable */ }
-        updatePriorityToggle();
-        if (state.last) {
-            render(state.last);
-        }
+    const el = document.createElement('div');
+    el.className = 'menu sort-menu';
+    el.setAttribute('role', 'group');
+
+    const fields = '<div role="radiogroup">'
+        + SORT_DEFS.map(([key, labelKey]) => sortItemMarkup('data-sort', key, state.labels[labelKey] || key)).join('')
+        + '</div>';
+    // The direction labels depend on the field, so syncSortMenu writes them.
+    const directions = '<div role="radiogroup">'
+        + ['asc', 'desc'].map((dir) => sortItemMarkup('data-dir', dir, '')).join('')
+        + '</div>';
+    const tip = state.labels.priority_order_hint || '';
+    const priority = '<label' + attr('class', 'menu-option') + (tip ? attr('data-tip', tip) : '') + '>'
+        + '<input' + attr('type', 'checkbox') + attr('data-priority', '1') + '>'
+        + '<span class="menu-label">' + esc(state.labels.priority_order || '') + '</span>'
+        + '</label>';
+    el.innerHTML = fields + '<div class="menu-separator"></div>' + directions + '<div class="menu-separator"></div>' + priority;
+
+    el.querySelectorAll('button[data-sort]').forEach((button) => {
+        button.addEventListener('click', () => setSort(button.dataset.sort));
     });
-    updatePriorityToggle();
+    el.querySelectorAll('button[data-dir]').forEach((button) => {
+        button.addEventListener('click', () => setSortDir(button.dataset.dir));
+    });
+    const checkbox = el.querySelector('input[data-priority]');
+    checkbox.addEventListener('change', () => setPriorityOrder(checkbox.checked));
+
+    syncSortMenu(el);
+    showMenu(el, trigger, { type: 'sort' });
+
+    if (focusFirst) {
+        const first = el.querySelector('button');
+        if (first) {
+            first.focus();
+        }
+    }
 }
 
-/* --- fancy menu (sort dropdown + per-row meatball) --- */
+// One choice in the sort list: a field or a direction, ticked while selected.
+// `attrName` is one of two literals, never data.
+function sortItemMarkup(attrName, value, label) {
+    return '<button' + attr('type', 'button') + attr('class', 'menu-item') + attr('role', 'radio') + attr(attrName, value) + '>'
+        + '<span class="menu-check" aria-hidden="true">&#10003;</span>'
+        + '<span class="menu-label">' + esc(label) + '</span>'
+        + '</button>';
+}
 
-// A single floating menu is reused for the sort dropdown and every row's
-// meatball menu; only one can be open at a time. The state remembers what the
-// menu is bound to (the sort trigger, or a specific session's row button) so a
-// re-render can re-anchor it instead of tearing it down.
+function syncSortMenu(el) {
+    el.querySelectorAll('button[data-sort]').forEach((button) => {
+        const active = button.dataset.sort === state.sort;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-checked', active ? 'true' : 'false');
+    });
+    const directions = logic.sortDirectionOptions(state.sort, state.labels);
+    el.querySelectorAll('button[data-dir]').forEach((button) => {
+        const option = directions.find((candidate) => candidate.dir === button.dataset.dir);
+        const active = button.dataset.dir === state.sortDir;
+        button.querySelector('.menu-label').textContent = option ? option.label : '';
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-checked', active ? 'true' : 'false');
+    });
+    const checkbox = el.querySelector('input[data-priority]');
+    checkbox.checked = state.priorityOrder;
+    checkbox.closest('.menu-option').classList.toggle('active', state.priorityOrder);
+}
+
+function setSort(key) {
+    state.sort = key;
+    try {
+        localStorage.setItem('amc-sort', state.sort);
+    } catch (e) { /* storage unavailable */ }
+    afterSortChange();
+}
+
+function setSortDir(dir) {
+    state.sortDir = dir === 'desc' ? 'desc' : 'asc';
+    try {
+        localStorage.setItem('amc-sort-dir', state.sortDir);
+    } catch (e) { /* storage unavailable */ }
+    afterSortChange();
+}
+
+// Cross-project ordering. When on (the default), projects are grouped into
+// attention bands so the ones that need you sit on top, and within a project
+// status leads; when off, projects are a plain alphabetical list and the field
+// above alone orders the sessions.
+function setPriorityOrder(enabled) {
+    state.priorityOrder = !!enabled;
+    try {
+        localStorage.setItem('amc-priority-order', state.priorityOrder ? '1' : '0');
+    } catch (e) { /* storage unavailable */ }
+    afterSortChange();
+}
+
+function afterSortChange() {
+    updateSortControls();
+    if (state.last) {
+        render(state.last);
+    }
+}
+
+/* --- fancy menu (filter and sort dropdowns + per-row meatball) --- */
+
+// A single floating menu is reused for the filter and sort dropdowns and every
+// row's meatball menu; only one can be open at a time. The state remembers what
+// the menu is bound to (a dropdown trigger, or a specific session's row button)
+// so a re-render can re-anchor it instead of tearing it down.
 let openMenuState = null;
 
 function closeMenu() {
@@ -728,12 +800,17 @@ function closeMenu() {
     menu.el.remove();
 }
 
-function openMenu(anchor, items, onSelect, context) {
-    // Clicking the same trigger again toggles the menu shut.
+// Make room for a menu on `anchor`. Clicking the same trigger again toggles the
+// menu shut, so this returns false when the click was the one closing it.
+function claimMenuSlot(anchor) {
     const toggleShut = openMenuState && openMenuState.anchorEl === anchor;
     closeMenu();
     closeProcPanel();
-    if (toggleShut) {
+    return !toggleShut;
+}
+
+function openMenu(anchor, items, onSelect, context) {
+    if (!claimMenuSlot(anchor)) {
         return;
     }
 
@@ -757,6 +834,14 @@ function openMenu(anchor, items, onSelect, context) {
         el.appendChild(button);
     });
 
+    showMenu(el, anchor, context);
+}
+
+// Mount a built menu under its anchor and wire the dismissal every menu shares:
+// an outside click or Escape closes it, scrolling and resizing follow the anchor.
+// A click inside the menu leaves it open - the item menus close themselves on
+// select, the filter list stays open while several boxes are ticked.
+function showMenu(el, anchor, context) {
     document.body.appendChild(el);
     anchor.classList.add('menu-open');
 
@@ -769,6 +854,7 @@ function openMenu(anchor, items, onSelect, context) {
         // live+history duplicate), and re-anchoring on the id would jump to the
         // wrong one after rows reorder.
         rowKey: context.rowKey || null,
+        align: context.align || 'right',
     };
 
     menu.onDocClick = (event) => {
@@ -786,7 +872,7 @@ function openMenu(anchor, items, onSelect, context) {
     // open; re-anchoring after a render is handled by syncOpenMenu.
     menu.onViewportChange = () => {
         if (menu.anchorEl && menu.anchorEl.isConnected) {
-            positionMenu(el, menu.anchorEl);
+            positionMenu(el, menu.anchorEl, menu.align);
         }
     };
 
@@ -803,7 +889,7 @@ function openMenu(anchor, items, onSelect, context) {
     document.addEventListener('scroll', menu.onViewportChange, true);
     window.addEventListener('resize', menu.onViewportChange);
 
-    positionMenu(el, anchor);
+    positionMenu(el, anchor, menu.align);
 }
 
 // Called after each render. The DOM node a menu was anchored to may have moved
@@ -819,10 +905,8 @@ function syncOpenMenu() {
     let anchor = null;
     if (menu.type === 'sort') {
         anchor = document.getElementById('sort-trigger');
-    } else if (menu.type === 'history-range') {
-        // renderFilters rebuilds the chip row wholesale, so this node is a new
-        // one after every poll - look it up by id rather than keeping a handle.
-        anchor = document.getElementById('history-range-trigger');
+    } else if (menu.type === 'filters') {
+        anchor = document.getElementById('filter-trigger');
     } else if (menu.type === 'row') {
         anchor = findRowMenuButton(menu.rowKey);
     }
@@ -837,7 +921,7 @@ function syncOpenMenu() {
         anchor.classList.add('menu-open');
         menu.anchorEl = anchor;
     }
-    positionMenu(menu.el, anchor);
+    positionMenu(menu.el, anchor, menu.align);
 }
 
 function findRowMenuButton(rowKey) {
@@ -853,16 +937,23 @@ function findRowMenuButton(rowKey) {
     return null;
 }
 
-function positionMenu(menu, anchor) {
+function positionMenu(menu, anchor, align) {
     const rect = anchor.getBoundingClientRect();
     const margin = 6;
     const width = menu.offsetWidth;
     const height = menu.offsetHeight;
 
-    // Right-align the menu under the anchor, then clamp to the viewport.
-    let left = rect.right - width;
-    if (left < margin) {
+    // Right-align the menu under the anchor, then clamp to the viewport. A
+    // left-aligned menu (the filter list) keeps its left edge on the anchor's,
+    // so a trigger whose text changes width never shifts the open list.
+    let left;
+    if (align === 'left') {
         left = Math.min(rect.left, window.innerWidth - width - margin);
+    } else {
+        left = rect.right - width;
+        if (left < margin) {
+            left = Math.min(rect.left, window.innerWidth - width - margin);
+        }
     }
     left = Math.max(margin, left);
 
@@ -1627,6 +1718,7 @@ function toggleFilter(key) {
         state.filters.add(key);
     }
     persistFilters();
+    updateFilterControls();
 
     // Turning the history chip on triggers the (potentially second-long) scan of
     // past sessions - lazily, off the UI thread, so the page never blocks. When
@@ -1657,7 +1749,7 @@ function visibleHistory() {
 
 // Switch how far back the history listing reaches. A narrower window is served
 // from the cache; only a wider one needs the backend again. Selecting a range
-// from the chip's menu also switches the chip on: the range half is otherwise a
+// in the filter list also switches the chip on: the options are otherwise a
 // dead end while the chip is off - the user picks a window, and nothing appears.
 // The search's widening offer passes activateChip false: it asked to look
 // further back, not to list every past session, and switching the chip on would
@@ -1676,6 +1768,7 @@ function setHistoryRange(key, activateChip = true) {
         state.filters.add('history');
         persistFilters();
     }
+    updateFilterControls();
 
     if (needsFetch) {
         state.history = null;
@@ -1823,93 +1916,111 @@ function countByFilter(projects, includeSession) {
     return counts;
 }
 
-// The thin chevron the dropdown triggers share, drawn rather than typed so it
-// matches the sort field's caret at any zoom level.
-const CARET_SVG = '<svg class="chip-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+// A funnel in the search field's stroke style, marking the dropdown as the filter.
+const FUNNEL_SVG = '<svg class="trigger-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
     + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-    + '<path d="m6 9 6 6 6-6"></path></svg>';
+    + '<path d="M3 5h18l-7 8.5V19l-4 2v-7.5z"></path></svg>';
+
+// The filters are one dropdown. Collapsed, its trigger names the active ones;
+// open, it lists every status band below each other with a checkbox, its colour
+// dot (which doubles as the key to the row dots) and its session count. Both are
+// updated in place on every render rather than rebuilt, so a ticked box keeps
+// its focus and a tooltip its target while the counts change.
+function initFilterControls() {
+    initDropdownTrigger(document.getElementById('filter-trigger'), FUNNEL_SVG, openFilterMenu);
+    updateFilterControls();
+}
 
 function renderFilters(counts) {
-    const container = document.getElementById('filters');
+    state.filterCounts = counts;
+    updateFilterControls();
+}
 
-    container.innerHTML = FILTER_DEFS.map((def) => {
-        const active = state.filters.has(def.key);
-        const count = counts[def.key];
-        if (def.key === 'history') {
-            return historyChipMarkup(def, active, count);
-        }
-        const dot = def.dot ? ' ' + def.dot : '';
-        const label = state.labels[def.label] || def.key;
-        const tip = def.tip ? (state.labels[def.tip] || '') : '';
-        return '<button'
-            + attr('class', 'filter-chip' + dot + (active ? ' active' : ''))
-            + attr('data-filter', def.key)
-            + (tip ? attr('data-tip', tip) : '')
-            + attr('aria-pressed', active ? 'true' : 'false')
-            + '>'
-            + esc(label)
-            + (count > 0 ? '<span class="count">' + esc(count) + '</span>' : '')
-            + '</button>';
-    }).join('');
-
-    container.querySelectorAll('[data-filter]').forEach((button) => {
-        button.addEventListener('click', () => toggleFilter(button.dataset.filter));
-    });
-
-    const rangeTrigger = container.querySelector('#history-range-trigger');
-    if (rangeTrigger) {
-        rangeTrigger.addEventListener('click', (event) => {
-            event.stopPropagation();
-            openHistoryRangeMenu(rangeTrigger);
-        });
+function updateFilterControls() {
+    const label = document.querySelector('#filter-trigger .trigger-label');
+    if (label) {
+        const rangeLabel = state.labels[logic.historyRange(state.historyRange).label] || state.historyRange;
+        label.textContent = logic.filterSummary(FILTER_DEFS, state.filters, state.labels, rangeLabel);
+    }
+    if (openMenuState && openMenuState.type === 'filters') {
+        syncFilterMenu(openMenuState.el);
     }
 }
 
-// The History chip is the one chip that carries a second control: how far back
-// the listing reaches. Both halves live inside one chip shell, so the pair reads
-// as a single control - the left half toggles the chip, the right half opens the
-// window menu, and only a hairline divider separates them. A button cannot
-// contain a button, so the shell is a plain element and the two halves are the
-// buttons.
-function historyChipMarkup(def, active, count) {
-    const label = state.labels[def.label] || def.key;
-    const tip = def.tip ? (state.labels[def.tip] || '') : '';
-    const rangeLabel = state.labels[logic.historyRange(state.historyRange).label] || state.historyRange;
-    const rangeTip = state.labels.history_range_tip || '';
+function openFilterMenu(trigger, focusFirst) {
+    if (!claimMenuSlot(trigger)) {
+        return;
+    }
 
-    // The count keeps its slot even at zero - before the first scan has run
-    // there is no number to show, and a badge that only materializes then would
-    // widen the chip (and can rewrap the chip row) at that moment. The
-    // placeholder is hidden rather than empty: an empty pill would read as a
-    // rendering glitch.
-    const badge = count > 0
-        ? '<span class="count">' + esc(count) + '</span>'
-        : '<span class="count count-placeholder" aria-hidden="true">00</span>';
+    const el = document.createElement('div');
+    el.className = 'menu filter-menu';
+    el.setAttribute('role', 'group');
+    el.innerHTML = FILTER_DEFS.map(filterOptionMarkup).join('');
 
-    return '<div' + attr('class', 'filter-chip filter-chip-split ' + (def.dot || '') + (active ? ' active' : '')) + '>'
-        + '<button' + attr('type', 'button') + attr('class', 'chip-toggle')
-        + attr('data-filter', def.key)
-        + (tip ? attr('data-tip', tip) : '')
-        + attr('aria-pressed', active ? 'true' : 'false')
-        + '>'
-        + esc(label) + badge
-        + '</button>'
-        + '<button' + attr('type', 'button') + attr('class', 'chip-range') + attr('id', 'history-range-trigger')
-        + (rangeTip ? attr('data-tip', rangeTip) : '')
-        + attr('aria-haspopup', 'menu')
-        + '>'
-        + '<span class="chip-range-label">' + esc(rangeLabel) + '</span>' + CARET_SVG
-        + '</button>'
-        + '</div>';
+    el.querySelectorAll('input[data-filter]').forEach((input) => {
+        input.addEventListener('change', () => toggleFilter(input.dataset.filter));
+    });
+    el.querySelectorAll('button[data-range]').forEach((button) => {
+        button.addEventListener('click', () => setHistoryRange(button.dataset.range));
+    });
+
+    syncFilterMenu(el);
+    showMenu(el, trigger, { type: 'filters', align: 'left' });
+
+    if (focusFirst) {
+        const first = el.querySelector('input[data-filter]');
+        if (first) {
+            first.focus();
+        }
+    }
 }
 
-function openHistoryRangeMenu(trigger) {
-    const items = logic.HISTORY_RANGES.map((range) => ({
-        key: range.key,
-        label: state.labels[range.label] || range.key,
-        active: range.key === state.historyRange,
-    }));
-    openMenu(trigger, items, setHistoryRange, { type: 'history-range' });
+// One line of the filter list. Its checked state, count and range selection are
+// left to syncFilterMenu, the one place that reads them from state.
+function filterOptionMarkup(def) {
+    const label = state.labels[def.label] || def.key;
+    const tip = def.tip ? (state.labels[def.tip] || '') : '';
+    const markup = '<label' + attr('class', 'menu-option') + (tip ? attr('data-tip', tip) : '') + '>'
+        + '<input' + attr('type', 'checkbox') + attr('data-filter', def.key) + '>'
+        + '<span' + attr('class', 'filter-dot ' + (def.dot || '')) + '></span>'
+        + '<span class="menu-label">' + esc(label) + '</span>'
+        + '<span' + attr('class', 'count') + attr('data-count', def.key) + '></span>'
+        + '</label>';
+
+    return def.key === 'history' ? markup + historyRangeMarkup() : markup;
+}
+
+// How far back the History filter reaches, as a row of options under its
+// checkbox. Picking one also ticks the box (setHistoryRange): choosing a window
+// and then seeing nothing would be a dead end.
+function historyRangeMarkup() {
+    const tip = state.labels.history_range_tip || '';
+    const buttons = logic.HISTORY_RANGES.map((range) => '<button'
+        + attr('type', 'button') + attr('class', 'filter-range') + attr('data-range', range.key) + '>'
+        + esc(state.labels[range.label] || range.key)
+        + '</button>').join('');
+
+    return '<div' + attr('class', 'filter-ranges') + attr('role', 'group') + (tip ? attr('data-tip', tip) : '') + '>'
+        + buttons + '</div>';
+}
+
+function syncFilterMenu(el) {
+    el.querySelectorAll('input[data-filter]').forEach((input) => {
+        const active = state.filters.has(input.dataset.filter);
+        input.checked = active;
+        input.closest('.menu-option').classList.toggle('active', active);
+    });
+    // No badge at zero: before the first history scan there is no number to
+    // show at all, and an empty pill would read as a rendering glitch.
+    el.querySelectorAll('[data-count]').forEach((badge) => {
+        const count = state.filterCounts[badge.dataset.count];
+        badge.textContent = count > 0 ? String(count) : '';
+    });
+    el.querySelectorAll('button[data-range]').forEach((button) => {
+        const active = button.dataset.range === state.historyRange;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
 }
 
 // Content search. The query is matched against the transcript CONTENT, which
@@ -3159,11 +3270,10 @@ function render(snapshot) {
     const projects = logic.groupProjects(rawSessions, state.labels, prices);
 
     const counts = countByFilter(projects, matchesSearch);
-    // Every status chip counts its sessions whether or not it is on, because its
-    // sessions are in the grouped set either way. History's are not while its
-    // chip is off, so count them here from the same cache - otherwise the badge
-    // would appear only on switching the chip on, changing the chip's width at
-    // the moment it is clicked and possibly rewrapping the whole chip row. The
+    // Every status filter counts its sessions whether or not it is on, because
+    // its sessions are in the grouped set either way. History's are not while its
+    // filter is off, so count them here from the same cache - otherwise the
+    // filter list would show a count beside every unticked box but that one. The
     // search narrows this count exactly as it narrows every other chip's: with
     // the chip off its sessions are outside the search scope, so an active query
     // matches none of them - which stays true through a widening, because that
@@ -3397,12 +3507,12 @@ async function boot() {
         reportUiError(err);
     }
     try {
-        initSortControls();
+        initFilterControls();
     } catch (err) {
         reportUiError(err);
     }
     try {
-        initPriorityToggle();
+        initSortControls();
     } catch (err) {
         reportUiError(err);
     }

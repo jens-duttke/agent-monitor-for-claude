@@ -621,6 +621,67 @@ function defaultFilterKeys(filterDefs) {
     return keys;
 }
 
+// The text the collapsed filter dropdown shows: the active filters' names in
+// definition order, comma-separated. All on-by-default filters active at once
+// read as one word (`filter_all`), since eight names spelled out say less than
+// "all"; an opt-in filter (History) is still named beside it, with its time
+// window, because what it adds depends on how far back it reaches. Nothing
+// active reads `filter_none`.
+function filterSummary(filterDefs, activeKeys, labels, historyRangeLabel) {
+    const strings = labels || {};
+    const active = asKeySet(activeKeys);
+    const defs = (filterDefs || []).filter((def) => def && def.key);
+    const defaults = defs.filter((def) => !def.offByDefault);
+    const allDefaults = defaults.length > 0 && defaults.every((def) => active.has(def.key));
+
+    const parts = allDefaults ? [strings.filter_all || ''] : [];
+    for (const def of defs) {
+        if (!active.has(def.key) || (allDefaults && !def.offByDefault)) {
+            continue;
+        }
+        const name = strings[def.label] || def.key;
+        parts.push(def.key === 'history' && historyRangeLabel ? name + ' (' + historyRangeLabel + ')' : name);
+    }
+    return parts.length > 0 ? parts.join(', ') : (strings.filter_none || '');
+}
+
+// What ascending and descending mean for each sort field, in the field's own
+// terms - "newest first" says what a list will look like, an arrow does not.
+// Each pair is [asc, desc]: an ascending activity sort orders by age, so the
+// newest comes first; an ascending model sort follows MODEL_RANK, smallest
+// model first; an ascending status sort follows STATUS_ORDER, most urgent
+// first.
+const SORT_DIRECTION_LABELS = new Map([
+    ['activity', ['sort_dir_newest', 'sort_dir_oldest']],
+    ['usage', ['sort_dir_lowest', 'sort_dir_highest']],
+    ['model', ['sort_dir_smallest', 'sort_dir_largest']],
+    ['host', ['sort_dir_a_z', 'sort_dir_z_a']],
+    ['status', ['sort_dir_urgent', 'sort_dir_calm']],
+]);
+
+// The two directions for a sort field as [{dir, label}], asc first. An unknown
+// field gets the activity wording, matching the activity sort it falls back to.
+function sortDirectionOptions(sortKey, labels) {
+    const strings = labels || {};
+    const [ascKey, descKey] = SORT_DIRECTION_LABELS.get(sortKey) || SORT_DIRECTION_LABELS.get('activity');
+    return [
+        { dir: 'asc', label: strings[ascKey] || ascKey },
+        { dir: 'desc', label: strings[descKey] || descKey },
+    ];
+}
+
+// The text the collapsed sort dropdown shows, comma-separated like the filter
+// dropdown's: priority ordering when it is on (it is the primary key), then the
+// field, then the direction in that field's own words.
+function sortSummary(sortKey, fieldLabel, sortDir, priorityOrder, labels) {
+    const strings = labels || {};
+    const direction = sortDirectionOptions(sortKey, strings).find((option) => option.dir === sortDir)
+        || sortDirectionOptions(sortKey, strings)[0];
+    const parts = priorityOrder ? [strings.priority_order || ''] : [];
+    parts.push(fieldLabel, direction.label);
+    return parts.filter(Boolean).join(', ');
+}
+
 // Whether a session passes the content-search filter. A null match set means no
 // search has produced results yet - a fresh query still inside its typing
 // debounce, or a cleared/invalid one - so nothing is filtered and every session
@@ -1850,6 +1911,9 @@ const AMC_LOGIC = {
     sessionMatchesSearch,
     searchHitsMarkup,
     defaultFilterKeys,
+    filterSummary,
+    sortDirectionOptions,
+    sortSummary,
     settleCall,
     pendingIsBlocking,
     pendingBlockReason,

@@ -227,12 +227,12 @@ feature that matches conversation text against something you supplied, so it is 
 - It runs only when there is a query you typed. While a search is active it also re-runs by itself
   when your session data changes, so a match that has only just appeared shows up without you
   retyping. With the search box empty, no transcript is ever opened for it.
-- It reads only the transcripts of the sessions currently shown by your filter chips. A session
+- It reads only the transcripts of the sessions currently shown by your filters. A session
   hidden by a filter is not opened - the single exception being the widening in the next point, which
   only a click of yours can start. On a self-triggered refresh the scope is narrower still: only live
   sessions that have not already matched.
 - That scope widens only when you click to widen it. When a search finds nothing, the empty result
-  offers one button - first to include the sessions your chips hide, then to reach further back in
+  offers one button - first to include the sessions your filters hide, then to reach further back in
   time - and each click adds exactly that one step for exactly that one query. Nothing widens on its
   own. It narrows back the moment you edit the search text, or immediately when you use the "Reset"
   control on the line above the results.
@@ -310,7 +310,7 @@ transcript is read once in full, but only three things are taken from it: the ti
 prompt (as the fallback title described above), and the session's working directory, which is needed
 to group it under its project.
 
-The listing reaches back only as far as the window selected on the chip itself (24 hours by default).
+The listing reaches back only as far as the window selected under that filter (24 hours by default).
 A transcript whose file has not been written within that window is skipped on its timestamp alone and
 never opened, so with the default window the scan reads only the handful of sessions from the last day
 - not every session you have ever run.
@@ -364,8 +364,8 @@ second window from starting - and no bundle to unpack, since the application run
 1. **Its interface-preference profile**, in `%LOCALAPPDATA%\AgentMonitorForClaude` on Windows and
    `~/.local/share/agent-monitor-for-claude` on Linux (or below `$XDG_DATA_HOME` when you have set
    it). This is the browser profile of the engine the window renders in - WebView2 or WebKitGTK - and
-   the application uses it for one purpose: so the window can remember your choices in `localStorage`. The current version stores seven values there - theme, which filter
-   chips are on, sort field and direction, whether priority ordering is on, your three search toggles,
+   the application uses it for one purpose: so the window can remember your choices in `localStorage`. The current version stores seven values there - theme, which filters
+   are on, sort field and direction, whether priority ordering is on, your three search toggles,
    and which project panels you collapsed. The collapsed-panel entry stores project directory paths,
    since that is what identifies a panel; the others are short flags. (An older version's leftover key
    may still sit there unused.)

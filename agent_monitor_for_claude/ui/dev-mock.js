@@ -415,8 +415,8 @@ window.__MOCK_TRANSCRIPTS__ = {
 
 // Past, non-live sessions - the on-demand history listing (get_history). All are
 // dead (alive:false, is_history:true) with no usage, exactly like the backend's
-// history records. index.js loads these only when the history chip is enabled.
-// Their ages deliberately straddle the chip's window options (hours to a month),
+// history records. index.js loads these only when the Older filter is enabled.
+// Their ages deliberately straddle the filter's window options (hours to a month),
 // so switching the range in the preview visibly changes the listing - and the
 // default 24 h window is never empty.
 function historySession(overrides) {
