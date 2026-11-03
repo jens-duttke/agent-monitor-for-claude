@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Agent Monitor for Claude
+Comment=Live status of your Claude Code agents
+Exec=agent-monitor-for-claude
+Icon=agent-monitor-for-claude
+Terminal=false
+Categories=Development;
+Keywords=Claude;Claude Code;agent;session;
+StartupWMClass=agent-monitor-for-claude

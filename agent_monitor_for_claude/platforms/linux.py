@@ -54,6 +54,11 @@ _WINDOW_BACKGROUND_LIGHT = '#faf9f5'
 # Directory name for the browser profile, in the XDG data directory.
 _STORAGE_DIR_NAME = 'agent-monitor-for-claude'
 
+# Program name GTK derives the window's X11 class and Wayland app id from.  It is
+# the file name of the desktop entry in linux/, which is how a dock pairs the
+# running window with the launcher icon that started it.
+_PROGRAM_NAME = 'agent-monitor-for-claude'
+
 # A Snap-confined application rewrites part of the environment for the programs
 # started from it, pointing them at its own bundled toolkit.  VS Code keeps each
 # value it replaced under the original name plus this suffix, which is what makes
@@ -158,9 +163,11 @@ def prepare_gui_environment() -> None:
     """Prepare this process's environment for the GUI toolkit.
 
     Idempotent, and must run before anything touches GTK - the instance guard's
-    dialog included.  Two things are settled here:
+    dialog included.  Three things are settled here:
 
     *Leaving a Snap's environment behind.*  See :func:`_leave_snap_environment`.
+
+    *The program name.*  See :func:`_set_program_name`.
 
     *The DMA-BUF renderer.*  WebKitGTK's produces a blank window on several
     drivers (NVIDIA's proprietary stack, and inside VMs), and the failure is
@@ -170,8 +177,30 @@ def prepare_gui_environment() -> None:
     leaves an explicit choice by the user alone.
     """
     _leave_snap_environment()
+    _set_program_name()
 
     os.environ.setdefault('WEBKIT_DISABLE_DMABUF_RENDERER', '1')
+
+
+def _set_program_name() -> None:
+    """Name this process for the desktop, so its window is paired with its desktop entry.
+
+    pywebview creates its GTK application without an id, so GTK falls back to
+    the program name for the window's X11 class and Wayland app id - and that
+    defaults to the interpreter's file name.  The window would then show up in
+    a dock as "python", beside rather than under the launcher icon the desktop
+    entry put there.  Best-effort: without PyGObject there is no window to name.
+    """
+    if _import_gi() is None:
+        return
+
+    try:
+        from gi.repository import GLib
+    except (ImportError, ValueError):
+        return
+
+    if GLib.get_prgname() != _PROGRAM_NAME:
+        GLib.set_prgname(_PROGRAM_NAME)
 
 
 def _leave_snap_environment() -> None:

@@ -1,0 +1,64 @@
+#!/bin/sh
+# Add Agent Monitor for Claude to your desktop's application launcher, or take
+# it out again with --remove.  See the Linux section of README.md.
+#
+# Writes exactly two files below $XDG_DATA_HOME (~/.local/share by default):
+# the desktop entry next to this script, with Exec pointing at this checkout's
+# launcher, and the icon.  Nothing else - no PATH change, no system directory,
+# no sudo.  The only other thing it may touch is an icon cache that already
+# exists there, which is refreshed so the new icon is found.
+#
+# Exec gets the launcher's absolute path, so the entry works whether or not the
+# launcher is on your PATH.  The desktop entry format reserves a few characters
+# inside Exec, so a checkout path holding one of them is refused rather than
+# written as an entry that silently fails to start.
+set -eu
+
+here=$(dirname -- "$(readlink -f -- "$0")")
+launcher=$(dirname -- "$here")/agent-monitor-for-claude
+name=agent-monitor-for-claude
+
+data_home=${XDG_DATA_HOME:-$HOME/.local/share}
+entry=$data_home/applications/$name.desktop
+icon_theme=$data_home/icons/hicolor
+icon=$icon_theme/256x256/apps/$name.png
+
+case "${1:-}" in
+    --remove)
+        rm -f -- "$entry" "$icon"
+        echo "Removed $entry"
+        echo "Removed $icon"
+        exit 0
+        ;;
+    '')
+        ;;
+    *)
+        echo "Usage: $0 [--remove]" >&2
+        exit 2
+        ;;
+esac
+
+case $launcher in
+    *[\"\`\$\\%]*)
+        echo "The checkout path $launcher contains a character a desktop entry cannot hold (\" \` \$ \\ %)." >&2
+        echo "Move the checkout, or start the app with its launcher instead." >&2
+        exit 1
+        ;;
+esac
+
+mkdir -p -- "$(dirname -- "$entry")" "$(dirname -- "$icon")"
+cp -- "$here/$name.png" "$icon"
+
+while IFS= read -r line; do
+    case $line in
+        Exec=*) printf 'Exec="%s"\n' "$launcher" ;;
+        *) printf '%s\n' "$line" ;;
+    esac
+done < "$here/$name.desktop" > "$entry"
+
+if [ -f "$icon_theme/icon-theme.cache" ] && command -v gtk-update-icon-cache > /dev/null 2>&1; then
+    gtk-update-icon-cache -q -t "$icon_theme" || true
+fi
+
+echo "Installed $entry"
+echo "Installed $icon"

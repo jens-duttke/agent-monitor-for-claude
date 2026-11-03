@@ -172,6 +172,29 @@ class EnvironmentTest(unittest.TestCase):
             linux.prepare_gui_environment()
             self.assertEqual(os.environ['WEBKIT_DISABLE_DMABUF_RENDERER'], '0')
 
+    def _set_program_name_with(self, current: str) -> mock.Mock:
+        glib = mock.Mock()
+        glib.get_prgname.return_value = current
+        with mock.patch.object(linux, '_import_gi', return_value=object()), \
+             mock.patch.dict(sys.modules, {'gi.repository': mock.Mock(GLib=glib)}):
+            linux._set_program_name()
+
+        return glib
+
+    def test_names_the_program_after_the_desktop_entry(self) -> None:
+        # GTK otherwise names the window after the interpreter, and a dock shows
+        # it as "python" beside the launcher icon instead of under it.
+        glib = self._set_program_name_with('python3')
+        glib.set_prgname.assert_called_once_with('agent-monitor-for-claude')
+
+    def test_a_second_call_leaves_the_name_alone(self) -> None:
+        glib = self._set_program_name_with('agent-monitor-for-claude')
+        glib.set_prgname.assert_not_called()
+
+    def test_without_pygobject_there_is_nothing_to_name(self) -> None:
+        with mock.patch.object(linux, '_import_gi', return_value=None):
+            linux._set_program_name()
+
     def test_setup_console_leaves_the_streams_alone(self) -> None:
         # A Linux process is started with its streams already connected, and a
         # redirect the user set up must survive untouched.

@@ -93,8 +93,15 @@ python3 -m venv --system-site-packages .venv
 ```
 
 That last line is the launcher, and it is all you need from then on. It activates nothing and works
-from any directory, so symlink it once for a global command - which also puts it in reach of your
-desktop's application launcher:
+from any directory. To start the app from your desktop's application launcher, with its own icon, add
+a desktop entry for it:
+
+```sh
+linux/install-desktop-entry
+```
+
+The entry points at this checkout, so run the script again if you move the checkout. To start the app
+from any terminal as well, symlink the launcher onto your PATH:
 
 ```sh
 ln -s ~/agent-monitor-for-claude/agent-monitor-for-claude ~/.local/bin/agent-monitor-for-claude
@@ -106,7 +113,7 @@ Two notes specific to Linux:
 - **Bringing an agent's window to the front goes through X11.** Applications drawn by XWayland - which is where VS Code and most terminals still run in a Wayland session - are found and raised as usual. A window belonging to a native Wayland client cannot be raised, because no Wayland protocol lets one application do that; clicking such an agent does nothing. Everything else works the same either way.
 
 ### Uninstalling
-On Windows, delete the executable. On Linux, delete the checkout and its `.venv`.
+On Windows, delete the executable. On Linux, run `linux/install-desktop-entry --remove` if you added the desktop entry, then delete the checkout and its `.venv`.
 
 What either leaves behind is your interface preferences (theme, filters, compact view, collapsed panels), in `%LOCALAPPDATA%\AgentMonitorForClaude` on Windows and `~/.local/share/agent-monitor-for-claude` on Linux - delete that folder to remove those too. Linux additionally leaves a lock file in the session's runtime directory, which the system clears at logout. There is nothing else: no installer, no registry entries, no service. See [PRIVACY.md](PRIVACY.md).
 

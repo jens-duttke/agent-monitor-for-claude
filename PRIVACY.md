@@ -401,6 +401,12 @@ second window from starting - and no bundle to unpack, since the application run
    so the next start takes it without resistance. Windows needs no file for this: it uses a named mutex
    and a named shared-memory block instead, neither of which touches your disk.
 
+One script in the checkout writes two more files, but only when you run it yourself: on Linux,
+`linux/install-desktop-entry` adds the application to your desktop's launcher by copying a desktop
+entry to `~/.local/share/applications` and its icon to `~/.local/share/icons` (below `$XDG_DATA_HOME`
+when you have set it), and refreshes an icon cache only if one already exists there.
+`linux/install-desktop-entry --remove` deletes both files again. The application itself never runs it.
+
 Nothing else is written to disk, moved, or deleted. Your transcripts, session registry, and Claude
 Code settings are never modified. The application writes no log file of its own and keeps no copy of
 anything it reads. Three changes exist that do not touch your disk at all - the clipboard, a small

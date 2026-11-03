@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An agent you can reach through Remote Control carries a pointer badge next to its name, like in Claude Desktop.
 - A compact view, switched on from the header: the window narrows and each agent shows only its status dot, title and age, for keeping it beside your editor. Switching back restores the previous window size.
 - A header button keeps the window above all other windows.
+- On Linux, `linux/install-desktop-entry` adds Agent Monitor to your desktop's application launcher, with its own icon; `--remove` takes it out again. Its window now shows up in the dock under that icon instead of as *python*.
 
 ### Changed
 - The status filters are now one dropdown instead of a row of chips. Collapsed, it names the filters that are on; opened, it lists every status below each other with a checkbox and its session count, and the *Older* time window sits right under its entry.
