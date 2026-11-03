@@ -129,6 +129,7 @@
     "sort_dir_urgent": "緊急度の高い順",
     "sort_dir_calm": "緊急度の低い順",
     "show_in_file_manager": "ファイルマネージャーで表示",
+    "project_this_computer": "このコンピューター",
     "show_transcript": "トランスクリプトをファイルマネージャーで表示",
     "show_scratchpad": "スクラッチパッドをファイルマネージャーで表示",
     "filter_history": "以前",

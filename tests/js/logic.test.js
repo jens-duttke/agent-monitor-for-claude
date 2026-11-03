@@ -1707,8 +1707,17 @@ test('cliHistory keeps the backend order, names where each run was written from,
     assert.deepEqual(logic.cliHistory(null), []);
 });
 
+test('hostLabel names a Claude Desktop session by its entrypoint', () => {
+    // The desktop app's process is no editor or terminal the probe knows, so
+    // the entrypoint is the only thing that names the host.
+    assert.equal(logic.hostLabel(null, 'claude-desktop'), 'Claude Desktop');
+    // A detected host still wins over the entrypoint.
+    assert.equal(logic.hostLabel('Windows Terminal', 'claude-desktop'), 'Windows Terminal');
+});
+
 test('entrypointLabel names the known origins and falls back to the token', () => {
     assert.equal(logic.entrypointLabel('claude-vscode'), 'VS Code');
+    assert.equal(logic.entrypointLabel('claude-desktop'), 'Claude Desktop');
     assert.equal(logic.entrypointLabel('cli'), 'CLI');
     // A token this build does not know is still a name of sorts.
     assert.equal(logic.entrypointLabel('sdk-ts'), 'sdk-ts');
@@ -1829,6 +1838,39 @@ test('groupProjects keeps two distros with the identical POSIX cwd apart', () =>
     assert.equal(byOrigin.get('wsl:Ubuntu').origin_display, 'Ubuntu (WSL)');
     assert.equal(byOrigin.get('wsl:Debian').origin_display, 'Debian (WSL)');
     assert.notEqual(byOrigin.get('wsl:Ubuntu').key, byOrigin.get('wsl:Debian').key);
+});
+
+test('scratchWorkspaceRoot recognizes only a Claude Desktop scratch folder', () => {
+    const root = 'C:\\Users\\dev\\AppData\\Local\\Claude-Data\\claude_pzs8sxrjxfjjc\\scratch-workspaces';
+    const cwd = root + '\\39474e52-271c-4fd5-86cd-c2ec92b0482a\\f1becc0d-292d-4dca-934f-96121b41f016\\scratch-2026-11-03-629f10';
+    assert.equal(logic.scratchWorkspaceRoot(cwd), root);
+    assert.equal(logic.scratchWorkspaceRoot(cwd + '\\'), root);
+    assert.equal(logic.scratchWorkspaceRoot('/Users/dev/Claude-Data/claude_x/scratch-workspaces/a/b/scratch-2026-11-03-c27e42'),
+        '/Users/dev/Claude-Data/claude_x/scratch-workspaces');
+    // A folder of the user's own that merely looks similar keeps its name.
+    assert.equal(logic.scratchWorkspaceRoot('D:\\scratch-workspaces\\scratch-2026-11-03-629f10'), null);
+    assert.equal(logic.scratchWorkspaceRoot(root + '\\a\\b\\my-project'), null);
+    assert.equal(logic.scratchWorkspaceRoot('D:\\WebDev\\proj'), null);
+    assert.equal(logic.scratchWorkspaceRoot(null), null);
+    assert.equal(logic.scratchWorkspaceRoot(42), null);
+});
+
+test('groupProjects puts every Claude Desktop scratch chat into one "This computer" panel', () => {
+    const root = 'c:\\Users\\dev\\AppData\\Local\\Claude-Data\\claude_pzs8sxrjxfjjc\\scratch-workspaces';
+    const projects = logic.groupProjects([
+        raw({ cwd: root + '\\a1\\b1\\scratch-2026-11-03-629f10', session_id: 'a', entrypoint: 'claude-desktop' }),
+        raw({ cwd: root + '\\a1\\b2\\scratch-2026-11-03-c27e42', session_id: 'b', entrypoint: 'claude-desktop' }),
+        raw({ cwd: 'D:\\WebDev\\proj', session_id: 'c' }),
+    ], { project_this_computer: 'Dieser Computer' });
+    assert.equal(projects.length, 2);
+    const scratch = projects.find((p) => p.name === 'Dieser Computer');
+    assert.equal(scratch.sessions.length, 2);
+    // The header opens the shared folder; each row keeps its own cwd.
+    assert.equal(scratch.cwd, 'C' + root.slice(1));
+    assert.equal(scratch.sessions[0].cwd, root + '\\a1\\b1\\scratch-2026-11-03-629f10');
+    assert.equal(projects.find((p) => p !== scratch).name, 'proj');
+    // Without a translation the English name stands in.
+    assert.equal(logic.groupProjects([raw({ cwd: root + '\\a\\b\\scratch-2026-11-03-629f10' })], {})[0].name, 'This computer');
 });
 
 function project(name, statuses, ages) {

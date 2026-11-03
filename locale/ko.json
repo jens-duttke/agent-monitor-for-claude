@@ -129,6 +129,7 @@
     "sort_dir_urgent": "긴급한 순",
     "sort_dir_calm": "덜 긴급한 순",
     "show_in_file_manager": "파일 관리자에서 표시",
+    "project_this_computer": "이 컴퓨터",
     "show_transcript": "세션 기록을 파일 관리자에서 표시",
     "show_scratchpad": "스크래치패드를 파일 관리자에서 표시",
     "filter_history": "이전",

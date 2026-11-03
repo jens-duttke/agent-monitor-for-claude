@@ -129,6 +129,7 @@
     "sort_dir_urgent": "Most urgent first",
     "sort_dir_calm": "Least urgent first",
     "show_in_file_manager": "Show in file manager",
+    "project_this_computer": "This computer",
     "show_transcript": "Show transcript in file manager",
     "show_scratchpad": "Show scratchpad in file manager",
     "filter_history": "Older",

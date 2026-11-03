@@ -129,6 +129,7 @@
     "sort_dir_urgent": "最紧急优先",
     "sort_dir_calm": "最不紧急优先",
     "show_in_file_manager": "在文件管理器中显示",
+    "project_this_computer": "此电脑",
     "show_transcript": "在文件管理器中显示转录记录",
     "show_scratchpad": "在文件管理器中显示暂存目录",
     "filter_history": "更早",

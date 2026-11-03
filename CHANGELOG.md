@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sessions now show up within about a second of starting the app, instead of only after every long transcript has been read. A session whose transcript is still being read shows `…` as its cost for a few seconds. Long transcripts also need far less memory while they are read.
 
 ### Fixed
+- An agent started in Claude Desktop now shows *Claude Desktop* in the app column instead of leaving it empty. Desktop chats without a project folder are listed together under *This computer*, as in Claude Desktop, instead of each in a panel named after its generated `scratch-...` folder.
 - Agents on Claude Opus 5.5, Opus 5, Sonnet 5.5, Haiku 5.5, Fable 5.1 and Mythos 5.1 now show an estimated cost instead of only a token total.
 - Claude Sonnet 5 is priced at $2/$10 per million tokens again. Since September 1 it was priced at $3/$15, a price increase that Anthropic cancelled.
 

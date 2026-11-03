@@ -244,6 +244,7 @@ const DEFAULT_LABELS = {
     copy_session_id: 'Copy session ID',
     copied: 'Copied to clipboard',
     show_in_file_manager: 'Show in file manager',
+    project_this_computer: 'This computer',
     show_transcript: 'Show transcript in file manager',
     show_scratchpad: 'Show scratchpad in file manager',
     filter_history: 'Older',

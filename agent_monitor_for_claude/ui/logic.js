@@ -1411,7 +1411,10 @@ function usageTotalTokens(usage) {
 
 // A `Map` for the reason MODE_LABELS is one: the entrypoint comes off disk, and
 // an object lookup would resolve `constructor` to an inherited function.
-const ENTRYPOINT_HOSTS = new Map([['claude-vscode', 'VS Code']]);
+const ENTRYPOINT_HOSTS = new Map([
+    ['claude-vscode', 'VS Code'],
+    ['claude-desktop', 'Claude Desktop'],
+]);
 
 function hostLabel(detected, entrypoint) {
     if (detected) {
@@ -1514,6 +1517,18 @@ function projectName(cwd) {
     const normalized = String(cwd).replace(/\\/g, '/').replace(/\/+$/, '');
     const segments = normalized.split('/');
     return segments[segments.length - 1] || cwd;
+}
+
+// Claude Desktop runs a chat without a project folder in a directory of its own,
+// <data>\claude_<id>\scratch-workspaces\...\scratch-<date>-<hex>, one per chat, and
+// names the place "This computer". Returns the scratch-workspaces folder for such
+// a cwd, so those chats share one panel keyed and opened on it rather than one
+// panel per generated folder name; null for every other path.
+const SCRATCH_WORKSPACE_CWD = /^(.*[\\/]claude_[^\\/]+[\\/]scratch-workspaces)(?:[\\/][^\\/]+)*[\\/]scratch-\d{4}-\d{2}-\d{2}-[0-9a-z]+[\\/]*$/i;
+
+function scratchWorkspaceRoot(cwd) {
+    const match = SCRATCH_WORKSPACE_CWD.exec(String(cwd == null ? '' : cwd));
+    return match ? match[1] : null;
 }
 
 // Capability order for the model sort; unknown families sort last.
@@ -1867,14 +1882,16 @@ function sortProjects(projects, byPriority) {
 function groupProjects(rawSessions, labels, prices) {
     const groups = new Map();
     for (const raw of rawSessions || []) {
-        const key = groupKey(raw.cwd, raw.origin);
+        const scratchRoot = scratchWorkspaceRoot(raw.cwd);
+        const path = scratchRoot || raw.cwd;
+        const key = groupKey(path, raw.origin);
         let group = groups.get(key);
         if (!group) {
             const origin = sessionOrigin(raw);
             group = {
                 key: key,
-                cwd: displayCwd(raw.cwd),
-                name: projectName(raw.cwd),
+                cwd: displayCwd(path),
+                name: scratchRoot ? (labels.project_this_computer || 'This computer') : projectName(raw.cwd),
                 origin: origin,
                 origin_display: isWslOrigin(origin) ? wslHostLabel(raw.origin_label) : '',
                 sessions: [],
@@ -1958,6 +1975,7 @@ const AMC_LOGIC = {
     groupKey,
     displayCwd,
     projectName,
+    scratchWorkspaceRoot,
     modelRank,
     buildSession,
     groupProjects,

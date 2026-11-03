@@ -129,6 +129,7 @@
     "sort_dir_urgent": "Plus urgentes d'abord",
     "sort_dir_calm": "Moins urgentes d'abord",
     "show_in_file_manager": "Afficher dans le gestionnaire de fichiers",
+    "project_this_computer": "Cet ordinateur",
     "show_transcript": "Afficher la transcription dans le gestionnaire de fichiers",
     "show_scratchpad": "Afficher le scratchpad dans le gestionnaire de fichiers",
     "filter_history": "Anciennes",
