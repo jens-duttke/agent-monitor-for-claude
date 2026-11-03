@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- An agent you can reach through Remote Control carries a pointer badge next to its name, like in Claude Desktop.
+
 ### Changed
 - The status filters are now one dropdown instead of a row of chips. Collapsed, it names the filters that are on; opened, it lists every status below each other with a checkbox and its session count, and the *Older* time window sits right under its entry.
 - Sorting is now one dropdown as well. It holds the sort field, the order in words that fit the field (*Newest first*, *Highest first*, *A to Z*, ...) instead of an arrow button, and *Priority order* as a checkbox.

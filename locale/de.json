@@ -86,6 +86,7 @@
     "auto_denials": "Vom Classifier blockierte Aufrufe: {count}",
     "worktree_tip": "Arbeitet in einem Git-Worktree",
     "worktree_branch": "Branch: {branch}",
+    "remote_control_tip": "Remote Control ist aktiv - du kannst diesen Agenten auf claude.ai oder in der Claude-App weiterführen",
     "subagents_running": "Laufende Subagenten: {count}",
     "subagents_finished": "Kürzlich abgeschlossen: {count}",
     "subagents_workflow": "Workflow: {done}/{total} Agenten",

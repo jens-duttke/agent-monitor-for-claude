@@ -86,6 +86,7 @@
     "auto_denials": "分類器がブロックした呼び出し: {count}",
     "worktree_tip": "git worktree で作業中",
     "worktree_branch": "ブランチ: {branch}",
+    "remote_control_tip": "Remote Control が有効 - claude.ai または Claude アプリからこのエージェントを続行できます",
     "subagents_running": "実行中のサブエージェント: {count}",
     "subagents_finished": "最近完了: {count}",
     "subagents_workflow": "ワークフロー: {done}/{total} エージェント",

@@ -1363,6 +1363,25 @@ body {
     cursor: help;
 }
 
+/* Icon-only, in the quiet chip colours: Remote Control is a standing
+   property of the session, not something asking for attention. */
+.rc-badge {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    color: var(--fg-dim);
+    background: var(--chip-bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 6px;
+    cursor: help;
+
+    .rc-icon {
+        width: 11px;
+        height: 11px;
+    }
+}
+
 .auto-paused-badge {
     flex: none;
     font-size: 11px;

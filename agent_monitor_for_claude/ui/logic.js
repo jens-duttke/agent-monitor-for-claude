@@ -1493,6 +1493,13 @@ function isVscodeDeeplink(raw) {
     return raw.entrypoint === 'claude-vscode';
 }
 
+// Remote Control runs in the session's own process, so the connection ends with
+// it - the registry record of an ended session still names the cloud session it
+// was bridged to, and that must not read as reachable.
+function isRemoteControlled(raw) {
+    return raw.remote_control === true && Boolean(raw.alive);
+}
+
 /* --- project grouping (ported from snapshot.py) --- */
 
 // Case-insensitive like Windows paths, and per origin: two distros can report
@@ -1741,6 +1748,7 @@ function buildSession(raw, labels, prices) {
         via_cli: !isBackground(raw) && isViaCli(raw),
         background: isBackground(raw),
         job_id: typeof raw.job_id === 'string' ? raw.job_id : '',
+        remote_control: isRemoteControlled(raw),
         mode: modeLabel(raw.permission_mode),
         auto_paused: autoModePaused(raw),
         auto_denials_total: Number(raw.auto_denials_total) || 0,
@@ -1972,6 +1980,7 @@ const AMC_LOGIC = {
     isBackground,
     kindLabelKey,
     isVscodeDeeplink,
+    isRemoteControlled,
     groupKey,
     displayCwd,
     projectName,

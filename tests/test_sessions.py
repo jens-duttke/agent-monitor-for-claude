@@ -78,6 +78,23 @@ class SessionsTest(unittest.TestCase):
         for record in list_sessions(self.root):
             self.assertIsNone(record['job_id'])
 
+    def test_a_named_bridge_session_means_remote_control_is_on(self) -> None:
+        self._write('1234.json', {'pid': 1234, 'sessionId': 'abc-def', 'cwd': 'd:\\x', 'bridgeSessionId': 'session_0185EZpWjqviNrxGgSiuWyPo'})
+        record = list_sessions(self.root)[0]
+        self.assertIs(record['remote_control'], True)
+        # Only the flag is taken; the cloud session id never leaves the parser.
+        self.assertNotIn('session_0185EZpWjqviNrxGgSiuWyPo', json.dumps(record))
+
+    def test_missing_null_or_mistyped_bridge_session_is_off(self) -> None:
+        self._write('1.json', {'pid': 1, 'sessionId': 'a', 'cwd': 'd:\\x'})
+        self._write('2.json', {'pid': 2, 'sessionId': 'b', 'cwd': 'd:\\x', 'bridgeSessionId': None})
+        self._write('3.json', {'pid': 3, 'sessionId': 'c', 'cwd': 'd:\\x', 'bridgeSessionId': ''})
+        self._write('4.json', {'pid': 4, 'sessionId': 'd', 'cwd': 'd:\\x', 'bridgeSessionId': True})
+        records = list_sessions(self.root)
+        self.assertEqual(len(records), 4)
+        for record in records:
+            self.assertIs(record['remote_control'], False)
+
     def test_name_defaults_to_session_prefix(self) -> None:
         self._write('9.json', {'pid': 9, 'sessionId': 'abcdefghij', 'cwd': 'd:\\x'})
         records = list_sessions(self.root)

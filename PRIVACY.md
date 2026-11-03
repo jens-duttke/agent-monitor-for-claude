@@ -150,9 +150,9 @@ this section is explicit about both:
 
 `~/.claude/sessions/*.json` (or `$CLAUDE_CONFIG_DIR/sessions/`) - the records Claude Code writes for
 each running session. Fields taken: session id, process id, working directory, project name, session
-kind and entry point, the native status and its waiting reason, the background-agent job id, and two
-timestamps. No conversation
-data is in these files.
+kind and entry point, the native status and its waiting reason, the background-agent job id, whether
+Remote Control is on (only that - the cloud session id it names is not kept), and two timestamps. No
+conversation data is in these files.
 
 ### Transcripts, for status metadata
 

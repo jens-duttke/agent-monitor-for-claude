@@ -86,6 +86,7 @@
     "auto_denials": "Викликів заблоковано класифікатором: {count}",
     "worktree_tip": "Працює в git worktree",
     "worktree_branch": "Гілка: {branch}",
+    "remote_control_tip": "Remote Control увімкнено - продовжуйте цього агента на claude.ai або в застосунку Claude",
     "subagents_running": "Активні субагенти: {count}",
     "subagents_finished": "Нещодавно завершені: {count}",
     "subagents_workflow": "Робочий процес: {done}/{total} агентів",

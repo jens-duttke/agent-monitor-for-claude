@@ -43,7 +43,7 @@ function rawSession(overrides) {
         child_count: 0, host: null, via_cli: false,
         has_transcript: true, has_activity: true, last_entry_kind: 'assistant', last_stop_reason: 'end_turn',
         pending_tool: false, last_tool_name: null, permission_mode: null,
-        auto_denials_consecutive: 0, auto_denials_total: 0, job_id: null,
+        auto_denials_consecutive: 0, auto_denials_total: 0, job_id: null, remote_control: false,
         api_error_kind: null, api_error_status: null, api_error_detail: null,
         model_id: null, usage: {}, usage_by_model: {}, model_timeline: [], title: null,
         // Every session runs the current CLI unless it says otherwise; the two
@@ -66,6 +66,8 @@ window.__MOCK_SNAPSHOT__ = {
         // --- Helios - real-time spectral path tracer (GPU renderer) ---
         rawSession({
             session_id: 'h1a', short_name: 'helios-renderer-b0', pid: 24880, entrypoint: 'claude-vscode', host: 'VS Code',
+            // Reachable from claude.ai through Remote Control - the pointer badge.
+            remote_control: true,
             title: 'Add spectral upsampling to the BRDF sampler', permission_mode: 'default',
             last_stop_reason: 'tool_use', pending_tool: true, last_tool_name: 'AskUserQuestion',
             age_seconds: 38,

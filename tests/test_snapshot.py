@@ -175,6 +175,19 @@ class RawSnapshotTest(_RegistryFixture):
         self.assertEqual(session['native_status'], 'waiting')
         self.assertEqual(session['waiting_for'], 'permission prompt')
 
+    def test_record_carries_remote_control(self) -> None:
+        sessions = Path(self._temp.name) / 'sessions'
+        (sessions / 'rc.json').write_text(
+            json.dumps({'pid': os.getpid(), 'sessionId': 'rc', 'cwd': 'd:\\x', 'bridgeSessionId': 'session_01abc'}),
+            encoding='utf-8',
+        )
+        (sessions / 'off.json').write_text(json.dumps({'pid': os.getpid(), 'sessionId': 'off', 'cwd': 'd:\\x'}), encoding='utf-8')
+
+        by_id = {s['session_id']: s for s in build_snapshot()['sessions']}
+
+        self.assertIs(by_id['rc']['remote_control'], True)
+        self.assertIs(by_id['off']['remote_control'], False)
+
     def test_local_command_tail_is_its_own_kind(self) -> None:
         self._add_session_with_transcript('lc', 'd:\\WebDev\\lc', _LOCAL_COMMAND_TAIL)
 
@@ -455,6 +468,18 @@ class FingerprintTest(_RegistryFixture):
         before = registry_fingerprint()
 
         registry.write_text(json.dumps({**base, 'waitingFor': 'plan review'}), encoding='utf-8')
+
+        self.assertNotEqual(before, registry_fingerprint())
+
+    def test_changes_when_remote_control_is_switched(self) -> None:
+        self._add_session('a', 'd:\\WebDev\\one')
+        registry = Path(self._temp.name) / 'sessions' / 'a.json'
+        base = {'pid': os.getpid(), 'sessionId': 'a', 'cwd': 'd:\\WebDev\\one', 'kind': 'interactive'}
+
+        registry.write_text(json.dumps({**base, 'bridgeSessionId': 'session_01abc'}), encoding='utf-8')
+        before = registry_fingerprint()
+
+        registry.write_text(json.dumps({**base, 'bridgeSessionId': None}), encoding='utf-8')
 
         self.assertNotEqual(before, registry_fingerprint())
 

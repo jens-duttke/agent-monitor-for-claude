@@ -1186,6 +1186,21 @@ test('buildSession carries the paused auto mode and the block total', () => {
     assert.equal(build({ auto_denials_total: '9' }).auto_denials_total, 9);
 });
 
+test('buildSession marks Remote Control only while the process holds the connection', () => {
+    const build = (overrides) => logic.buildSession(raw(Object.assign({ session_id: 's' }, overrides)), {}, {});
+
+    assert.equal(build({ remote_control: true }).remote_control, true);
+    assert.equal(build({ remote_control: false }).remote_control, false);
+    assert.equal(build({}).remote_control, false);
+    // The connection lives in the session's process: an ended session's registry
+    // record still names the bridge, but nothing is reachable any more.
+    assert.equal(build({ remote_control: true, alive: false }).remote_control, false);
+    // Only a real boolean counts - a truthy stand-in is not the backend's flag.
+    assert.equal(build({ remote_control: 'session_01abc' }).remote_control, false);
+    // A past session is never reachable.
+    assert.equal(build({ remote_control: true, is_history: true, alive: false }).remote_control, false);
+});
+
 test('buildSession names the worktree a session works in, and only then', () => {
     const build = (overrides) => logic.buildSession(raw(Object.assign({ session_id: 's', cwd: 'd:\\WebDev\\app' }, overrides)), {}, {});
 

@@ -32,8 +32,8 @@ def list_sessions(root: SessionRoot) -> list[dict[str, Any]]:
     """Return normalized session records from *root*'s on-disk registry.
 
     Each record has ``session_id``, ``pid``, ``cwd``, ``name``, ``kind``,
-    ``job_id``, ``started_at``, ``origin``, and ``origin_label``.  Records that
-    cannot be parsed are omitted.
+    ``job_id``, ``remote_control``, ``started_at``, ``origin``, and
+    ``origin_label``.  Records that cannot be parsed are omitted.
 
     Parameters
     ----------
@@ -94,6 +94,11 @@ def _normalize(data: Any) -> dict[str, Any] | None:
     # `logs` and `stop` take, which is the only handle such a session has - it
     # runs under the daemon with no window to raise.
     job_id = data.get('jobId')
+    # Remote Control is called the "bridge" internally: while the session is
+    # reachable from claude.ai, the registry names the cloud session it is
+    # bridged to.  Only whether one is named is taken - the id itself is a
+    # cloud identifier no feature here needs.
+    bridge_session_id = data.get('bridgeSessionId')
 
     return {
         'native_status': native_status if isinstance(native_status, str) else None,
@@ -106,6 +111,7 @@ def _normalize(data: Any) -> dict[str, Any] | None:
         'kind': kind if isinstance(kind, str) else 'interactive',
         'entrypoint': entrypoint if isinstance(entrypoint, str) else None,
         'job_id': job_id if isinstance(job_id, str) and job_id else None,
+        'remote_control': isinstance(bridge_session_id, str) and bool(bridge_session_id),
         'started_at': _parse_started_at(data.get('startedAt')),
     }
 

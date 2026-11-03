@@ -218,6 +218,7 @@ const DEFAULT_LABELS = {
     auto_denials: 'Calls blocked by the classifier: {count}',
     worktree_tip: 'Works in a git worktree',
     worktree_branch: 'Branch: {branch}',
+    remote_control_tip: 'Remote Control is on - continue this agent from claude.ai or the Claude app',
     subagents_running: 'Running subagents: {count}',
     subagents_finished: 'Recently finished: {count}',
     subagents_workflow: 'Workflow: {done}/{total} agents',
@@ -2554,9 +2555,19 @@ function cliCellHtml(session) {
     return html + '<span class="cli-more"' + attr('data-tip', lines.join('\n')) + '>+' + esc(history.length - 1) + '</span>';
 }
 
+// A mouse pointer, the mark Claude Desktop also uses for a session reachable
+// through Remote Control.
+const REMOTE_CONTROL_SVG = '<svg class="rc-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+    + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<path d="M4 4l16 6.5-6.5 2-2 7.5z"></path></svg>';
+
 function nameCellHtml(session) {
     const labels = state.labels;
     let html = '<span class="name">' + esc(session.name) + '</span>';
+
+    if (session.remote_control) {
+        html += '<span class="rc-badge"' + attr('data-tip', labels.remote_control_tip) + '>' + REMOTE_CONTROL_SVG + '</span>';
+    }
 
     // The panel is the project the session was launched in; the badge names the
     // git worktree it switched into, with the full path (and the branch, when
@@ -3125,11 +3136,11 @@ function onContentClick(event) {
     }
 
     // The hover-only info pills (the model and CLI-version "+N" histories, the
-    // running-subagent and worktree badges) are tooltip triggers with a help
-    // cursor, not navigation targets - a click on one must not fall through to
-    // focusing the session's window. The changelog link is a target of its own:
+    // running-subagent, worktree and Remote Control badges) are tooltip triggers
+    // with a help cursor, not navigation targets - a click on one must not fall
+    // through to focusing the session's window. The changelog link is a target of its own:
     // it opens in the browser, so it must not also raise the agent's window.
-    if (event.target.closest('.model-more, .cli-more, .cli-link, .agents-badge, .worktree-badge')) {
+    if (event.target.closest('.model-more, .cli-more, .cli-link, .agents-badge, .worktree-badge, .rc-badge')) {
         return;
     }
 

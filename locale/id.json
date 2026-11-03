@@ -86,6 +86,7 @@
     "auto_denials": "Panggilan yang diblokir classifier: {count}",
     "worktree_tip": "Bekerja di git worktree",
     "worktree_branch": "Branch: {branch}",
+    "remote_control_tip": "Remote Control aktif - lanjutkan agen ini dari claude.ai atau aplikasi Claude",
     "subagents_running": "Subagen berjalan: {count}",
     "subagents_finished": "Baru selesai: {count}",
     "subagents_workflow": "Alur kerja: {done}/{total} agen",

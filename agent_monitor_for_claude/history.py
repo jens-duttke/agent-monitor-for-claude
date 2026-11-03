@@ -271,6 +271,7 @@ def _build_history_record(path: Path) -> dict[str, Any] | None:
         'kind': 'interactive',
         'entrypoint': None,
         'job_id': None,
+        'remote_control': False,
         'native_status': None,
         'waiting_for': None,
         'child_count': 0,

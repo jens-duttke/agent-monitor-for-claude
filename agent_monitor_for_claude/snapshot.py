@@ -120,6 +120,7 @@ def _build_session_record(
         'kind': record['kind'],
         'entrypoint': record.get('entrypoint'),
         'job_id': record.get('job_id'),
+        'remote_control': record['remote_control'],
         'native_status': record['native_status'],
         'waiting_for': record['waiting_for'],
         'origin': record['origin'],
@@ -218,7 +219,7 @@ def registry_fingerprint() -> str:
                 transcript_mark = '-'
             parts.append(
                 f"{root.origin}:{record['pid']}:{record['session_id']}:{record['native_status']}:"
-                f"{record['waiting_for']}:{transcript_mark}"
+                f"{record['waiting_for']}:{record['remote_control']}:{transcript_mark}"
             )
 
     return '|'.join(parts)

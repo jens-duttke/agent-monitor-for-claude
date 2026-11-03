@@ -86,6 +86,7 @@
     "auto_denials": "क्लासिफ़ायर द्वारा रोके गए कॉल: {count}",
     "worktree_tip": "git worktree में काम कर रहा है",
     "worktree_branch": "ब्रांच: {branch}",
+    "remote_control_tip": "Remote Control चालू है - इस एजेंट को claude.ai या Claude ऐप से जारी रखें",
     "subagents_running": "चल रहे सबएजेंट: {count}",
     "subagents_finished": "हाल ही में पूर्ण: {count}",
     "subagents_workflow": "वर्कफ़्लो: {done}/{total} एजेंट",

@@ -86,6 +86,7 @@
     "auto_denials": "Calls blocked by the classifier: {count}",
     "worktree_tip": "Works in a git worktree",
     "worktree_branch": "Branch: {branch}",
+    "remote_control_tip": "Remote Control is on - continue this agent from claude.ai or the Claude app",
     "subagents_running": "Running subagents: {count}",
     "subagents_finished": "Recently finished: {count}",
     "subagents_workflow": "Workflow: {done}/{total} agents",
