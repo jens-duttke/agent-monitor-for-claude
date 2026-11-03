@@ -420,7 +420,7 @@ body {
     box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.55);
 }
 
-/* The app's one HTML tooltip (see index.js): never the native `title`. Shown for
+/* The app's one HTML tooltip (see tooltip.js): never the native `title`. Shown for
    any [data-tip] element; newlines in the value become line breaks. */
 .tooltip {
     position: fixed;
@@ -1012,7 +1012,7 @@ body {
 
    The CLI-version column is the one conditional track: normally every session
    runs the same Claude Code version, where the column would repeat one value
-   down every row, so index.js adds .show-cli to <body> only once the versions
+   down every row, so render.js adds .show-cli to <body> only once the versions
    differ (or one session spans several). It is a whole track rather than a
    zero-width one because a 0px column still pays the 13px gap. The track itself
    is added by the responsive block at the end of this file, which is also where
@@ -1245,7 +1245,7 @@ body {
    until a search matches it, and `display: none` while empty so no row pays the
    grid gap for a block it is not showing. The block is the one part of a row
    that is meant to be read and selected rather than clicked, hence the text
-   cursor and the click exemption in index.js. */
+   cursor and the click exemption in actions.js. */
 .row-hits {
     grid-column: 2 / -1;
     display: flex;

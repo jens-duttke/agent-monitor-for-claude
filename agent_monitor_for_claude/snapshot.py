@@ -25,6 +25,7 @@ import time
 from datetime import datetime
 from typing import Any
 
+from .background_scans import completed_background_scans, pause_background_scans
 from .last_seen import note_alive, prune_last_seen, seconds_since_alive
 from .paths import SessionRoot, transcript_path
 from .process_probe import ProcessInfo, probe_all
@@ -32,7 +33,7 @@ from .roots import session_roots
 from .sessions import list_sessions
 from .settings import ENDED_MAX_AGE, INCLUDE_COMPLETED
 from .subagents import count_subagents
-from .transcript import completed_background_scans, pause_background_scans, prune_scan_cache, state_for
+from .transcript import prune_scan_cache, state_for
 from .worktrees import prune_worktree_cache, resolve_worktree
 from .wsl import probe_wsl_sessions
 

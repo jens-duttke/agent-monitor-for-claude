@@ -2,7 +2,7 @@
 
 /* Agent Monitor for Claude - browser preview data (dev only).
 
-   index.js loads this file only when the UI is opened directly in a browser
+   core.js loads this file only when the UI is opened directly in a browser
    (a file:// page, or ?mock), where there is no pywebview bridge to supply real
    data. It is deliberately NOT listed in the PyInstaller spec, so it never ships
    in the packaged app: the shipped binary, always served over http with the
@@ -13,7 +13,7 @@
    and never describe a real session.
 
    Two deliberate non-duplications keep this from drifting: there are no labels
-   here (the full English set lives in index.js DEFAULT_LABELS), and the pricing
+   here (the full English set lives in core.js DEFAULT_LABELS), and the pricing
    block is only a small snapshot needed to demo the cost line - it does not
    mirror the whole shipped pricing.json, and a stale figure only nudges a demo
    dollar amount, never correctness. */
@@ -417,7 +417,7 @@ window.__MOCK_TRANSCRIPTS__ = {
 
 // Past, non-live sessions - the on-demand history listing (get_history). All are
 // dead (alive:false, is_history:true) with no usage, exactly like the backend's
-// history records. index.js loads these only when the Older filter is enabled.
+// history records. filters.js loads these only when the Older filter is enabled.
 // Their ages deliberately straddle the filter's window options (hours to a month),
 // so switching the range in the preview visibly changes the listing - and the
 // default 24 h window is never empty.

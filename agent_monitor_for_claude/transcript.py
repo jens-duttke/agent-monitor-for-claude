@@ -29,16 +29,15 @@ import re
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .background_scans import drop_pending, queue_scan, wait_for_readers
 from .paths import SessionRoot, transcript_path
 
 __all__ = [
     'TranscriptState', 'HistoryState', 'WorktreeState', 'state_for', 'history_state_for', 'worktree_for', 'prune_scan_cache',
-    'completed_background_scans', 'pause_background_scans',
 ]
 
 # Bytes read from the end of the transcript.  Large enough to contain the last
@@ -324,55 +323,6 @@ _scan_cache: dict[str, _ScanState] = {}
 _scan_lock = threading.Lock()
 
 
-@dataclass
-class _DeferredScans:
-    """The first full scans handed to the background thread (see ``_scan_or_defer``).
-
-    ``pending`` maps a scan-cache key to the file's size when it was queued and
-    its path; the size orders the queue smallest first, so as many sessions as
-    possible are complete as early as possible.  ``completed`` counts the scans
-    that stored a result, which is what tells a change fingerprint that a
-    snapshot now has more to show.  ``readers`` counts the callers inside
-    :func:`pause_background_scans`; ``lock`` is a condition so the worker can
-    wait for that count to drop to zero.
-    """
-
-    pending: dict[str, tuple[int, Path]] = field(default_factory=dict)
-    lock: threading.Condition = field(default_factory=threading.Condition)
-    worker: threading.Thread | None = None
-    completed: int = 0
-    readers: int = 0
-
-
-_deferred = _DeferredScans()
-
-
-def completed_background_scans() -> int:
-    """Return how many deferred first scans have stored their result so far."""
-    with _deferred.lock:
-        return _deferred.completed
-
-
-@contextmanager
-def pause_background_scans() -> Iterator[None]:
-    """Hold the background scans at their next chunk boundary while the caller runs.
-
-    The scan is CPU-bound and holds the interpreter lock in long stretches, so
-    a snapshot sharing the interpreter with it waits for the lock after every
-    file access it makes: measured, a snapshot took ~1 s instead of ~0.1 s for
-    as long as a scan ran, the first one ~1.4 s instead of ~0.5 s.  Holding the
-    scan for those few milliseconds costs it nothing it does not make up.
-    """
-    with _deferred.lock:
-        _deferred.readers += 1
-    try:
-        yield
-    finally:
-        with _deferred.lock:
-            _deferred.readers -= 1
-            _deferred.lock.notify_all()
-
-
 def prune_scan_cache(active: Iterable[tuple[SessionRoot, str, str]]) -> None:
     """Drop scan-cache entries for sessions no longer in the registry.
 
@@ -405,10 +355,7 @@ def prune_scan_cache(active: Iterable[tuple[SessionRoot, str, str]]) -> None:
 
     # A queued scan of a session that has left the registry would only produce
     # an entry this function drops on its next call.
-    with _deferred.lock:
-        for key in list(_deferred.pending):
-            if key not in keep:
-                del _deferred.pending[key]
+    drop_pending(keep)
 
 
 @dataclass(frozen=True)
@@ -1026,7 +973,8 @@ def _absorb_file(path: Path, state: _ScanState, end: int, before_chunk: Callable
     cannot be read.
 
     *before_chunk*, when given, runs before every chunk is read - the point at
-    which a background scan gives way (see :func:`pause_background_scans`).
+    which a background scan gives way (see
+    :func:`~agent_monitor_for_claude.background_scans.pause_background_scans`).
     """
     remainder = b''
     with path.open('rb') as handle:
@@ -1056,7 +1004,9 @@ def _scan_or_defer(path: Path) -> _ScanResult | None:
     that met the scan synchronously would keep the whole window on its loading
     skeleton until the largest transcript had been read - the deferred one
     instead lets it show every session at once and fill in the rest when the
-    scan has stored its result (see ``completed_background_scans``).
+    scan has stored its result.  The queue and its thread live in
+    :mod:`~agent_monitor_for_claude.background_scans`; :func:`_first_scan` is
+    the scan it runs.
     """
     cache_key = os.path.normcase(str(path))
     with _scan_lock:
@@ -1068,48 +1018,10 @@ def _scan_or_defer(path: Path) -> _ScanResult | None:
         except OSError:
             size = 0
         if size > _SYNC_SCAN_BYTES:
-            _defer_scan(cache_key, path, size)
+            queue_scan(cache_key, path, size, _first_scan)
             return None
 
     return _scan_appended(path)
-
-
-def _defer_scan(cache_key: str, path: Path, size: int) -> None:
-    """Queue the first full scan of *path*, starting the background thread if none is running."""
-    with _deferred.lock:
-        _deferred.pending.setdefault(cache_key, (size, path))
-        if _deferred.worker is None:
-            _deferred.worker = threading.Thread(target=_run_deferred_scans, name='transcript-scan', daemon=True)
-            _deferred.worker.start()
-
-
-def _wait_for_readers() -> None:
-    """Block the background scan while any caller is inside :func:`pause_background_scans`."""
-    with _deferred.lock:
-        _deferred.lock.wait_for(lambda: _deferred.readers == 0)
-
-
-def _run_deferred_scans() -> None:
-    """Work through the deferred first scans, smallest file first, until none is left."""
-    while True:
-        with _deferred.lock:
-            if not _deferred.pending:
-                _deferred.worker = None
-                return
-            cache_key, (_, path) = min(_deferred.pending.items(), key=lambda item: item[1][0])
-
-        try:
-            stored = _first_scan(cache_key, path)
-        except Exception:
-            # Last-resort isolation, like build_snapshot's per record: one odd
-            # file must not stop every scan queued behind it.  Nothing is stored,
-            # so the next snapshot queues it again.
-            stored = False
-
-        with _deferred.lock:
-            _deferred.pending.pop(cache_key, None)
-            if stored:
-                _deferred.completed += 1
 
 
 def _first_scan(cache_key: str, path: Path) -> bool:
@@ -1127,7 +1039,7 @@ def _first_scan(cache_key: str, path: Path) -> bool:
 
     state = _ScanState()
     try:
-        _absorb_file(path, state, path.stat().st_size, _wait_for_readers)
+        _absorb_file(path, state, path.stat().st_size, wait_for_readers)
     except OSError:
         return False
 

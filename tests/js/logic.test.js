@@ -841,7 +841,7 @@ test('searchWideningStep: offers the cheap step first, then the costly one, then
 /* --- empty-state wording and the widened-search notice --- */
 
 /* These build markup rather than derive data, but they belong here for the same
-   reason everything else does: they are pure. index.js maps UI state onto one
+   reason everything else does: they are pure. render.js maps UI state onto one
    plain `view` object (emptyStateView) and the wording rules live here, so which
    reason wins for an empty view, whether a widening is offered, and what the
    notice says are all checkable without a DOM. */
@@ -2024,7 +2024,7 @@ test('sortProjects: does not mutate its input', () => {
 
 /* --- HTML safety ---
 
-   These are the guard tests for the markup layer: index.js concatenates HTML
+   These are the guard tests for the markup layer: the controller concatenates HTML
    strings, so `esc` (text position) and `attr` (a whole attribute) are the only
    two things standing between a session title, a project path or a background
    task's output and the page. Do not weaken them.

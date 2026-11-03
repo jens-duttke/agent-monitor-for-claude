@@ -19,7 +19,7 @@ function fmt(template, values) {
 
    The UI builds its markup by string concatenation, so every interpolated value
    has to pass through one of exactly two primitives: `esc` in text position,
-   `attr` for a whole attribute. They live here, not in index.js, because they
+   `attr` for a whole attribute. They live here, not in the controller, because they
    are pure - that is what puts them under the Node test suite, where the
    guarantee below is asserted rather than assumed.
 
@@ -499,8 +499,8 @@ function asKeySet(keys) {
 /* --- empty-state and widened-search markup --- */
 
 // The empty content area and the widened-search notice are built here rather
-// than in index.js because they are pure string work: they take a plain `view`
-// object (assembled once by index.js `emptyStateView`) instead of reading UI
+// than in the controller because they are pure string work: they take a plain `view`
+// object (assembled once by render.js `emptyStateView`) instead of reading UI
 // state, which puts the wording rules - which message wins, whether a widening
 // is offered, what the hint names - under tests/js/logic.test.js. The view uses
 // the same key names searchWideningStep takes, so the decision is made in one

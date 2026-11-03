@@ -4,10 +4,31 @@
    Sits at the end of <body> - exactly where the inline <script> it replaces
    sat - so load order and DOMContentLoaded timing are unchanged. It is a
    separate file for the same reason as boot.js: the page's
-   Content-Security-Policy forbids inline script. */
+   Content-Security-Policy forbids inline script.
+
+   The controller scripts share one global scope, so their order here is
+   their dependency order: core.js first, index.js - which starts everything -
+   last. tests/js/global-scope.test.js reads this list and loads the files in
+   exactly this order. */
 
 (function () {
     var q = window.__assetQuery || '';
-    document.write('<script src="logic.js' + q + '"><\/script>');
-    document.write('<script src="index.js' + q + '"><\/script>');
+    var scripts = [
+        'logic.js',
+        'core.js',
+        'tooltip.js',
+        'header.js',
+        'sort.js',
+        'menu.js',
+        'proc-panel.js',
+        'dialogs.js',
+        'filters.js',
+        'search.js',
+        'render.js',
+        'actions.js',
+        'index.js',
+    ];
+    for (var i = 0; i < scripts.length; i++) {
+        document.write('<script src="' + scripts[i] + q + '"><\/script>');
+    }
 })();

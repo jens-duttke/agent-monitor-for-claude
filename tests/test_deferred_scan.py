@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from agent_monitor_for_claude import snapshot, transcript
+from agent_monitor_for_claude import background_scans, snapshot, transcript
 from agent_monitor_for_claude.paths import local_root, transcript_path
 
 _SESSION_ID = 'deferred-session-id'
@@ -36,7 +36,7 @@ def _prompt(text: str, mode: str | None = None, sidechain: bool = False) -> str:
 
 
 def _finish_background_scans() -> None:
-    worker = transcript._deferred.worker
+    worker = background_scans._deferred.worker
     if worker is not None:
         worker.join(timeout=10)
 
@@ -50,8 +50,8 @@ class DeferredScanEnvTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         _finish_background_scans()
-        with transcript._deferred.lock:
-            transcript._deferred.pending.clear()
+        with background_scans._deferred.lock:
+            background_scans._deferred.pending.clear()
         transcript._scan_cache.clear()
         if self._previous is None:
             os.environ.pop('CLAUDE_CONFIG_DIR', None)
@@ -88,7 +88,7 @@ class DeferredStateTest(DeferredScanEnvTest):
             _assistant(100),
             _assistant(50, timestamp='2026-07-11T10:01:00Z'),
         ])
-        completed = transcript.completed_background_scans()
+        completed = background_scans.completed_background_scans()
 
         with self._defer_everything():
             pending = transcript.state_for(local_root(), _SESSION_ID, _CWD)
@@ -107,7 +107,7 @@ class DeferredStateTest(DeferredScanEnvTest):
         self.assertFalse(done.scan_pending)
         self.assertEqual(done.usage['input_tokens'], 150)
         self.assertEqual(done.title, 'Generated title')
-        self.assertEqual(transcript.completed_background_scans(), completed + 1)
+        self.assertEqual(background_scans.completed_background_scans(), completed + 1)
 
     def test_scanned_transcript_grows_incrementally_without_deferring_again(self) -> None:
         path = self._write_transcript([_assistant(100)])
@@ -183,7 +183,7 @@ class DeferredStateTest(DeferredScanEnvTest):
         with self._defer_everything():
             # Holding the scans keeps the background thread from finishing
             # between the snapshot and the first fingerprint.
-            with transcript.pause_background_scans():
+            with background_scans.pause_background_scans():
                 pending = snapshot.build_snapshot()['sessions']
                 before = snapshot.registry_fingerprint()
             _finish_background_scans()
@@ -238,9 +238,9 @@ class ChunkedReadTest(DeferredScanEnvTest):
 
 class PauseTest(DeferredScanEnvTest):
     def test_background_scan_waits_while_a_reader_is_inside(self) -> None:
-        waiter = threading.Thread(target=transcript._wait_for_readers, daemon=True)
+        waiter = threading.Thread(target=background_scans.wait_for_readers, daemon=True)
 
-        with transcript.pause_background_scans():
+        with background_scans.pause_background_scans():
             waiter.start()
             waiter.join(timeout=0.05)
             self.assertTrue(waiter.is_alive())
@@ -252,10 +252,10 @@ class PauseTest(DeferredScanEnvTest):
         path = self._write_transcript([_assistant(100)])
         missing = path.with_name('missing.jsonl')
 
-        completed = transcript.completed_background_scans()
-        with transcript._deferred.lock:
+        completed = background_scans.completed_background_scans()
+        with background_scans._deferred.lock:
             # Queued directly, smallest first: the missing file is tried first.
-            transcript._deferred.pending['missing'] = (0, missing)
+            background_scans._deferred.pending['missing'] = (0, missing, transcript._first_scan)
         with self._defer_everything():
             transcript.state_for(local_root(), _SESSION_ID, _CWD)
             _finish_background_scans()
@@ -265,7 +265,7 @@ class PauseTest(DeferredScanEnvTest):
         self.assertEqual(state.usage['input_tokens'], 100)
         # Only the scan that stored a result counts, or a file that keeps
         # failing would move the fingerprint - and trigger a snapshot - forever.
-        self.assertEqual(transcript.completed_background_scans(), completed + 1)
+        self.assertEqual(background_scans.completed_background_scans(), completed + 1)
 
     def test_a_state_stored_meanwhile_is_not_overwritten(self) -> None:
         # worktree_for scans synchronously; its state has moved on from where a
@@ -280,14 +280,14 @@ class PauseTest(DeferredScanEnvTest):
 
     def test_prune_drops_queued_scans_of_sessions_that_left_the_registry(self) -> None:
         path = self._write_transcript([_assistant(100)])
-        with transcript._deferred.lock:
-            transcript._deferred.pending['gone'] = (1, path)
-            transcript._deferred.pending[os.path.normcase(str(path))] = (1, path)
+        with background_scans._deferred.lock:
+            background_scans._deferred.pending['gone'] = (1, path, transcript._first_scan)
+            background_scans._deferred.pending[os.path.normcase(str(path))] = (1, path, transcript._first_scan)
 
         transcript.prune_scan_cache([(local_root(), _SESSION_ID, _CWD)])
 
-        with transcript._deferred.lock:
-            self.assertEqual(list(transcript._deferred.pending), [os.path.normcase(str(path))])
+        with background_scans._deferred.lock:
+            self.assertEqual(list(background_scans._deferred.pending), [os.path.normcase(str(path))])
 
 
 if __name__ == '__main__':

@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
-from agent_monitor_for_claude import transcript
+from agent_monitor_for_claude import background_scans, transcript
 from agent_monitor_for_claude.paths import transcript_path, local_root
 from agent_monitor_for_claude.snapshot import build_snapshot
 from agent_monitor_for_claude.transcript import history_state_for, state_for
@@ -662,7 +662,7 @@ class PrivacyTest(TranscriptEnvTest):
             with mock.patch.object(transcript, '_SYNC_SCAN_BYTES', 0):
                 state = state_for(local_root(), _SESSION_ID, _CWD)
         finally:
-            worker = transcript._deferred.worker
+            worker = background_scans._deferred.worker
             if worker is not None:
                 worker.join(timeout=10)
 
