@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A Claude Desktop agent that ends its turn blocked on your decision reads *Blocked - needs your decision* under *Needs you*, and one that ends on a question reads *Finished with a question*. A question that only the session registry reports now reads *Question for you* instead of *Waiting for you*.
 - Hovering the status dot shows how long the agent has been in its status and, for a running turn, whether a finished background task or a message from another session started it.
 
+### Changed
+- A row that jumps to the agent's window now shows an alias cursor, and the background-process badge a help cursor. Rows with no window to jump to, such as a background agent's, no longer show a hand cursor.
+
 ### Fixed
 - Sessions show up much sooner at startup when a WSL distribution holds many records of long-ended sessions, and the monitor puts less load on WSL while it runs. Such records used to be read in full on every refresh before being skipped.
 - Token counts and estimated costs were about twice as high as they really are, because each reply was counted once per part it is stored in. Each reply now counts once.

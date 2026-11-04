@@ -837,7 +837,8 @@ body {
     color: var(--fg-heading);
     text-decoration: underline;
     text-underline-offset: 3px;
-    cursor: pointer;
+    /* Jumps to the session's window, like a row does. */
+    cursor: alias;
     max-width: 320px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1025,7 +1026,14 @@ body {
     border-top: 1px solid var(--border);
     --s: var(--c-unknown);
     transition: background 0.12s ease;
-    cursor: pointer;
+    cursor: default;
+
+    /* Only a row with a window to raise is a click target (render.js sets
+       data-pid for exactly those), and the click jumps to another application -
+       which the alias cursor says, where a pointer would promise a link. */
+    &[data-pid] {
+        cursor: alias;
+    }
 
     &:hover {
         background: var(--panel-hover);
@@ -1213,12 +1221,11 @@ body {
     --s: var(--c-history);
     opacity: 0.72;
     /* A past session has no window to raise, so its row is not a click target:
-       the pointer cursor, the hover highlight, and the press feedback are all
-       dropped. Only the meatball menu (still revealed on hover, with its own
-       pointer) is interactive - for the delete action. Hover just lifts the
-       dimming so the row is fully legible while you reach that menu. */
-    cursor: default;
-
+       it carries no data-pid and keeps the default cursor, and the hover
+       highlight and the press feedback are dropped. Only the meatball menu
+       (still revealed on hover, with its own pointer) is interactive - for the
+       delete action. Hover just lifts the dimming so the row is fully legible
+       while you reach that menu. */
     &:hover {
         opacity: 1;
         background: var(--bg);
@@ -1407,7 +1414,9 @@ body {
     border-radius: 999px;
     padding: 1px 8px;
     white-space: nowrap;
-    cursor: pointer;
+    /* A badge opens details about the session rather than leaving it, so it
+       shares the help cursor of the hover-only badges beside it. */
+    cursor: help;
 
     &:hover,
     &.proc-badge-open {
