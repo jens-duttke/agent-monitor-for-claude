@@ -1015,5 +1015,197 @@ class ActivityTimestampTest(unittest.TestCase):
         self.assertEqual(state.last_timestamp, '2026-07-11T09:00:00Z')
 
 
+def _reply(**fields) -> dict:
+    """A real assistant reply; *fields* override the entry, ``usage``/``content``/``model`` go into its message."""
+    message = {
+        'stop_reason': 'tool_use',
+        'model': fields.pop('model', 'claude-opus-5-5'),
+        'usage': fields.pop('usage', {'input_tokens': 5, 'cache_read_input_tokens': 100, 'cache_creation_input_tokens': 20}),
+        'content': fields.pop('content', [{'type': 'text', 'text': 'x'}]),
+    }
+    entry = {'type': 'assistant', 'timestamp': '2026-07-11T10:00:00Z', 'message': message}
+    entry.update(fields)
+    return entry
+
+
+def _plan_call(tool_input: dict) -> dict:
+    return _reply(content=[{'type': 'tool_use', 'id': 'p', 'name': 'mcp__ccd_turn__update_plan', 'input': tool_input}])
+
+
+def _plan_items(*statuses: str) -> dict:
+    return _plan_call({'items': [{'content': 'step', 'status': status} for status in statuses]})
+
+
+def _attachment(**attachment) -> dict:
+    return {'type': 'attachment', 'timestamp': '2026-07-11T10:00:00Z', 'attachment': attachment}
+
+
+class SessionDetailsTest(unittest.TestCase):
+    """The display details the tail parser collects beside the status."""
+
+    def test_the_newest_branch_of_any_main_entry_wins(self) -> None:
+        state = _parse(_lines(
+            {**_reply(), 'gitBranch': 'main'},
+            {**_attachment(type='date'), 'gitBranch': 'feature/x'},
+            {**_reply(), 'gitBranch': 'side', 'isSidechain': True},
+            {**_reply(), 'gitBranch': 42},
+        ))
+        self.assertEqual(state.git_branch, 'feature/x')
+
+    def test_effort_and_speed_come_from_the_newest_real_reply(self) -> None:
+        state = _parse(_lines(
+            _reply(effort='high', usage={'input_tokens': 1, 'speed': 'fast'}),
+            _reply(effort='Not A Token'),
+            _reply(model='<synthetic>', effort='max', usage={'input_tokens': 0, 'speed': 'slow'}),
+        ))
+        # The synthetic turn's effort still counts - it is the entry's own field -
+        # but its usage is no real request, so the speed stays the real one.
+        self.assertEqual(state.effort, 'max')
+        self.assertEqual(state.speed, 'fast')
+
+    def test_an_api_error_turn_sets_no_detail(self) -> None:
+        state = _parse(_lines(_reply(effort='low'), {**_reply(effort='max'), 'isApiErrorMessage': True}))
+        self.assertEqual(state.effort, 'low')
+
+    def test_context_is_what_the_newest_reply_sent(self) -> None:
+        state = _parse(_lines(
+            _reply(usage={'input_tokens': 1, 'cache_read_input_tokens': 2}),
+            _reply(model='claude-sonnet-5-5', usage={'input_tokens': 5, 'cache_read_input_tokens': 400000,
+                                                      'cache_creation_input_tokens': 1000, 'output_tokens': 9000}),
+            _reply(model='<synthetic>', usage={'input_tokens': 0}),
+        ))
+        self.assertEqual(state.context_tokens, 401005)
+        self.assertEqual(state.context_model, 'claude-sonnet-5-5')
+
+    def test_a_reply_without_usage_leaves_the_context_unknown(self) -> None:
+        state = _parse(_lines(_reply(usage={'input_tokens': True, 'cache_read_input_tokens': -4})))
+        self.assertIsNone(state.context_tokens)
+
+    def test_the_newest_valid_budget_is_reported(self) -> None:
+        state = _parse(_lines(
+            _attachment(type='budget_usd', used=2.5, total=20, remaining=17.5),
+            _attachment(type='budget_usd', used=True, total=60),
+            _attachment(type='budget_usd', used=1, total=0),
+        ))
+        self.assertEqual((state.budget_used, state.budget_total), (2.5, 20.0))
+
+    def test_queued_prompts_are_counted_and_never_go_below_zero(self) -> None:
+        def operation(name: str) -> dict:
+            return {'type': 'queue-operation', 'operation': name, 'timestamp': '2026-07-11T10:00:00Z'}
+
+        state = _parse(_lines(operation('dequeue'), operation('enqueue'), operation('enqueue'), operation('remove'),
+                              operation('enqueue'), operation('unknown')))
+        self.assertEqual(state.queued, 2)
+
+    def test_a_plan_reports_its_step_in_progress(self) -> None:
+        state = _parse(_lines(_plan_items('completed', 'in_progress', 'pending', 'pending')))
+        self.assertEqual((state.plan_step, state.plan_total), (2, 4))
+
+    def test_advance_moves_on_by_one_step(self) -> None:
+        state = _parse(_lines(_plan_items('in_progress', 'pending', 'pending'), _plan_call({'advance': True})))
+        self.assertEqual(state.plan_step, 2)
+
+    def test_done_and_start_are_one_based(self) -> None:
+        state = _parse(_lines(_plan_items('in_progress', 'pending', 'pending', 'pending'),
+                              _plan_call({'done': [1, 2], 'start': 3})))
+        self.assertEqual((state.plan_step, state.plan_total), (3, 4))
+
+    def test_out_of_range_steps_are_ignored(self) -> None:
+        state = _parse(_lines(_plan_items('in_progress', 'pending'), _plan_call({'done': [0, 9, True], 'start': 7})))
+        self.assertEqual(state.plan_step, 1)
+
+    def test_a_finished_plan_reports_nothing(self) -> None:
+        state = _parse(_lines(_plan_items('completed', 'in_progress'), _plan_call({'advance': True})))
+        self.assertIsNone(state.plan_step)
+        self.assertEqual(state.plan_total, 0)
+
+    def test_failing_hooks_are_grouped_by_name_and_exit_code(self) -> None:
+        entries = [_attachment(type='hook_non_blocking_error', hookName='PostToolUse:Bash', exitCode=7)] * 3
+        entries += [_attachment(type='hook_non_blocking_error', hookName='UserPromptSubmit', exitCode=1)]
+        entries += [_attachment(type='hook_non_blocking_error', hookName='PostToolUse:Bash', exitCode='x')]
+        entries += [_attachment(type='hook_non_blocking_error', hookName=f'Hook{index}', exitCode=1) for index in range(6)]
+        state = _parse(_lines(*entries))
+
+        # Most frequent first, ties in the order first seen; a mistyped exit code
+        # is unknown rather than dropped.
+        self.assertEqual(state.hook_errors[:3], (
+            tmod.HookError('PostToolUse:Bash', 7, 3),
+            tmod.HookError('UserPromptSubmit', 1, 1),
+            tmod.HookError('PostToolUse:Bash', None, 1),
+        ))
+        self.assertEqual(len(state.hook_errors), 5)
+
+    def test_the_artifact_count_is_the_newest(self) -> None:
+        state = _parse(_lines({'type': 'frame-link', 'artifactCount': 1}, {'type': 'frame-link', 'artifactCount': 3},
+                              {'type': 'frame-link', 'artifactCount': -1}))
+        self.assertEqual(state.artifact_count, 3)
+
+    def test_pull_requests_are_listed_newest_first_once_each(self) -> None:
+        def link(number: object, url: object = 'https://git.example/r/-/merge_requests/1') -> dict:
+            return {'type': 'pr-link', 'prRepository': 'group/repo', 'prNumber': number, 'prUrl': url}
+
+        # The address is judged by the UI, where it would reach an href; here it
+        # is only required to be a string of a sane length.
+        state = _parse(_lines(link(1), link(2, 12345), link(3, 'x' * 401), link(1), link(0), link('4')))
+        self.assertEqual(state.pr_links, (
+            tmod.PullRequest('group/repo', 1, 'https://git.example/r/-/merge_requests/1'),
+            tmod.PullRequest('group/repo', 3, None),
+            tmod.PullRequest('group/repo', 2, None),
+        ))
+
+    def test_at_most_the_newest_pull_requests_are_reported(self) -> None:
+        state = _parse(_lines(*({'type': 'pr-link', 'prRepository': 'r', 'prNumber': number} for number in range(1, 9))))
+        self.assertEqual([link.number for link in state.pr_links], [8, 7, 6, 5, 4])
+
+
+class ScanDetailsTest(unittest.TestCase):
+    """The session-wide counts of the full scan: files edited and context compactions."""
+
+    @staticmethod
+    def _absorb(state, entry):
+        _absorb_line(json.dumps(entry).encode('utf-8'), state)
+
+    @staticmethod
+    def _tool(name: str, **tool_input) -> dict:
+        return {'type': 'tool_use', 'id': name, 'name': name, 'input': tool_input}
+
+    def test_distinct_files_written_are_counted(self) -> None:
+        state = _ScanState()
+        self._absorb(state, _reply(content=[self._tool('Edit', file_path='a.py'), self._tool('Write', file_path='b.py')]))
+        self._absorb(state, _reply(content=[self._tool('MultiEdit', file_path='a.py'), self._tool('NotebookEdit', notebook_path='c.ipynb'),
+                                           self._tool('Read', file_path='d.py'), self._tool('Edit', file_path=7)]))
+        self.assertEqual(state.edited_files, {'a.py', 'b.py', 'c.ipynb'})
+
+    def test_compactions_of_the_main_conversation_are_counted(self) -> None:
+        state = _ScanState()
+        self._absorb(state, {'type': 'system', 'subtype': 'compact_boundary', 'compactMetadata': {'trigger': 'auto'}})
+        self._absorb(state, {'type': 'system', 'subtype': 'compact_boundary', 'isSidechain': True})
+        self._absorb(state, {'type': 'system', 'subtype': 'informational', 'content': 'compact_boundary'})
+        self.assertEqual(state.compactions, 1)
+
+    def test_the_counts_survive_a_partial_trailing_line(self) -> None:
+        state = _ScanState()
+        self._absorb(state, _reply(content=[self._tool('Edit', file_path='a.py')]))
+        self._absorb(state, {'type': 'system', 'subtype': 'compact_boundary'})
+        copy = state.copy()
+        self.assertEqual((copy.edited_files, copy.compactions), ({'a.py'}, 1))
+        copy.edited_files.add('b.py')
+        self.assertEqual(state.edited_files, {'a.py'})
+
+    def test_a_scan_reports_the_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session.jsonl'
+            path.write_text(''.join(json.dumps(entry) + '\n' for entry in (
+                _reply(content=[self._tool('Edit', file_path='a.py')]),
+                {'type': 'system', 'subtype': 'compact_boundary'},
+            )), encoding='utf-8')
+            tmod._scan_cache.clear()
+            try:
+                result = tmod._scan_appended(path)
+            finally:
+                tmod._scan_cache.clear()
+        self.assertEqual((result.files_edited, result.compactions), (1, 1))
+
+
 if __name__ == '__main__':
     unittest.main()

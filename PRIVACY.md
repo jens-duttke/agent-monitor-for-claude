@@ -9,13 +9,13 @@ It runs on Windows and Linux. Where the two differ - which programs are run, wha
 window is raised - each is stated separately below rather than merged into a claim that would only be
 true on one of them.
 
-Last reviewed: 2026-09-02
+Last reviewed: 2026-11-04
 
 ## At a glance
 
 | Question | Answer |
 | --- | --- |
-| Does the application connect to the internet? | No. It has no HTTP client in any of its own modules, and opens no connection of any kind - its one use of a network socket binds a port on your own machine to check that the interface server can have it. It carries exactly one remote address - a link to Claude Code's public changelog - which it never requests itself; clicking it opens your normal browser. See [Network Communication](#network-communication). The embedded Microsoft browser engine it renders in is a separate matter, stated there too. |
+| Does the application connect to the internet? | No. It has no HTTP client in any of its own modules, and opens no connection of any kind - its one use of a network socket binds a port on your own machine to check that the interface server can have it. It carries exactly one remote address - a link to Claude Code's public changelog - which it never requests itself; clicking it opens your normal browser. It can also link a pull request Claude Code itself recorded for a session, opened the same way and only on your click. See [Network Communication](#network-communication). The embedded Microsoft browser engine it renders in is a separate matter, stated there too. |
 | Does it run any other program? | On Windows, exactly one, and only to list which WSL distributions are currently running: `wsl.exe --list --running --quiet`, invoked by its absolute `System32` path so no same-named file elsewhere can ever be run in its place. Nothing is ever run *inside* a distribution. On Linux it runs no program at all. See [Programs it runs](#programs-it-runs). |
 | Does it read your credentials? | No. It never opens `.credentials.json` and never reads a token, key, or cookie. |
 | Does it send telemetry, analytics, or crash reports? | No. None, of any kind. |
@@ -53,6 +53,15 @@ address does and does not mean:
   fragment naming the version, and a fragment is resolved by the browser and never sent to the server,
   so not even which version you looked up leaves your machine. If you never click it, nothing is ever
   contacted.
+
+One more kind of address can appear in the window, though none is written in the code:
+
+- **Pull request links.** When Claude Code links a pull request to a session, it records the pull
+  request's web address in the transcript, and the row's pull-request badge links to the newest one.
+  The application never requests it either: a click hands it to your normal browser, exactly like the
+  changelog link. The address is shown as a link only in one plain shape - `https://`, a host name, and
+  a path of letters, digits and `. _ ~ % + -` - with no query, fragment, quote or `user@` part. Anything
+  else is listed by repository and number without a link.
 
 Two further things about the running process are worth stating plainly, because anyone inspecting it
 will find them:
@@ -155,6 +164,14 @@ Remote Control is on (only that - the cloud session id it names is not kept), an
 two for when the process started, one for when its native status last changed. No conversation data
 is in these files.
 
+### The model catalog
+
+`~/.claude/cache/model-catalog/*.json` - the list of models Claude Code fetched and cached for its own
+model picker. Fields taken: each model's id and the size of its context window
+(`runtime.max_input_tokens`), so a row can say how full a session's context is. Nothing else in these
+files is taken - not the account and organization they are cached for, not notices, not settings. A WSL
+distribution's own catalog is read for its sessions.
+
 ### Transcripts, for status metadata
 
 `~/.claude/projects/<project>/<session>.jsonl` - your conversation transcripts. To answer "what is
@@ -188,9 +205,24 @@ only as a count. A few more control values refine the status label:
 - on a prompt, the one-word label of what sent it (you, a finished background task, another session) -
   the message itself, and a sending session's name, stay unread.
 
+And a few more describe the session beside its status:
+
+- the git branch stamped on each entry;
+- a reply's effort level and speed (`high`, `fast`), and how many tokens its request sent - the size of
+  the context at that point;
+- the dollar budget a session runs under, as two numbers;
+- whether a queued prompt was added or taken off the queue - the prompt itself stays unread;
+- in Claude Desktop's progress list, the status of each step (pending, in progress, completed) - the
+  step texts stay unread;
+- a hook that failed without blocking: its name and exit code - its output and command stay unread;
+- how many artifacts the session made - their titles and addresses stay unread;
+- a linked pull request's repository, number, and web address (see [Network
+  Communication](#network-communication));
+- how many times the context was compacted.
+
 Message text, thinking blocks, tool inputs, and tool results are not taken, with these deliberate
-exceptions - five that are displayed to you, and two that are reduced to a flag or an id and never
-shown:
+exceptions - five that are displayed to you, and three that are reduced to a flag, an id, or a count
+and never shown:
 
 - **The session title** (displayed). In order of preference: a title you set yourself, the title
   Claude Code generated for its own session list, or - if neither exists - your **first prompt** in
@@ -223,6 +255,10 @@ shown:
 - **A background task's registration line** (not displayed). To map a task id to the command that
   started it, the tool result of a background shell call is searched for Claude Code's fixed
   "Output is being written to" line. Only the id mapping is kept.
+- **The files a tool wrote to** (not displayed). To say how many files a session edited, the file path
+  of each file-writing tool call (`Edit`, `MultiEdit`, `Write`, `NotebookEdit`) is read. This is a tool
+  input. Only the number of distinct paths is reported; the paths are not shown, and what was written
+  stays unread.
 
 Nothing from these files is transmitted anywhere, because there is nowhere for it to go.
 
@@ -457,6 +493,9 @@ something you did:
   Communication](#network-communication)). The link is only built when the version reads as a plain
   release number - three groups of digits separated by dots - so the address can never hold anything
   but digits and dots, whatever a transcript claims its version is.
+- **Opening a pull request.** Clicking a row's pull-request badge follows an ordinary link to the
+  address Claude Code recorded, passed to your default browser the same way - and only when that
+  address has the plain shape described under [Network Communication](#network-communication).
 - **Opening a folder, or showing a file in one.** Opening a session's project folder or its scratchpad
   in your file manager, and showing a session's transcript file selected in its folder. A folder path is
   verified to be an existing directory, a file path to be an existing file, before anything else sees it,
@@ -600,8 +639,10 @@ so a green run means everything applicable to your system passed.
   that none of them appear in the data the interface receives. It also asserts that the title comes
   from the first prompt and that a later message's text never appears in that data, and that an API
   error's message is read no further than its first line - a second line, a further block, and every
-  ordinary turn stay unread. The same goes for a retried request's summary, and for the calls and
-  prompts the status label reads flags from: their text never appears either.
+  ordinary turn stay unread. The same goes for a retried request's summary, for the calls and
+  prompts the status label reads flags from, and for the session details: a plan's step texts, a
+  failing hook's output and command, a queued prompt, an artifact's title, and the path and text of a
+  file a tool wrote never appear either.
 - [tests/test_search.py](tests/test_search.py) asserts the search boundary: that a session reports at
   most five excerpts however many hits it holds, that text beyond the context window either side of a
   hit is never reported, that a greedy regular expression still cannot return more than its clipped
@@ -615,7 +656,9 @@ so a green run means everything applicable to your system passed.
 - [tests/js/logic.test.js](tests/js/logic.test.js) asserts the display boundary in its "HTML safety"
   group: that escaping covers every character able to leave a text or attribute position, that an
   attribute value cannot break out of its attribute, and that background-task output containing markup
-  stays text and yields only class names from the fixed internal list.
+  stays text and yields only class names from the fixed internal list. Its pull-request tests assert
+  that only a plain `https` address can become a link - a `javascript:` address, a query, a fragment,
+  a quote or a `user@` part is listed without one.
 - [tests/test_wsl.py](tests/test_wsl.py) guards WSL discovery: `test_no_vmmem_short_circuits` and
   `test_setting_off_short_circuits` assert that `wsl.exe` is never invoked when no WSL2 VM is running or
   when the `wsl` setting is off; `test_discovery_cached_within_ttl` asserts the ten-second cache keeps it

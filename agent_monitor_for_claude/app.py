@@ -697,8 +697,8 @@ def _bindable_port(port: int) -> int | None:
 def _default_effort() -> str:
     """Read the global default effort level from Claude Code's settings file.
 
-    A per-session effort override is not persisted anywhere on disk, so only
-    this default can be surfaced.
+    The header names this default; each session's own level is the one its
+    latest reply recorded in the transcript, shown on a row only where it differs.
     """
     try:
         data = json.loads((config_dir() / 'settings.json').read_text(encoding='utf-8'))

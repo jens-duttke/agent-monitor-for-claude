@@ -2368,3 +2368,147 @@ test('the search-hit kind lookup cannot answer with an inherited value', () => {
     assert.ok(!html.includes('hit-source'));
     assert.match(html, /<mark>x<\/mark>/);
 });
+
+/* --- session details (branch, context, plan, queue, budget, hooks, PRs) --- */
+
+const DETAIL_LABELS = {
+    branch_tip: 'Git branch: {branch}',
+    context_tip: 'Context: {used} of {size} tokens ({percent}%)',
+    context_used: 'Context: {used} tokens',
+    compactions: 'Context compactions: {count}',
+    files_edited: 'Files edited: {count}',
+    artifacts: 'Artifacts: {count}',
+};
+
+test('context usage: share of the catalog window, capped at full', () => {
+    assert.deepEqual(logic.contextUsage({ context_tokens: 250000, context_window: 1000000 }), { used: 250000, size: 1000000, ratio: 0.25 });
+    assert.equal(logic.contextUsage({ context_tokens: 1200000, context_window: 1000000 }).ratio, 1);
+});
+
+test('context usage: without a window the size is known but not the share', () => {
+    assert.deepEqual(logic.contextUsage({ context_tokens: 5000 }), { used: 5000, size: null, ratio: null });
+});
+
+test('context usage: a missing or mistyped figure shows nothing', () => {
+    for (const value of [undefined, null, 0, -3, 'abc', true, 1.5]) {
+        assert.equal(logic.contextUsage({ context_tokens: value, context_window: 1000000 }), null);
+    }
+});
+
+test('plan progress: the step in progress of a known step count', () => {
+    assert.deepEqual(logic.planProgress({ plan_step: 3, plan_total: 7 }), { step: 3, total: 7 });
+    assert.equal(logic.planProgress({ plan_step: 8, plan_total: 7 }), null);
+    assert.equal(logic.planProgress({ plan_step: null, plan_total: 0 }), null);
+    assert.equal(logic.planProgress({ plan_step: true, plan_total: 2 }), null);
+});
+
+test('budget: used and total, only with a positive total', () => {
+    assert.deepEqual(logic.budgetOf({ budget_used: 12, budget_total: 60 }), { used: 12, total: 60, ratio: 0.2 });
+    assert.equal(logic.budgetOf({ budget_used: 1, budget_total: 0 }), null);
+    assert.equal(logic.budgetOf({ budget_used: true, budget_total: 60 }), null);
+    assert.equal(logic.budgetOf({}), null);
+});
+
+test('hook errors: malformed entries are dropped, an unknown exit code stays unknown', () => {
+    assert.deepEqual(logic.hookErrorsOf({ hook_errors: [
+        { hook: 'PostToolUse:Bash', exit_code: 7, count: 3 },
+        { hook: 'Stop', exit_code: 'x', count: 1 },
+        { hook: '', exit_code: 1, count: 1 },
+        { hook: 'Zero', exit_code: 1, count: 0 },
+        null,
+    ] }), [
+        { hook: 'PostToolUse:Bash', exit_code: 7, count: 3 },
+        { hook: 'Stop', exit_code: null, count: 1 },
+    ]);
+    assert.deepEqual(logic.hookErrorsOf({ hook_errors: 'nope' }), []);
+});
+
+test('effort and fast mode: only plain tokens are shown', () => {
+    assert.equal(logic.effortOf({ effort: 'xhigh' }), 'xhigh');
+    assert.equal(logic.effortOf({ effort: '<b>max</b>' }), '');
+    assert.equal(logic.effortOf({ effort: 3 }), '');
+    assert.equal(logic.isFastMode({ speed: 'fast' }), true);
+    assert.equal(logic.isFastMode({ speed: 'standard' }), false);
+});
+
+test('panel branch: the branch most sessions are on, the first seen winning a tie', () => {
+    assert.equal(logic.panelBranch([{ branch: 'feature/x' }, { branch: '' }, { branch: 'main' }, { branch: 'main' }]), 'main');
+    assert.equal(logic.panelBranch([{ branch: 'main' }, { branch: 'feature/x' }]), 'main');
+    assert.equal(logic.panelBranch([{ branch: '' }]), null);
+});
+
+test('group projects: the main branch goes to the header, only a row elsewhere names its own', () => {
+    const groups = logic.groupProjects([
+        raw({ session_id: 'a', pid: 1, cwd: 'c:\\p', git_branch: 'main' }),
+        raw({ session_id: 'b', pid: 2, cwd: 'c:\\p', git_branch: 'main' }),
+        raw({ session_id: 'c', pid: 3, cwd: 'c:\\p', git_branch: 'feature/x' }),
+        // The worktree row names its branch in the worktree badge already.
+        raw({ session_id: 'd', pid: 4, cwd: 'c:\\p', git_branch: 'wt', worktree_cwd: 'c:\\p\\wt', worktree_branch: 'wt' }),
+        raw({ session_id: 'e', pid: 5, cwd: 'c:\\p' }),
+    ], {}, {});
+    assert.equal(groups[0].branch, 'main');
+    assert.deepEqual(groups[0].sessions.map((session) => session.show_branch), [false, false, true, false, false]);
+});
+
+test('build session: details of a running process only while it is alive', () => {
+    const fields = { plan_step: 2, plan_total: 4, hook_errors: [{ hook: 'Stop', exit_code: 1, count: 1 }] };
+    const live = logic.buildSession(raw(fields), {}, {});
+    assert.deepEqual(live.plan, { step: 2, total: 4 });
+    assert.equal(live.hook_errors.length, 1);
+
+    const ended = logic.buildSession(raw(Object.assign({ alive: false }, fields)), {}, {});
+    assert.equal(ended.plan, null);
+    assert.deepEqual(ended.hook_errors, []);
+});
+
+test('build session: queued prompts count only while a turn runs', () => {
+    assert.equal(logic.buildSession(raw({ last_entry_kind: 'user_text', queued: 2 }), {}, {}).queued, 2);
+    assert.equal(logic.buildSession(raw({ last_entry_kind: 'assistant', last_stop_reason: 'end_turn', queued: 2 }), {}, {}).queued, 0);
+});
+
+test('build session: the context warns from the near-limit share', () => {
+    const near = Math.ceil(logic.NEAR_LIMIT_RATIO * 1000000);
+    assert.equal(logic.buildSession(raw({ context_tokens: near, context_window: 1000000 }), {}, {}).context_warn, true);
+    assert.equal(logic.buildSession(raw({ context_tokens: near - 1000, context_window: 1000000 }), {}, {}).context_warn, false);
+    assert.equal(logic.buildSession(raw({ context_tokens: near }), {}, {}).context_warn, false);
+});
+
+test('session info tip: the full title, then the details without a column', () => {
+    const session = logic.buildSession(raw({
+        title: 'A long title', git_branch: 'main', context_tokens: 450000, context_window: 1000000,
+        compactions: 2, files_edited: 5, artifact_count: 0,
+    }), DETAIL_LABELS, {});
+    assert.equal(session.info_tip, [
+        'A long title', 'Git branch: main', 'Context: 450k of 1.0M tokens (45%)', 'Context compactions: 2', 'Files edited: 5',
+    ].join('\n'));
+});
+
+test('pull request addresses: only a plain https address may reach an href', () => {
+    assert.equal(logic.pullRequestUrl('https://gitlab.example.com/group/repo/-/merge_requests/217'),
+        'https://gitlab.example.com/group/repo/-/merge_requests/217');
+    assert.equal(logic.pullRequestUrl('https://github.com/o/r/pull/5/'), 'https://github.com/o/r/pull/5/');
+    for (const hostile of [
+        'javascript:alert(1)',
+        'http://example.com/pr/1',
+        'https://example.com/pr/1?x=1',
+        'https://example.com/pr/1#x',
+        'https://user:pass@example.com/pr/1',
+        'https://example.com/pr/"onmouseover="alert(1)',
+        'https://example.com/pr/<script>',
+        'https://example.com/a b',
+        ' https://example.com/pr/1',
+        'https://example.com/' + 'a'.repeat(500),
+        42,
+        null,
+    ]) {
+        assert.equal(logic.pullRequestUrl(hostile), null, String(hostile));
+    }
+});
+
+test('pull requests: a hostile address is kept as a listing without a link', () => {
+    assert.deepEqual(logic.pullRequestsOf({ pr_links: [
+        { repository: 'group/repo', number: 3, url: 'javascript:alert(1)' },
+        { repository: 'group/repo', number: 0, url: null },
+        { repository: '', number: 4 },
+    ] }), [{ repository: 'group/repo', number: 3, url: null }]);
+});

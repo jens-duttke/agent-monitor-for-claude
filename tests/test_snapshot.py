@@ -182,6 +182,38 @@ class RawSnapshotTest(_RegistryFixture):
         self.assertEqual(session['api_error_status'], 529)
         self.assertEqual(session['api_error_detail'], 'API Error: 529 Overloaded.')
 
+    def test_record_carries_the_session_details(self) -> None:
+        # Every detail the UI shows has to reach the record; the context window
+        # is looked up in the root's own cached model catalog.
+        catalog =Path(self._temp.name) / 'cache' / 'model-catalog'
+        catalog.mkdir(parents=True)
+        (catalog / 'a-cc.json').write_text(json.dumps({'catalog': {'config': {'models': [
+            {'id': 'claude-opus-5-5', 'runtime': {'max_input_tokens': 1000000}}]}}}), encoding='utf-8')
+        transcript = '\n'.join(json.dumps(entry) for entry in (
+            {'type': 'assistant', 'timestamp': '2026-07-11T10:54:06Z', 'gitBranch': 'feature/x', 'effort': 'xhigh',
+             'message': {'id': 'm1', 'stop_reason': 'end_turn', 'model': 'claude-opus-5-5',
+                         'usage': {'input_tokens': 5, 'cache_read_input_tokens': 200000, 'output_tokens': 10},
+                         'content': [{'type': 'tool_use', 'id': 't1', 'name': 'Write', 'input': {'file_path': 'a.py'}}]}},
+            {'type': 'attachment', 'attachment': {'type': 'budget_usd', 'used': 3, 'total': 20}},
+            {'type': 'attachment', 'attachment': {'type': 'hook_non_blocking_error', 'hookName': 'Stop', 'exitCode': 2}},
+            {'type': 'pr-link', 'prRepository': 'group/repo', 'prNumber': 4, 'prUrl': 'https://git.example/pr/4'},
+            {'type': 'frame-link', 'artifactCount': 2},
+            {'type': 'system', 'subtype': 'compact_boundary'},
+        ))
+        self._add_session_with_transcript('d', 'd:\\WebDev\\one', transcript)
+
+        session = next(s for s in build_snapshot()['sessions'] if s['session_id'] == 'd')
+
+        self.assertEqual(session['git_branch'], 'feature/x')
+        self.assertEqual(session['effort'], 'xhigh')
+        self.assertEqual((session['context_tokens'], session['context_window']), (200005, 1000000))
+        self.assertEqual((session['budget_used'], session['budget_total']), (3.0, 20.0))
+        self.assertEqual(session['hook_errors'], [{'hook': 'Stop', 'exit_code': 2, 'count': 1}])
+        self.assertEqual(session['pr_links'], [{'repository': 'group/repo', 'number': 4, 'url': 'https://git.example/pr/4'}])
+        self.assertEqual(session['artifact_count'], 2)
+        self.assertEqual((session['files_edited'], session['compactions']), (1, 1))
+        json.dumps(session)
+
     def test_record_carries_native_status_and_waiting_for(self) -> None:
         sessions = Path(self._temp.name) / 'sessions'
         (sessions / 'w.json').write_text(

@@ -50,6 +50,11 @@ function rawSession(overrides) {
         // that do are what makes the conditional version column appear at all.
         cli_version: '2.1.228', cli_timeline: [{ time: '2026-07-11T09:25:21Z', version: '2.1.228' }],
         subagents_running: 0, subagents_done: 0, subagents_labels: [], workflows: [], age_seconds: 0,
+        // Session details: a shared branch is named once in the panel header, so
+        // only a panel with one session elsewhere shows the per-row badge.
+        git_branch: 'main', effort: 'xhigh', speed: 'standard', context_tokens: 182000, context_window: 1000000,
+        budget_used: null, budget_total: null, queued: 0, plan_step: null, plan_total: 0, hook_errors: [],
+        artifact_count: null, pr_links: [], files_edited: 3, compactions: 0,
     }, overrides);
 }
 
@@ -70,6 +75,9 @@ window.__MOCK_SNAPSHOT__ = {
             remote_control: true,
             title: 'Add spectral upsampling to the BRDF sampler', permission_mode: 'default',
             last_stop_reason: 'tool_use', pending_tool: true, last_tool_name: 'AskUserQuestion',
+            // A pull request Claude Code linked; without an address it is listed
+            // in the tooltip rather than linked.
+            pr_links: [{ repository: 'helios/renderer', number: 482, url: null }],
             age_seconds: 38,
             ...priced('claude-opus-4-8[1m]', {
                 input_tokens: 96400, output_tokens: 18200, cache_read_input_tokens: 58300000,
@@ -97,6 +105,8 @@ window.__MOCK_SNAPSHOT__ = {
             title: 'Port the ReSTIR denoiser to compute shaders', permission_mode: 'acceptEdits',
             last_entry_kind: 'tool_result', last_stop_reason: 'tool_use',
             child_count: 2,
+            // A context close to full warns on the row; the rest sits in the title's tooltip.
+            context_tokens: 871000, files_edited: 14, compactions: 2,
             age_seconds: 6,
             ...priced('claude-opus-4-8[1m]', {
                 input_tokens: 41800, output_tokens: 9600, cache_read_input_tokens: 33500000,
@@ -114,6 +124,9 @@ window.__MOCK_SNAPSHOT__ = {
                 'Audit the pipeline-cache invalidation path',
             ],
             child_count: 1,
+            // On a branch of its own, so the Helios rows name theirs; mid-plan in
+            // Claude Desktop's progress list, with a prompt queued behind the turn.
+            git_branch: 'fix/hot-reload-race', plan_step: 3, plan_total: 7, queued: 1,
             age_seconds: 12,
             ...priced('claude-opus-4-8[1m]', {
                 input_tokens: 62100, output_tokens: 14900, cache_read_input_tokens: 41200000,
@@ -135,6 +148,8 @@ window.__MOCK_SNAPSHOT__ = {
                 'workflow-subagent', 'workflow-subagent', 'workflow-subagent',
             ],
             workflows: [{ run_id: 'wf_a63b7dde', total: 12, done: 4, active: true }],
+            // Running under a dollar budget that is nearly spent.
+            budget_used: 41, budget_total: 50,
             age_seconds: 34,
             ...priced('claude-opus-4-8[1m]', {
                 input_tokens: 38000, output_tokens: 8200, cache_read_input_tokens: 28000000,
@@ -164,7 +179,7 @@ window.__MOCK_SNAPSHOT__ = {
             session_id: 'h4d', short_name: 'helios-renderer-2f', pid: 21030, entrypoint: 'claude-vscode', host: 'VS Code',
             title: 'Retune the importance sampler across models', permission_mode: 'default',
             last_entry_kind: 'assistant', last_stop_reason: 'end_turn', age_seconds: 210,
-            model_id: 'claude-opus-4-8[1m]',
+            model_id: 'claude-opus-4-8[1m]', effort: 'max', speed: 'fast',
             usage: {
                 input_tokens: 3600, output_tokens: 244000, cache_read_input_tokens: 512000000,
                 cache_creation_input_tokens: 24000000, cache_creation_5m_input_tokens: 9000000, cache_creation_1h_input_tokens: 15000000,
@@ -229,6 +244,7 @@ window.__MOCK_SNAPSHOT__ = {
             entrypoint: 'claude-vscode', host: 'VS Code',
             title: 'Redesign the presence protocol as binary frames', permission_mode: 'plan',
             last_stop_reason: 'tool_use', pending_tool: true, last_tool_name: 'ExitPlanMode',
+            artifact_count: 3,
             age_seconds: 22,
             ...priced('claude-opus-4-8[1m]', {
                 input_tokens: 12300, output_tokens: 3400, cache_read_input_tokens: 8900000,
@@ -259,6 +275,8 @@ window.__MOCK_SNAPSHOT__ = {
             entrypoint: 'cli', host: 'PowerShell', via_cli: true,
             title: 'Implement adaptive token-bucket rate limiting', permission_mode: 'default',
             native_status: 'busy', last_entry_kind: 'user_text', last_stop_reason: 'end_turn',
+            // A hook that keeps failing without blocking - worth a look at its configuration.
+            hook_errors: [{ hook: 'PostToolUse:Bash', exit_code: 7, count: 12 }, { hook: 'UserPromptSubmit', exit_code: 7, count: 2 }],
             age_seconds: 4,
             ...priced('claude-sonnet-5', {
                 input_tokens: 21500, output_tokens: 4300, cache_read_input_tokens: 14100000,

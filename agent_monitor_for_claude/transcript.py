@@ -15,15 +15,21 @@ switched into (directory paths and a branch name from Claude Code's own
 ``worktree-state`` entry), and the control values that refine a status label:
 a usage limit's type and reset time, a retried request's attempt counters, a
 ``/loop`` wakeup's delay, the two flags of Claude Desktop's turn-ending call,
-and the one-word label of what opened a turn.
+and the one-word label of what opened a turn.  Beside the status it reads the
+session details the row shows: the git branch, a reply's effort level and
+speed and the size of its context, a dollar budget, queue operations, the
+step statuses of Claude Desktop's plan, failing hooks' names and exit codes,
+the artifact count, linked pull requests, and how often the context was
+compacted.
 
 This module is the privacy boundary of the application.  It must never read,
 return, store, or expose conversation content - message ``text``, ``thinking``
 blocks, tool ``input``, or tool-result ``content`` are never accessed.  The
 narrow exceptions yield only metadata, never the surrounding content: the
 sanctioned title read above, matching the fixed interrupt-marker string to a
-boolean entry kind, and the first line of the CLI's own wording of an API error
-or of a request it is retrying.  A dedicated test enforces this.
+boolean entry kind, the first line of the CLI's own wording of an API error
+or of a request it is retrying, and the file path of a file-writing tool call,
+which is only counted.  A dedicated test enforces this.
 """
 from __future__ import annotations
 
@@ -41,8 +47,8 @@ from .background_scans import drop_pending, queue_scan, wait_for_readers
 from .paths import SessionRoot, transcript_path
 
 __all__ = [
-    'ApiRetry', 'TranscriptState', 'HistoryState', 'WorktreeState', 'state_for', 'history_state_for', 'worktree_for',
-    'prune_scan_cache',
+    'ApiRetry', 'HookError', 'PullRequest', 'TranscriptState', 'HistoryState', 'WorktreeState', 'state_for',
+    'history_state_for', 'worktree_for', 'prune_scan_cache',
 ]
 
 # Bytes read from the end of the transcript.  Large enough to contain the last
@@ -137,6 +143,31 @@ _WAKEUP_TOOL = 'ScheduleWakeup'
 # recap, the question and the suggested actions are text and stay unread.
 _WRAP_UP_TOOL = 'mcp__ccd_turn__wrap_up'
 
+# Claude Desktop's progress list for the running turn: a call either sets the
+# whole list (``items``), moves on by one step (``advance``), or marks steps done
+# and names the one now in progress (``done``/``start``, 1-based).  Only each
+# item's status is read; the step texts stay unread.
+_PLAN_TOOL = 'mcp__ccd_turn__update_plan'
+_PLAN_COMPLETED = 'completed'
+_PLAN_IN_PROGRESS = 'in_progress'
+_PLAN_PENDING = 'pending'
+
+# The tools that write a file, each with the input field naming that file.  The
+# path is read to count distinct files only - it is neither kept past the scan
+# nor reported - and nothing else of the call (the text written) is touched.
+_FILE_EDIT_TOOLS = {'Edit': 'file_path', 'MultiEdit': 'file_path', 'Write': 'file_path', 'NotebookEdit': 'notebook_path'}
+
+# A short lowercase token Claude Code writes as an effort level or a speed
+# (``high``, ``xhigh``, ``fast``); anything else is not displayed.
+_LABEL_TOKEN_PATTERN = re.compile(r'^[a-z][a-z0-9_-]{0,15}$')
+
+# Caps on what the tail reports for display: the newest pull requests, the most
+# frequent failing hooks, and the length of a branch, hook or repository name.
+_MAX_PR_LINKS = 5
+_MAX_HOOK_ERRORS = 5
+_NAME_MAX_CHARS = 120
+_PR_URL_MAX_CHARS = 400
+
 # What opened the newest turn, from the prompt entry's own ``origin.kind`` (or
 # the older ``turnOrigin`` spelling): typed by you, a background task that
 # finished, or a message from another session.  Mapped through this table so
@@ -182,6 +213,12 @@ _USER_MARKER = b'"user"'
 # follows it into the worktree - this entry is what ties the two together.
 _WORKTREE_STATE_MARKER = b'worktree-state'
 _WORKTREE_STATE_TYPE = 'worktree-state'
+
+# A context compaction is recorded as a ``system`` entry of this subtype.  Rare
+# lines, so the extra marker costs one more byte search per line - measured at
+# about 2% of the first full scan.
+_COMPACT_BOUNDARY_MARKER = b'compact_boundary'
+_COMPACT_BOUNDARY_SUBTYPE = 'compact_boundary'
 
 # The two markers behind the auto-mode denial streak.  Claude Code records why a
 # tool call was refused in its own field, so the streak is read from a control
@@ -262,6 +299,10 @@ class _ScanState:
     worktree: WorktreeState | None = None
     # Output tokens already summed per API message id (see _unclaimed_usage).
     counted_output_by_message: dict[str, int] = field(default_factory=dict)
+    # Distinct files a file-writing tool was called on (see _FILE_EDIT_TOOLS),
+    # kept only to be counted, and the number of context compactions.
+    edited_files: set[str] = field(default_factory=set)
+    compactions: int = 0
     # Memoized run-compressed timelines, one per value field, each kept with the
     # event count it was built from.  Deliberately the last field, so the
     # positional ``copy()`` below stays correct without carrying it over - a copy
@@ -307,6 +348,7 @@ class _ScanState:
             list(self.cli_events),
             self.ai_title, self.custom_title, self.first_prompt, self.first_command_prompt, self.permission_mode,
             self.auto_denials_consecutive, self.auto_denials_total, self.worktree, dict(self.counted_output_by_message),
+            set(self.edited_files), self.compactions,
         )
 
 
@@ -323,6 +365,8 @@ class _ScanResult:
     auto_denials_consecutive: int
     auto_denials_total: int
     worktree: WorktreeState | None
+    files_edited: int
+    compactions: int
 
 
 @dataclass(frozen=True)
@@ -407,6 +451,24 @@ class ApiRetry:
 
 
 @dataclass(frozen=True)
+class HookError:
+    """A hook that failed without blocking, as Claude Code records it: the hook's name, its exit code, and how often."""
+
+    hook: str
+    exit_code: int | None
+    count: int
+
+
+@dataclass(frozen=True)
+class PullRequest:
+    """A pull request Claude Code linked to the session: its repository, number, and web address as recorded."""
+
+    repository: str
+    number: int
+    url: str | None = None
+
+
+@dataclass(frozen=True)
 class TranscriptState:
     """Control-metadata extracted from a session transcript."""
 
@@ -451,6 +513,29 @@ class TranscriptState:
     turn_end_signal: str | None = None
     # What opened the newest turn (see _TURN_ORIGINS), or None when unknown.
     turn_origin: str | None = None
+    # Display details from the tail, each the newest value Claude Code wrote (see
+    # _TailDetails): the git branch, the reply's effort level and speed, how many
+    # tokens the newest reply's context held and on which model, the session's
+    # dollar budget, prompts still queued, Claude Desktop's progress list (the
+    # 1-based step in progress and the step count), the hooks that failed, the
+    # artifact count, and the pull requests Claude Code linked.
+    git_branch: str | None = None
+    effort: str | None = None
+    speed: str | None = None
+    context_tokens: int | None = None
+    context_model: str | None = None
+    budget_used: float | None = None
+    budget_total: float | None = None
+    queued: int = 0
+    plan_step: int | None = None
+    plan_total: int = 0
+    hook_errors: tuple[HookError, ...] = ()
+    artifact_count: int | None = None
+    pr_links: tuple[PullRequest, ...] = ()
+    # From the full scan: distinct files edited and context compactions, both
+    # None while that scan is still pending.
+    files_edited: int | None = None
+    compactions: int | None = None
     age_seconds: float | None = None
     title: str | None = None
     model: str | None = None
@@ -514,7 +599,8 @@ def state_for(root: SessionRoot, session_id: str, cwd: str) -> TranscriptState:
                    model_timeline=scan.model_timeline, cli_timeline=scan.cli_timeline,
                    title=scan.title, permission_mode=scan.permission_mode,
                    auto_denials_consecutive=scan.auto_denials_consecutive,
-                   auto_denials_total=scan.auto_denials_total)
+                   auto_denials_total=scan.auto_denials_total,
+                   files_edited=scan.files_edited, compactions=scan.compactions)
 
 
 def worktree_for(path: Path) -> WorktreeState | None:
@@ -762,6 +848,7 @@ def _parse(lines: list[str]) -> TranscriptState:
     turn_end_signal: str | None = None
     turn_origin: str | None = None
     any_parsed: bool = False
+    details = _TailDetails()
 
     for line in lines:
         entry = _load(line)
@@ -814,6 +901,8 @@ def _parse(lines: list[str]) -> TranscriptState:
         if isinstance(entry_version, str) and entry_version:
             cli_version = entry_version
 
+        details.absorb_entry(entry_type, entry)
+
         if entry_type == 'assistant' and isinstance(message, dict):
             if entry.get('isApiErrorMessage') is True:
                 # A locally-generated error turn (a usage/session limit, an
@@ -849,6 +938,7 @@ def _parse(lines: list[str]) -> TranscriptState:
                 # (locally-generated turns) is not a model and must not be displayed.
                 if isinstance(entry_model, str) and entry_model and entry_model != _SYNTHETIC_MODEL:
                     model = entry_model
+                details.absorb_reply(entry, message)
                 if isinstance(content, list):
                     for block in content:
                         if isinstance(block, dict) and block.get('type') == 'tool_use':
@@ -859,6 +949,8 @@ def _parse(lines: list[str]) -> TranscriptState:
                             turn_end_signal = _wrap_up_signal(block)
                             if last_tool_name == _WAKEUP_TOOL:
                                 wakeup_at = _wakeup_at(block, timestamp)
+                            elif last_tool_name == _PLAN_TOOL:
+                                details.absorb_plan_call(block.get('input'))
 
         elif entry_type == 'user':
             # A user entry is a fresh prompt, a tool_result answering a request,
@@ -936,7 +1028,202 @@ def _parse(lines: list[str]) -> TranscriptState:
         turn_origin=turn_origin,
         model=model,
         cli_version=cli_version,
+        **details.state_fields(),
     )
+
+
+@dataclass
+class _TailDetails:
+    """The display details :func:`_parse` collects beside the status, over the main conversation's entries in the tail.
+
+    Each is the newest value Claude Code wrote, or a count over the window -
+    nothing here feeds the status.  Values are control fields and numbers;
+    of the hooks, the plan and the queue only names, statuses and operations
+    are read, never a hook's output, a step's text or a queued prompt.
+    """
+
+    git_branch: str | None = None
+    effort: str | None = None
+    speed: str | None = None
+    context_tokens: int | None = None
+    context_model: str | None = None
+    budget_used: float | None = None
+    budget_total: float | None = None
+    queued: int = 0
+    plan_statuses: list[str] = field(default_factory=list)
+    plan_current: int | None = None
+    hook_error_counts: dict[tuple[str, int | None], int] = field(default_factory=dict)
+    artifact_count: int | None = None
+    pull_requests: dict[tuple[str, int], str | None] = field(default_factory=dict)
+
+    def absorb_entry(self, entry_type: object, entry: dict) -> None:
+        """Fold the branch stamped on any entry, and the bookkeeping entries that carry a detail."""
+        branch = entry.get('gitBranch')
+        if isinstance(branch, str) and branch:
+            self.git_branch = _clip(branch, _NAME_MAX_CHARS)
+
+        if entry_type == 'attachment':
+            self._absorb_attachment(entry.get('attachment'))
+        elif entry_type == 'queue-operation':
+            # A dequeue or removal of a prompt queued before the window is
+            # ignored rather than counted below zero.
+            operation = entry.get('operation')
+            if operation == 'enqueue':
+                self.queued += 1
+            elif operation in ('dequeue', 'remove'):
+                self.queued = max(0, self.queued - 1)
+        elif entry_type == 'pr-link':
+            self._absorb_pull_request(entry)
+        elif entry_type == 'frame-link':
+            count = entry.get('artifactCount')
+            if _is_count(count):
+                self.artifact_count = count
+
+    def absorb_reply(self, entry: dict, message: dict) -> None:
+        """Fold a real (not error, not synthetic) assistant reply: its effort, speed, and context size."""
+        effort = entry.get('effort')
+        if isinstance(effort, str) and _LABEL_TOKEN_PATTERN.match(effort):
+            self.effort = effort
+
+        usage = message.get('usage')
+        model = message.get('model')
+        if not isinstance(usage, dict) or not isinstance(model, str) or not model or model == _SYNTHETIC_MODEL:
+            return
+
+        speed = usage.get('speed')
+        if isinstance(speed, str) and _LABEL_TOKEN_PATTERN.match(speed):
+            self.speed = speed
+
+        # What the request sent is what the context held: fresh input plus the
+        # cached prefix, read or written.
+        context = 0
+        for key in ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'):
+            value = usage.get(key)
+            if _is_count(value):
+                context += value
+        if context > 0:
+            self.context_tokens = context
+            self.context_model = model
+
+    def absorb_plan_call(self, tool_input: object) -> None:
+        """Apply one call of Claude Desktop's progress tool to the plan (see _PLAN_TOOL)."""
+        if not isinstance(tool_input, dict):
+            return
+
+        items = tool_input.get('items')
+        if isinstance(items, list):
+            self.plan_statuses = [_plan_status(item) for item in items if isinstance(item, dict)]
+            self.plan_current = _index_of(self.plan_statuses, _PLAN_IN_PROGRESS)
+            return
+
+        statuses = self.plan_statuses
+        if tool_input.get('advance') is True:
+            current = _index_of(statuses, _PLAN_IN_PROGRESS)
+            if current is not None:
+                statuses[current] = _PLAN_COMPLETED
+            following = _index_of(statuses, _PLAN_PENDING, 0 if current is None else current + 1)
+            if following is not None:
+                statuses[following] = _PLAN_IN_PROGRESS
+            self.plan_current = following
+            return
+
+        done = tool_input.get('done')
+        for number in done if isinstance(done, list) else ():
+            if _is_count(number) and 1 <= number <= len(statuses):
+                statuses[number - 1] = _PLAN_COMPLETED
+        start = tool_input.get('start')
+        if _is_count(start) and 1 <= start <= len(statuses):
+            statuses[start - 1] = _PLAN_IN_PROGRESS
+            self.plan_current = start - 1
+        elif self.plan_current is not None and statuses[self.plan_current] == _PLAN_COMPLETED:
+            self.plan_current = None
+
+    def state_fields(self) -> dict[str, object]:
+        """Return these details under their :class:`TranscriptState` field names."""
+        unfinished = self.plan_current is not None and any(status != _PLAN_COMPLETED for status in self.plan_statuses)
+        hook_errors = sorted(self.hook_error_counts.items(), key=lambda item: -item[1])[:_MAX_HOOK_ERRORS]
+        pull_requests = list(self.pull_requests.items())[-_MAX_PR_LINKS:]
+
+        return {
+            'git_branch': self.git_branch,
+            'effort': self.effort,
+            'speed': self.speed,
+            'context_tokens': self.context_tokens,
+            'context_model': self.context_model,
+            'budget_used': self.budget_used,
+            'budget_total': self.budget_total,
+            'queued': self.queued,
+            'plan_step': self.plan_current + 1 if unfinished else None,
+            'plan_total': len(self.plan_statuses) if unfinished else 0,
+            'hook_errors': tuple(HookError(hook, code, count) for (hook, code), count in hook_errors),
+            'artifact_count': self.artifact_count,
+            'pr_links': tuple(PullRequest(repository, number, url) for (repository, number), url in reversed(pull_requests)),
+        }
+
+    def _absorb_attachment(self, attachment: object) -> None:
+        """Fold a budget notice or a failed-hook notice; every other attachment, and their text, stay unread."""
+        if not isinstance(attachment, dict):
+            return
+
+        kind = attachment.get('type')
+        if kind == 'budget_usd':
+            used = attachment.get('used')
+            total = attachment.get('total')
+            if _is_amount(used) and _is_amount(total) and total > 0:
+                self.budget_used = float(used)
+                self.budget_total = float(total)
+        elif kind == 'hook_non_blocking_error':
+            # The hook's own output and command stay unread: only which hook
+            # failed and with which exit code.
+            hook = attachment.get('hookName')
+            code = attachment.get('exitCode')
+            if isinstance(hook, str) and hook:
+                key = (_clip(hook, _NAME_MAX_CHARS), code if _is_count(code) else None)
+                self.hook_error_counts[key] = self.hook_error_counts.get(key, 0) + 1
+
+    def _absorb_pull_request(self, entry: dict) -> None:
+        """Fold a ``pr-link`` entry; one pull request linked again moves to the newest position."""
+        repository = entry.get('prRepository')
+        number = entry.get('prNumber')
+        if not isinstance(repository, str) or not repository or not _is_count(number) or number <= 0:
+            return
+
+        # Passed on as recorded and judged by the UI, which alone decides whether
+        # an address is safe to link (logic.pullRequestUrl).
+        url = entry.get('prUrl')
+        if not isinstance(url, str) or not url or len(url) > _PR_URL_MAX_CHARS:
+            url = None
+        key = (_clip(repository, _NAME_MAX_CHARS), number)
+        self.pull_requests.pop(key, None)
+        self.pull_requests[key] = url
+
+
+def _plan_status(item: dict) -> str:
+    """Return a plan item's status, reading anything unexpected as still pending."""
+    status = item.get('status')
+    return status if status in (_PLAN_COMPLETED, _PLAN_IN_PROGRESS) else _PLAN_PENDING
+
+
+def _index_of(statuses: list[str], wanted: str, start: int = 0) -> int | None:
+    """Return the index of the first *wanted* status at or after *start*, or None."""
+    for index in range(start, len(statuses)):
+        if statuses[index] == wanted:
+            return index
+
+    return None
+
+
+def _is_count(value: object) -> bool:
+    """Return True for a non-negative integer that is not a bool."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _is_amount(value: object) -> bool:
+    """Return True for a finite, non-negative number that is not a bool."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+
+    return value >= 0 and value != float('inf')
 
 
 def _api_error_kind(entry: dict) -> str | None:
@@ -1330,6 +1617,8 @@ def _scan_result(state: _ScanState) -> _ScanResult:
         auto_denials_consecutive=state.auto_denials_consecutive,
         auto_denials_total=state.auto_denials_total,
         worktree=state.worktree,
+        files_edited=len(state.edited_files),
+        compactions=state.compactions,
     )
 
 
@@ -1431,6 +1720,7 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
         or _CUSTOM_TITLE_MARKER in raw_line
         or _PERMISSION_MODE_MARKER in raw_line
         or _WORKTREE_STATE_MARKER in raw_line
+        or _COMPACT_BOUNDARY_MARKER in raw_line
     )
     if not interesting and (state.first_prompt is not None or b'"user"' not in raw_line):
         return
@@ -1465,6 +1755,7 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
 
     if entry_type == 'assistant':
         message = entry.get('message')
+        _note_edited_files(message.get('content') if isinstance(message, dict) else None, state.edited_files)
         usage = message.get('usage') if isinstance(message, dict) else None
         if isinstance(usage, dict):
             usage = _unclaimed_usage(message, usage, state)
@@ -1536,6 +1827,10 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
             if worktree is not None:
                 state.worktree = worktree
 
+    elif entry_type == 'system' and entry.get('subtype') == _COMPACT_BOUNDARY_SUBTYPE:
+        if entry.get('isSidechain') is not True:
+            state.compactions += 1
+
     elif (entry_type == 'user' and state.first_prompt is None
             and entry.get('isSidechain') is not True and entry.get('isMeta') is not True):
         # Skip injected isMeta entries (a continuation summary), mirroring _parse:
@@ -1547,6 +1842,23 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
                 state.first_command_prompt = text
         else:
             state.first_prompt = text
+
+
+def _note_edited_files(content: object, edited_files: set[str]) -> None:
+    """Add the file each file-writing tool call in *content* names to *edited_files*; nothing else of the call is read."""
+    if not isinstance(content, list):
+        return
+
+    for block in content:
+        if not isinstance(block, dict) or block.get('type') != 'tool_use':
+            continue
+        path_key = _FILE_EDIT_TOOLS.get(block.get('name'))
+        tool_input = block.get('input')
+        if path_key is None or not isinstance(tool_input, dict):
+            continue
+        path = tool_input.get(path_key)
+        if isinstance(path, str) and path:
+            edited_files.add(path)
 
 
 def _worktree_state(session: object) -> WorktreeState | None:

@@ -26,8 +26,8 @@ from pathlib import Path
 from .platforms import IS_WINDOWS
 
 __all__ = [
-    'SessionRoot', 'local_root', 'claude_temp_dir', 'config_dir', 'sessions_dir', 'projects_dir', 'cwd_to_slug',
-    'transcript_path', 'find_transcript', 'task_output_dir', 'task_output_path', 'scratchpad_dir', 'host_path',
+    'SessionRoot', 'local_root', 'claude_temp_dir', 'config_dir', 'sessions_dir', 'projects_dir', 'model_catalog_dir',
+    'cwd_to_slug', 'transcript_path','find_transcript', 'task_output_dir', 'task_output_path', 'scratchpad_dir', 'host_path',
 ]
 
 _NON_ALNUM_PATTERN = re.compile(r'[^A-Za-z0-9]')
@@ -139,6 +139,11 @@ def sessions_dir(root: SessionRoot) -> Path:
 def projects_dir(root: SessionRoot) -> Path:
     """Return the directory holding the per-project transcript folders."""
     return root.config_dir / 'projects'
+
+
+def model_catalog_dir(root: SessionRoot) -> Path:
+    """Return the directory where Claude Code caches the model catalog it fetched (one file per account and surface)."""
+    return root.config_dir / 'cache' / 'model-catalog'
 
 
 def cwd_to_slug(cwd: str) -> str:

@@ -832,6 +832,43 @@ class PrivacyTest(TranscriptEnvTest):
         for secret in _SECRETS:
             self.assertNotIn(secret, serialized)
 
+    def test_the_session_details_read_names_and_numbers_never_text(self) -> None:
+        # Each detail is a control value beside text that must stay unread: the
+        # plan's step texts, a failing hook's output and command, a queued
+        # prompt, an artifact's title and address, and what a file-writing tool
+        # wrote. The file a tool wrote to is counted, never reported.
+        self._write_transcript(_SESSION_ID, _CWD, [
+            json.dumps({'type': 'user', 'timestamp': '2026-07-11T13:19:00Z', 'message': {'content': 'Benign question'}}),
+            json.dumps({'type': 'queue-operation', 'operation': 'enqueue', 'timestamp': '2026-07-11T13:19:01Z',
+                        'content': 'SECRET_TEXT'}),
+            json.dumps({'type': 'attachment', 'timestamp': '2026-07-11T13:19:02Z', 'gitBranch': 'feature/x',
+                        'attachment': {'type': 'hook_non_blocking_error', 'hookName': 'PostToolUse:Bash', 'exitCode': 7,
+                                       'stderr': 'SECRET_RESULT', 'stdout': 'SECRET_RESULT', 'command': 'SECRET_INPUT'}}),
+            json.dumps({'type': 'frame-link', 'artifactCount': 2, 'title': 'SECRET_TEXT', 'frameUrl': 'https://SECRET_INPUT'}),
+            json.dumps({'type': 'assistant', 'timestamp': '2026-07-11T13:19:05Z', 'effort': 'high',
+                        'message': {'id': 'm1', 'stop_reason': 'tool_use', 'model': 'claude-opus-5-5',
+                                    'usage': {'input_tokens': 10, 'cache_read_input_tokens': 1000, 'output_tokens': 5},
+                                    'content': [
+                                        {'type': 'tool_use', 'id': 't1', 'name': 'mcp__ccd_turn__update_plan',
+                                         'input': {'scope': 'SECRET_INPUT', 'items': [
+                                             {'content': 'SECRET_INPUT', 'status': 'in_progress'},
+                                             {'content': 'SECRET_INPUT', 'status': 'pending'}]}},
+                                        {'type': 'tool_use', 'id': 't2', 'name': 'Edit',
+                                         'input': {'file_path': 'SECRET_INPUT_PATH', 'old_string': 'SECRET_INPUT',
+                                                   'new_string': 'SECRET_INPUT'}},
+                                    ]}}),
+        ])
+        state = state_for(local_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual((state.plan_step, state.plan_total), (1, 2))
+        self.assertEqual(state.hook_errors[0].hook, 'PostToolUse:Bash')
+        self.assertEqual(state.queued, 1)
+        self.assertEqual(state.artifact_count, 2)
+        self.assertEqual(state.files_edited, 1)
+        serialized = json.dumps(asdict(state))
+        for secret in _SECRETS:
+            self.assertNotIn(secret, serialized)
+
     def test_only_the_retry_summary_first_line_is_read(self) -> None:
         # A retried request's one sanctioned line is the CLI's own short summary,
         # first line only: a second line and the raw error message stay unread.

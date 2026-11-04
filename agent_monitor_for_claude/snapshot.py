@@ -3,7 +3,8 @@ Snapshot
 ========
 
 Assembles the raw session data the UI consumes.  This module reads the local
-sources (session registry, transcripts, processes, subagents) and returns a
+sources (session registry, transcripts, processes, subagents, and the context
+window size from Claude Code's cached model catalog) and returns a
 flat list of raw per-session records.  It performs no status classification,
 label formatting, grouping or sorting - all of that derivation lives in the UI
 (``agent_monitor_for_claude/ui/logic.js``).  Python's role is purely to provide
@@ -27,6 +28,7 @@ from typing import Any
 
 from .background_scans import completed_background_scans, pause_background_scans
 from .last_seen import note_alive, prune_last_seen, seconds_since_alive
+from .model_catalog import context_window
 from .paths import SessionRoot, transcript_path
 from .process_probe import ProcessInfo, probe_all
 from .roots import session_roots
@@ -156,6 +158,27 @@ def _build_session_record(
         'auto_denials_total': transcript_state.auto_denials_total,
         'model_id': transcript_state.model,
         'cli_version': transcript_state.cli_version,
+        'git_branch': transcript_state.git_branch,
+        'effort': transcript_state.effort,
+        'speed': transcript_state.speed,
+        'context_tokens': transcript_state.context_tokens,
+        'context_window': context_window(root, transcript_state.context_model),
+        'budget_used': transcript_state.budget_used,
+        'budget_total': transcript_state.budget_total,
+        'queued': transcript_state.queued,
+        'plan_step': transcript_state.plan_step,
+        'plan_total': transcript_state.plan_total,
+        'hook_errors': [
+            {'hook': error.hook, 'exit_code': error.exit_code, 'count': error.count}
+            for error in transcript_state.hook_errors
+        ],
+        'artifact_count': transcript_state.artifact_count,
+        'pr_links': [
+            {'repository': link.repository, 'number': link.number, 'url': link.url}
+            for link in transcript_state.pr_links
+        ],
+        'files_edited': transcript_state.files_edited,
+        'compactions': transcript_state.compactions,
         'usage': transcript_state.usage or {},
         'usage_by_model': transcript_state.usage_by_model or {},
         'model_timeline': transcript_state.model_timeline or [],

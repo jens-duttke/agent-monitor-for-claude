@@ -37,13 +37,35 @@ function fmtDateTime(iso) {
 // oldest first - one line per model run with the time it began, so a model
 // returned to appears again and the last line is the current model.
 function modelCellHtml(session) {
-    const name = '<span class="model-name">' + esc(session.model || '') + '</span>';
+    const name = '<span class="model-name">' + esc(session.model || '') + modelSuffixHtml(session) + '</span>';
     if (!session.model_switched) {
         return name;
     }
     const history = session.model_history || [];
     const lines = history.map((entry) => fmtDateTime(entry.time) + '  ' + entry.label);
     return name + '<span class="model-more"' + attr('data-tip', lines.join('\n')) + '>+' + esc(history.length - 1) + '</span>';
+}
+
+// The latest reply's effort level and fast mode, after the model name in a
+// dimmer weight - the two settings that decide how that model is run. The
+// header already names the default effort, so a row names its own only when it
+// differs.
+function modelSuffixHtml(session) {
+    const labels = state.labels;
+    const parts = [];
+    const lines = [];
+    if (session.effort && session.effort !== state.defaultEffort) {
+        parts.push(session.effort);
+        lines.push(fmt(labels.effort_tip, { level: session.effort }));
+    }
+    if (session.fast_mode) {
+        parts.push('fast');
+        lines.push(labels.fast_mode_tip);
+    }
+    if (!session.model || parts.length === 0) {
+        return '';
+    }
+    return ' <span class="model-effort"' + attr('data-tip', lines.join('\n')) + '>' + esc(parts.join(' · ')) + '</span>';
 }
 
 // The Claude Code version column, shown only while more than one version is in
@@ -87,9 +109,21 @@ const REMOTE_CONTROL_SVG = '<svg class="rc-icon" viewBox="0 0 24 24" fill="none"
     + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
     + '<path d="M4 4l16 6.5-6.5 2-2 7.5z"></path></svg>';
 
+// A git branch: two commits on a line and a third forking off it.
+const BRANCH_SVG = '<svg class="branch-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+    + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<circle cx="6" cy="5" r="2"></circle><circle cx="6" cy="19" r="2"></circle><circle cx="18" cy="7" r="2"></circle>'
+    + '<path d="M6 7v10"></path><path d="M18 9c0 5-12 3-12 8"></path></svg>';
+
+function branchHtml(branch) {
+    return BRANCH_SVG + '<span class="branch-name">' + esc(branch) + '</span>';
+}
+
 function nameCellHtml(session) {
     const labels = state.labels;
-    let html = '<span class="name">' + esc(session.name) + '</span>';
+    // The title's tooltip repeats the full title, which the row may cut short,
+    // and adds the details that have no column of their own.
+    let html = '<span class="name"' + attr('data-tip', session.info_tip || '') + '>' + esc(session.name) + '</span>';
 
     if (session.remote_control) {
         html += '<span class="rc-badge"' + attr('data-tip', labels.remote_control_tip) + '>' + REMOTE_CONTROL_SVG + '</span>';
@@ -105,6 +139,15 @@ function nameCellHtml(session) {
         }
         html += '<span class="worktree-badge"' + attr('data-tip', lines.join('\n')) + '>⎇ ' + esc(session.worktree.name) + '</span>';
     }
+
+    // Only a panel whose sessions work on different branches names them per row;
+    // a shared one sits in the panel header instead.
+    if (session.show_branch) {
+        html += '<span class="branch-badge"' + attr('data-tip', fmt(labels.branch_tip, { branch: session.branch })) + '>'
+            + branchHtml(session.branch) + '</span>';
+    }
+
+    html += pullRequestHtml(session.pull_requests, labels);
 
     if (session.mode) {
         html += '<span class="mode-chip">' + esc(session.mode) + '</span>';
@@ -158,6 +201,65 @@ function nameCellHtml(session) {
             + attr('data-proc-origin', session.origin || 'local')
             + attr('data-tip', labels.proc_open_hint || '')
             + '>⚙ ' + esc(session.processes) + '</span>';
+    }
+
+    return html + detailBadgesHtml(session, labels);
+}
+
+// The newest pull request Claude Code linked, as a link to it when its address
+// passed logic.pullRequestUrl; the tooltip lists every one. Like the changelog
+// link, the application requests nothing from the address: target="_blank" hands
+// it to the host, which opens the system browser.
+function pullRequestHtml(pullRequests, labels) {
+    if (!pullRequests || pullRequests.length === 0) {
+        return '';
+    }
+    const newest = pullRequests[0];
+    const lines = [labels.pr_tip].concat(pullRequests.map((pr) => pr.repository + ' #' + pr.number));
+    const text = '#' + newest.number + (pullRequests.length > 1 ? ' +' + (pullRequests.length - 1) : '');
+    if (!newest.url) {
+        return '<span class="pr-badge"' + attr('data-tip', lines.join('\n')) + '>' + esc(text) + '</span>';
+    }
+    return '<a class="pr-badge pr-link"' + attr('href', newest.url) + ' target="_blank" rel="noreferrer"'
+        + attr('data-tip', lines.join('\n')) + '>' + esc(text) + '</a>';
+}
+
+// Badges for the details worth seeing at a glance: a nearly full context, the
+// plan's step, queued prompts, the budget, and hooks that keep failing.
+function detailBadgesHtml(session, labels) {
+    let html = '';
+
+    if (session.context_warn) {
+        html += '<span class="context-badge"' + attr('data-tip', logic.contextLine(session.context, labels)) + '>◔ '
+            + esc(Math.round(session.context.ratio * 100)) + '%</span>';
+    }
+
+    if (session.plan) {
+        html += '<span class="plan-badge"' + attr('data-tip', fmt(labels.plan_tip, session.plan)) + '>☰ '
+            + esc(session.plan.step) + '/' + esc(session.plan.total) + '</span>';
+    }
+
+    if (session.queued > 0) {
+        html += '<span class="queue-badge"' + attr('data-tip', fmt(labels.queued_tip, { count: session.queued })) + '>✉ '
+            + esc(session.queued) + '</span>';
+    }
+
+    if (session.budget) {
+        const used = logic.formatCost(session.budget.used);
+        const total = logic.formatCost(session.budget.total);
+        const warn = session.budget.ratio >= logic.NEAR_LIMIT_RATIO ? ' budget-warn' : '';
+        html += '<span' + attr('class', 'budget-badge' + warn) + attr('data-tip', fmt(labels.budget_tip, { used: used, total: total })) + '>'
+            + esc(used) + ' / ' + esc(total) + '</span>';
+    }
+
+    if (session.hook_errors.length > 0) {
+        const lines = [labels.hook_errors_tip].concat(session.hook_errors.map((error) => fmt(labels.hook_error_line, {
+            hook: error.hook,
+            code: error.exit_code === null ? '?' : error.exit_code,
+            count: error.count,
+        })));
+        const total = session.hook_errors.reduce((sum, error) => sum + error.count, 0);
+        html += '<span class="hook-badge"' + attr('data-tip', lines.join('\n')) + '>⚠ ' + esc(total) + '</span>';
     }
 
     return html;
@@ -337,6 +439,7 @@ function createPanel() {
     section.className = 'panel';
     section.innerHTML = '<div class="panel-head">'
         + '<h2></h2><span class="panel-path"><span class="path-open"></span></span>'
+        + '<span class="panel-branch"></span>'
         + '<span class="panel-origin"></span><span class="head-status"></span>'
         + '<span class="panel-count"></span><span class="chevron"></span>'
         + '</div><div class="rows"></div>';
@@ -371,6 +474,19 @@ function updatePanel(section, project) {
     // Names the distro when the panel belongs to a WSL root, so two panels
     // with the same path text stay tellable apart at a glance.
     section.querySelector('.panel-origin').textContent = project.origin_display || '';
+
+    // The branch every session of the panel is on, when they share one; rewritten
+    // only on a change, so a hovered tooltip survives the poll.
+    const branchEl = section.querySelector('.panel-branch');
+    if (branchEl.dataset.branch !== (project.branch || '')) {
+        branchEl.dataset.branch = project.branch || '';
+        branchEl.innerHTML = project.branch ? branchHtml(project.branch) : '';
+    }
+    if (project.branch) {
+        branchEl.dataset.tip = fmt(state.labels.branch_tip, { branch: project.branch });
+    } else {
+        delete branchEl.dataset.tip;
+    }
 
     // The group's headline status, shown in both states: collapsed it stands in
     // for the hidden rows, open it names at a glance what the panel as a whole

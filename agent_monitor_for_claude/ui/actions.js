@@ -178,11 +178,14 @@ function onContentClick(event) {
     }
 
     // The hover-only info pills (the model and CLI-version "+N" histories, the
-    // running-subagent, worktree and Remote Control badges) are tooltip triggers
-    // with a help cursor, not navigation targets - a click on one must not fall
-    // through to focusing the session's window. The changelog link is a target of its own:
-    // it opens in the browser, so it must not also raise the agent's window.
-    if (event.target.closest('.model-more, .cli-more, .cli-link, .agents-badge, .worktree-badge, .rc-badge')) {
+    // running-subagent, worktree, Remote Control and detail badges) are tooltip
+    // triggers with a help cursor, not navigation targets - a click on one must
+    // not fall through to focusing the session's window. The changelog and pull
+    // request links are targets of their own: they open in the browser, so they
+    // must not also raise the agent's window.
+    const infoPills = '.model-more, .cli-more, .cli-link, .agents-badge, .worktree-badge, .rc-badge, .model-effort,'
+        + ' .branch-badge, .pr-badge, .context-badge, .plan-badge, .queue-badge, .budget-badge, .hook-badge';
+    if (event.target.closest(infoPills)) {
         return;
     }
 

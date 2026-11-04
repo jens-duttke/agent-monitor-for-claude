@@ -29,6 +29,7 @@ function applyBootstrap(bootstrap) {
     refreshWindowToggleButtons();
 
     const effortBadge = document.getElementById('effort-badge');
+    state.defaultEffort = typeof bootstrap.default_effort === 'string' ? bootstrap.default_effort : '';
     if (bootstrap.default_effort) {
         effortBadge.textContent = fmt(state.labels.effort_badge, { level: bootstrap.default_effort });
         effortBadge.hidden = false;

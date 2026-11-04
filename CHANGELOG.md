@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A usage limit names which limit was hit and counts down to its reset (*5-hour limit - resets in 2h 10m*). Once the reset has passed, it says that you can continue.
 - A Claude Desktop agent that ends its turn blocked on your decision reads *Blocked - needs your decision* under *Needs you*, and one that ends on a question reads *Finished with a question*. A question that only the session registry reports now reads *Question for you* instead of *Waiting for you*.
 - Hovering the status dot shows how long the agent has been in its status and, for a running turn, whether a finished background task or a message from another session started it.
+- A panel header names the git branch its agents are on, and a row names its own when it works on a different branch.
+- Badges flag a context nearly full, a nearly spent dollar budget, a Claude Desktop agent's current plan step, prompts queued behind the running turn, and hooks that keep failing. A pull-request badge opens the newest pull request linked to the session in your browser.
+- The model column adds the latest reply's effort level when it differs from your default, and *fast* in fast mode.
+- Hovering a title shows it in full, with the context size, how often the context was compacted, how many files the agent edited, and its artifacts.
 
 ### Changed
 - A row that jumps to the agent's window now shows an alias cursor, and the background-process badge a help cursor. Rows with no window to jump to, such as a background agent's, no longer show a hand cursor.

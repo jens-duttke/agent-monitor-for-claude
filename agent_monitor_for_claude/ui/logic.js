@@ -1861,7 +1861,12 @@ function buildSession(raw, labels, prices) {
     // describes a turn that stopped.
     const statusTipText = statusTip(statusText, statusDetailLines(status, raw, labels));
 
-    return {
+    // Details that describe the running process - its plan, the hooks it runs -
+    // say nothing once it has ended.
+    const alive = raw.alive === true;
+    const context = contextUsage(raw);
+
+    const session = {
         session_id: raw.session_id,
         pid: raw.pid,
         cwd: raw.cwd,
@@ -1911,8 +1916,27 @@ function buildSession(raw, labels, prices) {
         auto_denials_total: Number(raw.auto_denials_total) || 0,
         vscode_deeplink: isVscodeDeeplink(raw),
         worktree: worktreeOf(raw),
+        branch: branchOf(raw),
+        // Whether the row names the branch itself; groupProjects sets it when the
+        // panel's sessions are on different branches.
+        show_branch: false,
+        effort: effortOf(raw),
+        fast_mode: isFastMode(raw),
+        context: context,
+        context_warn: Boolean(context && context.ratio !== null && context.ratio >= NEAR_LIMIT_RATIO),
+        plan: alive ? planProgress(raw) : null,
+        queued: QUEUE_STATUSES.has(status) ? (positiveInteger(raw.queued) || 0) : 0,
+        budget: budgetOf(raw),
+        hook_errors: alive ? hookErrorsOf(raw) : [],
+        pull_requests: pullRequestsOf(raw),
+        files_edited: positiveInteger(raw.files_edited) || 0,
+        compactions: positiveInteger(raw.compactions) || 0,
+        artifacts: positiveInteger(raw.artifact_count) || 0,
         age_seconds: raw.age_seconds == null ? null : Math.floor(raw.age_seconds),
     };
+    session.info_tip = sessionInfoTip(session, labels);
+
+    return session;
 }
 
 // A session that switched into a git worktree is grouped under the project it
@@ -1929,6 +1953,196 @@ function worktreeOf(raw) {
         path: displayCwd(path),
         branch: typeof raw.worktree_branch === 'string' ? raw.worktree_branch : '',
     };
+}
+
+/* --- session details (branch, context, plan, queue, budget, hooks, PRs) ---
+
+   Display-only: none of these feeds the status. Each takes the raw record and
+   returns a plain value or null, so a missing, renamed or mistyped field shows
+   nothing instead of a wrong figure. */
+
+// The share of the context window from which the row warns that a compaction is
+// near. Below it the figure stays in the title's tooltip.
+const NEAR_LIMIT_RATIO = 0.8;
+
+// Statuses during which a turn is running, the only time a prompt can sit in
+// Claude Code's queue: once the turn ends, a queued prompt is delivered at once,
+// so a count read while idle would only be a leftover the tail failed to pair.
+const QUEUE_STATUSES = new Set(['working', 'processing', 'awaiting_permission']);
+
+// An effort level or speed exactly as Claude Code writes it (`high`, `xhigh`,
+// `fast`); anything else is not shown.
+const LABEL_TOKEN = /^[a-z][a-z0-9_-]{0,15}$/;
+
+// A pull request's web address may reach an href only in this shape: https, a
+// host, and path segments of unreserved characters - no query, no fragment, no
+// quote, no `user@` part. Anything else is listed without a link.
+const PULL_REQUEST_URL = /^https:\/\/[A-Za-z0-9.-]+(?::\d{1,5})?(?:\/[A-Za-z0-9._~%+-]+)*\/?$/;
+const PULL_REQUEST_URL_MAX = 400;
+
+function positiveInteger(value) {
+    if (typeof value === 'boolean') {
+        return null;
+    }
+    const number = Number(value);
+    return Number.isInteger(number) && number > 0 ? number : null;
+}
+
+function nonNegativeAmount(value) {
+    if (value === null || value === undefined || typeof value === 'boolean') {
+        return null;
+    }
+    const number = Number(value);
+    return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+// The current git branch, or '' when the transcript names none.
+function branchOf(raw) {
+    return typeof raw.git_branch === 'string' ? raw.git_branch : '';
+}
+
+// The latest reply's effort level, or ''.
+function effortOf(raw) {
+    return typeof raw.effort === 'string' && LABEL_TOKEN.test(raw.effort) ? raw.effort : '';
+}
+
+function isFastMode(raw) {
+    return raw.speed === 'fast';
+}
+
+// How full the context was on the latest reply: the tokens it held and, when the
+// model catalog names the window, its size and the share of it used.
+function contextUsage(raw) {
+    const used = positiveInteger(raw.context_tokens);
+    if (used === null) {
+        return null;
+    }
+    const size = positiveInteger(raw.context_window);
+
+    return { used: used, size: size, ratio: size === null ? null : Math.min(1, used / size) };
+}
+
+// Claude Desktop's progress list: the step in progress and the step count, or
+// null when there is none or every step is done.
+function planProgress(raw) {
+    const step = positiveInteger(raw.plan_step);
+    const total = positiveInteger(raw.plan_total);
+    if (step === null || total === null || step > total) {
+        return null;
+    }
+
+    return { step: step, total: total };
+}
+
+// The dollar budget the session runs under, or null without one.
+function budgetOf(raw) {
+    const used = nonNegativeAmount(raw.budget_used);
+    const total = nonNegativeAmount(raw.budget_total);
+    if (used === null || total === null || total <= 0) {
+        return null;
+    }
+
+    return { used: used, total: total, ratio: used / total };
+}
+
+// The hooks that failed without blocking, most frequent first as the backend
+// sorted them.
+function hookErrorsOf(raw) {
+    const result = [];
+    for (const error of Array.isArray(raw.hook_errors) ? raw.hook_errors : []) {
+        if (!error || typeof error.hook !== 'string' || !error.hook) {
+            continue;
+        }
+        const count = positiveInteger(error.count);
+        if (count === null) {
+            continue;
+        }
+        const code = Number.isInteger(error.exit_code) && error.exit_code >= 0 ? error.exit_code : null;
+        result.push({ hook: error.hook, exit_code: code, count: count });
+    }
+    return result;
+}
+
+// A pull request's address when it is safe to put in an href, else null.
+function pullRequestUrl(url) {
+    if (typeof url !== 'string' || url.length > PULL_REQUEST_URL_MAX || !PULL_REQUEST_URL.test(url)) {
+        return null;
+    }
+    return url;
+}
+
+// The pull requests Claude Code linked to the session, newest first.
+function pullRequestsOf(raw) {
+    const result = [];
+    for (const link of Array.isArray(raw.pr_links) ? raw.pr_links : []) {
+        if (!link || typeof link.repository !== 'string' || !link.repository) {
+            continue;
+        }
+        const number = positiveInteger(link.number);
+        if (number === null) {
+            continue;
+        }
+        result.push({ repository: link.repository, number: number, url: pullRequestUrl(link.url) });
+    }
+    return result;
+}
+
+function contextLine(context, labels) {
+    if (!context) {
+        return '';
+    }
+    if (context.ratio === null) {
+        return fmt(labels.context_used, { used: formatTokens(context.used) });
+    }
+    return fmt(labels.context_tip, {
+        used: formatTokens(context.used),
+        size: formatTokens(context.size),
+        percent: Math.round(context.ratio * 100),
+    });
+}
+
+// The title's tooltip: the full title, which the row may have cut short, then
+// the details that have no column of their own.
+function sessionInfoTip(session, labels) {
+    const lines = [session.name || ''];
+    if (session.branch) {
+        lines.push(fmt(labels.branch_tip, { branch: session.branch }));
+    }
+    const context = contextLine(session.context, labels);
+    if (context) {
+        lines.push(context);
+    }
+    if (session.compactions > 0) {
+        lines.push(fmt(labels.compactions, { count: session.compactions }));
+    }
+    if (session.files_edited > 0) {
+        lines.push(fmt(labels.files_edited, { count: session.files_edited }));
+    }
+    if (session.artifacts > 0) {
+        lines.push(fmt(labels.artifacts, { count: session.artifacts }));
+    }
+    return lines.filter(Boolean).join('\n');
+}
+
+// The branch most of a panel's sessions are on (the first one seen wins a tie),
+// or null when none names one. The header names it once; only a row on another
+// branch names its own, so one session elsewhere does not put the shared branch
+// on every row. Sessions that name none (a history row, a session outside a git
+// repository) do not count.
+function panelBranch(sessions) {
+    const counts = new Map();
+    let best = null;
+    for (const session of sessions || []) {
+        if (!session.branch) {
+            continue;
+        }
+        const count = (counts.get(session.branch) || 0) + 1;
+        counts.set(session.branch, count);
+        if (best === null || count > counts.get(best)) {
+            best = session.branch;
+        }
+    }
+    return best;
 }
 
 /* --- project ordering (cross-project attention bands) --- */
@@ -2065,6 +2279,16 @@ function groupProjects(rawSessions, labels, prices) {
         }
         group.sessions.push(buildSession(raw, labels, prices));
     }
+
+    // The panel's main branch is named once in the header; a row names its own
+    // only when it differs - and not when its worktree badge already carries it.
+    for (const group of groups.values()) {
+        group.branch = panelBranch(group.sessions) || '';
+        for (const session of group.sessions) {
+            const inWorktreeBadge = Boolean(session.worktree && session.worktree.branch === session.branch);
+            session.show_branch = Boolean(session.branch) && session.branch !== group.branch && !inWorktreeBadge;
+        }
+    }
     return [...groups.values()];
 }
 
@@ -2147,6 +2371,19 @@ const AMC_LOGIC = {
     projectName,
     scratchWorkspaceRoot,
     modelRank,
+    NEAR_LIMIT_RATIO,
+    branchOf,
+    effortOf,
+    isFastMode,
+    contextUsage,
+    planProgress,
+    budgetOf,
+    hookErrorsOf,
+    pullRequestUrl,
+    pullRequestsOf,
+    contextLine,
+    sessionInfoTip,
+    panelBranch,
     buildSession,
     groupProjects,
     projectBand,
