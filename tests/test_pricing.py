@@ -24,12 +24,24 @@ class PricingTest(unittest.TestCase):
 
         for date, schedule in data.items():
             for model, rates in schedule.items():
+                if model == 'web_search':
+                    continue
                 for field in ('input', 'output', 'cache_read', 'cache_write_5m', 'cache_write_1h'):
                     with self.subTest(date=date, model=model, field=field):
                         value = rates.get(field)
                         self.assertIsInstance(value, (int, float))
                         self.assertNotIsInstance(value, bool)
                         self.assertGreaterEqual(value, 0)
+
+    def test_every_schedule_prices_a_web_search(self) -> None:
+        # The one reserved key that is not a model: the price of a single web
+        # search, which the cost adds on top of the tokens.
+        for date, schedule in pricing.load_pricing().items():
+            with self.subTest(date=date):
+                value = schedule['web_search']['per_request']
+                self.assertIsInstance(value, (int, float))
+                self.assertNotIsInstance(value, bool)
+                self.assertGreaterEqual(value, 0)
 
     def test_missing_file_yields_empty(self) -> None:
         original = pricing.PRICING_PATH

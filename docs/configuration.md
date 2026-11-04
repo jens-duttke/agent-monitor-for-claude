@@ -67,4 +67,5 @@ Top-level keys are **effective-from dates** (`YYYY-MM-DD`). The schedule with th
 - **Model keys** are family-version - the model id with `claude-`, any `[tier]`, and a trailing snapshot date removed (e.g. `claude-opus-4-8[1m]` and `claude-haiku-4-5-20251001` both need `opus-4-8` / `haiku-4-5`). Versions can be priced differently, so list each one you use.
 - All five rate fields are explicit - no multipliers are applied, so enter each rate as it is published.
 - If a session uses a model that is not listed, it shows a plain token total instead of a cost - add the model to fix that.
+- The key `web_search` is not a model: `{ "per_request": 0.01 }` is the price of one web search in US dollars, added on top of the tokens. Repeat it in each dated table like a model; without it, web searches are left out of the cost.
 - A `_comment` key is allowed for notes and is ignored.

@@ -30,6 +30,7 @@ window.__MOCK_BOOTSTRAP__ = {
             'sonnet-5': { input: 2, output: 10, cache_read: 0.20, cache_write_5m: 2.50, cache_write_1h: 4 },
             'haiku-4-5': { input: 1, output: 5, cache_read: 0.10, cache_write_5m: 1.25, cache_write_1h: 2 },
             'fable-5': { input: 10, output: 50, cache_read: 1, cache_write_5m: 12.50, cache_write_1h: 20 },
+            web_search: { per_request: 0.01 },
         },
     },
 };
@@ -63,6 +64,31 @@ function rawSession(overrides) {
 // once and both the breakdown (usage) and the cost (usage_by_model) stay in sync.
 function priced(modelId, usage) {
     return { model_id: modelId, usage: usage, usage_by_model: { [modelId]: usage } };
+}
+
+// A single-model session that ran subagents: the totals are the main
+// conversation plus every agent, summed here so the breakdown, the cost and
+// the cost tooltip's parts all agree.
+function pricedWithParts(modelId, main, agentsByType, skills, webSearches) {
+    const perModel = (usage) => ({ [modelId]: usage });
+    const total = {};
+    for (const usage of [main, ...Object.values(agentsByType)]) {
+        for (const [key, value] of Object.entries(usage)) {
+            total[key] = (total[key] || 0) + value;
+        }
+    }
+    const agents = {};
+    for (const [agentType, usage] of Object.entries(agentsByType)) {
+        agents[agentType] = perModel(usage);
+    }
+    const skillParts = {};
+    for (const [skill, usage] of Object.entries(skills)) {
+        skillParts[skill] = perModel(usage);
+    }
+    return {
+        model_id: modelId, usage: total, usage_by_model: perModel(total),
+        usage_parts: { main: perModel(main), agents: agents, skills: skillParts, web_searches: webSearches },
+    };
 }
 
 window.__MOCK_SNAPSHOT__ = {
@@ -107,6 +133,8 @@ window.__MOCK_SNAPSHOT__ = {
             child_count: 2,
             // A context close to full warns on the row; the rest sits in the title's tooltip.
             context_tokens: 871000, files_edited: 14, compactions: 2,
+            // The second session on ticket HEL-214: the branch's tooltip adds both up.
+            git_branch: 'fix/HEL-214-hot-reload-race',
             age_seconds: 6,
             ...priced('claude-opus-4-8[1m]', {
                 input_tokens: 41800, output_tokens: 9600, cache_read_input_tokens: 33500000,
@@ -126,12 +154,28 @@ window.__MOCK_SNAPSHOT__ = {
             child_count: 1,
             // On a branch of its own, so the Helios rows name theirs; mid-plan in
             // Claude Desktop's progress list, with a prompt queued behind the turn.
-            git_branch: 'fix/hot-reload-race', plan_step: 3, plan_total: 7, queued: 1,
+            git_branch: 'fix/HEL-214-hot-reload-race', plan_step: 3, plan_total: 7, queued: 1,
             age_seconds: 12,
-            ...priced('claude-opus-4-8[1m]', {
+            // Most of its spend went to its subagents, mostly under one skill, and
+            // a few web searches - the cost's tooltip breaks that down.
+            ...pricedWithParts('claude-opus-4-8[1m]', {
                 input_tokens: 62100, output_tokens: 14900, cache_read_input_tokens: 41200000,
                 cache_creation_input_tokens: 1800000, cache_creation_5m_input_tokens: 1200000, cache_creation_1h_input_tokens: 600000,
-            }),
+            }, {
+                'general-purpose': {
+                    input_tokens: 31000, output_tokens: 22000, cache_read_input_tokens: 64000000,
+                    cache_creation_input_tokens: 2600000, cache_creation_5m_input_tokens: 0, cache_creation_1h_input_tokens: 2600000,
+                },
+                Explore: {
+                    input_tokens: 8000, output_tokens: 3100, cache_read_input_tokens: 9000000,
+                    cache_creation_input_tokens: 400000, cache_creation_5m_input_tokens: 0, cache_creation_1h_input_tokens: 400000,
+                },
+            }, {
+                'debug-gpu': {
+                    input_tokens: 51000, output_tokens: 31000, cache_read_input_tokens: 92000000,
+                    cache_creation_input_tokens: 3600000, cache_creation_5m_input_tokens: 600000, cache_creation_1h_input_tokens: 3000000,
+                },
+            }, 14),
         }),
 
         // A background workflow. Its badge shows the run's total agent count (12),

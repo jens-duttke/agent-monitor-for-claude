@@ -20,7 +20,10 @@ session details the row shows: the git branch, a reply's effort level and
 speed and the size of its context, a dollar budget, queue operations, the
 step statuses of Claude Desktop's plan, failing hooks' names and exit codes,
 the artifact count, linked pull requests, and how often the context was
-compacted.
+compacted.  For the cost tooltip it reads the name of the skill a turn ran
+under (``attributionSkill``) and a web search's count of searches made
+(``toolUseResult.searchCount``); the same usage scan also sums the transcripts
+of a session's subagents (:func:`usage_scan`).
 
 This module is the privacy boundary of the application.  It must never read,
 return, store, or expose conversation content - message ``text``, ``thinking``
@@ -41,14 +44,16 @@ import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 
 from .background_scans import drop_pending, queue_scan, wait_for_readers
 from .paths import SessionRoot, transcript_path
+from .usage_parts import UsageScan
 
 __all__ = [
     'ApiRetry', 'HookError', 'PullRequest', 'TranscriptState', 'HistoryState', 'WorktreeState', 'state_for',
-    'history_state_for', 'worktree_for', 'prune_scan_cache',
+    'history_state_for', 'worktree_for', 'prune_scan_cache', 'usage_scan', 'usage_scan_once',
 ]
 
 # Bytes read from the end of the transcript.  Large enough to contain the last
@@ -156,6 +161,16 @@ _PLAN_PENDING = 'pending'
 # path is read to count distinct files only - it is neither kept past the scan
 # nor reported - and nothing else of the call (the text written) is touched.
 _FILE_EDIT_TOOLS = {'Edit': 'file_path', 'MultiEdit': 'file_path', 'Write': 'file_path', 'NotebookEdit': 'notebook_path'}
+
+# The skill a turn ran under, as Claude Code stamps it on every reply that
+# turn produced (``review``, ``next:review-fix``) - a subagent's replies carry
+# the skill that started it.  A name of any other shape is not attributed.
+_SKILL_NAME_PATTERN = re.compile(r'[A-Za-z0-9][A-Za-z0-9:._-]{0,63}')
+
+# A web search's result records how many searches it made; each is billed on
+# top of the tokens.  Only that count is read - the query and the results stay
+# unread.
+_SEARCH_COUNT_MARKER = b'"searchCount"'
 
 # A short lowercase token Claude Code writes as an effort level or a speed
 # (``high``, ``xhigh``, ``fast``); anything else is not displayed.
@@ -303,6 +318,10 @@ class _ScanState:
     # kept only to be counted, and the number of context compactions.
     edited_files: set[str] = field(default_factory=set)
     compactions: int = 0
+    # Usage per skill a turn ran under (see _SKILL_NAME_PATTERN) and model, and
+    # the web searches made - both only for the cost tooltip.
+    by_skill: dict[str, dict[str, dict[str, int]]] = field(default_factory=dict)
+    web_searches: int = 0
     # Memoized run-compressed timelines, one per value field, each kept with the
     # event count it was built from.  Deliberately the last field, so the
     # positional ``copy()`` below stays correct without carrying it over - a copy
@@ -348,7 +367,15 @@ class _ScanState:
             list(self.cli_events),
             self.ai_title, self.custom_title, self.first_prompt, self.first_command_prompt, self.permission_mode,
             self.auto_denials_consecutive, self.auto_denials_total, self.worktree, dict(self.counted_output_by_message),
-            set(self.edited_files), self.compactions,
+            set(self.edited_files), self.compactions, _copy_skill_usage(self.by_skill), self.web_searches,
+        )
+
+    def usage(self) -> UsageScan:
+        """Return the usage this state holds as a :class:`UsageScan` that shares no dict with it."""
+        return UsageScan(
+            by_model={model: dict(usage) for model, usage in self.by_model.items()},
+            by_skill=_copy_skill_usage(self.by_skill),
+            web_searches=self.web_searches,
         )
 
 
@@ -367,6 +394,8 @@ class _ScanResult:
     worktree: WorktreeState | None
     files_edited: int
     compactions: int
+    usage_by_skill: dict[str, dict[str, dict[str, int]]]
+    web_searches: int
 
 
 @dataclass(frozen=True)
@@ -418,13 +447,14 @@ def prune_scan_cache(active: Iterable[tuple[SessionRoot, str, str]]) -> None:
         cache key is computed exactly like :func:`_scan_appended` (path,
         case-normalized), so the two always agree - and including the root
         keeps two roots' transcripts apart even when a session_id/cwd pair
-        happens to repeat across them.
+        happens to repeat across them.  The scans of the session's subagent
+        transcripts (see :func:`usage_scan`) are kept with it: they all lie in
+        the folder named after the transcript.
     """
-    keep = {
-        os.path.normcase(str(transcript_path(root, session_id, cwd)))
-        for root, session_id, cwd in active
-        if session_id and cwd
-    }
+    keep = _ScanKeys()
+    for root, session_id, cwd in active:
+        if session_id and cwd:
+            keep.add(os.path.normcase(str(transcript_path(root, session_id, cwd))))
 
     with _scan_lock:
         for key in list(_scan_cache):
@@ -434,6 +464,22 @@ def prune_scan_cache(active: Iterable[tuple[SessionRoot, str, str]]) -> None:
     # A queued scan of a session that has left the registry would only produce
     # an entry this function drops on its next call.
     drop_pending(keep)
+
+
+class _ScanKeys:
+    """The scan-cache keys of a set of session transcripts and of every file in their session folders."""
+
+    def __init__(self) -> None:
+        self._transcripts: set[str] = set()
+        self._folders: tuple[str, ...] = ()
+
+    def add(self, transcript_key: str) -> None:
+        self._transcripts.add(transcript_key)
+        # The session folder is the transcript's path without its extension.
+        self._folders += (os.path.splitext(transcript_key)[0] + os.sep,)
+
+    def __contains__(self, key: object) -> bool:
+        return isinstance(key, str) and (key in self._transcripts or key.startswith(self._folders))
 
 
 @dataclass(frozen=True)
@@ -542,6 +588,10 @@ class TranscriptState:
     cli_version: str | None = None
     usage: dict[str, int] | None = None
     usage_by_model: dict[str, dict[str, int]] | None = None
+    # Usage per skill and model, and the web searches made; None/0 while the
+    # full scan is pending, like the usage above.
+    usage_by_skill: dict[str, dict[str, dict[str, int]]] | None = None
+    web_searches: int = 0
     model_timeline: list[dict[str, str]] | None = None
     cli_timeline: list[dict[str, str]] | None = None
     permission_mode: str | None = None
@@ -566,7 +616,9 @@ class HistoryState:
     title: str | None = None
     model: str | None = None
     cli_version: str | None = None
+    git_branch: str | None = None
     age_seconds: float | None = None
+    usage: UsageScan = field(default_factory=UsageScan)
 
 
 def state_for(root: SessionRoot, session_id: str, cwd: str) -> TranscriptState:
@@ -596,6 +648,7 @@ def state_for(root: SessionRoot, session_id: str, cwd: str) -> TranscriptState:
         return replace(state, age_seconds=age_seconds, title=title, permission_mode=permission_mode, scan_pending=True)
 
     return replace(state, age_seconds=age_seconds, usage=scan.usage, usage_by_model=scan.usage_by_model,
+                   usage_by_skill=scan.usage_by_skill, web_searches=scan.web_searches,
                    model_timeline=scan.model_timeline, cli_timeline=scan.cli_timeline,
                    title=scan.title, permission_mode=scan.permission_mode,
                    auto_denials_consecutive=scan.auto_denials_consecutive,
@@ -623,11 +676,10 @@ def history_state_for(path: Path) -> HistoryState:
     and must be recovered from the transcript itself.
 
     The correct title can sit anywhere in the file (a late rename writes its
-    entry at that point, not at the head), so the whole file is read once - but
-    only the few title-bearing lines, the first prompt, and the first ``cwd``
-    are parsed; the usage of every turn is skipped, which keeps the scan roughly
-    twice as fast as a full :func:`state_for`.  The current model and the
-    activity age come from a cheap tail read.
+    entry at that point, not at the head), and the cost needs every reply's
+    usage, so the whole file runs once through the same scan a live session
+    gets (:func:`_scan_history`), plus the first ``cwd``.  The current model,
+    the branch and the activity age come from a cheap tail read.
 
     Parameters
     ----------
@@ -640,7 +692,7 @@ def history_state_for(path: Path) -> HistoryState:
     except OSError:
         return HistoryState(session_id=session_id)
 
-    title, cwd = _scan_title_cwd(path)
+    scan, cwd = _scan_history(path)
     tail = _parse(_read_tail(path))
     # Escalate the tail window only when nothing parsed (an unreadable tail),
     # exactly like state_for: a single trailing entry larger than 256 KB (a giant
@@ -652,65 +704,85 @@ def history_state_for(path: Path) -> HistoryState:
         tail = _parse(_read_tail(path, window))
     age_seconds = _activity_age(tail.last_timestamp, mtime)
 
-    return HistoryState(session_id=session_id, cwd=cwd, title=title, model=tail.model, cli_version=tail.cli_version, age_seconds=age_seconds)
+    return HistoryState(
+        session_id=session_id, cwd=cwd, title=scan.title(), model=tail.model, cli_version=tail.cli_version,
+        git_branch=tail.git_branch, age_seconds=age_seconds, usage=scan.usage(),
+    )
 
 
-def _scan_title_cwd(path: Path) -> tuple[str | None, str | None]:
-    """Read a transcript once, resolving the correct title and the session cwd.
+def usage_scan(path: Path) -> UsageScan | None:
+    """Return the usage in a live session's subagent transcript, or None while its first scan runs in the background.
 
-    Mirrors Claude Code's title precedence (a manual rename, then the
-    auto-generated title, then the first prompt) by scanning the whole file, but
-    parses only title-bearing lines, the first user prompt, and the first entry
-    carrying a ``cwd``.  Usage-bearing turns are skipped, so a history listing
-    never pays the full usage-aggregation cost.  No conversation content is
-    read: only the sanctioned title fields (mirroring Claude Code's own UI) and
-    the working directory.
+    The incremental, cached scan :func:`state_for` uses, on a state that never
+    looks for a first prompt: a subagent's prompt is not the session's title,
+    and only the usage of this file is wanted.
     """
-    try:
-        data = path.read_bytes()
-    except OSError:
-        return None, None
+    scan = _scan_or_defer(path, _usage_only_state)
+    if scan is None:
+        return None
 
+    return UsageScan(by_model=scan.usage_by_model, by_skill=scan.usage_by_skill, web_searches=scan.web_searches)
+
+
+def usage_scan_once(path: Path) -> UsageScan:
+    """Return the usage in a past session's subagent transcript, read once and not cached.
+
+    A file that cannot be read counts as empty - the session's cost is then
+    the part that could be read, never an error.
+    """
+    state = _usage_only_state()
+    try:
+        _absorb_file(path, state, path.stat().st_size)
+    except OSError:
+        return UsageScan()
+
+    return state.usage()
+
+
+def _usage_only_state() -> _ScanState:
+    """Return a fresh scan state that skips the search for a first prompt (see :func:`usage_scan`)."""
+    return _ScanState(first_prompt='')
+
+
+def _scan_history(path: Path) -> tuple[_ScanState, str | None]:
+    """Read a past transcript once through the full scan, also resolving the session cwd.
+
+    Every line goes through ``_absorb_line``, exactly as a live session's
+    first scan, which yields the title (Claude Code's precedence: a manual
+    rename, then the generated title, then the first prompt) and the usage the
+    cost is priced from.  The first entry carrying a ``cwd`` is parsed once
+    more for that path.  Read in chunks, so a large transcript is never held
+    in memory whole.  An unreadable file yields an empty state and no cwd.
+    """
     state = _ScanState()
     cwd: str | None = None
 
-    for raw_line in data.split(b'\n'):
-        is_title = _AI_TITLE_MARKER in raw_line or _CUSTOM_TITLE_MARKER in raw_line
-        need_prompt = state.first_prompt is None and _USER_MARKER in raw_line
-        need_cwd = cwd is None and _CWD_MARKER in raw_line
-        if not (is_title or need_prompt or need_cwd):
-            continue
+    try:
+        with path.open('rb') as handle:
+            remainder = b''
+            while chunk := handle.read(_SCAN_CHUNK_BYTES):
+                lines = (remainder + chunk).split(b'\n')
+                remainder = lines.pop()
+                for raw_line in lines:
+                    if cwd is None and _CWD_MARKER in raw_line:
+                        cwd = _entry_cwd(raw_line)
+                    _absorb_line(raw_line, state)
+    except OSError:
+        return _ScanState(), None
 
-        entry = _load(raw_line.decode('utf-8', errors='ignore'))
-        if entry is None:
-            continue
+    if remainder:
+        if cwd is None and _CWD_MARKER in remainder:
+            cwd = _entry_cwd(remainder)
+        _absorb_line(remainder, state)
 
-        if need_cwd:
-            value = entry.get('cwd')
-            if isinstance(value, str) and value:
-                cwd = value
+    return state, cwd
 
-        entry_type = entry.get('type')
-        if entry_type == 'ai-title':
-            value = entry.get('aiTitle')
-            if isinstance(value, str) and value:
-                state.ai_title = value
-        elif entry_type == 'custom-title':
-            value = entry.get('customTitle')
-            if isinstance(value, str) and value:
-                state.custom_title = value
-        elif (entry_type == 'user' and state.first_prompt is None
-                and entry.get('isSidechain') is not True and entry.get('isMeta') is not True):
-            # Skip injected isMeta entries (a continuation summary) here too, so a
-            # history row's title is the first real prompt, not the machine digest.
-            text, is_housekeeping = _prompt_display_parts(entry)
-            if is_housekeeping:
-                if state.first_command_prompt is None:
-                    state.first_command_prompt = text
-            else:
-                state.first_prompt = text
 
-    return state.title(), cwd
+def _entry_cwd(raw_line: bytes) -> str | None:
+    """Return the ``cwd`` of the entry on *raw_line*, or None."""
+    entry = _load(raw_line.decode('utf-8', errors='ignore'))
+    value = entry.get('cwd') if entry is not None else None
+    return value if isinstance(value, str) and value else None
 
 
 def _activity_age(last_timestamp: str | None, mtime: float) -> float:
@@ -1405,14 +1477,15 @@ def _rate_limit_reset(entry: dict) -> tuple[str | None, float | None]:
     return (limit_type if isinstance(limit_type, str) and limit_type else None), (float(resets_at) if resets_at is not None else None)
 
 
-def _scan_appended(path: Path) -> _ScanResult:
+def _scan_appended(path: Path, fresh: Callable[[], _ScanState] = _ScanState) -> _ScanResult:
     """Return the incremental scan's accumulated result for *path*.
 
     The first call reads the whole file; subsequent calls parse only newly
     appended bytes.  Tracks summed usage (overall and per model - subagents
     often run on a cheaper model, so a valid cost needs the split), the ordered
     model-switch and CLI-version timelines of the main conversation, the display
-    title, and the latest permission mode.
+    title, and the latest permission mode.  *fresh* makes the state a scan
+    starts from (see :func:`usage_scan`).
     """
     # Normalize case so two registry cwds that differ only in case (they resolve
     # to the same case-insensitive file) share one cache entry instead of each
@@ -1420,7 +1493,7 @@ def _scan_appended(path: Path) -> _ScanResult:
     cache_key = os.path.normcase(str(path))
 
     with _scan_lock:
-        state = _scan_cache.get(cache_key) or _ScanState()
+        state = _scan_cache.get(cache_key) or fresh()
 
         try:
             size = path.stat().st_size
@@ -1428,7 +1501,7 @@ def _scan_appended(path: Path) -> _ScanResult:
             return _scan_result(state)
 
         if size < state.consumed:
-            state = _ScanState()
+            state = fresh()
 
         result = state
 
@@ -1492,7 +1565,7 @@ def _absorb_file(path: Path, state: _ScanState, end: int, before_chunk: Callable
     return remainder
 
 
-def _scan_or_defer(path: Path) -> _ScanResult | None:
+def _scan_or_defer(path: Path, fresh: Callable[[], _ScanState] = _ScanState) -> _ScanResult | None:
     """Return :func:`_scan_appended`'s result for *path*, or None while its first full scan runs in the background.
 
     Only the *first* scan of a large transcript is deferred; it is what costs
@@ -1514,13 +1587,13 @@ def _scan_or_defer(path: Path) -> _ScanResult | None:
         except OSError:
             size = 0
         if size > _SYNC_SCAN_BYTES:
-            queue_scan(cache_key, path, size, _first_scan)
+            queue_scan(cache_key, path, size, partial(_first_scan, fresh=fresh))
             return None
 
-    return _scan_appended(path)
+    return _scan_appended(path, fresh)
 
 
-def _first_scan(cache_key: str, path: Path) -> bool:
+def _first_scan(cache_key: str, path: Path, fresh: Callable[[], _ScanState] = _ScanState) -> bool:
     """Scan *path* in full and store the result under *cache_key*; return True if it was stored.
 
     The read runs outside ``_scan_lock`` - it can take seconds, and holding the
@@ -1533,7 +1606,7 @@ def _first_scan(cache_key: str, path: Path) -> bool:
         if cache_key in _scan_cache:
             return False
 
-    state = _ScanState()
+    state = fresh()
     try:
         _absorb_file(path, state, path.stat().st_size, wait_for_readers)
     except OSError:
@@ -1619,7 +1692,14 @@ def _scan_result(state: _ScanState) -> _ScanResult:
         worktree=state.worktree,
         files_edited=len(state.edited_files),
         compactions=state.compactions,
+        usage_by_skill=_copy_skill_usage(state.by_skill),
+        web_searches=state.web_searches,
     )
+
+
+def _copy_skill_usage(by_skill: dict[str, dict[str, dict[str, int]]]) -> dict[str, dict[str, dict[str, int]]]:
+    """Return a copy of per-skill, per-model usage that shares no dict with *by_skill*."""
+    return {skill: {model: dict(usage) for model, usage in models.items()} for skill, models in by_skill.items()}
 
 
 def _run_timeline(events: Sequence[tuple[str, ...]], keys: tuple[str, ...]) -> list[dict[str, str]]:
@@ -1721,8 +1801,9 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
         or _PERMISSION_MODE_MARKER in raw_line
         or _WORKTREE_STATE_MARKER in raw_line
         or _COMPACT_BOUNDARY_MARKER in raw_line
+        or _SEARCH_COUNT_MARKER in raw_line
     )
-    if not interesting and (state.first_prompt is not None or b'"user"' not in raw_line):
+    if not interesting and (state.first_prompt is not None or _USER_MARKER not in raw_line):
         return
 
     entry = _load(raw_line.decode('utf-8', errors='ignore'))
@@ -1753,6 +1834,9 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
 
     entry_type = entry.get('type')
 
+    if entry_type == 'user':
+        state.web_searches += _search_count(entry)
+
     if entry_type == 'assistant':
         message = entry.get('message')
         _note_edited_files(message.get('content') if isinstance(message, dict) else None, state.edited_files)
@@ -1765,23 +1849,25 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
             # unpriceable key in usage_by_model and wrongly drop the whole
             # session's cost to a plain token total.
             model = message.get('model') if isinstance(message, dict) else None
-            bucket = None
+            buckets = [state.totals]
             if model != _SYNTHETIC_MODEL:
                 model_key = model if isinstance(model, str) and model else ''
-                bucket = state.by_model.setdefault(model_key, {key: 0 for key in _USAGE_TOTAL_KEYS})
+                buckets.append(state.by_model.setdefault(model_key, {key: 0 for key in _USAGE_TOTAL_KEYS}))
+                skill = entry.get('attributionSkill')
+                if isinstance(skill, str) and _SKILL_NAME_PATTERN.fullmatch(skill):
+                    skill_models = state.by_skill.setdefault(skill, {})
+                    buckets.append(skill_models.setdefault(model_key, {key: 0 for key in _USAGE_TOTAL_KEYS}))
 
             for key in _USAGE_KEYS:
                 value = usage.get(key)
-                _add_usage(state.totals, key, value)
-                if bucket is not None:
+                for bucket in buckets:
                     _add_usage(bucket, key, value)
 
             creation = usage.get('cache_creation')
             if isinstance(creation, dict):
                 for nested_key, total_key in _CACHE_TTL_KEYS.items():
                     value = creation.get(nested_key)
-                    _add_usage(state.totals, total_key, value)
-                    if bucket is not None:
+                    for bucket in buckets:
                         _add_usage(bucket, total_key, value)
 
             # Record each assistant turn in the MAIN conversation as an event for
@@ -1842,6 +1928,13 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
                 state.first_command_prompt = text
         else:
             state.first_prompt = text
+
+
+def _search_count(entry: dict) -> int:
+    """Return how many web searches the tool result on *entry* made, or 0; nothing else of the result is read."""
+    result = entry.get('toolUseResult')
+    count = result.get('searchCount') if isinstance(result, dict) else None
+    return count if _is_count(count) else 0
 
 
 def _note_edited_files(content: object, edited_files: set[str]) -> None:

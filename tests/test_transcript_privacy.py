@@ -922,6 +922,38 @@ class PrivacyTest(TranscriptEnvTest):
         for secret in _SECRETS:
             self.assertNotIn(secret, json.dumps(asdict(state)))
 
+    def test_the_cost_parts_read_a_skill_name_and_a_count_never_text(self) -> None:
+        # The cost tooltip needs the skill a reply ran under and how many web
+        # searches a result made - nothing of the search, its results or any
+        # subagent's conversation may reach the snapshot through that path.
+        pid = os.getpid()
+        self._write_session(_SESSION_ID, _CWD, pid, 'privacy-name')
+        self._write_transcript(_SESSION_ID, _CWD, _transcript_lines() + [json.dumps({
+            'type': 'user', 'timestamp': '2026-07-11T10:55:00Z',
+            'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'w1', 'content': 'SECRET_RESULT'}]},
+            'toolUseResult': {'query': 'SECRET_INPUT', 'results': [{'title': 'SECRET_RESULT'}], 'searchCount': 2},
+        })])
+        agents = transcript_path(local_root(), _SESSION_ID, _CWD).with_suffix('') / 'subagents'
+        agents.mkdir(parents=True)
+        (agents / 'agent-a1.jsonl').write_text('\n'.join([
+            json.dumps({'type': 'user', 'message': {'content': 'SECRET_TEXT'}}),
+            json.dumps({'type': 'assistant', 'attributionSkill': 'review', 'message': {
+                'id': 'sub1', 'model': 'claude-opus-4-8', 'usage': {'input_tokens': 1, 'output_tokens': 1},
+                'content': [{'type': 'thinking', 'thinking': 'SECRET_THINKING'}, {'type': 'text', 'text': 'SECRET_TEXT'}]}}),
+        ]), encoding='utf-8')
+        (agents / 'agent-a1.meta.json').write_text(json.dumps({'agentType': 'Explore'}), encoding='utf-8')
+
+        with mock.patch('agent_monitor_for_claude.snapshot.session_roots', return_value=[local_root()]):
+            snapshot = build_snapshot()
+
+        record = next(s for s in snapshot['sessions'] if s['session_id'] == _SESSION_ID)
+        self.assertEqual(record['usage_parts']['web_searches'], 2)
+        self.assertIn('review', record['usage_parts']['skills'])
+        self.assertIn('Explore', record['usage_parts']['agents'])
+        serialized = json.dumps(snapshot)
+        for secret in _SECRETS:
+            self.assertNotIn(secret, serialized)
+
     def test_snapshot_leaks_no_content(self) -> None:
         # Use this test process's own PID so the session counts as alive and
         # is therefore included in the snapshot rather than filtered out.

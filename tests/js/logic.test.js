@@ -2512,3 +2512,128 @@ test('pull requests: a hostile address is kept as a listing without a link', () 
         { repository: '', number: 4 },
     ] }), [{ repository: 'group/repo', number: 3, url: null }]);
 });
+
+/* --- cost parts and tickets --- */
+
+const COST_LABELS = {
+    cost_main: 'Main: {cost}',
+    cost_agents: 'Agents: {cost}',
+    cost_agent_unknown: 'other',
+    cost_skills: 'Skills:',
+    cost_web_search: 'Searches: {count} · {cost}',
+    ticket_cost: '{ticket}: {cost} · sessions: {count}',
+    ticket_scope_live: 'live only',
+    ticket_scope_history: 'with history',
+};
+
+// One million output tokens on opus-4-8 cost $25.
+const MTOK_OUT = { output_tokens: 1000000 };
+
+test('sessionTotalCostUsd: adds the web searches to the tokens', () => {
+    const prices = Object.assign({ web_search: { per_request: 0.01 } }, PRICES);
+    const session = { usage_by_model: { 'claude-opus-4-8': MTOK_OUT }, usage_parts: { web_searches: 300 } };
+
+    assert.equal(logic.sessionTotalCostUsd(session, prices), 28);
+    assert.equal(logic.sessionTotalCostUsd(session, PRICES), 25, 'no price for a search adds nothing');
+    assert.equal(logic.sessionTotalCostUsd({ usage_by_model: { 'claude-unknown-9': MTOK_OUT } }, prices), null);
+});
+
+test('webSearchPrice: only a finite, non-negative per-request price counts', () => {
+    assert.equal(logic.webSearchPrice({ web_search: { per_request: 0.01 } }), 0.01);
+    for (const entry of [undefined, null, {}, { per_request: -1 }, { per_request: 'x' }, 'cheap']) {
+        assert.equal(logic.webSearchPrice({ web_search: entry }), null, JSON.stringify(entry));
+    }
+    assert.equal(logic.webSearchPrice(Object.create({ web_search: { per_request: 1 } })), null, 'inherited entry');
+});
+
+test('costTipLines: splits a session that ran subagents into its parts', () => {
+    const prices = Object.assign({ web_search: { per_request: 0.01 } }, PRICES);
+    const lines = logic.costTipLines({
+        usage_parts: {
+            main: { 'claude-opus-4-8': MTOK_OUT },
+            agents: {
+                'next:reviewer': { 'claude-opus-4-8': { output_tokens: 2000000 } },
+                '': { 'claude-opus-4-8': { output_tokens: 40000 } },
+            },
+            skills: { 'next:review': { 'claude-opus-4-8': { output_tokens: 2000000 } } },
+            web_searches: 150,
+        },
+    }, prices, COST_LABELS);
+
+    assert.deepEqual(lines, [
+        'Main: $25',
+        'Agents: $51',
+        '• next:reviewer $50',
+        '• other $1',
+        'Skills:',
+        '• next:review $50',
+        'Searches: 150 · $2',
+    ]);
+});
+
+test('costTipLines: without subagents there is no main/agent split, and nothing at all means no lines', () => {
+    const lines = logic.costTipLines({
+        usage_parts: { main: { 'claude-opus-4-8': MTOK_OUT }, agents: {}, skills: {}, web_searches: 0 },
+    }, PRICES, COST_LABELS);
+
+    assert.deepEqual(lines, []);
+    assert.deepEqual(logic.costTipLines({}, PRICES, COST_LABELS), []);
+    assert.deepEqual(logic.costTipLines({ usage_parts: 'broken' }, PRICES, COST_LABELS), []);
+});
+
+test('costTipLines: an unpriced part shows its tokens, and a long list counts the rest', () => {
+    const skills = {};
+    for (const name of ['a', 'b', 'c', 'd', 'e', 'f']) {
+        skills[name] = { 'claude-opus-4-8': { output_tokens: 1000000 } };
+    }
+    skills.u = { 'claude-unknown-9': { output_tokens: 3000 } };
+    const lines = logic.costTipLines({ usage_parts: { skills: skills } }, PRICES, COST_LABELS);
+
+    assert.deepEqual(lines, ['Skills:', '• a $25', '• b $25', '• c $25', '• d $25', '• +3']);
+});
+
+test('costTipLines: an on-disk name like __proto__ stays a name, never a prototype', () => {
+    const parts = JSON.parse('{"agents": {"__proto__": {"claude-opus-4-8": {"output_tokens": 1000000}}},'
+        + ' "main": {"__proto__": {"output_tokens": 5}}}');
+    const lines = logic.costTipLines({ usage_parts: parts }, PRICES, COST_LABELS);
+
+    assert.deepEqual(lines.slice(1), ['Agents: $25', '• __proto__ $25']);
+    assert.equal({}.output_tokens, undefined);
+});
+
+test('ticketKey: finds a tracker key standing on its own in the branch', () => {
+    assert.equal(logic.ticketKey('feature/PNE-10617/JDUT/Measure-compare'), 'PNE-10617');
+    assert.equal(logic.ticketKey('PNE-1-fix'), 'PNE-1');
+    assert.equal(logic.ticketKey('fix/HEL-214-hot-reload-race'), 'HEL-214');
+    for (const branch of ['main', 'development', 'claude/magical-burnell-23ae0a', 'feature/pne-12', 'XPNE-0', 'v2-123', null, 42]) {
+        assert.equal(logic.ticketKey(branch), null, String(branch));
+    }
+});
+
+test('ticketTotals: adds every session on a ticket once, live and past alike', () => {
+    const session = (id, branch, output) => ({ session_id: id, git_branch: branch, usage: { output_tokens: output },
+        usage_by_model: { 'claude-opus-4-8': { output_tokens: output } } });
+    const totals = logic.ticketTotals([
+        session('a', 'feature/PNE-1/x', 1000000),
+        session('b', 'feature/PNE-1/y', 1000000),
+        session('b', 'feature/PNE-1/y', 1000000),
+        session('c', 'main', 1000000),
+        Object.assign(session('d', 'feature/PNE-2/z', 500), { usage_by_model: { 'claude-unknown-9': { output_tokens: 500 } } }),
+    ], PRICES);
+
+    assert.deepEqual(totals.get('PNE-1'), { usd: 50, tokens: 2000000, sessions: 2, priced: true });
+    assert.equal(totals.get('PNE-2').priced, false);
+    assert.equal(totals.size, 2);
+});
+
+test('ticketTip: names the cost and the scope, and stays empty without a ticket', () => {
+    const totals = new Map([['PNE-1', { usd: 50, tokens: 2000000, sessions: 2, priced: true }],
+        ['PNE-2', { usd: 0, tokens: 1500, sessions: 1, priced: false }]]);
+
+    assert.equal(logic.ticketTip('feature/PNE-1/x', totals, false, COST_LABELS), 'PNE-1: $50 · sessions: 2\nlive only');
+    assert.equal(logic.ticketTip('feature/PNE-1/x', totals, true, COST_LABELS), 'PNE-1: $50 · sessions: 2\nwith history');
+    assert.equal(logic.ticketTip('feature/PNE-2/x', totals, true, COST_LABELS), 'PNE-2: 1.5k · sessions: 1\nwith history');
+    assert.equal(logic.ticketTip('main', totals, true, COST_LABELS), '');
+    assert.equal(logic.ticketTip('feature/PNE-9/x', totals, true, COST_LABELS), '');
+    assert.equal(logic.ticketTip('feature/PNE-1/x', null, true, COST_LABELS), '');
+});

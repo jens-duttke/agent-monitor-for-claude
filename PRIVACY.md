@@ -218,7 +218,10 @@ And a few more describe the session beside its status:
 - how many artifacts the session made - their titles and addresses stay unread;
 - a linked pull request's repository, number, and web address (see [Network
   Communication](#network-communication));
-- how many times the context was compacted.
+- how many times the context was compacted;
+- the name of the skill a reply ran under (`review`, `next:review-fix`), so the cost tooltip can say
+  what each skill cost;
+- how many searches a web search made - the query and its results stay unread.
 
 Message text, thinking blocks, tool inputs, and tool results are not taken, with these deliberate
 exceptions - five that are displayed to you, and three that are reduced to a flag, an id, or a count
@@ -269,8 +272,13 @@ how many just finished. Per subagent this reads the last 64 KB of its `agent-*.j
 parses only the final entry's control fields (entry type, stop reason, content-block type), plus that
 subagent's `agent-<id>.meta.json` for its agent type and the task description named above. For a
 background workflow, the run's `journal.jsonl` is scanned line by line, and only each event's type and
-agent id are taken - which gives the run's agent count and whether it is still active. No subagent's
-messages, reasoning, or returned results are read or shown.
+agent id are taken - which gives the run's agent count and whether it is still active.
+
+A session's cost includes what its subagents spent, so every `agent-*.jsonl` transcript is also read in
+full once, and afterwards only its newly appended lines - the same scan as a session's own transcript
+(see above). From a subagent's transcript only the token-usage numbers, the model id, the response id,
+the skill name and the web-search count are taken. No subagent's messages, reasoning, or returned
+results are read or shown.
 
 ### Transcripts, for the content search (on demand)
 
@@ -359,9 +367,11 @@ yourself.
 ### The history listing (on demand)
 
 Enabling the *Older* filter lists finished sessions by scanning the `projects/` folder. Each past
-transcript is read once in full, but only three things are taken from it: the title fields, the first
-prompt (as the fallback title described above), and the session's working directory, which is needed
-to group it under its project.
+transcript, and each of its subagents' transcripts, is read once in full through the same scan as a
+live session. Taken from it are the title fields, the first prompt (as the fallback title described
+above), the session's working directory, which is needed to group it under its project, and the
+usage, skill and web-search numbers its cost is priced from. The git branch comes from the last
+entries, so a past session's cost can be added to its ticket.
 
 The listing reaches back only as far as the window selected under that filter (24 hours by default).
 A transcript whose file has not been written within that window is skipped on its timestamp alone and
@@ -581,8 +591,9 @@ of them is accounted for here, so that nothing looks like a hidden exception:
   filled by the browser engine, which [app.py](agent_monitor_for_claude/app.py) points at that
   location, and the temp extraction is done by the single-file launcher before any application code
   runs.
-- The dynamic-execution search matches one line of code and two comments. The line of code is in
-  `ui/logic.js`: a regular expression's `.exec()` call used to strip terminal color codes. The two
+- The dynamic-execution search matches two lines of code and two comments. The lines of code are in
+  `ui/logic.js`: regular expressions' `.exec()` calls, one to strip terminal color codes and one to
+  recognize the folder Claude Desktop runs a chat without a project in. The two
   comments, in `ui/index.html` and `app.py`, are the ones explaining the `'unsafe-eval'` in the page's
   policy - see below. There is no `eval`, no `exec`, no `__import__`, and no encoded payload anywhere
   in the application. (`compile` does occur, as `re.compile`, which builds a regular expression and

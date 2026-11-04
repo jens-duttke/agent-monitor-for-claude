@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Badges flag a context nearly full, a nearly spent dollar budget, a Claude Desktop agent's current plan step, prompts queued behind the running turn, and hooks that keep failing. A pull-request badge opens the newest pull request linked to the session in your browser.
 - The model column adds the latest reply's effort level when it differs from your default, and *fast* in fast mode.
 - Hovering a title shows it in full, with the context size, how often the context was compacted, how many files the agent edited, and its artifacts.
+- Hovering an agent's cost splits it into the main conversation, each kind of subagent (e.g. *next:reviewer $30*), each skill its turns ran under, and its web searches. Web searches now count toward the cost.
+- A branch that names a ticket (`feature/PNE-123/...`) adds up in its tooltip what all sessions on that ticket cost - the past ones in the *Older* time range too, once that filter has been turned on.
+- Past sessions under *Older* show their cost like running ones.
 
 ### Changed
 - A row that jumps to the agent's window now shows an alias cursor, and the background-process badge a help cursor. Rows with no window to jump to, such as a background agent's, no longer show a hand cursor.
@@ -24,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Sessions show up much sooner at startup when a WSL distribution holds many records of long-ended sessions, and the monitor puts less load on WSL while it runs. Such records used to be read in full on every refresh before being skipped.
 - Token counts and estimated costs were about twice as high as they really are, because each reply was counted once per part it is stored in. Each reply now counts once.
+- An agent's cost now includes what its subagents spent. It used to cover only the main conversation, which for an agent that delegates a lot was often less than half of the real figure.
 - A chat that was reopened several times - typical for Claude Desktop and WSL - is listed once again. It used to appear once per earlier run, as identical grey rows next to the live one.
 - With *Older* on, a Claude Desktop chat that ran inside WSL is listed once instead of twice. Claude Desktop keeps a copy of such chats on Windows, which used to show up as a second row.
 

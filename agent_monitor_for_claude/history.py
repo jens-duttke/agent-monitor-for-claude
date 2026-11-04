@@ -10,8 +10,9 @@ by the session registry, which is pruned once a process exits.
 
 This is a deliberately separate, on-demand path: the UI fetches it only when the
 history filter is enabled, so the potentially large ``projects/`` scan (reading
-each transcript once to resolve its correct title) never runs on the per-second
-poll and never costs anything while the filter is off.
+each transcript and its subagents' once, for the correct title and the cost)
+never runs on the per-second poll and never costs anything while the filter is
+off.
 
 The listing is additionally bounded by the UI's selected time window
 (*max_age_seconds*).  A transcript whose file has not been written within that
@@ -43,7 +44,9 @@ from .paths import SessionRoot, cwd_to_slug, projects_dir
 from .roots import session_roots
 from .sessions import list_sessions
 from .snapshot import live_or_recent_ids
+from .subagents import past_subagent_usage
 from .transcript import history_state_for
+from .usage_parts import session_usage
 
 __all__ = ['list_history']
 
@@ -291,6 +294,8 @@ def _build_history_record(path: Path) -> dict[str, Any] | None:
     """
     try:
         state = history_state_for(path)
+        # The cost covers the session's subagents too, exactly as for a live one.
+        usage = session_usage(state.usage, past_subagent_usage(path))
     except Exception:
         # Last-resort per-file isolation, mirroring build_snapshot: one bad
         # transcript must skip that entry, never blank the whole history list.
@@ -340,8 +345,11 @@ def _build_history_record(path: Path) -> dict[str, Any] | None:
         'auto_denials_total': 0,
         'model_id': state.model,
         'cli_version': state.cli_version,
-        'usage': {},
-        'usage_by_model': {},
+        # The branch names the ticket a past session's cost is added to.
+        'git_branch': state.git_branch,
+        'usage': usage['usage'],
+        'usage_by_model': usage['usage_by_model'],
+        'usage_parts': usage['usage_parts'],
         'model_timeline': [],
         # The version each turn was written by needs the full incremental scan a
         # live session gets; a history entry reads only its tail, so the current

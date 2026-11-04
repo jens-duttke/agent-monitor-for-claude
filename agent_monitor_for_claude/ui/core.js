@@ -56,6 +56,10 @@ const state = {
     labels: {},
     labelsLoaded: false,
     pricing: {},
+    // What each ticket's sessions cost (logic.ticketTotals), rebuilt on every
+    // render, and whether the past sessions were loaded into it.
+    ticketTotals: new Map(),
+    ticketIncludesHistory: false,
     // The global default effort the header names; a row names its own effort
     // only when it differs.
     defaultEffort: '',
@@ -251,6 +255,14 @@ const DEFAULT_LABELS = {
     compactions: 'Context compactions: {count}',
     files_edited: 'Files edited: {count}',
     artifacts: 'Artifacts: {count}',
+    cost_main: 'Main conversation: {cost}',
+    cost_agents: 'Subagents: {cost}',
+    cost_agent_unknown: 'other',
+    cost_skills: 'By skill:',
+    cost_web_search: 'Web searches: {count} · {cost}',
+    ticket_cost: 'Ticket {ticket}: {cost} · sessions: {count}',
+    ticket_scope_live: 'Running and recently ended sessions only - turn on “Older” to add past ones',
+    ticket_scope_history: 'Includes the older sessions of the selected time range',
     plan_tip: 'Plan: step {step} of {total}',
     queued_tip: 'Queued messages: {count}',
     budget_tip: 'Budget: {used} of {total} used',

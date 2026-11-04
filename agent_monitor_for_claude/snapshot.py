@@ -35,7 +35,8 @@ from .roots import session_roots
 from .sessions import list_sessions
 from .settings import ENDED_MAX_AGE, INCLUDE_COMPLETED
 from .subagents import count_subagents
-from .transcript import prune_scan_cache, state_for
+from .transcript import TranscriptState, prune_scan_cache, state_for
+from .usage_parts import UsageScan, session_usage
 from .worktrees import prune_worktree_cache, resolve_worktree
 from .wsl import probe_wsl_sessions
 
@@ -115,6 +116,9 @@ def _build_session_record(
     # to the running *count* after a force-stopped turn or a reopen.
     subagent_age = subagents.running_age if info.alive and not _older_than_process(subagents.running_age, process_age) else None
 
+    # The session's spend is its own transcript plus every subagent's.
+    usage = session_usage(_main_usage(transcript_state), subagents.usage_by_type)
+
     return {
         'pid': record['pid'],
         'session_id': record['session_id'],
@@ -179,12 +183,15 @@ def _build_session_record(
         ],
         'files_edited': transcript_state.files_edited,
         'compactions': transcript_state.compactions,
-        'usage': transcript_state.usage or {},
-        'usage_by_model': transcript_state.usage_by_model or {},
+        'usage': usage['usage'],
+        'usage_by_model': usage['usage_by_model'],
+        'usage_parts': usage['usage_parts'],
         'model_timeline': transcript_state.model_timeline or [],
         'cli_timeline': transcript_state.cli_timeline or [],
         'title': transcript_state.title,
-        'scan_pending': transcript_state.scan_pending,
+        # A subagent whose first scan is still running is missing from the sum,
+        # so the cost is unknown until it lands, just like the session's own.
+        'scan_pending': transcript_state.scan_pending or subagents.usage_pending,
         'subagents_running': subagents.running,
         'subagents_done': subagents.recent_done,
         'subagents_labels': list(subagents.labels),
@@ -370,6 +377,18 @@ def _one_record_per_session(
             kept.append((root, record))
 
     return kept
+
+
+def _main_usage(transcript_state: TranscriptState) -> UsageScan | None:
+    """Return the usage in the session's own transcript, or None while its first full scan is pending."""
+    if transcript_state.scan_pending or transcript_state.usage_by_model is None:
+        return None
+
+    return UsageScan(
+        by_model=transcript_state.usage_by_model,
+        by_skill=transcript_state.usage_by_skill or {},
+        web_searches=transcript_state.web_searches,
+    )
 
 
 def _display_age(transcript_age: float | None, subagent_age: float | None, process_age: float | None) -> float | None:

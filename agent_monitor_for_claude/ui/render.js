@@ -119,6 +119,13 @@ function branchHtml(branch) {
     return BRANCH_SVG + '<span class="branch-name">' + esc(branch) + '</span>';
 }
 
+// The branch's tooltip: the branch and, when it names a ticket, what that
+// ticket's sessions cost.
+function branchTip(branch) {
+    const ticket = logic.ticketTip(branch, state.ticketTotals, state.ticketIncludesHistory, state.labels);
+    return fmt(state.labels.branch_tip, { branch: branch }) + (ticket ? '\n' + ticket : '');
+}
+
 function nameCellHtml(session) {
     const labels = state.labels;
     // The title's tooltip repeats the full title, which the row may cut short,
@@ -143,7 +150,7 @@ function nameCellHtml(session) {
     // Only a panel whose sessions work on different branches names them per row;
     // a shared one sits in the panel header instead.
     if (session.show_branch) {
-        html += '<span class="branch-badge"' + attr('data-tip', fmt(labels.branch_tip, { branch: session.branch })) + '>'
+        html += '<span class="branch-badge"' + attr('data-tip', branchTip(session.branch)) + '>'
             + branchHtml(session.branch) + '</span>';
     }
 
@@ -347,7 +354,15 @@ function updateRow(row, session, projectName) {
     }
 
     row.querySelector('.name-cell').innerHTML = nameCellHtml(session);
-    row.querySelector('.usage-compact').textContent = session.usage_compact || '';
+    const usageCompact = row.querySelector('.usage-compact');
+    usageCompact.textContent = session.usage_compact || '';
+    // What the cost is made of - main conversation, subagents, skills, web
+    // searches - when there is more to it than the total.
+    if (session.cost_tip) {
+        usageCompact.dataset.tip = session.cost_tip;
+    } else {
+        delete usageCompact.dataset.tip;
+    }
     row.querySelector('.usage-detail').textContent = session.usage_detail || '';
     row.querySelector('.model-cell').innerHTML = modelCellHtml(session);
     row.querySelector('.cli-cell').innerHTML = cliCellHtml(session);
@@ -483,7 +498,7 @@ function updatePanel(section, project) {
         branchEl.innerHTML = project.branch ? branchHtml(project.branch) : '';
     }
     if (project.branch) {
-        branchEl.dataset.tip = fmt(state.labels.branch_tip, { branch: project.branch });
+        branchEl.dataset.tip = branchTip(project.branch);
     } else {
         delete branchEl.dataset.tip;
     }
@@ -724,6 +739,11 @@ function render(snapshot) {
         }
     }
     const loadingNote = ((historyActive || widened) && state.historyLoading) ? state.labels.history_loading : '';
+
+    // A ticket's cost covers every session on it whatever the filters show: the
+    // live ones, and the past ones in the window once they have been loaded.
+    state.ticketTotals = logic.ticketTotals((snapshot.sessions || []).concat(historyRows), prices);
+    state.ticketIncludesHistory = Array.isArray(state.history);
 
     const projects = logic.groupProjects(rawSessions, state.labels, prices);
 

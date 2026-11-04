@@ -242,7 +242,10 @@ class ListHistoryTest(HistoryEnvTest):
         self.assertEqual(record['model_id'], 'claude-opus-4-8')
         self.assertEqual(record['short_name'], '11111111')
         self.assertIsNotNone(record['age_seconds'])
-        self.assertEqual(record['usage'], {})
+        # A past session carries its cost like a live one.
+        self.assertEqual(record['usage']['input_tokens'], 5)
+        self.assertEqual(record['usage']['output_tokens'], 3)
+        self.assertEqual(record['usage_parts']['main']['claude-opus-4-8']['output_tokens'], 3)
         self.assertEqual(record['subagents_running'], 0)
 
 

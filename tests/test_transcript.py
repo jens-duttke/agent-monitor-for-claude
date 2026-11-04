@@ -15,7 +15,7 @@ from agent_monitor_for_claude.transcript import (
     _absorb_line,
     _parse,
     _run_timeline,
-    _scan_title_cwd,
+    _scan_history,
     _ScanState,
     history_state_for,
 )
@@ -188,7 +188,7 @@ class TitleSkipsInjectedMetaTest(unittest.TestCase):
         }).encode('utf-8'), state)
         self.assertEqual(state.first_prompt, 'the real first prompt')
 
-    def test_scan_title_cwd_ignores_a_meta_user_entry(self) -> None:
+    def test_scan_history_ignores_a_meta_user_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'session.jsonl'
             path.write_text('\n'.join([
@@ -198,7 +198,8 @@ class TitleSkipsInjectedMetaTest(unittest.TestCase):
                             'message': {'content': 'the real first prompt'}}),
             ]), encoding='utf-8')
 
-            title, cwd = _scan_title_cwd(path)
+            state, cwd = _scan_history(path)
+            title = state.title()
 
             self.assertEqual(title, 'the real first prompt')
             self.assertEqual(cwd, 'd:\\proj')
@@ -287,7 +288,7 @@ class TitleLooksPastAClearCommandTest(unittest.TestCase):
         }).encode('utf-8'), state)
         self.assertEqual(state.title(), '/clear')
 
-    def test_scan_title_cwd_skips_a_leading_clear(self) -> None:
+    def test_scan_history_skips_a_leading_clear(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'session.jsonl'
             path.write_text('\n'.join([
@@ -297,7 +298,8 @@ class TitleLooksPastAClearCommandTest(unittest.TestCase):
                             'message': {'content': 'the real first prompt'}}),
             ]), encoding='utf-8')
 
-            title, cwd = _scan_title_cwd(path)
+            state, cwd = _scan_history(path)
+            title = state.title()
 
             self.assertEqual(title, 'the real first prompt')
             self.assertEqual(cwd, 'd:\\proj')

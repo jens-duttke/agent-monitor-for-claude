@@ -25,19 +25,29 @@ and one ``result`` event per agent, giving both the run's total agent count and
 whether it is still active. Only each event's ``type`` and ``agentId`` decide the
 counts; a ``result`` event's payload (the agent's returned content) is never
 accessed or surfaced.
+
+A session's cost includes its subagents: every agent transcript - running or
+long finished - goes through the transcript module's usage scan
+(:func:`~agent_monitor_for_claude.transcript.usage_scan`, which reads the
+replies' usage and nothing of their content), and the sums are grouped by the
+agent's ``agentType`` for the cost tooltip.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import time
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .paths import SessionRoot, cwd_to_slug, projects_dir
 from .settings import SUBAGENT_RECENT_SECONDS
+from .transcript import usage_scan, usage_scan_once
+from .usage_parts import UsageScan, merge_scans
 
-__all__ = ['SubagentInfo', 'WorkflowActivity', 'count_subagents']
+__all__ = ['SubagentInfo', 'WorkflowActivity', 'count_subagents', 'past_subagent_usage']
 
 _SUBAGENT_TAIL_BYTES = 65536
 
@@ -87,10 +97,15 @@ class SubagentInfo:
     # activity the main transcript cannot see.  Finished agents are excluded:
     # once one returns, the main transcript carries the turn again.
     running_age: float | None = None
+    # The usage of every agent the session ran, summed per ``agentType`` (``''``
+    # when its metadata names none), and whether any agent's first scan is still
+    # running in the background - the sums then leave that agent out.
+    usage_by_type: dict[str, UsageScan] = field(default_factory=dict)
+    usage_pending: bool = False
 
 
 def count_subagents(root: SessionRoot, session_id: str, cwd: str) -> SubagentInfo:
-    """Return running/recently-finished subagent counts and running labels for a session under *root*."""
+    """Return running/recently-finished subagent counts and running labels for a session under *root*, and their usage."""
     directory = _subagents_dir(root, session_id, cwd)
     if directory is None:
         return SubagentInfo()
@@ -100,13 +115,11 @@ def count_subagents(root: SessionRoot, session_id: str, cwd: str) -> SubagentInf
     running_age: float | None = None
     recent_done = 0
 
-    # rglob walks lazily, so an inaccessible sub-directory raises mid-iteration -
-    # materialize under a guard so a permission error degrades to "no subagents"
-    # rather than propagating out and dropping the whole session.
-    try:
-        agent_paths = list(directory.rglob('agent-*.jsonl'))
-    except OSError:
+    agent_paths = _agent_paths(directory)
+    if agent_paths is None:
         return SubagentInfo()
+
+    usage_by_type, usage_pending = _usage_by_type(agent_paths, usage_scan)
 
     for path in agent_paths:
         try:
@@ -134,7 +147,55 @@ def count_subagents(root: SessionRoot, session_id: str, cwd: str) -> SubagentInf
     labels = tuple(label for label in (_label(path) for path in running_paths) if label)
     workflows = _workflow_activity(directory, now)
 
-    return SubagentInfo(running=len(running_paths), recent_done=recent_done, labels=labels, workflows=workflows, running_age=running_age)
+    return SubagentInfo(
+        running=len(running_paths), recent_done=recent_done, labels=labels, workflows=workflows, running_age=running_age,
+        usage_by_type=usage_by_type, usage_pending=usage_pending,
+    )
+
+
+def past_subagent_usage(transcript: Path) -> dict[str, UsageScan]:
+    """Return the usage of a past session's subagents, summed per ``agentType``, each file read once.
+
+    *transcript* is the session's own transcript; its agents lie in the folder
+    of the same name.  A session without one has no subagents.
+    """
+    directory = transcript.parent / transcript.stem / 'subagents'
+    if not directory.is_dir():
+        return {}
+
+    agent_paths = _agent_paths(directory)
+    if agent_paths is None:
+        return {}
+
+    usage_by_type, _ = _usage_by_type(agent_paths, usage_scan_once)
+    return usage_by_type
+
+
+def _agent_paths(directory: Path) -> list[Path] | None:
+    """Return every agent transcript below *directory*, or None if the folder cannot be walked.
+
+    rglob walks lazily, so an inaccessible sub-directory raises mid-iteration -
+    materialized under a guard so a permission error degrades to "no
+    subagents" rather than propagating out and dropping the whole session.
+    """
+    try:
+        return list(directory.rglob('agent-*.jsonl'))
+    except OSError:
+        return None
+
+
+def _usage_by_type(agent_paths: Iterable[Path], scan: Callable[[Path], UsageScan | None]) -> tuple[dict[str, UsageScan], bool]:
+    """Return the usage *scan* reads from each agent transcript, summed per ``agentType``, and whether any scan was pending."""
+    scans_by_type: dict[str, list[UsageScan]] = {}
+    pending = False
+    for path in agent_paths:
+        usage = scan(path)
+        if usage is None:
+            pending = True
+            continue
+        scans_by_type.setdefault(_agent_type(path), []).append(usage)
+
+    return {agent_type: merge_scans(scans) for agent_type, scans in scans_by_type.items()}, pending
 
 
 def _is_finished(agent_path: Path, age: float) -> bool:
@@ -327,15 +388,7 @@ def _label(agent_path: Path) -> str:
     Prefers the ``description`` (what the subagent was asked to do), falling
     back to the ``agentType``.  Only these two fields are read.
     """
-    meta_path = agent_path.parent / (agent_path.stem + '.meta.json')
-
-    try:
-        data = json.loads(meta_path.read_text(encoding='utf-8'))
-    except (OSError, json.JSONDecodeError, ValueError):
-        return ''
-
-    if not isinstance(data, dict):
-        return ''
+    data = _meta(agent_path)
 
     description = data.get('description')
     if isinstance(description, str) and description:
@@ -346,3 +399,45 @@ def _label(agent_path: Path) -> str:
         return agent_type
 
     return ''
+
+
+# An ``agentType`` as Claude Code writes it (``next:reviewer``, ``Explore``); a
+# name of any other shape is summed under no type rather than shown verbatim.
+_AGENT_TYPE_PATTERN = re.compile(r'[A-Za-z0-9][A-Za-z0-9:._-]{0,63}')
+
+# {agent transcript path: agentType} - the metadata never changes once written,
+# so each agent's file is read once, not on every poll.  A failed read is not
+# cached: the metadata can land a moment after the transcript.  Bounded so a
+# long-lived monitor cannot grow it without limit.
+_agent_type_cache: dict[str, str] = {}
+_AGENT_TYPE_CACHE_MAX = 4096
+
+
+def _agent_type(agent_path: Path) -> str:
+    """Return the ``agentType`` an agent's ``meta.json`` names, or ``''``; nothing else of the file is kept."""
+    key = str(agent_path)
+    cached = _agent_type_cache.get(key)
+    if cached is not None:
+        return cached
+
+    data = _meta(agent_path)
+    agent_type = data.get('agentType')
+    if not isinstance(agent_type, str) or not _AGENT_TYPE_PATTERN.fullmatch(agent_type):
+        return ''
+
+    while len(_agent_type_cache) >= _AGENT_TYPE_CACHE_MAX:
+        _agent_type_cache.pop(next(iter(_agent_type_cache)))
+    _agent_type_cache[key] = agent_type
+    return agent_type
+
+
+def _meta(agent_path: Path) -> dict:
+    """Return the agent's sibling ``agent-<id>.meta.json`` as a dict, or an empty dict if it cannot be read."""
+    meta_path = agent_path.parent / (agent_path.stem + '.meta.json')
+
+    try:
+        data = json.loads(meta_path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+
+    return data if isinstance(data, dict) else {}

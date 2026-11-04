@@ -1562,6 +1562,197 @@ function usageTotalTokens(usage) {
         + (source.cache_read_input_tokens || 0) + (source.cache_creation_input_tokens || 0);
 }
 
+/* --- cost parts (main conversation, subagents, skills, web searches) ---
+
+   The backend ships a session's usage per model for the whole session - its
+   own transcript and every subagent's - plus `usage_parts`: the same usage
+   split into the main conversation, each kind of subagent and each skill a
+   turn ran under, and the number of web searches. The parts only explain the
+   total; they never change it. */
+
+// How many entries a list of parts names before it counts the rest, and the
+// mark each entry's line starts with.
+const COST_PART_LIMIT = 4;
+const COST_PART_BULLET = '• ';
+
+function isRecord(value) {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+// The price of one web search from the resolved table's `web_search` entry, or
+// null when the table names none. Own-property check for the reason
+// sessionCostUsd has one: the table is data, not code.
+function webSearchPrice(prices) {
+    const entry = isRecord(prices) && Object.prototype.hasOwnProperty.call(prices, 'web_search') ? prices.web_search : null;
+    const price = isRecord(entry) ? Number(entry.per_request) : NaN;
+    return Number.isFinite(price) && price >= 0 ? price : null;
+}
+
+function webSearchCount(raw) {
+    const parts = raw ? raw.usage_parts : null;
+    return isRecord(parts) ? (positiveInteger(parts.web_searches) || 0) : 0;
+}
+
+// The session's estimated cost: every model's tokens plus its web searches.
+// Null when a model has no rate, exactly like sessionCostUsd.
+function sessionTotalCostUsd(raw, prices) {
+    const tokens = sessionCostUsd(raw ? raw.usage_by_model : null, prices);
+    if (tokens === null) {
+        return null;
+    }
+    const price = webSearchPrice(prices);
+    return tokens + (price === null ? 0 : webSearchCount(raw) * price);
+}
+
+function modelUsageTokens(usageByModel) {
+    let total = 0;
+    for (const usage of Object.values(isRecord(usageByModel) ? usageByModel : {})) {
+        total += usageTotalTokens(usage);
+    }
+    return total;
+}
+
+// A part's amount: its cost when every model in it has a rate, else its tokens.
+function partAmount(usageByModel, prices) {
+    const usd = sessionCostUsd(usageByModel, prices);
+    return usd === null ? formatTokens(modelUsageTokens(usageByModel)) : formatCost(usd);
+}
+
+// One tooltip line per part, the most spend first ("• next:reviewer $30"); past
+// COST_PART_LIMIT a last line counts the rest ("• +3"). The tooltip collapses
+// leading spaces, so a bullet marks each line as belonging to the heading above.
+function costPartLines(partsByName, prices, displayName) {
+    const entries = [];
+    for (const name of Object.keys(isRecord(partsByName) ? partsByName : {})) {
+        const usageByModel = partsByName[name];
+        const tokens = modelUsageTokens(usageByModel);
+        if (tokens === 0) {
+            continue;
+        }
+        entries.push({ name: displayName(name), usd: sessionCostUsd(usageByModel, prices), tokens: tokens });
+    }
+    entries.sort((first, second) => ((second.usd ?? -1) - (first.usd ?? -1)) || (second.tokens - first.tokens));
+
+    const lines = entries.slice(0, COST_PART_LIMIT).map(
+        (entry) => COST_PART_BULLET + entry.name + ' ' + (entry.usd === null ? formatTokens(entry.tokens) : formatCost(entry.usd)));
+    if (entries.length > COST_PART_LIMIT) {
+        lines.push(COST_PART_BULLET + '+' + (entries.length - COST_PART_LIMIT));
+    }
+    return lines;
+}
+
+// The sum of several per-model usages. Model ids and usage keys are on-disk
+// data, so the objects have no prototype: a key such as `__proto__` stays an
+// ordinary property instead of reaching Object.prototype.
+function mergedModelUsage(usageByModelList) {
+    const merged = Object.create(null);
+    for (const usageByModel of usageByModelList) {
+        for (const model of Object.keys(isRecord(usageByModel) ? usageByModel : {})) {
+            if (!Object.prototype.hasOwnProperty.call(merged, model)) {
+                merged[model] = Object.create(null);
+            }
+            const target = merged[model];
+            for (const [key, value] of Object.entries(isRecord(usageByModel[model]) ? usageByModel[model] : {})) {
+                target[key] = (target[key] || 0) + (Number(value) || 0);
+            }
+        }
+    }
+    return merged;
+}
+
+// The cost tooltip's lines: how the session's spend divides into the main
+// conversation and its subagents (only when it ran any), into the skills its
+// turns ran under, and what its web searches cost. Empty when there is nothing
+// beyond the total to explain.
+function costTipLines(raw, prices, labels) {
+    const parts = raw ? raw.usage_parts : null;
+    if (!isRecord(parts)) {
+        return [];
+    }
+    const lines = [];
+
+    const agents = isRecord(parts.agents) ? parts.agents : {};
+    const agentUsage = mergedModelUsage(Object.keys(agents).map((name) => agents[name]));
+    if (modelUsageTokens(agentUsage) > 0) {
+        lines.push(fmt(labels.cost_main, { cost: partAmount(parts.main, prices) }));
+        lines.push(fmt(labels.cost_agents, { cost: partAmount(agentUsage, prices) }));
+        lines.push(...costPartLines(agents, prices, (name) => name || labels.cost_agent_unknown));
+    }
+
+    const skills = costPartLines(parts.skills, prices, (name) => name);
+    if (skills.length > 0) {
+        lines.push(labels.cost_skills, ...skills);
+    }
+
+    const searches = webSearchCount(raw);
+    const price = webSearchPrice(prices);
+    if (searches > 0 && price !== null) {
+        lines.push(fmt(labels.cost_web_search, { count: searches, cost: formatCost(searches * price) }));
+    }
+    return lines;
+}
+
+/* --- cost per ticket ---
+
+   A branch that names a ticket key (`feature/PNE-10617/...`) ties a session to
+   that ticket; the sessions of one ticket - live, and past ones once the
+   history has been loaded - are added up for the branch's tooltip. */
+
+// A tracker key as Jira writes it: an upper-case project key, a hyphen and a
+// number, standing on its own within the branch name.
+const TICKET_KEY = /(?:^|[^A-Za-z0-9])([A-Z][A-Z0-9]{1,9}-[1-9][0-9]{0,6})(?![A-Za-z0-9])/;
+
+function ticketKey(branch) {
+    if (typeof branch !== 'string') {
+        return null;
+    }
+    const match = branch.match(TICKET_KEY);
+    return match ? match[1] : null;
+}
+
+// Per ticket key: the summed cost (`priced` false once a session in it has no
+// rate, when only the tokens are meaningful), the tokens and the session count.
+// A session id seen twice counts once.
+function ticketTotals(rawSessions, prices) {
+    const totals = new Map();
+    const seen = new Set();
+    for (const raw of rawSessions || []) {
+        if (!raw || seen.has(raw.session_id)) {
+            continue;
+        }
+        seen.add(raw.session_id);
+        const key = ticketKey(raw.git_branch);
+        if (!key) {
+            continue;
+        }
+        const total = totals.get(key) || { usd: 0, tokens: 0, sessions: 0, priced: true };
+        const usd = sessionTotalCostUsd(raw, prices);
+        if (usd === null) {
+            total.priced = false;
+        } else {
+            total.usd += usd;
+        }
+        total.tokens += usageTotalTokens(raw.usage);
+        total.sessions += 1;
+        totals.set(key, total);
+    }
+    return totals;
+}
+
+// The branch tooltip's ticket lines, or '' when the branch names no ticket:
+// what its sessions cost, and which sessions that covers - the live ones only
+// until the history has been loaded.
+function ticketTip(branch, totals, includesHistory, labels) {
+    const key = ticketKey(branch);
+    const total = key && totals instanceof Map ? totals.get(key) : null;
+    if (!total) {
+        return '';
+    }
+    const amount = total.priced ? formatCost(total.usd) : formatTokens(total.tokens);
+    return fmt(labels.ticket_cost, { ticket: key, cost: amount, count: total.sessions })
+        + '\n' + (includesHistory ? labels.ticket_scope_history : labels.ticket_scope_live);
+}
+
 /* --- host / entrypoint (ported from snapshot.py) --- */
 
 // A `Map` for the reason MODE_LABELS is one: the entrypoint comes off disk, and
@@ -1824,7 +2015,7 @@ function buildSession(raw, labels, prices) {
     // number is never wrong), and the per-category breakdown that slides open
     // before it on hover. Expanded reads "<breakdown> · <anchor>".
     const breakdown = tokenLabels(raw.usage, labels);
-    const costText = formatCost(sessionCostUsd(raw.usage_by_model, prices)) || '';
+    const costText = formatCost(sessionTotalCostUsd(raw, prices)) || '';
     let usageCompact = '';
     let usageDetail = '';
     if (raw.scan_pending) {
@@ -1891,6 +2082,8 @@ function buildSession(raw, labels, prices) {
         usage_compact: usageCompact,
         usage_detail: usageDetail,
         usage_total: usageTotalTokens(usage),
+        // Unknown while a scan is pending, like the figure it explains.
+        cost_tip: raw.scan_pending ? '' : costTipLines(raw, prices, labels).join('\n'),
         subagents_running: subagentsRunning,
         subagents_done: raw.subagents_done || 0,
         subagents_labels: subagentsLabels,
@@ -2127,8 +2320,8 @@ function sessionInfoTip(session, labels) {
 // The branch most of a panel's sessions are on (the first one seen wins a tie),
 // or null when none names one. The header names it once; only a row on another
 // branch names its own, so one session elsewhere does not put the shared branch
-// on every row. Sessions that name none (a history row, a session outside a git
-// repository) do not count.
+// on every row. Sessions that name none (a session outside a git repository)
+// do not count.
 function panelBranch(sessions) {
     const counts = new Map();
     let best = null;
@@ -2353,6 +2546,12 @@ const AMC_LOGIC = {
     modelPriceKey,
     usageCostUsd,
     sessionCostUsd,
+    sessionTotalCostUsd,
+    webSearchPrice,
+    costTipLines,
+    ticketKey,
+    ticketTotals,
+    ticketTip,
     formatCost,
     usageTotalTokens,
     modelHistory,
