@@ -358,6 +358,85 @@ class EndedRetentionTest(_RegistryFixture):
         self.assertIsNone(snapshot_mod.seconds_since_alive('local', 'a'))
 
 
+class DuplicateRegistryRecordTest(_RegistryFixture):
+    """Records an earlier process of the same session left behind collapse into one row.
+
+    Every process writes its own registry file, and one not shut down cleanly
+    leaves it behind - a chat reopened a dozen times then carried a dozen
+    identical rows, all kept on screen by the one live sibling.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        snapshot_mod.prune_last_seen([])
+        self.addCleanup(snapshot_mod.prune_last_seen, [])
+        # Liveness is probed per pid, so every record needs its own: the live
+        # ones borrow this process and its parent, the dead ones name pids no
+        # system hands out.
+        self._live_pids = [os.getpid(), os.getppid()]
+        self._dead_pid = 0x7FFFFF00
+        path = transcript_path(local_root(), 's', 'd:\\x')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_END_TURN, encoding='utf-8')
+
+    def _add_record(self, file_name: str, *, alive: bool, started_at_ms: float) -> None:
+        if alive:
+            pid = self._live_pids.pop(0)
+        else:
+            self._dead_pid -= 4
+            pid = self._dead_pid
+        record = {'pid': pid, 'sessionId': 's', 'cwd': 'd:\\x', 'kind': 'interactive', 'startedAt': started_at_ms}
+        (Path(self._temp.name) / 'sessions' / f'{file_name}.json').write_text(json.dumps(record), encoding='utf-8')
+
+    def _rows(self) -> list[dict]:
+        with mock.patch.object(snapshot_mod, 'seconds_since_alive', return_value=0.0):
+            return [session for session in build_snapshot()['sessions'] if session['session_id'] == 's']
+
+    def test_a_live_record_hides_its_dead_siblings(self) -> None:
+        now_ms = time.time() * 1000
+        self._add_record('old1', alive=False, started_at_ms=now_ms - 3_000_000)
+        self._add_record('live', alive=True, started_at_ms=now_ms - 60_000)
+        self._add_record('old2', alive=False, started_at_ms=now_ms - 2_000_000)
+
+        rows = self._rows()
+
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]['alive'])
+
+    def test_without_a_live_record_only_the_newest_dead_one_stays(self) -> None:
+        now_ms = time.time() * 1000
+        self._add_record('older', alive=False, started_at_ms=now_ms - 3_000_000)
+        self._add_record('newest', alive=False, started_at_ms=now_ms - 60_000)
+        self._add_record('middle', alive=False, started_at_ms=now_ms - 2_000_000)
+
+        rows = self._rows()
+
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(55 <= rows[0]['process_age_seconds'] <= 70)
+
+    def test_two_live_processes_on_one_session_both_stay(self) -> None:
+        now_ms = time.time() * 1000
+        self._add_record('editor', alive=True, started_at_ms=now_ms - 120_000)
+        self._add_record('terminal', alive=True, started_at_ms=now_ms - 60_000)
+        self._add_record('stale', alive=False, started_at_ms=now_ms - 3_000_000)
+
+        rows = self._rows()
+
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all(row['alive'] for row in rows))
+
+    def test_live_or_recent_ids_does_not_read_a_superseded_record(self) -> None:
+        now_ms = time.time() * 1000
+        self._add_record('live', alive=True, started_at_ms=now_ms - 60_000)
+        self._add_record('stale', alive=False, started_at_ms=now_ms - 3_000_000)
+
+        with mock.patch.object(snapshot_mod, 'state_for') as state_for:
+            ids = live_or_recent_ids()
+
+        self.assertEqual(ids, {'s'})
+        state_for.assert_not_called()
+
+
 class PerRecordIsolationTest(_RegistryFixture):
     def test_one_failing_record_does_not_blank_the_snapshot(self) -> None:
         # An unforeseen failure while assembling one session must skip that

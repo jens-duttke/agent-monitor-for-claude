@@ -53,7 +53,7 @@ def _build_snapshot() -> dict[str, Any]:
     pairs = _collect_pairs()
     probe_map = _probe_map(pairs)
 
-    for root, record in pairs:
+    for root, record in _one_record_per_session(pairs, probe_map):
         try:
             session = _build_session_record(root, record, probe_map)
         except Exception:
@@ -178,7 +178,7 @@ def live_or_recent_ids() -> set[str]:
     probe_map = _probe_map(pairs)
 
     ids: set[str] = set()
-    for root, record in pairs:
+    for root, record in _one_record_per_session(pairs, probe_map):
         info = probe_map.get((record['origin'], record['pid']))
         if info is not None and info.alive:
             note_alive(record['origin'], record['session_id'])
@@ -297,6 +297,45 @@ def _probe_map(pairs: list[tuple[SessionRoot, dict[str, Any]]]) -> dict[tuple[st
             probe_map[(root.origin, pid)] = info
 
     return probe_map
+
+
+def _one_record_per_session(
+    pairs: list[tuple[SessionRoot, dict[str, Any]]], probe_map: dict[tuple[str, int], ProcessInfo],
+) -> list[tuple[SessionRoot, dict[str, Any]]]:
+    """Drop the registry records an earlier process of the same session left behind.
+
+    Every process writes its own registry record, and one that is not shut down
+    cleanly (a Claude Desktop chat reopened many times, a WSL distro switched
+    off) leaves it in place - one conversation then carries a dozen records.
+    Retention and age are per session, so a single live sibling would keep all
+    of them on screen as identical rows.  Per ``(origin, session_id)`` this
+    keeps every live record (two processes can genuinely hold one session at
+    once) and, only when none is alive, the dead record with the newest
+    ``startedAt``.  The original order is preserved.
+    """
+    def is_alive(record: dict[str, Any]) -> bool:
+        info = probe_map.get((record['origin'], record['pid']))
+        return info is not None and info.alive
+
+    alive_sessions: set[tuple[str, str]] = set()
+    newest_dead: dict[tuple[str, str], dict[str, Any]] = {}
+    for _, record in pairs:
+        key = (record['origin'], record['session_id'])
+        if is_alive(record):
+            alive_sessions.add(key)
+            continue
+
+        current = newest_dead.get(key)
+        if current is None or (record['started_at'] or 0) > (current['started_at'] or 0):
+            newest_dead[key] = record
+
+    kept: list[tuple[SessionRoot, dict[str, Any]]] = []
+    for root, record in pairs:
+        key = (record['origin'], record['session_id'])
+        if is_alive(record) or (key not in alive_sessions and newest_dead.get(key) is record):
+            kept.append((root, record))
+
+    return kept
 
 
 def _display_age(transcript_age: float | None, subagent_age: float | None, process_age: float | None) -> float | None:
