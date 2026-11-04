@@ -1530,18 +1530,76 @@ function sessionCostUsd(usageByModel, prices) {
         if (usageTotalTokens(usage) === 0) {
             continue;
         }
-        const key = modelPriceKey(modelId);
-        // Own-property check: a key like "constructor"/"toString" would otherwise
-        // resolve to an inherited Object.prototype member (truthy) and price the
-        // model at $0 instead of falling back to the token total. modelId comes
-        // from untrusted on-disk transcripts.
-        const rate = key && Object.prototype.hasOwnProperty.call(table, key) ? table[key] : null;
+        const rate = modelRate(modelId, table);
         if (!rate) {
             return null;
         }
         total += usageCostUsd(usage, rate);
     }
     return total;
+}
+
+// A model's rates in the resolved price table, or null without one.
+function modelRate(modelId, prices) {
+    const table = prices || {};
+    const key = modelPriceKey(modelId);
+    // Own-property check: a key like "constructor"/"toString" would otherwise
+    // resolve to an inherited Object.prototype member (truthy) and price the
+    // model at $0 instead of falling back to the token total. modelId comes
+    // from untrusted on-disk transcripts.
+    const rate = key && Object.prototype.hasOwnProperty.call(table, key) ? table[key] : null;
+    return isRecord(rate) ? rate : null;
+}
+
+/* --- prompt cache outlook ---
+
+   Every request reads the conversation so far from the prompt cache and restarts
+   its lifetime (5 minutes or 1 hour, whichever the last write used). A session
+   left alone past that lifetime pays for its whole context again on the next
+   request, at the cache-write rate instead of the read rate. */
+
+// From this cost on, a lapsed cache earns a badge on the row; below it, and
+// while the cache is warm, the line stays in the cost tooltip.
+const CACHE_REWRITE_BADGE_USD = 1;
+
+const SECONDS_PER_HOUR = 3600;
+
+// Whether the session's prompt cache is still warm and for how long, how many
+// tokens the next request sends, and what writing them again would cost - null
+// for the cost when the model has no write rate. Null when the cache's lifetime,
+// the context or the deadline is unknown.
+function cacheOutlook(raw, prices) {
+    const ttl = positiveInteger(raw.cache_ttl_seconds);
+    const tokens = positiveInteger(raw.context_tokens);
+    const remaining = raw.cache_expires_in_seconds == null || typeof raw.cache_expires_in_seconds === 'boolean'
+        ? NaN : Number(raw.cache_expires_in_seconds);
+    if (ttl === null || tokens === null || !Number.isFinite(remaining)) {
+        return null;
+    }
+
+    const rate = modelRate(raw.model_id, prices);
+    const writeRate = rate ? (ttl >= SECONDS_PER_HOUR ? rate.cache_write_1h : rate.cache_write_5m) : null;
+    const priced = typeof writeRate === 'number' && Number.isFinite(writeRate) && writeRate >= 0;
+
+    return {
+        warm: remaining > 0,
+        remaining_seconds: Math.max(0, remaining),
+        tokens: tokens,
+        rewrite_usd: priced ? tokens * writeRate / TOKENS_PER_UNIT_PRICE : null,
+    };
+}
+
+function cacheLine(cache, labels) {
+    if (!cache) {
+        return '';
+    }
+    if (cache.warm) {
+        return fmt(labels.cache_warm_tip, { time: formatAge(cache.remaining_seconds, labels) });
+    }
+    if (cache.rewrite_usd === null) {
+        return fmt(labels.cache_cold_tokens_tip, { tokens: formatTokens(cache.tokens) });
+    }
+    return fmt(labels.cache_cold_tip, { tokens: formatTokens(cache.tokens), cost: formatCost(cache.rewrite_usd) });
 }
 
 // Whole dollars ("$19"); anything under a dollar is just "<$1". The estimate is
@@ -2137,6 +2195,10 @@ function buildSession(raw, labels, prices) {
     // say nothing once it has ended.
     const alive = raw.alive === true;
     const context = contextUsage(raw);
+    // Only a lapsed cache the next prompt of yours would pay for is worth saying:
+    // a running turn keeps its cache warm, and an ended session has none.
+    const cache = alive && needsAttention(status) ? cacheOutlook(raw, prices) : null;
+    const costLines = (raw.scan_pending ? [] : costTipLines(raw, prices, labels)).concat(cacheLine(cache, labels));
 
     const session = {
         session_id: raw.session_id,
@@ -2165,8 +2227,9 @@ function buildSession(raw, labels, prices) {
         usage_compact: usageCompact,
         usage_detail: usageDetail,
         usage_total: usageTotalTokens(usage),
-        // Unknown while a scan is pending, like the figure it explains.
-        cost_tip: raw.scan_pending ? '' : costTipLines(raw, prices, labels).join('\n'),
+        // The breakdown is unknown while a scan is pending, like the figure it
+        // explains; the cache line comes from the tail and is known at once.
+        cost_tip: costLines.filter(Boolean).join('\n'),
         subagents_running: subagentsRunning,
         subagents_done: raw.subagents_done || 0,
         subagents_labels: subagentsLabels,
@@ -2200,6 +2263,8 @@ function buildSession(raw, labels, prices) {
         fast_mode: isFastMode(raw),
         context: context,
         context_warn: Boolean(context && context.ratio !== null && context.ratio >= NEAR_LIMIT_RATIO),
+        cache: cache,
+        cache_warn: Boolean(cache && !cache.warm && cache.rewrite_usd !== null && cache.rewrite_usd >= CACHE_REWRITE_BADGE_USD),
         plan: alive ? planProgress(raw) : null,
         queued: QUEUE_STATUSES.has(status) ? (positiveInteger(raw.queued) || 0) : 0,
         budget: budgetOf(raw),
@@ -2657,6 +2722,10 @@ const AMC_LOGIC = {
     modelPriceKey,
     usageCostUsd,
     sessionCostUsd,
+    modelRate,
+    CACHE_REWRITE_BADGE_USD,
+    cacheOutlook,
+    cacheLine,
     sessionTotalCostUsd,
     webSearchPrice,
     costTipLines,

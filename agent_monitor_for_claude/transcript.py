@@ -570,6 +570,11 @@ class TranscriptState:
     speed: str | None = None
     context_tokens: int | None = None
     context_model: str | None = None
+    # The prompt cache's lifetime as the newest reply that wrote to it set it (300
+    # or 3600 seconds), and when it lapses (POSIX seconds): every request that
+    # reads or writes the cache restarts that lifetime.
+    cache_ttl_seconds: int | None = None
+    cache_expires_at: float | None = None
     budget_used: float | None = None
     budget_total: float | None = None
     queued: int = 0
@@ -1119,6 +1124,8 @@ class _TailDetails:
     speed: str | None = None
     context_tokens: int | None = None
     context_model: str | None = None
+    cache_ttl_seconds: int | None = None
+    cache_touched_at: float | None = None
     budget_used: float | None = None
     budget_total: float | None = None
     queued: int = 0
@@ -1177,6 +1184,16 @@ class _TailDetails:
             self.context_tokens = context
             self.context_model = model
 
+        # A reply that only read the cache says nothing about its lifetime, so the
+        # one an earlier write set stands; reading it still restarts the clock.
+        ttl = _cache_ttl(usage.get('cache_creation'))
+        if ttl is not None:
+            self.cache_ttl_seconds = ttl
+        cached = (usage.get('cache_read_input_tokens'), usage.get('cache_creation_input_tokens'))
+        touched = _timestamp_epoch(entry.get('timestamp'))
+        if touched is not None and any(_is_count(value) and value > 0 for value in cached):
+            self.cache_touched_at = touched
+
     def absorb_plan_call(self, tool_input: object) -> None:
         """Apply one call of Claude Desktop's progress tool to the plan (see _PLAN_TOOL)."""
         if not isinstance(tool_input, dict):
@@ -1215,6 +1232,7 @@ class _TailDetails:
         unfinished = self.plan_current is not None and any(status != _PLAN_COMPLETED for status in self.plan_statuses)
         hook_errors = sorted(self.hook_error_counts.items(), key=lambda item: -item[1])[:_MAX_HOOK_ERRORS]
         pull_requests = list(self.pull_requests.items())[-_MAX_PR_LINKS:]
+        cache_known = self.cache_ttl_seconds is not None and self.cache_touched_at is not None
 
         return {
             'git_branch': self.git_branch,
@@ -1222,6 +1240,8 @@ class _TailDetails:
             'speed': self.speed,
             'context_tokens': self.context_tokens,
             'context_model': self.context_model,
+            'cache_ttl_seconds': self.cache_ttl_seconds if cache_known else None,
+            'cache_expires_at': self.cache_touched_at + self.cache_ttl_seconds if cache_known else None,
             'budget_used': self.budget_used,
             'budget_total': self.budget_total,
             'queued': self.queued,
@@ -1288,6 +1308,30 @@ def _index_of(statuses: list[str], wanted: str, start: int = 0) -> int | None:
 def _is_count(value: object) -> bool:
     """Return True for a non-negative integer that is not a bool."""
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+# The prompt cache's two lifetimes, keyed by the field of `usage.cache_creation`
+# that counts the tokens written with each.
+_CACHE_TTL_SECONDS = {'ephemeral_5m_input_tokens': 300, 'ephemeral_1h_input_tokens': 3600}
+
+
+def _cache_ttl(creation: object) -> int | None:
+    """Return the lifetime of the cache a reply wrote, or None when it wrote nothing.
+
+    A reply can write with both lifetimes at once; the one that wrote more
+    tokens holds most of the context, so it decides.
+    """
+    if not isinstance(creation, dict):
+        return None
+
+    best_ttl = None
+    best_tokens = 0
+    for key, ttl in _CACHE_TTL_SECONDS.items():
+        tokens = creation.get(key)
+        if _is_count(tokens) and tokens > best_tokens:
+            best_ttl, best_tokens = ttl, tokens
+
+    return best_ttl
 
 
 def _is_amount(value: object) -> bool:

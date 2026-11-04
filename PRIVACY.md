@@ -217,6 +217,8 @@ And a few more describe the session beside its status:
 - the git branch stamped on each entry;
 - a reply's effort level and speed (`high`, `fast`), and how many tokens its request sent - the size of
   the context at that point;
+- whether a reply wrote the prompt cache with its 5-minute or its 1-hour lifetime, and the reply's
+  timestamp, so a row can say when the cache lapses;
 - the dollar budget a session runs under, as two numbers;
 - whether a queued prompt was added or taken off the queue - the prompt itself stays unread;
 - in Claude Desktop's progress list, the status of each step (pending, in progress, completed) - the

@@ -847,7 +847,8 @@ class PrivacyTest(TranscriptEnvTest):
             json.dumps({'type': 'frame-link', 'artifactCount': 2, 'title': 'SECRET_TEXT', 'frameUrl': 'https://SECRET_INPUT'}),
             json.dumps({'type': 'assistant', 'timestamp': '2026-07-11T13:19:05Z', 'effort': 'high',
                         'message': {'id': 'm1', 'stop_reason': 'tool_use', 'model': 'claude-opus-5-5',
-                                    'usage': {'input_tokens': 10, 'cache_read_input_tokens': 1000, 'output_tokens': 5},
+                                    'usage': {'input_tokens': 10, 'cache_read_input_tokens': 1000, 'output_tokens': 5,
+                                              'cache_creation_input_tokens': 40, 'cache_creation': {'ephemeral_1h_input_tokens': 40}},
                                     'content': [
                                         {'type': 'tool_use', 'id': 't1', 'name': 'mcp__ccd_turn__update_plan',
                                          'input': {'scope': 'SECRET_INPUT', 'items': [
@@ -865,6 +866,8 @@ class PrivacyTest(TranscriptEnvTest):
         self.assertEqual(state.queued, 1)
         self.assertEqual(state.artifact_count, 2)
         self.assertEqual(state.files_edited, 1)
+        # The prompt cache's lifetime is a number from the usage, beside the text.
+        self.assertEqual(state.cache_ttl_seconds, 3600)
         serialized = json.dumps(asdict(state))
         for secret in _SECRETS:
             self.assertNotIn(secret, serialized)

@@ -303,6 +303,9 @@ window.__MOCK_SNAPSHOT__ = {
             title: 'Fix cursor drift on high-latency connections',
             last_entry_kind: 'assistant', last_stop_reason: 'end_turn',
             age_seconds: 2460,
+            // Idle past its 5-minute cache: the badge says what the next prompt
+            // pays to write the context again.
+            context_tokens: 640000, cache_ttl_seconds: 300, cache_expires_in_seconds: -2160,
             ...priced('claude-sonnet-5', {
                 input_tokens: 28700, output_tokens: 6100, cache_read_input_tokens: 19400000,
                 cache_creation_input_tokens: 820000, cache_creation_5m_input_tokens: 300000, cache_creation_1h_input_tokens: 520000,
@@ -385,6 +388,8 @@ window.__MOCK_SNAPSHOT__ = {
             title: 'Parallelize the N-body force solver across cores', permission_mode: 'default',
             last_entry_kind: 'assistant', last_stop_reason: 'end_turn',
             age_seconds: 96,
+            // Still warm: the cost tooltip counts down instead of a badge.
+            cache_ttl_seconds: 300, cache_expires_in_seconds: 204,
             ...priced('claude-sonnet-5', {
                 input_tokens: 14200, output_tokens: 3100, cache_read_input_tokens: 9800000,
                 cache_creation_input_tokens: 420000, cache_creation_5m_input_tokens: 420000, cache_creation_1h_input_tokens: 0,

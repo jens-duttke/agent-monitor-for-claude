@@ -231,15 +231,21 @@ function pullRequestHtml(pullRequests, labels) {
         + attr('data-tip', lines.join('\n')) + '>' + esc(text) + '</a>';
 }
 
-// Badges for the details worth seeing at a glance: a nearly full context, the
-// plan's step, queued prompts, the budget, hooks that keep failing, and a newer
-// Claude Code a restart would bring.
+// Badges for the details worth seeing at a glance: a nearly full context, a
+// lapsed prompt cache the next prompt pays for, the plan's step, queued prompts,
+// the budget, hooks that keep failing, and a newer Claude Code a restart would
+// bring.
 function detailBadgesHtml(session, labels) {
     let html = '';
 
     if (session.context_warn) {
         html += '<span class="context-badge"' + attr('data-tip', logic.contextLine(session.context, labels)) + '>◔ '
             + esc(Math.round(session.context.ratio * 100)) + '%</span>';
+    }
+
+    if (session.cache_warn) {
+        html += '<span class="cache-badge"' + attr('data-tip', logic.cacheLine(session.cache, labels)) + '>❄ '
+            + esc(logic.formatCost(session.cache.rewrite_usd)) + '</span>';
     }
 
     if (session.plan) {

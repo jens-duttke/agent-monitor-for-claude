@@ -2558,6 +2558,74 @@ test('build session: the context warns from the near-limit share', () => {
     assert.equal(logic.buildSession(raw({ context_tokens: near }), {}, {}).context_warn, false);
 });
 
+const CACHE_LABELS = {
+    age_seconds: '{s}s',
+    age_minutes: '{m}m',
+    cache_warm_tip: 'Warm for {time}',
+    cache_cold_tip: 'Expired: {tokens} again ({cost})',
+    cache_cold_tokens_tip: 'Expired: {tokens} again',
+};
+
+// An idle session whose cache, written with a one-hour lifetime, lapsed ten minutes ago.
+function coldCache(overrides) {
+    return raw(Object.assign({
+        last_entry_kind: 'assistant', last_stop_reason: 'end_turn', model_id: 'claude-opus-4-8',
+        context_tokens: 400000, cache_ttl_seconds: 3600, cache_expires_in_seconds: -600,
+    }, overrides));
+}
+
+test('cache outlook: a lapsed cache costs its context at the write rate of its lifetime', () => {
+    assert.deepEqual(logic.cacheOutlook(coldCache(), PRICES), { warm: false, remaining_seconds: 0, tokens: 400000, rewrite_usd: 4 });
+    assert.equal(logic.cacheOutlook(coldCache({ cache_ttl_seconds: 300 }), PRICES).rewrite_usd, 2.5);
+});
+
+test('cache outlook: a warm cache counts down to its expiry', () => {
+    const cache = logic.cacheOutlook(coldCache({ cache_expires_in_seconds: 1500 }), PRICES);
+    assert.equal(cache.warm, true);
+    assert.equal(cache.remaining_seconds, 1500);
+    assert.equal(logic.cacheLine(cache, CACHE_LABELS), 'Warm for 25m');
+});
+
+test('cache outlook: an unpriced or hostile model keeps the tokens but names no cost', () => {
+    for (const model of ['claude-unknown-9', 'constructor', '__proto__', null]) {
+        const cache = logic.cacheOutlook(coldCache({ model_id: model }), PRICES);
+        assert.equal(cache.rewrite_usd, null);
+        assert.equal(logic.cacheLine(cache, CACHE_LABELS), 'Expired: 400k again');
+    }
+});
+
+test('cache outlook: a missing or mistyped figure shows nothing', () => {
+    for (const fields of [
+        { cache_ttl_seconds: null }, { cache_ttl_seconds: true }, { context_tokens: 0 },
+        { cache_expires_in_seconds: null }, { cache_expires_in_seconds: true }, { cache_expires_in_seconds: 'soon' },
+    ]) {
+        assert.equal(logic.cacheOutlook(coldCache(fields), PRICES), null);
+    }
+});
+
+test('build session: a lapsed cache earns a badge only when your next prompt pays for it', () => {
+    const idle = logic.buildSession(coldCache(), CACHE_LABELS, PRICES);
+    assert.equal(idle.cache_warn, true);
+    assert.equal(idle.cost_tip.split('\n').pop(), 'Expired: 400k again ($4)');
+
+    // Below the threshold the line stays in the tooltip.
+    const cheap = logic.buildSession(coldCache({ context_tokens: 50000 }), CACHE_LABELS, PRICES);
+    assert.equal(cheap.cache_warn, false);
+    assert.equal(cheap.cost_tip, 'Expired: 50.0k again (<$1)');
+
+    // A running turn keeps its cache warm, and an ended session has none to pay for.
+    for (const fields of [{ last_entry_kind: 'user_text', last_stop_reason: null }, { alive: false }]) {
+        const session = logic.buildSession(coldCache(fields), CACHE_LABELS, PRICES);
+        assert.equal(session.cache, null);
+        assert.equal(session.cache_warn, false);
+    }
+});
+
+test('build session: the cache line does not wait for a pending scan', () => {
+    const session = logic.buildSession(coldCache({ scan_pending: true }), CACHE_LABELS, PRICES);
+    assert.equal(session.cost_tip, 'Expired: 400k again ($4)');
+});
+
 test('session info tip: the full title, then the details without a column', () => {
     const session = logic.buildSession(raw({
         title: 'A long title', git_branch: 'main', context_tokens: 450000, context_window: 1000000,

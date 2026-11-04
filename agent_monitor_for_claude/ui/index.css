@@ -1484,6 +1484,7 @@ body {
 }
 
 .context-badge,
+.cache-badge,
 .budget-badge.budget-warn {
     color: var(--c-awaiting_permission);
     background: color-mix(in srgb, var(--c-awaiting_permission) 14%, transparent);
@@ -1491,6 +1492,7 @@ body {
 }
 
 .context-badge,
+.cache-badge,
 .hook-badge {
     flex: none;
     font-size: 11px;

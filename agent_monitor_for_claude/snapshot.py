@@ -172,6 +172,8 @@ def _build_session_record(
         'speed': transcript_state.speed,
         'context_tokens': transcript_state.context_tokens,
         'context_window': context_window(root, transcript_state.context_model),
+        'cache_ttl_seconds': transcript_state.cache_ttl_seconds,
+        'cache_expires_in_seconds': _seconds_until(transcript_state.cache_expires_at),
         'budget_used': transcript_state.budget_used,
         'budget_total': transcript_state.budget_total,
         'queued': transcript_state.queued,
@@ -446,8 +448,8 @@ def _seconds_since_ms(epoch_ms: float | None) -> float | None:
 def _seconds_until(epoch_seconds: float | None) -> float | None:
     """Seconds from now until a transcript deadline in POSIX seconds, negative once it has passed, or None.
 
-    Not clamped: whether a scheduled wakeup or a usage limit's reset still lies
-    ahead is exactly what the UI reads from the sign.
+    Not clamped: whether a scheduled wakeup, a usage limit's reset or the prompt
+    cache's expiry still lies ahead is exactly what the UI reads from the sign.
     """
     if epoch_seconds is None:
         return None

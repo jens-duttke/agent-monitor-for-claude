@@ -17,6 +17,7 @@ from agent_monitor_for_claude.transcript import (
     _run_timeline,
     _scan_history,
     _ScanState,
+    _timestamp_epoch,
     history_state_for,
 )
 
@@ -1078,6 +1079,36 @@ class SessionDetailsTest(unittest.TestCase):
         ))
         self.assertEqual(state.context_tokens, 401005)
         self.assertEqual(state.context_model, 'claude-sonnet-5-5')
+
+    def test_the_cache_lapses_one_lifetime_after_the_newest_reply_that_used_it(self) -> None:
+        state = _parse(_lines(
+            _reply(usage={'cache_creation_input_tokens': 500, 'cache_creation': {'ephemeral_1h_input_tokens': 500}}),
+            # Only read: the lifetime the write set stands, the clock restarts.
+            _reply(timestamp='2026-07-11T10:20:00Z', usage={'input_tokens': 3, 'cache_read_input_tokens': 500}),
+        ))
+        self.assertEqual(state.cache_ttl_seconds, 3600)
+        self.assertEqual(state.cache_expires_at, _timestamp_epoch('2026-07-11T10:20:00Z') + 3600)
+
+    def test_the_lifetime_that_wrote_more_tokens_decides(self) -> None:
+        state = _parse(_lines(_reply(usage={
+            'cache_creation_input_tokens': 900,
+            'cache_creation': {'ephemeral_5m_input_tokens': 800, 'ephemeral_1h_input_tokens': 100},
+        })))
+        self.assertEqual(state.cache_ttl_seconds, 300)
+
+    def test_without_a_known_lifetime_the_cache_is_not_reported(self) -> None:
+        # A reply that only read, one whose split is mistyped, and one whose split
+        # names a lifetime but whose token counts say no cache was used leave
+        # nothing to count down.
+        for usage in (
+            {'input_tokens': 3, 'cache_read_input_tokens': 500},
+            {'cache_creation_input_tokens': 5, 'cache_creation': {'ephemeral_1h_input_tokens': True, 'ephemeral_5m_input_tokens': '7'}},
+            {'input_tokens': 9, 'cache_creation': {'ephemeral_1h_input_tokens': 4}},
+        ):
+            with self.subTest(usage=usage):
+                state = _parse(_lines(_reply(usage=usage)))
+                self.assertIsNone(state.cache_ttl_seconds)
+                self.assertIsNone(state.cache_expires_at)
 
     def test_a_reply_without_usage_leaves_the_context_unknown(self) -> None:
         state = _parse(_lines(_reply(usage={'input_tokens': True, 'cache_read_input_tokens': -4})))

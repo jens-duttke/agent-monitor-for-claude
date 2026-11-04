@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hovering the status dot shows how long the agent has been in its status and, for a running turn, whether a finished background task or a message from another session started it.
 - A panel header names the git branch its agents are on, and a row names its own when it works on a different branch. The branch Claude Desktop creates for a chat's own worktree is left out until the agent switches to a branch of its own.
 - Badges flag a context nearly full, a nearly spent dollar budget, a Claude Desktop agent's current plan step, prompts queued behind the running turn, and hooks that keep failing. A pull-request badge opens the newest pull request linked to the session in your browser.
+- When an agent waiting for you has outlived its prompt cache, a badge shows what your next prompt will cost to write the whole context again (from $1). Hovering the cost tells how long the cache stays warm.
 - The model column adds the latest reply's effort level when it differs from your default, and *fast* in fast mode.
 - Hovering a title shows it in full, with the context size, how often the context was compacted, how many files the agent edited, and its artifacts.
 - Hovering an agent's cost splits it into the main conversation, each kind of subagent (e.g. *next:reviewer $30*), each skill its turns ran under, and its web searches. Web searches now count toward the cost.
