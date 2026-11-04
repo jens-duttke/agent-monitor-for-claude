@@ -16,16 +16,50 @@ root each one belongs to.
 Parsing is defensive: the registry schema is an unversioned Claude Code
 internal, so a record missing its required fields is skipped rather than
 raising.
+
+The registry is listed on every snapshot and every change-fingerprint poll,
+and records of ended sessions can pile up by the hundred - in a WSL distro,
+whose files are read over a slow network share, that would cost seconds per
+poll.  Each file's parsed record is therefore cached by its modification time
+and size, which the directory listing already supplies, so only a file that
+changed is read again.  Nothing is written to disk.
 """
 from __future__ import annotations
 
 import json
+import os
+import threading
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .paths import SessionRoot, sessions_dir
 
 __all__ = ['list_sessions']
+
+# A file modified this recently is read again even when its time and size are
+# unchanged: two rewrites within one timestamp tick can leave both identical
+# (``busy`` -> ``idle`` keeps the size), and the second must not be missed.
+_RECENT_WRITE_SECONDS = 2.0
+
+
+@dataclass(frozen=True)
+class _CachedRecord:
+    """One registry file's normalized record (None if invalid), keyed by its time and size."""
+
+    mtime_ns: int
+    size: int
+    record: dict[str, Any] | None
+
+
+# Registry directory -> file name -> its cached record.  Each listing replaces
+# its directory's map, which drops the files that have gone.
+_registry_cache: dict[str, dict[str, _CachedRecord]] = {}
+
+# The snapshot, the change fingerprint and the history dedupe each list the
+# registry, on different pywebview worker threads.
+_lock = threading.Lock()
 
 
 def list_sessions(root: SessionRoot) -> list[dict[str, Any]]:
@@ -42,20 +76,55 @@ def list_sessions(root: SessionRoot) -> list[dict[str, Any]]:
         ``origin``/``origin_label`` stamped onto every returned record.
     """
     directory = sessions_dir(root)
-    if not directory.is_dir():
+    try:
+        with os.scandir(directory) as entries:
+            files = sorted((entry for entry in entries if entry.name.endswith('.json')), key=lambda entry: entry.name)
+    except OSError:
         return []
 
+    with _lock:
+        previous = _registry_cache.get(str(directory), {})
+
+    current: dict[str, _CachedRecord] = {}
     records: list[dict[str, Any]] = []
-    for path in sorted(directory.glob('*.json')):
-        record = _normalize(_read_json(path))
-        if record is None:
+    for entry in files:
+        cached = _cached_or_read(entry, previous.get(entry.name))
+        if cached is None:
             continue
 
+        current[entry.name] = cached
+        if cached.record is None:
+            continue
+
+        # A copy, so a caller stamping or rewriting fields never alters the cache.
+        record = dict(cached.record)
         record['origin'] = root.origin
         record['origin_label'] = root.label
         records.append(record)
 
+    with _lock:
+        _registry_cache[str(directory)] = current
+
     return records
+
+
+def _cached_or_read(entry: os.DirEntry[str], cached: _CachedRecord | None) -> _CachedRecord | None:
+    """Return *entry*'s cached record if the file is unchanged, else read it; None if it cannot be stat'ed.
+
+    On Windows the directory listing already carries the time and size, so an
+    unchanged file costs no file-system call at all.
+    """
+    try:
+        stat_result = entry.stat()
+    except OSError:
+        return None
+
+    recently_written = time.time() - stat_result.st_mtime < _RECENT_WRITE_SECONDS
+    if (cached is not None and not recently_written and cached.mtime_ns == stat_result.st_mtime_ns
+            and cached.size == stat_result.st_size):
+        return cached
+
+    return _CachedRecord(stat_result.st_mtime_ns, stat_result.st_size, _normalize(_read_json(Path(entry.path))))
 
 
 def _read_json(path: Path) -> Any:

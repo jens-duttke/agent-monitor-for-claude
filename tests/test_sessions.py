@@ -4,9 +4,12 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from agent_monitor_for_claude import sessions as sessions_mod
 from agent_monitor_for_claude.paths import SessionRoot, local_root
 from agent_monitor_for_claude.sessions import list_sessions
 
@@ -129,6 +132,74 @@ class SessionsTest(unittest.TestCase):
     def test_missing_directory_returns_empty(self) -> None:
         os.environ['CLAUDE_CONFIG_DIR'] = str(Path(self._temp.name) / 'does-not-exist')
         self.assertEqual(list_sessions(local_root()), [])
+
+    def _settle(self, name: str) -> None:
+        """Date *name* back past the recent-write guard, as a file written a while ago."""
+        stamp = time.time() - 60
+        os.utime(self._sessions / name, (stamp, stamp))
+
+    def _list_counting_reads(self) -> tuple[list[dict[str, object]], int]:
+        with mock.patch.object(sessions_mod, '_read_json', wraps=sessions_mod._read_json) as read_json:
+            records = list_sessions(self.root)
+        return records, read_json.call_count
+
+    def test_an_unchanged_file_is_not_read_again(self) -> None:
+        # Hundreds of ended sessions' records can sit in a registry read over a
+        # slow share on every poll; only a changed file may cost a read.
+        self._write('1.json', {'pid': 1, 'sessionId': 'a', 'cwd': 'd:\\x'})
+        self._write('2.json', {'not': 'a record'})
+        self._settle('1.json')
+        self._settle('2.json')
+        list_sessions(self.root)
+
+        records, reads = self._list_counting_reads()
+
+        self.assertEqual(reads, 0)
+        self.assertEqual([record['session_id'] for record in records], ['a'])
+
+    def test_a_changed_file_is_read_again(self) -> None:
+        self._write('1.json', {'pid': 1, 'sessionId': 'a', 'cwd': 'd:\\x', 'status': 'busy'})
+        self._settle('1.json')
+        list_sessions(self.root)
+
+        self._write('1.json', {'pid': 1, 'sessionId': 'a', 'cwd': 'd:\\x', 'status': 'waiting'})
+        self._settle('1.json')
+        records, reads = self._list_counting_reads()
+
+        self.assertEqual(reads, 1)
+        self.assertEqual(records[0]['native_status'], 'waiting')
+
+    def test_a_recently_written_file_is_read_again_even_with_the_same_time_and_size(self) -> None:
+        # Two rewrites within one timestamp tick leave time and size alike
+        # (busy -> idle keeps the length); the second must still be seen.
+        self._write('1.json', {'pid': 1, 'sessionId': 'a', 'cwd': 'd:\\x', 'status': 'busy'})
+        stat_before = (self._sessions / '1.json').stat()
+        list_sessions(self.root)
+
+        self._write('1.json', {'pid': 1, 'sessionId': 'a', 'cwd': 'd:\\x', 'status': 'idle'})
+        os.utime(self._sessions / '1.json', ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns))
+        records, reads = self._list_counting_reads()
+
+        self.assertEqual(reads, 1)
+        self.assertEqual(records[0]['native_status'], 'idle')
+
+    def test_a_returned_record_can_be_changed_without_touching_the_cache(self) -> None:
+        self._write('1.json', {'pid': 1, 'sessionId': 'a', 'cwd': 'd:\\x'})
+        self._settle('1.json')
+        list_sessions(self.root)[0]['cwd'] = 'd:\\elsewhere'
+
+        self.assertEqual(list_sessions(self.root)[0]['cwd'], 'd:\\x')
+
+    def test_a_removed_file_leaves_the_listing(self) -> None:
+        self._write('1.json', {'pid': 1, 'sessionId': 'a', 'cwd': 'd:\\x'})
+        self._write('2.json', {'pid': 2, 'sessionId': 'b', 'cwd': 'd:\\x'})
+        self._settle('1.json')
+        self._settle('2.json')
+        list_sessions(self.root)
+
+        (self._sessions / '2.json').unlink()
+
+        self.assertEqual([record['session_id'] for record in list_sessions(self.root)], ['a'])
 
     def test_origin_and_origin_label_come_from_a_wsl_root(self) -> None:
         with tempfile.TemporaryDirectory() as base:

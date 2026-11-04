@@ -88,16 +88,17 @@ def _build_session_record(
     a session whose process turned out not alive.
     """
     info = probe_map[(record['origin'], record['pid'])]
-    transcript_state = state_for(root, record['session_id'], record['cwd'])
-
     if info.alive:
         note_alive(record['origin'], record['session_id'])
-    else:
-        # A process that ended long ago has nothing worth showing; drop it here
-        # so the UI never has to know about the retention policy.
-        ended_seconds = seconds_since_alive(record['origin'], record['session_id'])
-        if not _include_ended(transcript_state.age_seconds, ended_seconds):
-            return None
+    elif _ended_long_ago(root, record):
+        return None
+
+    transcript_state = state_for(root, record['session_id'], record['cwd'])
+
+    # A process that ended long ago has nothing worth showing; drop it here so
+    # the UI never has to know about the retention policy.
+    if not info.alive and not _include_ended(transcript_state.age_seconds, seconds_since_alive(record['origin'], record['session_id'])):
+        return None
 
     subagents = count_subagents(root, record['session_id'], record['cwd'])
     process_age = _process_age(record['started_at'])
@@ -182,6 +183,9 @@ def live_or_recent_ids() -> set[str]:
         if info is not None and info.alive:
             note_alive(record['origin'], record['session_id'])
             ids.add(record['session_id'])
+            continue
+
+        if _ended_long_ago(root, record):
             continue
 
         age = state_for(root, record['session_id'], record['cwd']).age_seconds
@@ -349,6 +353,31 @@ def _older_than_process(age: float | None, process_age: float | None) -> bool:
         return False
 
     return age > process_age
+
+
+def _ended_long_ago(root: SessionRoot, record: dict[str, Any]) -> bool:
+    """Return True if an ended session is certainly past the retention window, judged without reading its transcript.
+
+    The registry keeps the records of ended sessions until Claude Code removes
+    them, which a hard shutdown never does - hundreds can pile up, and reading
+    each one's transcript only to drop it would cost a snapshot many seconds.
+    The transcript's modification time settles it: no entry can be newer than
+    the file's last write, so a file older than the window cannot hold an
+    entry inside it.  The check is the looser of the two - an in-place
+    rewrite can bump the time without a new entry - so a session it lets
+    through is still judged exactly by :func:`_include_ended`.
+    """
+    ended_seconds = seconds_since_alive(record['origin'], record['session_id'])
+    if ended_seconds is not None or INCLUDE_COMPLETED:
+        return not _include_ended(None, ended_seconds)
+
+    try:
+        modified = transcript_path(root, record['session_id'], record['cwd']).stat().st_mtime
+    except OSError:
+        # No transcript means no age, which the exact rule drops as well.
+        return True
+
+    return time.time() - modified >= ENDED_MAX_AGE
 
 
 def _include_ended(age_seconds: float | None, ended_seconds: float | None) -> bool:

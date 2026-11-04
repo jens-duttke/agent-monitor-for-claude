@@ -180,7 +180,8 @@ class DeferredStateTest(DeferredScanEnvTest):
         )
         self._write_transcript([_assistant(100)])
 
-        with self._defer_everything():
+        # Only the fixture root: a running WSL distro on the test machine would add its own sessions.
+        with self._defer_everything(), mock.patch.object(snapshot, 'session_roots', return_value=[local_root()]):
             # Holding the scans keeps the background thread from finishing
             # between the snapshot and the first fingerprint.
             with background_scans.pause_background_scans():

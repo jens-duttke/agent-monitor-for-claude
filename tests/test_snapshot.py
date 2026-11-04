@@ -265,6 +265,82 @@ class EndedRetentionTest(_RegistryFixture):
         with mock.patch.object(snapshot_mod, 'seconds_since_alive', return_value=None):
             self.assertNotIn('closed', self._ids())
 
+    def _age_transcript(self, session_id: str, seconds: float) -> None:
+        stamp = time.time() - seconds
+        os.utime(transcript_path(local_root(), session_id, 'd:\\x'), (stamp, stamp))
+
+    def _read_ids(self, build) -> tuple[set[str], set[str]]:
+        """Run *build* and return the ids it retained and the ids whose transcript it read."""
+        read: set[str] = set()
+        real_state_for = snapshot_mod.state_for
+
+        def recording(root, session_id: str, cwd: str):
+            read.add(session_id)
+            return real_state_for(root, session_id, cwd)
+
+        with mock.patch.object(snapshot_mod, 'seconds_since_alive', return_value=None), \
+                mock.patch.object(snapshot_mod, 'state_for', side_effect=recording):
+            retained = build()
+
+        return retained, read
+
+    def test_a_transcript_untouched_past_the_window_is_dropped_unread(self) -> None:
+        # Hundreds of stale registry records can pile up; each must cost one
+        # stat, not a transcript read, before it is dropped.
+        self._add_ended_session('closed')
+        self._age_transcript('closed', snapshot_mod.ENDED_MAX_AGE + 60)
+
+        retained, read = self._read_ids(self._ids)
+
+        self.assertNotIn('closed', retained)
+        self.assertNotIn('closed', read)
+
+    def test_an_ended_session_without_a_transcript_is_dropped_unread(self) -> None:
+        self._add_ended_session('closed')
+        transcript_path(local_root(), 'closed', 'd:\\x').unlink()
+
+        retained, read = self._read_ids(self._ids)
+
+        self.assertNotIn('closed', retained)
+        self.assertNotIn('closed', read)
+
+    def test_a_recent_transcript_is_still_judged_by_its_newest_entry(self) -> None:
+        # The file time only rules sessions out; one inside the window is kept
+        # only if its newest entry is.
+        self._add_ended_session('recent')
+        recent_turn = json.dumps({
+            'type': 'assistant',
+            'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+            'message': {'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': 'x'}]},
+        })
+        transcript_path(local_root(), 'recent', 'd:\\x').write_text(recent_turn, encoding='utf-8')
+        self._add_ended_session('rewritten')
+
+        retained, read = self._read_ids(self._ids)
+
+        self.assertIn('recent', retained)
+        # A fresh file time over an old entry (an in-place rewrite) is read, then dropped.
+        self.assertNotIn('rewritten', retained)
+        self.assertEqual(read, {'recent', 'rewritten'})
+
+    def test_the_include_completed_setting_still_keeps_a_long_ended_session(self) -> None:
+        self._add_ended_session('closed')
+        self._age_transcript('closed', snapshot_mod.ENDED_MAX_AGE + 60)
+
+        with mock.patch.object(snapshot_mod, 'INCLUDE_COMPLETED', True):
+            retained, _ = self._read_ids(self._ids)
+
+        self.assertIn('closed', retained)
+
+    def test_live_or_recent_ids_drops_a_long_ended_session_unread(self) -> None:
+        self._add_ended_session('closed')
+        self._age_transcript('closed', snapshot_mod.ENDED_MAX_AGE + 60)
+
+        retained, read = self._read_ids(live_or_recent_ids)
+
+        self.assertNotIn('closed', retained)
+        self.assertNotIn('closed', read)
+
     def test_a_live_session_records_a_sighting(self) -> None:
         self._add_session('a', 'd:\\WebDev\\one')
 
