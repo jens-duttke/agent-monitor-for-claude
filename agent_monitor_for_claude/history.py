@@ -59,7 +59,9 @@ def list_history(max_age_seconds: float | None = None) -> list[dict[str, Any]]:
     unique regardless of which root it came from, so one dedup set applies
     across every root's scan.  Each returned record mirrors the shape the UI's
     ``buildSession`` consumes, marked ``is_history`` and always ``alive: False``
-    (the process is gone, so the derived status is ``completed``).
+    (the process is gone, so the derived status is ``completed``).  A session
+    whose transcript turns up under more than one root is listed once (see
+    :func:`_one_record_per_session`).
 
     Every session root is scanned independently: an unexpected error scanning
     one root is caught here and skips just that root, so one broken root - a
@@ -77,18 +79,44 @@ def list_history(max_age_seconds: float | None = None) -> list[dict[str, Any]]:
     window = _valid_window(max_age_seconds)
     live_ids = live_or_recent_ids()
 
-    records: list[dict[str, Any]] = []
+    found: list[tuple[dict[str, Any], bool]] = []
     for root in session_roots():
         try:
-            records.extend(_list_root_history(root, live_ids, window))
+            found.extend(_list_root_history(root, live_ids, window))
         except Exception:
             continue
 
-    return records
+    return _one_record_per_session(found)
 
 
-def _list_root_history(root: SessionRoot, live_ids: set[str], window: float | None) -> list[dict[str, Any]]:
-    """Return history records for past session transcripts under one root.
+def _one_record_per_session(found: list[tuple[dict[str, Any], bool]]) -> list[dict[str, Any]]:
+    """Keep one record per session id when the same transcript turns up under more than one root.
+
+    Claude Desktop keeps a copy of the chats it runs inside WSL on the host, in
+    a folder per chat (``projects/ssh-<id>/``) rather than the one the project's
+    slug names - so such a session is found once in its distro and once more on
+    the host.  The copy in the folder Claude Code's own slug scheme names for
+    the session's cwd is the original and wins; between two copies placed alike
+    the one from the root scanned first is kept.  The original order is
+    preserved.
+
+    Parameters
+    ----------
+    found : list of (dict, bool)
+        Each history record with whether it lies in its own project folder
+        (see :func:`_list_root_history`).
+    """
+    chosen: dict[str, tuple[dict[str, Any], bool]] = {}
+    for record, in_own_folder in found:
+        current = chosen.get(record['session_id'])
+        if current is None or (in_own_folder and not current[1]):
+            chosen[record['session_id']] = (record, in_own_folder)
+
+    return [record for record, _ in found if chosen[record['session_id']][0] is record]
+
+
+def _list_root_history(root: SessionRoot, live_ids: set[str], window: float | None) -> list[tuple[dict[str, Any], bool]]:
+    """Return history records for past session transcripts under one root, each with whether it lies in its own project folder.
 
     The working directory that groups a session under its project is resolved
     **per project folder**, not per transcript: a minimal or aborted transcript
@@ -122,6 +150,13 @@ def _list_root_history(root: SessionRoot, live_ids: set[str], window: float | No
         entry (an in-place metadata rewrite can even bump it without appending
         a turn), so it can admit a session the exact filter then drops, but it
         can never hide one that belongs in the window.
+
+    Returns
+    -------
+    list of (dict, bool)
+        Each record with True when its folder is the one ``cwd_to_slug`` names
+        for the record's cwd - the original, as opposed to a copy another tool
+        keeps elsewhere (see :func:`_one_record_per_session`).
     """
     projects_root = projects_dir(root)
     if not projects_root.is_dir():
@@ -143,7 +178,7 @@ def _list_root_history(root: SessionRoot, live_ids: set[str], window: float | No
     except OSError:
         return []
 
-    records: list[dict[str, Any]] = []
+    records: list[tuple[dict[str, Any], bool]] = []
     for project_dir in project_dirs:
         try:
             transcripts = sorted(project_dir.glob('*.jsonl'))
@@ -176,7 +211,7 @@ def _list_root_history(root: SessionRoot, live_ids: set[str], window: float | No
             if not record['cwd']:
                 record['cwd'] = canonical_cwd
             if _within_window(record['age_seconds'], window):
-                records.append(record)
+                records.append((record, cwd_to_slug(record['cwd']).lower() == project_dir.name.lower()))
 
     return records
 

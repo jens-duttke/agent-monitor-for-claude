@@ -421,5 +421,75 @@ class MultiRootHistoryTest(HistoryEnvTest):
         self.assertEqual(by_id['cccccccc-1111-2222-3333-444444444444']['cwd'], slug)
 
 
+class MirroredTranscriptTest(HistoryEnvTest):
+    """A session whose transcript exists under two roots is listed once.
+
+    Claude Desktop keeps a copy of the chats it runs inside WSL on the host,
+    under ``projects/ssh-<id>/`` rather than the project's slug folder, so the
+    host root and the distro root both find the same session id.
+    """
+
+    _ID = 'aaaaaaaa-1111-2222-3333-444444444444'
+    _CWD = '/home/dev/proj'
+
+    def setUp(self) -> None:
+        super().setUp()
+        base = tempfile.TemporaryDirectory()
+        self.addCleanup(base.cleanup)
+        self.wsl_root = SessionRoot(
+            origin='wsl:U', label='U', config_dir=Path(base.name) / 'cfg',
+            proc_dir=Path(base.name) / 'proc', claude_temp_dir=Path(base.name) / 'tmp',
+        )
+
+    def _write(self, root: SessionRoot, folder: str) -> None:
+        project = root.config_dir / 'projects' / folder
+        project.mkdir(parents=True, exist_ok=True)
+        (project / f'{self._ID}.jsonl').write_text(
+            json.dumps({'type': 'user', 'cwd': self._CWD, 'timestamp': '2026-07-01T10:00:00Z', 'message': {'content': 'x'}}) + '\n',
+            encoding='utf-8')
+
+    def _list(self) -> list[dict]:
+        with mock.patch.object(history, 'session_roots', return_value=[self.local_root, self.wsl_root]), \
+             mock.patch.object(history, 'live_or_recent_ids', return_value=set()):
+            return history.list_history()
+
+    def test_the_original_wins_over_a_copy_in_a_foreign_folder(self) -> None:
+        # The host copy comes from the root scanned first, so only its folder can make it lose.
+        self._write(self.local_root, 'ssh-0123456789abcdef')
+        self._write(self.wsl_root, '-home-dev-proj')
+
+        records = self._list()
+
+        self.assertEqual([record['origin'] for record in records], ['wsl:U'])
+
+    def test_a_copy_alone_is_still_listed(self) -> None:
+        # With the distro not running, the host copy is the only one there is.
+        self._write(self.local_root, 'ssh-0123456789abcdef')
+
+        records = self._list()
+
+        self.assertEqual([record['origin'] for record in records], ['local'])
+
+    def test_between_two_copies_placed_alike_the_first_root_wins(self) -> None:
+        self._write(self.local_root, '-home-dev-proj')
+        self._write(self.wsl_root, '-home-dev-proj')
+
+        records = self._list()
+
+        self.assertEqual([record['origin'] for record in records], ['local'])
+
+    def test_distinct_sessions_are_all_kept(self) -> None:
+        self._write(self.wsl_root, '-home-dev-proj')
+        other = self.local_root.config_dir / 'projects' / 'ssh-0123456789abcdef'
+        other.mkdir(parents=True)
+        (other / 'bbbbbbbb-1111-2222-3333-444444444444.jsonl').write_text(
+            json.dumps({'type': 'user', 'cwd': self._CWD, 'timestamp': '2026-07-01T10:00:00Z', 'message': {'content': 'x'}}) + '\n',
+            encoding='utf-8')
+
+        ids = sorted(record['session_id'] for record in self._list())
+
+        self.assertEqual(ids, ['aaaaaaaa-1111-2222-3333-444444444444', 'bbbbbbbb-1111-2222-3333-444444444444'])
+
+
 if __name__ == '__main__':
     unittest.main()
