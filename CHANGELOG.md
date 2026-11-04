@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-04
+
 ### Added
 - A self-paced `/loop` waiting for its next run shows *Wakes in 4m* under *Background* instead of *Idle*, since it continues on its own.
 - While Claude Code retries a failed request, the status reads *Retrying (2/10)*, or *Offline - retrying (2/10)* when the network is down, with Claude Code's own summary of the failure on hover.
@@ -242,7 +244,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 13 languages, auto-detected from the system locale.
 - Optional settings file to tune the poll interval and window size.
 
-[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.8.0...v0.9.0
