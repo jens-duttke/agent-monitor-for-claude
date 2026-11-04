@@ -10,16 +10,20 @@ error (and whether that error is a usage/session limit), timestamps, the model
 name, the Claude Code version that wrote each turn, aggregated token-usage
 numbers, the session title (the ``aiTitle`` Claude Code generates for its own
 session list, or the ``customTitle`` the user set by renaming the session -
-display metadata, not conversation content), and the worktree the session
+display metadata, not conversation content), the worktree the session
 switched into (directory paths and a branch name from Claude Code's own
-``worktree-state`` entry).
+``worktree-state`` entry), and the control values that refine a status label:
+a usage limit's type and reset time, a retried request's attempt counters, a
+``/loop`` wakeup's delay, the two flags of Claude Desktop's turn-ending call,
+and the one-word label of what opened a turn.
 
 This module is the privacy boundary of the application.  It must never read,
 return, store, or expose conversation content - message ``text``, ``thinking``
 blocks, tool ``input``, or tool-result ``content`` are never accessed.  The
 narrow exceptions yield only metadata, never the surrounding content: the
-sanctioned title read above, and matching the fixed interrupt-marker string to
-a boolean entry kind.  A dedicated test enforces this.
+sanctioned title read above, matching the fixed interrupt-marker string to a
+boolean entry kind, and the first line of the CLI's own wording of an API error
+or of a request it is retrying.  A dedicated test enforces this.
 """
 from __future__ import annotations
 
@@ -37,7 +41,8 @@ from .background_scans import drop_pending, queue_scan, wait_for_readers
 from .paths import SessionRoot, transcript_path
 
 __all__ = [
-    'TranscriptState', 'HistoryState', 'WorktreeState', 'state_for', 'history_state_for', 'worktree_for', 'prune_scan_cache',
+    'ApiRetry', 'TranscriptState', 'HistoryState', 'WorktreeState', 'state_for', 'history_state_for', 'worktree_for',
+    'prune_scan_cache',
 ]
 
 # Bytes read from the end of the transcript.  Large enough to contain the last
@@ -120,6 +125,29 @@ _INTERRUPT_MARKER = '[Request interrupted by user'
 # Matched only to that boolean entry kind; the output itself is never read.
 _LOCAL_COMMAND_OUTPUT_MARKERS = ('<local-command-stdout>', '<local-command-stderr>')
 
+# The tool a self-paced ``/loop`` schedules its next run with.  Its call carries
+# the delay as a number (and ``stop`` to end the loop), which is all that is read:
+# a turn that ended after scheduling one is not waiting for you - the session
+# wakes itself.  The prompt and reason it carries stay unread.
+_WAKEUP_TOOL = 'ScheduleWakeup'
+
+# Claude Desktop's own turn-ending tool.  Its call says whether the agent ends
+# the turn with a question for you (``ask``) or cannot continue without your
+# decision (``blocked``).  Only those two are read, and only as flags - the
+# recap, the question and the suggested actions are text and stay unread.
+_WRAP_UP_TOOL = 'mcp__ccd_turn__wrap_up'
+
+# What opened the newest turn, from the prompt entry's own ``origin.kind`` (or
+# the older ``turnOrigin`` spelling): typed by you, a background task that
+# finished, or a message from another session.  Mapped through this table so
+# an unknown value reads as nothing instead of reaching the UI verbatim.
+_TURN_ORIGINS = {
+    'human': 'human',
+    'task-notification': 'task-notification',
+    'task_notification': 'task-notification',
+    'peer': 'peer',
+}
+
 # Entry types that carry a conversational turn, and therefore the only ones
 # whose timestamp counts as session activity - the same types ``_parse`` reads
 # ``last_entry_kind`` from, so age and status are driven by the same entries.
@@ -179,6 +207,10 @@ _TITLE_MAX_CHARS = 80
 # writes (the 529 overload sentence, about 150 characters); anything longer - a
 # raw JSON body from an edge proxy, say - is clipped rather than shown in full.
 _ERROR_DETAIL_MAX_CHARS = 160
+
+# The same cap for the error line of a request the CLI is still retrying - its
+# own short summary of the failure ("Connection dropped (ECONNRESET)").
+_RETRY_DETAIL_MAX_CHARS = _ERROR_DETAIL_MAX_CHARS
 
 # Wrapper blocks Claude Code injects around prompts; stripped before using a
 # prompt as the fallback title, mirroring what Claude Code's own UI displays.
@@ -361,6 +393,20 @@ def prune_scan_cache(active: Iterable[tuple[SessionRoot, str, str]]) -> None:
 
 
 @dataclass(frozen=True)
+class ApiRetry:
+    """A failed API request the CLI is retrying, from its trailing ``system``/``api_error`` entry."""
+
+    attempt: int
+    max_attempts: int
+    # Claude Code's own verdict that the machine is offline, as opposed to one
+    # dropped connection or a server-side failure.
+    offline: bool = False
+    # The CLI's one-line summary of the failure, clipped - CLI text, not
+    # conversation, shown in the status tooltip alone.
+    detail: str | None = None
+
+
+@dataclass(frozen=True)
 class TranscriptState:
     """Control-metadata extracted from a session transcript."""
 
@@ -388,6 +434,23 @@ class TranscriptState:
     # is CLI text, not conversation, and it is shown verbatim in the status
     # tooltip alone - never parsed, and never for any other entry type.
     api_error_detail: str | None = None
+    # A usage limit's own reset: which limit was hit (``five_hour``,
+    # ``seven_day``, ...) and when it lifts, in POSIX seconds - both read from the
+    # trailing error entry's ``quotaLimits``, both absent for any other error.
+    rate_limit_type: str | None = None
+    rate_limit_resets_at: float | None = None
+    # Set while the newest entry is a failed request the CLI is retrying.
+    api_retry: ApiRetry | None = None
+    # When a scheduled ``/loop`` run is due, in POSIX seconds: the newest
+    # wakeup call's time plus its delay.  Kept even once past: the snapshot
+    # turns it into seconds from now, and a past one simply no longer applies.
+    wakeup_at: float | None = None
+    # How the newest turn ended in Claude Desktop's wrap-up call: ``blocked``
+    # (cannot go on without your decision), ``ask`` (ends on a question for
+    # you), or None.  Cleared by any later tool call or prompt.
+    turn_end_signal: str | None = None
+    # What opened the newest turn (see _TURN_ORIGINS), or None when unknown.
+    turn_origin: str | None = None
     age_seconds: float | None = None
     title: str | None = None
     model: str | None = None
@@ -692,6 +755,12 @@ def _parse(lines: list[str]) -> TranscriptState:
     api_error_detail: str | None = None
     model: str | None = None
     cli_version: str | None = None
+    rate_limit_type: str | None = None
+    rate_limit_resets_at: float | None = None
+    api_retry: ApiRetry | None = None
+    wakeup_at: float | None = None
+    turn_end_signal: str | None = None
+    turn_origin: str | None = None
     any_parsed: bool = False
 
     for line in lines:
@@ -708,15 +777,24 @@ def _parse(lines: list[str]) -> TranscriptState:
         if entry.get('isSidechain') is True:
             continue
 
+        entry_type = entry.get('type')
+        message = entry.get('message')
+        content = message.get('content') if isinstance(message, dict) else None
+
+        # A prompt opens a new turn, and whatever the previous turn ended on is
+        # over with it.  Read ahead of the isMeta skip below: Claude Code injects
+        # a peer's message and a loop's wakeup as meta entries, and both open a
+        # turn all the same.
+        if entry_type == 'user' and not _carries_tool_result(content):
+            turn_origin = _turn_origin(entry)
+            turn_end_signal = None
+
         # Notices Claude Code injects into the conversation (the local-command
         # "DO NOT respond" caveat, continuation summaries, ...) carry isMeta.
         # They are not conversational turns, so - like sidechain entries - they
         # must never be read as a prompt the model owes a response to.
         if entry.get('isMeta') is True:
             continue
-
-        # Read up front: the timestamp below counts only for a conversational type.
-        entry_type = entry.get('type')
 
         # Claude Code also appends bookkeeping entries - queue operations,
         # file-history snapshots and deltas, the generated title - which say
@@ -736,9 +814,6 @@ def _parse(lines: list[str]) -> TranscriptState:
         if isinstance(entry_version, str) and entry_version:
             cli_version = entry_version
 
-        message = entry.get('message')
-        content = message.get('content') if isinstance(message, dict) else None
-
         if entry_type == 'assistant' and isinstance(message, dict):
             if entry.get('isApiErrorMessage') is True:
                 # A locally-generated error turn (a usage/session limit, an
@@ -754,14 +829,20 @@ def _parse(lines: list[str]) -> TranscriptState:
                 api_error_kind = _api_error_kind(entry)
                 api_error_status = _api_error_status(entry)
                 api_error_detail = _api_error_detail(content)
+                rate_limit_type, rate_limit_resets_at = _rate_limit_reset(entry)
+                # The retries ran out: the request is no longer being retried.
+                api_retry = None
             else:
                 last_entry_kind = 'assistant'
                 # A real turn superseded any earlier API error, so the error
                 # fields (set only in the api_error branch) must not linger -
-                # they describe the trailing entry alone.
+                # they describe the trailing entry alone.  The same holds for a
+                # retry: the request went through.
                 api_error_kind = None
                 api_error_status = None
                 api_error_detail = None
+                rate_limit_type = rate_limit_resets_at = None
+                api_retry = None
                 last_stop_reason = message.get('stop_reason')
                 entry_model = message.get('model')
                 # Keep the last *real* model for the column; the synthetic sentinel
@@ -773,6 +854,11 @@ def _parse(lines: list[str]) -> TranscriptState:
                         if isinstance(block, dict) and block.get('type') == 'tool_use':
                             last_tool_id = block.get('id')
                             last_tool_name = block.get('name')
+                            # Only the wrap-up call says how the turn ended, so any
+                            # other call after it means the turn went on.
+                            turn_end_signal = _wrap_up_signal(block)
+                            if last_tool_name == _WAKEUP_TOOL:
+                                wakeup_at = _wakeup_at(block, timestamp)
 
         elif entry_type == 'user':
             # A user entry is a fresh prompt, a tool_result answering a request,
@@ -792,6 +878,8 @@ def _parse(lines: list[str]) -> TranscriptState:
             api_error_kind = None
             api_error_status = None
             api_error_detail = None
+            rate_limit_type = rate_limit_resets_at = None
+            api_retry = None
             if isinstance(content, list):
                 for block in content:
                     if isinstance(block, dict) and block.get('type') == 'tool_result':
@@ -818,6 +906,14 @@ def _parse(lines: list[str]) -> TranscriptState:
             api_error_kind = None
             api_error_status = None
             api_error_detail = None
+            rate_limit_type = rate_limit_resets_at = None
+            api_retry = None
+
+        elif entry_type == 'system' and entry.get('subtype') == 'api_error':
+            # A request failed and the CLI is retrying it.  The turn is still
+            # running - nothing about the entry kind changes - but the session is
+            # waiting on the network rather than thinking, which the label can say.
+            api_retry = _api_retry(entry)
 
     pending_tool = last_tool_id is not None and last_tool_id not in resolved_tool_ids
 
@@ -832,6 +928,12 @@ def _parse(lines: list[str]) -> TranscriptState:
         api_error_kind=api_error_kind,
         api_error_status=api_error_status,
         api_error_detail=api_error_detail,
+        rate_limit_type=rate_limit_type,
+        rate_limit_resets_at=rate_limit_resets_at,
+        api_retry=api_retry,
+        wakeup_at=wakeup_at,
+        turn_end_signal=turn_end_signal,
+        turn_origin=turn_origin,
         model=model,
         cli_version=cli_version,
     )
@@ -909,6 +1011,111 @@ def _clip(text: str, limit: int) -> str:
         return text
 
     return text[:limit - 1] + '…'
+
+
+def _carries_tool_result(content: object) -> bool:
+    """Return True if a user entry's content answers a tool call rather than opening a turn."""
+    if not isinstance(content, list):
+        return False
+
+    return any(isinstance(block, dict) and block.get('type') == 'tool_result' for block in content)
+
+
+def _turn_origin(entry: dict) -> str | None:
+    """Return what opened the turn a prompt entry starts, or None when the entry does not say.
+
+    Only the entry's own origin label is read - ``origin.kind``, or the older
+    ``turnOrigin`` - never the ``origin`` payload around it, which for a message
+    from another session carries that message's text.
+    """
+    origin = entry.get('origin')
+    kind = origin.get('kind') if isinstance(origin, dict) else None
+    if not isinstance(kind, str):
+        kind = entry.get('turnOrigin')
+
+    return _TURN_ORIGINS.get(kind) if isinstance(kind, str) else None
+
+
+def _wrap_up_signal(block: dict) -> str | None:
+    """Return how a Claude Desktop wrap-up call ends the turn (``blocked``/``ask``), or None.
+
+    Any other tool call returns None, so a later call clears an earlier signal.
+    Both inputs are read as flags only: whether ``blocked`` is set, and whether
+    an ``ask`` was given at all - never what it asks.
+    """
+    if block.get('name') != _WRAP_UP_TOOL:
+        return None
+
+    tool_input = block.get('input')
+    if not isinstance(tool_input, dict):
+        return None
+    if tool_input.get('blocked') is True:
+        return 'blocked'
+    ask = tool_input.get('ask')
+    if isinstance(ask, str) and ask.strip():
+        return 'ask'
+
+    return None
+
+
+def _wakeup_at(block: dict, timestamp: object) -> float | None:
+    """Return when a ``ScheduleWakeup`` call is due, in POSIX seconds, or None.
+
+    A call that stops the loop, or one whose delay or timestamp does not read
+    as a number, schedules nothing.  Only ``stop`` and ``delaySeconds`` are read.
+    """
+    tool_input = block.get('input')
+    if not isinstance(tool_input, dict) or tool_input.get('stop') is True:
+        return None
+
+    delay = tool_input.get('delaySeconds')
+    scheduled = _timestamp_epoch(timestamp) if isinstance(timestamp, str) else None
+    if isinstance(delay, bool) or not isinstance(delay, (int, float)) or delay <= 0 or scheduled is None:
+        return None
+
+    return scheduled + float(delay)
+
+
+def _api_retry(entry: dict) -> ApiRetry | None:
+    """Return the retry a ``system``/``api_error`` entry records, or None if it does not read as one.
+
+    The attempt counters and the offline flag are structural; the one text read
+    is the CLI's own short ``formatted`` summary of the failure, first line only
+    and clipped - the same kind of line as ``_api_error_detail``.
+    """
+    attempt = entry.get('retryAttempt')
+    max_attempts = entry.get('maxRetries')
+    for value in (attempt, max_attempts):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            return None
+
+    error = entry.get('error')
+    error = error if isinstance(error, dict) else {}
+    formatted = error.get('formatted')
+    detail = None
+    if isinstance(formatted, str):
+        lines = [line.strip() for line in formatted.splitlines() if line.strip()]
+        detail = _clip(lines[0], _RETRY_DETAIL_MAX_CHARS) if lines else None
+
+    return ApiRetry(attempt=attempt, max_attempts=max_attempts, offline=error.get('isNetworkDown') is True, detail=detail)
+
+
+def _rate_limit_reset(entry: dict) -> tuple[str | None, float | None]:
+    """Return which usage limit an API-error entry hit and when it resets, from its ``quotaLimits``.
+
+    Either value degrades to None on its own: a limit with no readable reset
+    still names itself, and a reset with no limit type is still a reset.
+    """
+    limits = entry.get('quotaLimits')
+    if not isinstance(limits, dict):
+        return None, None
+
+    limit_type = limits.get('rateLimitType')
+    resets_at = limits.get('resetsAt')
+    if isinstance(resets_at, bool) or not isinstance(resets_at, (int, float)) or resets_at <= 0:
+        resets_at = None
+
+    return (limit_type if isinstance(limit_type, str) and limit_type else None), (float(resets_at) if resets_at is not None else None)
 
 
 def _scan_appended(path: Path) -> _ScanResult:

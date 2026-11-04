@@ -101,7 +101,8 @@ def _build_session_record(
         return None
 
     subagents = count_subagents(root, record['session_id'], record['cwd'])
-    process_age = _process_age(record['started_at'])
+    process_age = _seconds_since_ms(record['started_at'])
+    api_retry = transcript_state.api_retry
 
     # Subagents run in-process, so one cannot outlive its session: a "running"
     # agent under a dead process is a phantom the recent window has yet to
@@ -124,6 +125,7 @@ def _build_session_record(
         'job_id': record.get('job_id'),
         'remote_control': record['remote_control'],
         'native_status': record['native_status'],
+        'native_status_age_seconds': _seconds_since_ms(record.get('native_status_since')),
         'waiting_for': record['waiting_for'],
         'origin': record['origin'],
         'origin_label': record['origin_label'],
@@ -138,6 +140,15 @@ def _build_session_record(
         'api_error_kind': transcript_state.api_error_kind,
         'api_error_status': transcript_state.api_error_status,
         'api_error_detail': transcript_state.api_error_detail,
+        'rate_limit_type': transcript_state.rate_limit_type,
+        'rate_limit_resets_in_seconds': _seconds_until(transcript_state.rate_limit_resets_at),
+        'api_retry_attempt': api_retry.attempt if api_retry else None,
+        'api_retry_max': api_retry.max_attempts if api_retry else None,
+        'api_retry_offline': bool(api_retry and api_retry.offline),
+        'api_retry_detail': api_retry.detail if api_retry else None,
+        'wakeup_in_seconds': _seconds_until(transcript_state.wakeup_at),
+        'turn_end_signal': transcript_state.turn_end_signal,
+        'turn_origin': transcript_state.turn_origin,
         'pending_tool': transcript_state.pending_tool,
         'last_tool_name': transcript_state.last_tool_name,
         'permission_mode': transcript_state.permission_mode,
@@ -359,7 +370,7 @@ def _display_age(transcript_age: float | None, subagent_age: float | None, proce
         Seconds since the most recently written running subagent transcript.
     process_age : float or None
         Seconds since the registry recorded the process start (see
-        ``_process_age``), used only when neither age is known.
+        ``_seconds_since_ms``), used only when neither age is known.
     """
     ages = [age for age in (transcript_age, subagent_age) if age is not None]
     if ages:
@@ -368,19 +379,33 @@ def _display_age(transcript_age: float | None, subagent_age: float | None, proce
     return process_age
 
 
-def _process_age(started_at_ms: float | None) -> float | None:
-    """Seconds since the registry recorded the session's process start, or None without a ``startedAt``.
+def _seconds_since_ms(epoch_ms: float | None) -> float | None:
+    """Seconds since a registry timestamp in epoch milliseconds, or None without one.
 
-    Shipped raw as ``process_age_seconds``: the UI compares it with the
-    transcript age to tell a turn this process wrote from one an earlier
-    process left behind in the same session (a reopened session), and it is
-    the fallback age of a never-used session.  Clamped at 0 against clock
-    skew, like every other age here.
+    The process start (``startedAt``) is shipped as ``process_age_seconds``: the
+    UI compares it with the transcript age to tell a turn this process wrote
+    from one an earlier process left behind in the same session (a reopened
+    session), and it is the fallback age of a never-used session.  The last
+    native status change (``statusUpdatedAt``) says how long the session has
+    been in that status.  Clamped at 0 against clock skew, like every other
+    age here.
     """
-    if started_at_ms is None:
+    if epoch_ms is None:
         return None
 
-    return max(0.0, time.time() - started_at_ms / 1000)
+    return max(0.0, time.time() - epoch_ms / 1000)
+
+
+def _seconds_until(epoch_seconds: float | None) -> float | None:
+    """Seconds from now until a transcript deadline in POSIX seconds, negative once it has passed, or None.
+
+    Not clamped: whether a scheduled wakeup or a usage limit's reset still lies
+    ahead is exactly what the UI reads from the sign.
+    """
+    if epoch_seconds is None:
+        return None
+
+    return epoch_seconds - time.time()
 
 
 def _older_than_process(age: float | None, process_age: float | None) -> bool:

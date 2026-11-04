@@ -806,6 +806,50 @@ class PrivacyTest(TranscriptEnvTest):
         self.assertIsNone(state.api_error_detail)
         self.assertNotIn('SECRET_TEXT', json.dumps(asdict(state)))
 
+    def test_the_turn_refinements_read_flags_never_text(self) -> None:
+        # How a turn ended, when a loop wakes, what opened the turn: each is read
+        # from a control field beside text that must stay unread - the wrap-up's
+        # recap, question and actions, the wakeup's prompt and reason, and the
+        # body and sender name of a message from another session.
+        self._write_transcript(_SESSION_ID, _CWD, [
+            json.dumps({'type': 'user', 'timestamp': '2026-07-11T13:19:00Z', 'isMeta': True,
+                        'origin': {'kind': 'peer', 'from': 'SECRET_INPUT', 'name': 'SECRET_INPUT', 'body': 'SECRET_TEXT'},
+                        'message': {'content': 'SECRET_TEXT'}}),
+            json.dumps({'type': 'assistant', 'timestamp': '2026-07-11T13:19:05Z',
+                        'message': {'stop_reason': 'tool_use', 'model': 'claude-opus-5-5', 'content': [
+                            {'type': 'tool_use', 'id': 't1', 'name': 'ScheduleWakeup',
+                             'input': {'delaySeconds': 300, 'reason': 'SECRET_INPUT', 'prompt': 'SECRET_INPUT'}},
+                            {'type': 'tool_use', 'id': 't2', 'name': 'mcp__ccd_turn__wrap_up',
+                             'input': {'recap': 'SECRET_INPUT', 'ask': 'SECRET_INPUT', 'actions': ['SECRET_INPUT'], 'blocked': True}},
+                        ]}}),
+        ])
+        state = state_for(local_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual(state.turn_origin, 'peer')
+        self.assertEqual(state.turn_end_signal, 'blocked')
+        self.assertIsNotNone(state.wakeup_at)
+        serialized = json.dumps(asdict(state))
+        for secret in _SECRETS:
+            self.assertNotIn(secret, serialized)
+
+    def test_only_the_retry_summary_first_line_is_read(self) -> None:
+        # A retried request's one sanctioned line is the CLI's own short summary,
+        # first line only: a second line and the raw error message stay unread.
+        self._write_transcript(_SESSION_ID, _CWD, [
+            # The first prompt is the sanctioned title, so it carries no marker.
+            json.dumps({'type': 'user', 'timestamp': '2026-07-11T13:19:00Z', 'message': {'content': 'Benign question'}}),
+            json.dumps({'type': 'system', 'subtype': 'api_error', 'timestamp': '2026-07-11T13:19:05Z',
+                        'retryAttempt': 1, 'maxRetries': 10,
+                        'error': {'formatted': 'Connection dropped (ECONNRESET)\nSECRET_RESULT', 'message': 'SECRET_INPUT',
+                                  'connection': {'message': 'SECRET_INPUT'}}}),
+        ])
+        state = state_for(local_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual(state.api_retry.detail, 'Connection dropped (ECONNRESET)')
+        serialized = json.dumps(asdict(state))
+        for secret in _SECRETS:
+            self.assertNotIn(secret, serialized)
+
     def test_only_first_prompt_is_read_never_later_messages(self) -> None:
         # The first prompt is the sanctioned display title; every later user
         # message must stay unread.

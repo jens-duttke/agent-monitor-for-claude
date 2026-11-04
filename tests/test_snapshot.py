@@ -146,6 +146,29 @@ class RawSnapshotTest(_RegistryFixture):
         self.assertIsNone(records['a']['process_age_seconds'])
         self.assertTrue(80 <= records['b']['process_age_seconds'] <= 100)
 
+    def test_record_carries_the_status_duration_and_a_deadline_relative_to_now(self) -> None:
+        # Both reach the UI as seconds, like every other age: how long the
+        # registry has held its status, and how far ahead a loop's wakeup lies.
+        now = time.time()
+        (Path(self._temp.name) / 'sessions' / 'w.json').write_text(json.dumps({
+            'pid': os.getpid(), 'sessionId': 'w', 'cwd': 'd:\\x', 'status': 'idle', 'statusUpdatedAt': (now - 90) * 1000,
+        }), encoding='utf-8')
+        scheduled = datetime.fromtimestamp(now - 30, timezone.utc).isoformat().replace('+00:00', 'Z')
+        path = transcript_path(local_root(), 'w', 'd:\\x')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('\n'.join([
+            json.dumps({'type': 'assistant', 'timestamp': scheduled, 'message': {'stop_reason': 'tool_use', 'content': [
+                {'type': 'tool_use', 'id': 't1', 'name': 'ScheduleWakeup', 'input': {'delaySeconds': 300}}]}}),
+            json.dumps({'type': 'user', 'timestamp': scheduled, 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't1'}]}}),
+        ]), encoding='utf-8')
+
+        session = next(s for s in build_snapshot()['sessions'] if s['session_id'] == 'w')
+
+        self.assertTrue(80 <= session['native_status_age_seconds'] <= 100)
+        self.assertTrue(260 <= session['wakeup_in_seconds'] <= 271)
+        self.assertIsNone(session['rate_limit_resets_in_seconds'])
+        self.assertIsNone(session['api_retry_attempt'])
+
     def test_record_carries_the_api_error_fields(self) -> None:
         # All three fields an errored session's status is built from have to reach
         # the record. The parser and the UI are each tested on their own, so a

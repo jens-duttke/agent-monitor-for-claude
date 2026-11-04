@@ -197,7 +197,11 @@ function classify(raw) {
         return raw.pending_blocking ? 'awaiting_permission' : 'working';
     }
     if (raw.last_entry_kind === 'assistant' && raw.last_stop_reason === 'end_turn') {
-        return 'awaiting_input';
+        // Claude Desktop ends a turn through its wrap-up call, which says when
+        // the agent cannot go on without your decision. That is not the calm
+        // "finished, nothing required" of an ordinary end of turn but a block on
+        // you, like an open dialog.
+        return raw.turn_end_blocked ? 'awaiting_permission' : 'awaiting_input';
     }
     // A local command (a slash or `!` command) ran as the newest turn. It
     // executes outside the model - Claude Code writes a caveat telling the model
@@ -818,22 +822,48 @@ function deriveStatus(raw) {
         has_activity: raw.has_activity,
         last_entry_kind: raw.last_entry_kind,
         turn_predates_process: turnPredatesProcess(raw),
+        turn_end_blocked: raw.turn_end_signal === 'blocked',
     });
 
     if (raw.alive) {
         status = refineWithNative(status, raw.native_status, raw.waiting_for);
-        // A stopped turn (see turnStopped) tore down its in-process subagents and
-        // workflows, so a still-"running" count or a still-"active" workflow is a
-        // phantom until the recent window clears it - it must not promote the
-        // session to "processing". A detached OS child process (a build or
-        // server) can outlive the stop, so it counts.
-        const stopped = turnStopped(raw);
-        const subagentsRunning = stopped ? 0 : (raw.subagents_running || 0);
-        const workflowRunning = !stopped && activeWorkflows(raw.workflows).length > 0;
-        const backgroundWork = subagentsRunning > 0 || childRunning(raw) || workflowRunning;
-        status = refineWithBackgroundWork(status, backgroundWork);
+        status = refineWithBackgroundWork(status, backgroundWorkRunning(raw));
+        status = refineWithWakeup(status, wakeupPending(raw));
     }
     return status;
+}
+
+// Whether work the session started is still running beside a finished turn. A
+// stopped turn (see turnStopped) tore down its in-process subagents and
+// workflows, so a still-"running" count or a still-"active" workflow is a
+// phantom until the recent window clears it - it must not promote the session to
+// "processing". A detached OS child process (a build or server) can outlive the
+// stop, so it counts.
+function backgroundWorkRunning(raw) {
+    const stopped = turnStopped(raw);
+    const subagentsRunning = stopped ? 0 : (raw.subagents_running || 0);
+    const workflowRunning = !stopped && activeWorkflows(raw.workflows).length > 0;
+
+    return subagentsRunning > 0 || childRunning(raw) || workflowRunning;
+}
+
+// Whether a self-paced /loop has scheduled its next run and it is still ahead.
+// The wakeup lives in the memory of the process that scheduled it, so a session
+// reopened since has none; and a turn that ended on a question or a block is
+// waiting for you whatever the loop planned. The deadline is the one Claude Code
+// itself wrote (the call's time plus its delay), not elapsed silence, so a
+// thinking session is never touched: its turn has not ended.
+function wakeupPending(raw) {
+    const due = raw.wakeup_in_seconds == null ? NaN : Number(raw.wakeup_in_seconds);
+
+    return Boolean(raw.alive) && !turnPredatesProcess(raw) && !raw.turn_end_signal && Number.isFinite(due) && due > 0;
+}
+
+// A finished turn whose loop will wake the session on its own is not your turn:
+// the agent goes on without you, which is what "processing" says. Only the calm
+// finished state is promoted - an interrupt means you stopped the loop.
+function refineWithWakeup(status, pending) {
+    return pending && status === 'awaiting_input' ? 'processing' : status;
 }
 
 /* --- pending-tool blocking + mode (ported from formatting.py) --- */
@@ -1104,7 +1134,7 @@ function apiErrorLabel(raw, labels) {
         || (status !== null && status >= 500 ? 'error_server' : null);
 
     if (reasonKey === 'status_usage_limit') {
-        return labels.status_usage_limit || null;
+        return usageLimitLabel(raw, labels);
     }
 
     const reason = reasonKey ? labels[reasonKey] : (status !== null ? fmt(labels.error_http, { status: status }) : '');
@@ -1115,17 +1145,55 @@ function apiErrorLabel(raw, labels) {
     return fmt(labels.status_errored_reason, { reason: reason }) || null;
 }
 
-// The dot's hover text: the translated status label, with the error entry's own
-// line under it when one was read. The two are joined into one string by a
-// newline, which the tooltip renders as a line break (white-space: pre-line);
-// the row and the panel header keep the label alone, both being single-line.
+// Which usage limit the error entry's quotaLimits names. A `Map` because the
+// type is untrusted on-disk data; a limit it does not know reads as the generic
+// one, and the per-model weekly limits are weekly limits all the same.
+const RATE_LIMIT_LABEL_KEYS = new Map([
+    ['five_hour', 'limit_five_hour'],
+    ['seven_day', 'limit_seven_day'],
+    ['seven_day_opus', 'limit_seven_day'],
+    ['seven_day_sonnet', 'limit_seven_day'],
+]);
+
+// A usage limit that says when it resets is worth more than "Usage limit
+// reached": the reset is when you can go on, and once it has passed the session
+// is no longer waiting for anything but you. The reset is the time Claude Code
+// itself wrote into the error entry, counted down against the clock - a
+// deadline, not elapsed silence. Without a readable reset the plain label stays.
+function usageLimitLabel(raw, labels) {
+    const resetsIn = raw.rate_limit_resets_in_seconds == null ? NaN : Number(raw.rate_limit_resets_in_seconds);
+    const limit = labels[RATE_LIMIT_LABEL_KEYS.get(raw.rate_limit_type) || 'limit_usage'];
+    if (!Number.isFinite(resetsIn) || !limit) {
+        return labels.status_usage_limit || null;
+    }
+
+    const label = resetsIn > 0
+        ? fmt(labels.status_limit_resets, { limit: limit, time: formatAge(resetsIn, labels) })
+        : fmt(labels.status_limit_over, { limit: limit });
+
+    return label || labels.status_usage_limit || null;
+}
+
+// The dot's hover text: the translated status label, with the detail lines that
+// say more under it - the error entry's own line, how long the session has been
+// in its status, what started the turn. One string joined by newlines, which the
+// tooltip renders as line breaks (white-space: pre-line); the row and the panel
+// header keep the label alone, both being single-line. A single detail may be
+// passed bare.
 function statusTip(label, detail) {
-    const text = typeof detail === 'string' ? detail.trim() : '';
-    if (!text) {
+    const details = Array.isArray(detail) ? detail : [detail];
+    const lines = [];
+    for (const item of details) {
+        const text = typeof item === 'string' ? item.trim() : '';
+        if (text) {
+            lines.push(text);
+        }
+    }
+    if (!lines.length) {
         return label;
     }
 
-    return label ? label + '\n' + text : text;
+    return label ? [label].concat(lines).join('\n') : lines.join('\n');
 }
 
 function attentionLabel(status, pendingToolName, labels, errorLabel) {
@@ -1153,6 +1221,93 @@ function attentionLabel(status, pendingToolName, labels, errorLabel) {
         return errorLabel || statusLabel(status, labels);
     }
     return statusLabel(status, labels);
+}
+
+// A more specific label than the status's own, where the transcript or the
+// registry says more about the state than the status can - or null to keep the
+// plain one. Each refinement speaks only for the status it describes:
+//   - working: a request the CLI is retrying, offline or not;
+//   - processing: a loop asleep until its next run, when nothing else runs -
+//     beside a subagent or a build, "Background" is the truer word;
+//   - awaiting_permission with no tool to name: a wrap-up call that ended the
+//     turn blocked, or the registry's "input needed", which current Claude Code
+//     writes for an open question only (a "permission prompt" stays neutral -
+//     earlier versions wrote it for questions too);
+//   - awaiting_input: a turn that ended on a question for you.
+function refinedStatusLabel(status, raw, labels) {
+    if (status === 'working') {
+        return retryLabel(raw, labels);
+    }
+    if (status === 'processing' && !backgroundWorkRunning(raw) && wakeupPending(raw)) {
+        return fmt(labels.status_sleeping, { time: formatAge(Number(raw.wakeup_in_seconds), labels) }) || null;
+    }
+    if (status === 'awaiting_permission' && !namedPendingTool(raw)) {
+        if (raw.turn_end_signal === 'blocked') {
+            return labels.status_blocked || null;
+        }
+        if (raw.native_status === 'waiting' && raw.waiting_for === 'input needed') {
+            return labels.status_question || null;
+        }
+    }
+    if (status === 'awaiting_input' && raw.turn_end_signal === 'ask') {
+        return labels.status_asks || null;
+    }
+    return null;
+}
+
+// "Retrying (2/10)" for a request the CLI is retrying, or its offline variant
+// when Claude Code itself found the network down. Both counters must read as
+// positive integers, or there is nothing to say beyond "Working".
+function retryLabel(raw, labels) {
+    const attempt = Number(raw.api_retry_attempt);
+    const max = Number(raw.api_retry_max);
+    if (!Number.isInteger(attempt) || !Number.isInteger(max) || attempt <= 0 || max <= 0) {
+        return null;
+    }
+
+    return fmt(raw.api_retry_offline ? labels.status_offline : labels.status_retrying, { attempt: attempt, max: max }) || null;
+}
+
+// Which derived status each native registry status confirms. How long the
+// registry has held its status is shown only where the two agree - a lagging
+// "idle" beside a session the transcript shows working says nothing about how
+// long it has worked.
+const NATIVE_STATUS_MATCH = new Map([
+    ['busy', 'working'],
+    ['idle', 'awaiting_input'],
+    ['waiting', 'awaiting_permission'],
+]);
+
+// What opened the running turn, where that is worth a line: a background task
+// that finished, or a message from another session. A turn you started yourself
+// needs no explanation.
+const TURN_ORIGIN_LABEL_KEYS = new Map([
+    ['task-notification', 'origin_task'],
+    ['peer', 'origin_peer'],
+]);
+
+// The tooltip lines under the status label (see statusTip), in reading order:
+// the CLI's own wording of an error or of a failed request it is retrying, what
+// started the running turn, and how long the session has been in its status.
+function statusDetailLines(status, raw, labels) {
+    const lines = [];
+    if (status === 'errored') {
+        lines.push(raw.api_error_detail);
+    }
+    if (status === 'working') {
+        if (retryLabel(raw, labels)) {
+            lines.push(raw.api_retry_detail);
+        }
+        const originKey = TURN_ORIGIN_LABEL_KEYS.get(raw.turn_origin);
+        if (originKey) {
+            lines.push(labels[originKey]);
+        }
+    }
+    const since = raw.native_status_age_seconds == null ? NaN : Number(raw.native_status_age_seconds);
+    if (NATIVE_STATUS_MATCH.get(raw.native_status) === status && Number.isFinite(since)) {
+        lines.push(fmt(labels.status_for, { time: formatAge(since, labels) }));
+    }
+    return lines;
 }
 
 function formatAge(seconds, labels) {
@@ -1694,15 +1849,17 @@ function buildSession(raw, labels, prices) {
     // gate. A stalled call falls through for the opposite reason: a tool is
     // named, but nothing says it is waiting on a permission rather than simply
     // abandoned, so it must not claim one.
-    const statusText = attentionLabel(status, namedPendingTool(raw), labels, apiErrorLabel(raw, labels));
+    // A refinement the transcript or registry supports (a retry, a sleeping
+    // loop, a blocked wrap-up, an open question) outranks the generic wording.
+    const statusText = refinedStatusLabel(status, raw, labels)
+        || attentionLabel(status, namedPendingTool(raw), labels, apiErrorLabel(raw, labels));
 
     // That one label goes to the dot, the row and the panel header; the dot's
-    // tooltip gets a second line on top of it, the error's own wording, which
-    // carries what the structural fields cannot (when a limit resets, which
-    // invalid-request case applied). Only the tooltip has room for it - the
-    // other two are single-line - and only `errored` gets it at all, since the
-    // line describes a turn that stopped.
-    const statusTipText = statusTip(statusText, status === 'errored' ? raw.api_error_detail : null);
+    // tooltip adds the lines only it has room for - the other two are
+    // single-line. Each line is tied to the status it describes (see
+    // statusDetailLines): the error's own wording only for `errored`, since it
+    // describes a turn that stopped.
+    const statusTipText = statusTip(statusText, statusDetailLines(status, raw, labels));
 
     return {
         session_id: raw.session_id,
@@ -1920,6 +2077,8 @@ const AMC_LOGIC = {
     deriveStatus,
     refineWithNative,
     refineWithBackgroundWork,
+    refineWithWakeup,
+    wakeupPending,
     activeWorkflows,
     needsAttention,
     filterBucket,
@@ -1959,6 +2118,8 @@ const AMC_LOGIC = {
     apiErrorLabel,
     statusTip,
     attentionLabel,
+    refinedStatusLabel,
+    statusDetailLines,
     formatAge,
     formatAgeSince,
     formatModel,

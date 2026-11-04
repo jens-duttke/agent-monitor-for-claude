@@ -129,6 +129,22 @@ class SessionsTest(unittest.TestCase):
         self.assertIsNone(record['proc_start_ticks'])
         self.assertIsNone(record['started_at'])
 
+    def test_parses_when_the_native_status_last_changed(self) -> None:
+        self._write('9.json', {'pid': 9, 'sessionId': 's', 'cwd': 'd:\\x', 'status': 'busy', 'statusUpdatedAt': 1793790939696})
+        self.assertEqual(list_sessions(self.root)[0]['native_status_since'], 1793790939696.0)
+
+    def test_a_missing_or_mistyped_status_change_time_is_none(self) -> None:
+        # An older Claude Code writes no such field; a mistyped one must not
+        # reach the UI as a duration.
+        for index, value in enumerate((None, 'yesterday', True, -5, [1])):
+            with self.subTest(value=value):
+                record = {'pid': 20 + index, 'sessionId': 's', 'cwd': 'd:\\x'}
+                if value is not None:
+                    record['statusUpdatedAt'] = value
+                self._write(f'{20 + index}.json', record)
+                parsed = next(item for item in list_sessions(self.root) if item['pid'] == 20 + index)
+                self.assertIsNone(parsed['native_status_since'])
+
     def test_missing_directory_returns_empty(self) -> None:
         os.environ['CLAUDE_CONFIG_DIR'] = str(Path(self._temp.name) / 'does-not-exist')
         self.assertEqual(list_sessions(local_root()), [])

@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -388,6 +389,160 @@ class ApiErrorFieldsTest(unittest.TestCase):
         self.assertIsNone(state.api_error_status)
         self.assertIsNone(state.api_error_kind)
         self.assertIsNone(state.api_error_detail)
+
+    def test_a_usage_limit_names_its_limit_and_reset(self) -> None:
+        state = _parse(_lines({**_LIMIT_ERROR, 'quotaLimits': {'status': 'rejected', 'resetsAt': 1793613600, 'rateLimitType': 'seven_day'}}))
+        self.assertEqual(state.rate_limit_type, 'seven_day')
+        self.assertEqual(state.rate_limit_resets_at, 1793613600.0)
+
+    def test_a_mistyped_reset_degrades_on_its_own(self) -> None:
+        # The limit still names itself when its reset does not read as a number,
+        # and an error without quotaLimits carries neither.
+        for limits in ({'resetsAt': 'soon', 'rateLimitType': 'five_hour'}, {'resetsAt': True, 'rateLimitType': 'five_hour'}):
+            with self.subTest(limits=limits):
+                state = _parse(_lines({**_LIMIT_ERROR, 'quotaLimits': limits}))
+                self.assertEqual(state.rate_limit_type, 'five_hour')
+                self.assertIsNone(state.rate_limit_resets_at)
+        state = _parse(_lines(_LIMIT_ERROR))
+        self.assertIsNone(state.rate_limit_type)
+        self.assertIsNone(state.rate_limit_resets_at)
+
+    def test_the_reset_is_cleared_by_a_later_turn(self) -> None:
+        state = _parse(_lines(
+            {**_LIMIT_ERROR, 'quotaLimits': {'resetsAt': 1793613600, 'rateLimitType': 'seven_day'}},
+            {'type': 'user', 'timestamp': '2026-07-11T10:01:00Z', 'message': {'content': 'continue'}},
+        ))
+        self.assertIsNone(state.rate_limit_type)
+        self.assertIsNone(state.rate_limit_resets_at)
+
+
+_PROMPT = {'type': 'user', 'timestamp': '2026-07-11T10:00:00Z', 'message': {'content': 'do it'}}
+
+
+def _retry(attempt: int = 2, **error: object) -> dict:
+    return {'type': 'system', 'subtype': 'api_error', 'timestamp': '2026-07-11T10:00:05Z', 'level': 'error',
+            'retryAttempt': attempt, 'maxRetries': 10, 'retryInMs': 1098, 'error': error}
+
+
+def _tool_call(name: str, timestamp: str = '2026-07-11T10:00:10Z', tool_id: str = 't1', **tool_input: object) -> dict:
+    return {'type': 'assistant', 'timestamp': timestamp,
+            'message': {'stop_reason': 'tool_use', 'model': 'claude-opus-5-5',
+                        'content': [{'type': 'tool_use', 'id': tool_id, 'name': name, 'input': tool_input}]}}
+
+
+def _tool_result(tool_id: str = 't1', timestamp: str = '2026-07-11T10:00:11Z') -> dict:
+    return {'type': 'user', 'timestamp': timestamp, 'message': {'content': [{'type': 'tool_result', 'tool_use_id': tool_id}]}}
+
+
+_END_TURN = {'type': 'assistant', 'timestamp': '2026-07-11T10:00:12Z',
+             'message': {'stop_reason': 'end_turn', 'model': 'claude-opus-5-5', 'content': [{'type': 'text', 'text': 'done'}]}}
+
+
+class ApiRetryTest(unittest.TestCase):
+    def test_a_retried_request_is_reported_without_changing_the_kind(self) -> None:
+        # The turn is still running, so the kind stays the prompt's; the retry
+        # only refines what the session is doing meanwhile.
+        state = _parse(_lines(_PROMPT, _retry(2, formatted='Connection dropped (ECONNRESET)', isNetworkDown=False)))
+        self.assertEqual(state.last_entry_kind, 'user_text')
+        self.assertEqual(state.api_retry, tmod.ApiRetry(attempt=2, max_attempts=10, offline=False, detail='Connection dropped (ECONNRESET)'))
+
+    def test_claude_code_own_offline_verdict_is_kept(self) -> None:
+        state = _parse(_lines(_PROMPT, _retry(3, isNetworkDown=True)))
+        self.assertTrue(state.api_retry.offline)
+        self.assertIsNone(state.api_retry.detail)
+
+    def test_the_retry_is_cleared_once_the_request_goes_through_or_gives_up(self) -> None:
+        for later in (_END_TURN, _LIMIT_ERROR, _PROMPT):
+            with self.subTest(later=later['type']):
+                self.assertIsNone(_parse(_lines(_PROMPT, _retry(), later)).api_retry)
+
+    def test_unreadable_counters_record_no_retry(self) -> None:
+        for attempt in (None, 0, '2', True):
+            with self.subTest(attempt=attempt):
+                self.assertIsNone(_parse(_lines(_PROMPT, _retry(attempt))).api_retry)
+
+    def test_a_subagent_retry_is_not_the_main_conversation(self) -> None:
+        self.assertIsNone(_parse(_lines(_PROMPT, {**_retry(), 'isSidechain': True})).api_retry)
+
+
+class ScheduledWakeupTest(unittest.TestCase):
+    _SCHEDULED = datetime(2026, 7, 11, 10, 0, 10, tzinfo=timezone.utc).timestamp()
+
+    def test_a_wakeup_is_due_at_its_call_time_plus_delay(self) -> None:
+        state = _parse(_lines(_PROMPT, _tool_call('ScheduleWakeup', delaySeconds=270, reason='r', prompt='p'), _tool_result(), _END_TURN))
+        self.assertEqual(state.wakeup_at, self._SCHEDULED + 270)
+
+    def test_a_later_call_replaces_it_and_a_stop_ends_it(self) -> None:
+        state = _parse(_lines(
+            _tool_call('ScheduleWakeup', delaySeconds=270), _tool_result(),
+            _tool_call('ScheduleWakeup', tool_id='t2', delaySeconds=60), _tool_result('t2'),
+        ))
+        self.assertEqual(state.wakeup_at, self._SCHEDULED + 60)
+        state = _parse(_lines(
+            _tool_call('ScheduleWakeup', delaySeconds=270), _tool_result(),
+            _tool_call('ScheduleWakeup', tool_id='t2', stop=True), _tool_result('t2'),
+        ))
+        self.assertIsNone(state.wakeup_at)
+
+    def test_an_unreadable_delay_schedules_nothing(self) -> None:
+        for delay in (None, 'soon', True, -5, 0):
+            with self.subTest(delay=delay):
+                self.assertIsNone(_parse(_lines(_tool_call('ScheduleWakeup', delaySeconds=delay))).wakeup_at)
+
+    def test_another_tool_leaves_the_wakeup_standing(self) -> None:
+        # The loop is still scheduled while the turn goes on with other calls.
+        state = _parse(_lines(_tool_call('ScheduleWakeup', delaySeconds=270), _tool_result(), _tool_call('Bash', tool_id='t2')))
+        self.assertEqual(state.wakeup_at, self._SCHEDULED + 270)
+
+
+class TurnEndSignalTest(unittest.TestCase):
+    _WRAP_UP = 'mcp__ccd_turn__wrap_up'
+
+    def test_a_blocked_wrap_up_ends_the_turn_blocked(self) -> None:
+        state = _parse(_lines(_PROMPT, _tool_call(self._WRAP_UP, recap='r', ask='a?', blocked=True), _tool_result(), _END_TURN))
+        self.assertEqual(state.turn_end_signal, 'blocked')
+
+    def test_a_wrap_up_with_a_question_ends_on_it(self) -> None:
+        state = _parse(_lines(_PROMPT, _tool_call(self._WRAP_UP, recap='r', ask='a?'), _tool_result(), _END_TURN))
+        self.assertEqual(state.turn_end_signal, 'ask')
+
+    def test_a_plain_wrap_up_or_an_empty_question_signals_nothing(self) -> None:
+        for tool_input in ({'recap': 'r'}, {'recap': 'r', 'ask': '   '}, {'recap': 'r', 'blocked': 'yes'}):
+            with self.subTest(tool_input=tool_input):
+                self.assertIsNone(_parse(_lines(_tool_call(self._WRAP_UP, **tool_input))).turn_end_signal)
+
+    def test_the_signal_is_cleared_by_a_later_call_or_prompt(self) -> None:
+        blocked = _tool_call(self._WRAP_UP, recap='r', ask='a?', blocked=True)
+        self.assertIsNone(_parse(_lines(blocked, _tool_result(), _tool_call('Bash', tool_id='t2'))).turn_end_signal)
+        self.assertIsNone(_parse(_lines(blocked, _tool_result(), _END_TURN, _PROMPT, _END_TURN)).turn_end_signal)
+        # A loop's wakeup is an injected meta prompt, and it opens a turn too.
+        wakeup = {**_PROMPT, 'isMeta': True}
+        self.assertIsNone(_parse(_lines(blocked, _tool_result(), _END_TURN, wakeup, _END_TURN)).turn_end_signal)
+
+
+class TurnOriginTest(unittest.TestCase):
+    def test_the_origin_kind_of_the_opening_prompt_is_read(self) -> None:
+        for origin, expected in (('human', 'human'), ('task-notification', 'task-notification'), ('peer', 'peer')):
+            with self.subTest(origin=origin):
+                state = _parse(_lines({**_PROMPT, 'origin': {'kind': origin}}, _tool_call('Bash')))
+                self.assertEqual(state.turn_origin, expected)
+
+    def test_the_older_turn_origin_spelling_is_read_too(self) -> None:
+        self.assertEqual(_parse(_lines({**_PROMPT, 'turnOrigin': 'task_notification'})).turn_origin, 'task-notification')
+
+    def test_a_peer_message_injected_as_meta_still_opens_the_turn(self) -> None:
+        peer = {**_PROMPT, 'isMeta': True, 'origin': {'kind': 'peer', 'from': 'x'}}
+        state = _parse(_lines({**_PROMPT, 'origin': {'kind': 'human'}}, _END_TURN, peer, _tool_call('Bash')))
+        self.assertEqual(state.turn_origin, 'peer')
+
+    def test_a_tool_result_does_not_open_a_turn(self) -> None:
+        state = _parse(_lines({**_PROMPT, 'origin': {'kind': 'task-notification'}}, _tool_call('Bash'), _tool_result()))
+        self.assertEqual(state.turn_origin, 'task-notification')
+
+    def test_an_unknown_or_missing_origin_reads_as_none(self) -> None:
+        for entry in (_PROMPT, {**_PROMPT, 'origin': {'kind': 'constructor'}}, {**_PROMPT, 'origin': 'human'}, {**_PROMPT, 'turnOrigin': 7}):
+            with self.subTest(entry=entry):
+                self.assertIsNone(_parse(_lines(entry)).turn_origin)
 
 
 class ModelEventGuardTest(unittest.TestCase):

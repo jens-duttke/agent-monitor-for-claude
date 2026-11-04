@@ -66,8 +66,8 @@ def list_sessions(root: SessionRoot) -> list[dict[str, Any]]:
     """Return normalized session records from *root*'s on-disk registry.
 
     Each record has ``session_id``, ``pid``, ``cwd``, ``name``, ``kind``,
-    ``job_id``, ``remote_control``, ``started_at``, ``origin``, and
-    ``origin_label``.  Records that cannot be parsed are omitted.
+    ``job_id``, ``remote_control``, ``started_at``, ``native_status_since``,
+    ``origin``, and ``origin_label``.  Records that cannot be parsed are omitted.
 
     Parameters
     ----------
@@ -181,7 +181,10 @@ def _normalize(data: Any) -> dict[str, Any] | None:
         'entrypoint': entrypoint if isinstance(entrypoint, str) else None,
         'job_id': job_id if isinstance(job_id, str) and job_id else None,
         'remote_control': isinstance(bridge_session_id, str) and bool(bridge_session_id),
-        'started_at': _parse_started_at(data.get('startedAt')),
+        'started_at': _parse_epoch_ms(data.get('startedAt')),
+        # When the native status last changed - how long a session has been busy,
+        # idle or waiting, which the transcript cannot tell for a long turn.
+        'native_status_since': _parse_epoch_ms(data.get('statusUpdatedAt')),
     }
 
 
@@ -198,8 +201,8 @@ def _parse_proc_start(value: Any) -> int | None:
     return ticks if ticks > 0 else None
 
 
-def _parse_started_at(value: Any) -> float | None:
-    """Parse the ``startedAt`` field (epoch milliseconds) to a number."""
+def _parse_epoch_ms(value: Any) -> float | None:
+    """Parse a registry timestamp in epoch milliseconds (``startedAt``, ``statusUpdatedAt``) to a number."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
 

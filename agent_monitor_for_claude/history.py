@@ -318,6 +318,19 @@ def _build_history_record(path: Path) -> dict[str, Any] | None:
         'api_error_kind': None,
         'api_error_status': None,
         'api_error_detail': None,
+        # Everything that refines the label of a running session - a retry, a
+        # usage limit's reset, a scheduled wakeup, how the turn ended or began -
+        # describes a process a past session no longer has.
+        'native_status_age_seconds': None,
+        'rate_limit_type': None,
+        'rate_limit_resets_in_seconds': None,
+        'api_retry_attempt': None,
+        'api_retry_max': None,
+        'api_retry_offline': False,
+        'api_retry_detail': None,
+        'wakeup_in_seconds': None,
+        'turn_end_signal': None,
+        'turn_origin': None,
         'pending_tool': False,
         'last_tool_name': None,
         'permission_mode': None,

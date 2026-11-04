@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A self-paced `/loop` waiting for its next run shows *Wakes in 4m* under *Background* instead of *Idle*, since it continues on its own.
+- While Claude Code retries a failed request, the status reads *Retrying (2/10)*, or *Offline - retrying (2/10)* when the network is down, with Claude Code's own summary of the failure on hover.
+- A usage limit names which limit was hit and counts down to its reset (*5-hour limit - resets in 2h 10m*). Once the reset has passed, it says that you can continue.
+- A Claude Desktop agent that ends its turn blocked on your decision reads *Blocked - needs your decision* under *Needs you*, and one that ends on a question reads *Finished with a question*. A question that only the session registry reports now reads *Question for you* instead of *Waiting for you*.
+- Hovering the status dot shows how long the agent has been in its status and, for a running turn, whether a finished background task or a message from another session started it.
+
 ### Fixed
 - Sessions show up much sooner at startup when a WSL distribution holds many records of long-ended sessions, and the monitor puts less load on WSL while it runs. Such records used to be read in full on every refresh before being skipped.
 - Token counts and estimated costs were about twice as high as they really are, because each reply was counted once per part it is stored in. Each reply now counts once.

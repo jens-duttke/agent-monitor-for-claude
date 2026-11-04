@@ -671,6 +671,146 @@ test('buildSession: the error wording reaches the tooltip and only the tooltip',
     assert.equal(idle.status_tip, 'Idle');
 });
 
+/* --- status refinements: what the transcript and registry say beyond the status --- */
+
+const REFINED_LABELS = {
+    status_working: 'Working', status_processing: 'Background', status_awaiting_input: 'Idle',
+    status_awaiting_permission: 'Permission needed', status_needs_you: 'Waiting for you', status_question: 'Question for you',
+    status_errored: 'Error', status_errored_reason: 'Error: {reason}', status_usage_limit: 'Usage limit reached',
+    status_sleeping: 'Wakes in {time}', status_retrying: 'Retrying ({attempt}/{max})',
+    status_offline: 'Offline - retrying ({attempt}/{max})', status_blocked: 'Blocked - needs your decision',
+    status_asks: 'Finished with a question', status_for: 'for {time}',
+    status_limit_resets: '{limit} - resets in {time}', status_limit_over: '{limit} reset - you can continue',
+    limit_five_hour: '5-hour limit', limit_seven_day: 'Weekly limit', limit_usage: 'Usage limit',
+    origin_task: 'Started by a finished background task', origin_peer: 'Started by a message from another session',
+    age_seconds: '{s}s', age_minutes: '{m}m', age_hours: '{h}h {m}m', age_days: '{d}d',
+};
+
+function refinedSession(overrides) {
+    return logic.buildSession({
+        session_id: 's', pid: 1, cwd: 'd:\\x', short_name: 's', alive: true, has_transcript: true, has_activity: true,
+        last_entry_kind: 'assistant', last_stop_reason: 'end_turn', native_status: null, usage: {}, child_count: 0,
+        ...overrides,
+    }, REFINED_LABELS, {});
+}
+
+test('classify: a turn that ended blocked waits for you like an open dialog', () => {
+    const ended = raw({ last_entry_kind: 'assistant', last_stop_reason: 'end_turn' });
+    assert.equal(logic.classify({ ...ended, turn_end_blocked: true }), 'awaiting_permission');
+    assert.equal(logic.classify(ended), 'awaiting_input');
+});
+
+test('deriveStatus: a blocked wrap-up survives a lagging registry idle', () => {
+    assert.equal(logic.deriveStatus(raw({
+        last_entry_kind: 'assistant', last_stop_reason: 'end_turn', turn_end_signal: 'blocked', native_status: 'idle',
+    })), 'awaiting_permission');
+    // A question at the end of the turn is still the calm finished state.
+    assert.equal(logic.deriveStatus(raw({
+        last_entry_kind: 'assistant', last_stop_reason: 'end_turn', turn_end_signal: 'ask',
+    })), 'awaiting_input');
+});
+
+test('deriveStatus: a finished turn whose loop wakes itself is background, not your turn', () => {
+    const ended = { last_entry_kind: 'assistant', last_stop_reason: 'end_turn', age_seconds: 20, process_age_seconds: 600 };
+    assert.equal(logic.deriveStatus(raw({ ...ended, wakeup_in_seconds: 240 })), 'processing');
+    // Due or past: the loop either woke already or no longer will.
+    assert.equal(logic.deriveStatus(raw({ ...ended, wakeup_in_seconds: 0 })), 'awaiting_input');
+    assert.equal(logic.deriveStatus(raw({ ...ended, wakeup_in_seconds: -30 })), 'awaiting_input');
+    // A missing or mistyped deadline is no evidence.
+    assert.equal(logic.deriveStatus(raw({ ...ended, wakeup_in_seconds: null })), 'awaiting_input');
+    assert.equal(logic.deriveStatus(raw({ ...ended, wakeup_in_seconds: 'soon' })), 'awaiting_input');
+});
+
+test('deriveStatus: a wakeup never outranks you or a stop', () => {
+    const ended = { last_entry_kind: 'assistant', last_stop_reason: 'end_turn', age_seconds: 20, process_age_seconds: 600, wakeup_in_seconds: 240 };
+    // The turn ended on a question or a block: it waits for you whatever the loop planned.
+    assert.equal(logic.deriveStatus(raw({ ...ended, turn_end_signal: 'ask' })), 'awaiting_input');
+    assert.equal(logic.deriveStatus(raw({ ...ended, turn_end_signal: 'blocked' })), 'awaiting_permission');
+    // You interrupted the loop.
+    assert.equal(logic.deriveStatus(raw({ ...ended, last_entry_kind: 'user_interrupt' })), 'interrupted');
+    // The wakeup lived in the earlier process of a reopened session.
+    assert.equal(logic.deriveStatus(raw({ ...ended, age_seconds: 900 })), 'awaiting_input');
+    // An ended process wakes nothing.
+    assert.equal(logic.deriveStatus(raw({ ...ended, alive: false })), 'completed');
+    // A turn still running is untouched.
+    assert.equal(logic.deriveStatus(raw({ ...ended, last_stop_reason: 'tool_use' })), 'working');
+});
+
+test('buildSession: a sleeping loop says when it wakes, unless other work runs beside it', () => {
+    const sleeping = { age_seconds: 20, process_age_seconds: 600, wakeup_in_seconds: 245 };
+    assert.equal(refinedSession(sleeping).status_label, 'Wakes in 4m');
+    assert.equal(refinedSession({ ...sleeping, subagents_running: 1 }).status_label, 'Background');
+    assert.equal(refinedSession({ ...sleeping, child_count: 1 }).status_label, 'Background');
+});
+
+test('buildSession: a retried request says so, with the CLI summary in the tooltip only', () => {
+    const retrying = { last_entry_kind: 'user_text', last_stop_reason: null, api_retry_attempt: 2, api_retry_max: 10,
+        api_retry_detail: 'Connection dropped (ECONNRESET)' };
+    const session = refinedSession(retrying);
+    assert.equal(session.status, 'working');
+    assert.equal(session.status_label, 'Retrying (2/10)');
+    assert.equal(session.status_tip, 'Retrying (2/10)\nConnection dropped (ECONNRESET)');
+    assert.equal(refinedSession({ ...retrying, api_retry_offline: true }).status_label, 'Offline - retrying (2/10)');
+    // Unreadable counters: nothing to say beyond "Working", and no orphaned detail.
+    const unreadable = refinedSession({ ...retrying, api_retry_attempt: 'two' });
+    assert.equal(unreadable.status_label, 'Working');
+    assert.equal(unreadable.status_tip, 'Working');
+});
+
+test('buildSession: a usage limit counts down to its reset, then says you can go on', () => {
+    const limited = { last_entry_kind: 'api_error', last_stop_reason: 'stop_sequence', api_error_kind: 'rate_limit',
+        api_error_status: 429 };
+    assert.equal(refinedSession({ ...limited, rate_limit_type: 'five_hour', rate_limit_resets_in_seconds: 7800 }).status_label,
+        '5-hour limit - resets in 2h 10m');
+    assert.equal(refinedSession({ ...limited, rate_limit_type: 'seven_day', rate_limit_resets_in_seconds: 3 * 86400 + 60 }).status_label,
+        'Weekly limit - resets in 3d');
+    assert.equal(refinedSession({ ...limited, rate_limit_type: 'seven_day_opus', rate_limit_resets_in_seconds: -5 }).status_label,
+        'Weekly limit reset - you can continue');
+    // An unknown limit type is the generic limit, an inherited property never a label key.
+    assert.equal(refinedSession({ ...limited, rate_limit_type: 'brand_new', rate_limit_resets_in_seconds: 90 }).status_label,
+        'Usage limit - resets in 1m');
+    assert.equal(refinedSession({ ...limited, rate_limit_type: 'constructor', rate_limit_resets_in_seconds: 90 }).status_label,
+        'Usage limit - resets in 1m');
+    // Without a readable reset the plain label stays; the status stays errored either way.
+    const plain = refinedSession({ ...limited, rate_limit_type: 'five_hour', rate_limit_resets_in_seconds: null });
+    assert.equal(plain.status_label, 'Usage limit reached');
+    assert.equal(plain.status, 'errored');
+});
+
+test('buildSession: how a turn ended and what the registry waits for refine the label', () => {
+    assert.equal(refinedSession({ turn_end_signal: 'blocked' }).status_label, 'Blocked - needs your decision');
+    assert.equal(refinedSession({ turn_end_signal: 'ask' }).status_label, 'Finished with a question');
+    // Current Claude Code writes "input needed" for an open question only...
+    const waiting = { last_entry_kind: 'user_text', last_stop_reason: null, native_status: 'waiting' };
+    assert.equal(refinedSession({ ...waiting, waiting_for: 'input needed' }).status_label, 'Question for you');
+    // ...while "permission prompt" was once written for questions too, so it stays neutral.
+    assert.equal(refinedSession({ ...waiting, waiting_for: 'permission prompt' }).status_label, 'Waiting for you');
+});
+
+test('statusDetailLines: each line speaks only for the status it describes', () => {
+    const lines = (status, overrides) => logic.statusDetailLines(status, raw(overrides), REFINED_LABELS);
+    // How long the registry has held its status, where the two agree.
+    assert.deepEqual(lines('working', { native_status: 'busy', native_status_age_seconds: 720 }), ['for 12m']);
+    assert.deepEqual(lines('awaiting_input', { native_status: 'idle', native_status_age_seconds: 10200 }), ['for 2h 50m']);
+    assert.deepEqual(lines('awaiting_input', { native_status: 'busy', native_status_age_seconds: 720 }), []);
+    assert.deepEqual(lines('working', { native_status: 'busy', native_status_age_seconds: null }), []);
+    assert.deepEqual(lines('working', { native_status: 'constructor', native_status_age_seconds: 5 }), []);
+    // What opened the running turn - never for one you typed, never once it is over.
+    assert.deepEqual(lines('working', { turn_origin: 'task-notification' }), ['Started by a finished background task']);
+    assert.deepEqual(lines('working', { turn_origin: 'peer' }), ['Started by a message from another session']);
+    assert.deepEqual(lines('working', { turn_origin: 'human' }), []);
+    assert.deepEqual(lines('awaiting_input', { turn_origin: 'peer' }), []);
+    // The error's own line, only while errored.
+    assert.deepEqual(lines('errored', { api_error_detail: 'API Error: 500' }), ['API Error: 500']);
+    assert.deepEqual(lines('awaiting_input', { api_error_detail: 'API Error: 500' }), []);
+});
+
+test('statusTip: several detail lines follow the label in order, blanks dropped', () => {
+    assert.equal(logic.statusTip('Working', ['Started by a finished background task', null, '  ', 'for 12m']),
+        'Working\nStarted by a finished background task\nfor 12m');
+    assert.equal(logic.statusTip('Idle', []), 'Idle');
+});
+
 test('pruneResumedHistory: a resumed session is not folded in twice', () => {
     const live = [{ session_id: 'a', alive: true }];
     const history = [{ session_id: 'a', is_history: true }, { session_id: 'b', is_history: true }];
