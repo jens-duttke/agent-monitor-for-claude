@@ -168,7 +168,8 @@ folder - a file-existence check per folder, nothing opened - and then reads it l
 
 What it **takes** from that scan is control-flow metadata: entry types, stop reasons, tool ids and
 tool names, timestamps, the model id, the Claude Code version stamped on each entry, token-usage
-numbers, the permission mode, the git worktree a session switched into (its directory, the directory
+numbers and the id of the API response they belong to (so a reply stored as several entries counts
+once), the permission mode, the git worktree a session switched into (its directory, the directory
 the session was launched from, and its branch when Claude Code recorded one), and the flags that
 distinguish a real turn from a sidechain, an injected notice, or an API error - plus, on an API
 error, the short error token and HTTP status code that entry carries, which is what lets the status

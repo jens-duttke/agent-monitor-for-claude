@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Sessions show up much sooner at startup when a WSL distribution holds many records of long-ended sessions, and the monitor puts less load on WSL while it runs. Such records used to be read in full on every refresh before being skipped.
+- Token counts and estimated costs were about twice as high as they really are, because each reply was counted once per part it is stored in. Each reply now counts once.
 - A chat that was reopened several times - typical for Claude Desktop and WSL - is listed once again. It used to appear once per earlier run, as identical grey rows next to the live one.
 
 ## [0.11.0] - 2026-11-03

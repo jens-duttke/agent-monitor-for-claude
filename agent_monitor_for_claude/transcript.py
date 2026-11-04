@@ -228,6 +228,8 @@ class _ScanState:
     # The newest worktree-state entry; None before any, and again after the
     # session left its worktree.
     worktree: WorktreeState | None = None
+    # Output tokens already summed per API message id (see _unclaimed_usage).
+    counted_output_by_message: dict[str, int] = field(default_factory=dict)
     # Memoized run-compressed timelines, one per value field, each kept with the
     # event count it was built from.  Deliberately the last field, so the
     # positional ``copy()`` below stays correct without carrying it over - a copy
@@ -272,7 +274,7 @@ class _ScanState:
             list(self.model_events),
             list(self.cli_events),
             self.ai_title, self.custom_title, self.first_prompt, self.first_command_prompt, self.permission_mode,
-            self.auto_denials_consecutive, self.auto_denials_total, self.worktree,
+            self.auto_denials_consecutive, self.auto_denials_total, self.worktree, dict(self.counted_output_by_message),
         )
 
 
@@ -1167,6 +1169,38 @@ def _add_usage(totals: dict[str, int], key: str, value: object) -> None:
         totals[key] += value
 
 
+def _unclaimed_usage(message: dict[str, object], usage: dict[str, object], state: _ScanState) -> dict[str, object]:
+    """Return the part of *usage* not yet summed for *message*'s API response, and record it as summed.
+
+    Claude Code writes one API response as several transcript entries - one per
+    content block (thinking, text, each tool call) - and every one of them
+    repeats the response's ``usage``.  Summing each entry counted a session's
+    tokens and cost about twice over.  The response's ``message.id`` ties the
+    entries together: its first entry counts in full, a later one only by the
+    output tokens it adds - an early entry can carry a mid-stream output count,
+    while the input and cache figures are the same in every one.  An entry
+    without a usable id cannot be matched to its siblings and counts on its own.
+    """
+    message_id = message.get('id')
+    if not isinstance(message_id, str) or not message_id:
+        return usage
+
+    output = usage.get('output_tokens')
+    if not isinstance(output, int) or isinstance(output, bool) or output < 0:
+        output = 0
+
+    counted = state.counted_output_by_message.get(message_id)
+    if counted is None:
+        state.counted_output_by_message[message_id] = output
+        return usage
+
+    if output <= counted:
+        return {}
+
+    state.counted_output_by_message[message_id] = output
+    return {'output_tokens': output - counted}
+
+
 def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
     """Fold one transcript line into the scan state (usage, title, mode, denials)."""
     # A tool result that is not a denial means a tool ran, which ends the streak
@@ -1226,6 +1260,7 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
         message = entry.get('message')
         usage = message.get('usage') if isinstance(message, dict) else None
         if isinstance(usage, dict):
+            usage = _unclaimed_usage(message, usage, state)
             # Sum into the overall totals always, and into a per-model bucket for
             # real models only. The synthetic sentinel (locally-generated turns,
             # zero usage) is not a real model - bucketing it would put an

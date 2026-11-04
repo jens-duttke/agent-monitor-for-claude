@@ -175,6 +175,72 @@ class ParseTest(TranscriptEnvTest):
         self.assertEqual(state.usage_by_model['claude-haiku-4-5']['input_tokens'], 8)
         self.assertEqual(state.usage_by_model['claude-haiku-4-5']['output_tokens'], 4)
 
+    def test_one_response_split_over_entries_counts_its_usage_once(self) -> None:
+        # Claude Code writes one API response as one entry per content block, and
+        # every entry repeats the response's full usage. Summing each entry
+        # counted a session's tokens and cost about twice over.
+        def block(message_id: str | None, block_type: str, timestamp: str, model: str = 'claude-opus-4-8') -> str:
+            message = {'stop_reason': 'tool_use', 'model': model, 'content': [{'type': block_type}],
+                       'usage': {'input_tokens': 10, 'output_tokens': 40, 'cache_read_input_tokens': 1000,
+                                 'cache_creation_input_tokens': 300,
+                                 'cache_creation': {'ephemeral_5m_input_tokens': 0, 'ephemeral_1h_input_tokens': 300}}}
+            if message_id is not None:
+                message['id'] = message_id
+            return json.dumps({'type': 'assistant', 'timestamp': timestamp, 'message': message})
+
+        lines = [
+            block('msg_a', 'thinking', '2026-07-11T10:00:00Z'),
+            block('msg_a', 'text', '2026-07-11T10:00:01Z'),
+            block('msg_a', 'tool_use', '2026-07-11T10:00:02Z'),
+            block('msg_b', 'text', '2026-07-11T10:01:00Z', model='claude-haiku-4-5'),
+            block('msg_b', 'tool_use', '2026-07-11T10:01:01Z', model='claude-haiku-4-5'),
+            # No id to match on: counted on its own, never merged into another response.
+            block(None, 'text', '2026-07-11T10:02:00Z'),
+            block(None, 'text', '2026-07-11T10:02:01Z'),
+        ]
+        self._write_transcript(_SESSION_ID, _CWD, lines)
+        state = state_for(local_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual(state.usage['output_tokens'], 4 * 40)
+        self.assertEqual(state.usage['cache_read_input_tokens'], 4 * 1000)
+        self.assertEqual(state.usage['cache_creation_1h_input_tokens'], 4 * 300)
+        self.assertEqual(state.usage_by_model['claude-opus-4-8']['output_tokens'], 3 * 40)
+        self.assertEqual(state.usage_by_model['claude-haiku-4-5']['output_tokens'], 40)
+
+    def test_a_mid_stream_entry_counts_only_up_to_the_final_output(self) -> None:
+        # An early entry of a response can carry the output count reached so far;
+        # a later entry of the same response raises it. The input and cache
+        # figures are identical in both and must still count once.
+        def entry(output: int, timestamp: str) -> str:
+            return json.dumps({'type': 'assistant', 'timestamp': timestamp,
+                               'message': {'id': 'msg_a', 'stop_reason': 'tool_use', 'model': 'claude-opus-4-8', 'content': [],
+                                           'usage': {'input_tokens': 5, 'output_tokens': output, 'cache_read_input_tokens': 900}}})
+
+        self._write_transcript(_SESSION_ID, _CWD, [entry(12, '2026-07-11T10:00:00Z'), entry(80, '2026-07-11T10:00:05Z'),
+                                                   entry(80, '2026-07-11T10:00:06Z')])
+        state = state_for(local_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual(state.usage['output_tokens'], 80)
+        self.assertEqual(state.usage['input_tokens'], 5)
+        self.assertEqual(state.usage['cache_read_input_tokens'], 900)
+        self.assertEqual(state.usage_by_model['claude-opus-4-8']['output_tokens'], 80)
+
+    def test_a_response_continued_after_an_incremental_scan_is_not_counted_again(self) -> None:
+        # The entries of one response can straddle two polls; the second poll
+        # must still recognize the response it already counted.
+        entry = {'type': 'assistant', 'timestamp': '2026-07-11T10:00:00Z',
+                 'message': {'id': 'msg_a', 'stop_reason': 'tool_use', 'model': 'claude-opus-4-8', 'content': [],
+                             'usage': {'input_tokens': 5, 'output_tokens': 50}}}
+        self._write_transcript(_SESSION_ID, _CWD, [json.dumps(entry)])
+        first = state_for(local_root(), _SESSION_ID, _CWD)
+
+        with transcript_path(local_root(), _SESSION_ID, _CWD).open('a', encoding='utf-8') as handle:
+            handle.write('\n' + json.dumps(entry))
+        second = state_for(local_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual(first.usage['output_tokens'], 50)
+        self.assertEqual(second.usage['output_tokens'], 50)
+
     def test_model_timeline_is_ordered_switch_log(self) -> None:
         def assistant(model: str, ts: str, sidechain: bool = False) -> str:
             entry = {'type': 'assistant', 'timestamp': ts,
