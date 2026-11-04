@@ -117,6 +117,7 @@
     "plan_tip": "Rencana: langkah {step} dari {total}",
     "queued_tip": "Pesan dalam antrean: {count}",
     "budget_tip": "Anggaran: {used} dari {total} terpakai",
+    "cli_update_tip": "Claude Code {available} tersedia - agen ini masih menjalankan {running}. Mulai ulang untuk beralih.",
     "hook_errors_tip": "Ada hook yang gagal tanpa memblokir - periksa konfigurasi hook Anda",
     "hook_error_line": "{hook} (kode keluar {code}): {count}",
     "effort_tip": "Effort balasan terakhir: {level}",

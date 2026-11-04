@@ -1427,14 +1427,15 @@ body {
 
 /* --- Session detail badges ---
    The quiet chip look for standing properties of the session (its branch, its
-   pull request, the plan's step, queued prompts, the budget), and an alarm
-   colour only for what asks for a look: a nearly full context, a nearly spent
-   budget, hooks that keep failing. */
+   pull request, the plan's step, queued prompts, the budget, a Claude Code
+   update waiting for a restart), and an alarm colour only for what asks for a
+   look: a nearly full context, a nearly spent budget, hooks that keep failing. */
 .branch-badge,
 .pr-badge,
 .plan-badge,
 .queue-badge,
-.budget-badge {
+.budget-badge,
+.update-badge {
     flex: none;
     font-size: 11px;
     color: var(--fg-dim);
@@ -1513,11 +1514,14 @@ body {
     cursor: help;
 }
 
-/* The branch a panel's sessions share, beside its path. */
+/* The branch a panel's sessions share, beside its path. Full length while the
+   header has room - the path only takes what is left - and cut short only past
+   a share of the header, so a long branch never squeezes the path out entirely
+   on a narrow window. */
 .panel-branch {
     flex: 0 1 auto;
     min-width: 0;
-    max-width: 18em;
+    max-width: 40%;
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -1991,7 +1995,8 @@ body.compact {
         .plan-badge,
         .queue-badge,
         .budget-badge,
-        .hook-badge {
+        .hook-badge,
+        .update-badge {
             display: none;
         }
     }

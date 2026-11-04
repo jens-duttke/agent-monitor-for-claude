@@ -117,6 +117,7 @@
     "plan_tip": "계획: {total}단계 중 {step}단계",
     "queued_tip": "대기 중인 메시지: {count}",
     "budget_tip": "예산: {total} 중 {used} 사용",
+    "cli_update_tip": "Claude Code {available}을(를) 사용할 수 있습니다 - 이 에이전트는 아직 {running}에서 실행 중입니다. 전환하려면 다시 시작하세요.",
     "hook_errors_tip": "차단하지 않고 실패하는 훅이 있습니다 - 훅 설정을 확인하세요",
     "hook_error_line": "{hook} (종료 코드 {code}): {count}",
     "effort_tip": "최근 응답의 effort: {level}",

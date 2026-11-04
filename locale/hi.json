@@ -117,6 +117,7 @@
     "plan_tip": "प्लान: {total} में से चरण {step}",
     "queued_tip": "कतार में संदेश: {count}",
     "budget_tip": "बजट: {total} में से {used} उपयोग हुआ",
+    "cli_update_tip": "Claude Code {available} उपलब्ध है - यह एजेंट अभी भी {running} पर चल रहा है। बदलने के लिए इसे रीस्टार्ट करें।",
     "hook_errors_tip": "कुछ हुक बिना ब्लॉक किए विफल हो रहे हैं - अपना हुक कॉन्फ़िगरेशन जाँचें",
     "hook_error_line": "{hook} (एग्ज़िट कोड {code}): {count}",
     "effort_tip": "पिछले जवाब का effort: {level}",

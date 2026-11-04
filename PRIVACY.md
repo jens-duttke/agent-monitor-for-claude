@@ -160,9 +160,16 @@ this section is explicit about both:
 `~/.claude/sessions/*.json` (or `$CLAUDE_CONFIG_DIR/sessions/`) - the records Claude Code writes for
 each running session. Fields taken: session id, process id, working directory, project name, session
 kind and entry point, the native status and its waiting reason, the background-agent job id, whether
-Remote Control is on (only that - the cloud session id it names is not kept), and three timestamps -
-two for when the process started, one for when its native status last changed. No conversation data
-is in these files.
+Remote Control is on (only that - the cloud session id it names is not kept), the Claude Code version
+the process runs, and three timestamps - two for when the process started, one for when its native
+status last changed. No conversation data is in these files.
+
+### The last self-update's result
+
+`~/.claude/.last-update-result.json` - the outcome Claude Code records when it updates its own install.
+Fields taken: whether the update succeeded and the version it moved to, so a row can say that a
+restart would bring a newer Claude Code. Nothing else in the file is taken. A WSL distribution's own
+file is read for its sessions.
 
 ### The model catalog
 

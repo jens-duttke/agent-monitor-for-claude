@@ -232,7 +232,8 @@ function pullRequestHtml(pullRequests, labels) {
 }
 
 // Badges for the details worth seeing at a glance: a nearly full context, the
-// plan's step, queued prompts, the budget, and hooks that keep failing.
+// plan's step, queued prompts, the budget, hooks that keep failing, and a newer
+// Claude Code a restart would bring.
 function detailBadgesHtml(session, labels) {
     let html = '';
 
@@ -267,6 +268,13 @@ function detailBadgesHtml(session, labels) {
         })));
         const total = session.hook_errors.reduce((sum, error) => sum + error.count, 0);
         html += '<span class="hook-badge"' + attr('data-tip', lines.join('\n')) + '>⚠ ' + esc(total) + '</span>';
+    }
+
+    // The session still runs an older Claude Code than the one a restart would
+    // bring - installed, or already running in a sibling session of the same app.
+    if (session.cli_update) {
+        html += '<span class="update-badge"' + attr('data-tip', fmt(labels.cli_update_tip, session.cli_update)) + '>↻ '
+            + esc(session.cli_update.available) + '</span>';
     }
 
     return html;

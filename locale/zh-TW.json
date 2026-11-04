@@ -117,6 +117,7 @@
     "plan_tip": "計畫：第 {step} 步，共 {total} 步",
     "queued_tip": "佇列中的訊息：{count}",
     "budget_tip": "預算：已用 {used}，共 {total}",
+    "cli_update_tip": "Claude Code {available} 已可用 - 此代理仍在執行 {running}。重新啟動即可切換。",
     "hook_errors_tip": "有 hook 失敗但未阻擋執行 - 請檢查 hook 設定",
     "hook_error_line": "{hook}（結束代碼 {code}）：{count}",
     "effort_tip": "最新回覆的 effort：{level}",

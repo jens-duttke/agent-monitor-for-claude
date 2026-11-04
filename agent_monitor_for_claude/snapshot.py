@@ -27,6 +27,7 @@ from datetime import datetime
 from typing import Any
 
 from .background_scans import completed_background_scans, pause_background_scans
+from .cli_install import installed_version
 from .last_seen import note_alive, prune_last_seen, seconds_since_alive
 from .model_catalog import context_window
 from .paths import SessionRoot, transcript_path
@@ -133,6 +134,10 @@ def _build_session_record(
         'native_status': record['native_status'],
         'native_status_age_seconds': _seconds_since_ms(record.get('native_status_since')),
         'waiting_for': record['waiting_for'],
+        'process_version': record.get('process_version'),
+        # Beside every record of the root, not once per snapshot: the UI decides
+        # per session whether it applies (only the CLI runs the native install).
+        'installed_version': installed_version(root),
         'origin': record['origin'],
         'origin_label': record['origin_label'],
         'alive': info.alive,

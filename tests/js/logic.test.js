@@ -1902,6 +1902,74 @@ test('cliColumnRelevant only when the version says something', () => {
     assert.equal(logic.cliColumnRelevant(null), false);
 });
 
+test('parseVersion and compareVersions order releases numerically', () => {
+    assert.deepEqual(logic.parseVersion('2.1.318'), [2, 1, 318]);
+    for (const value of [null, undefined, '', '2', '2.1.318-beta', 'v2.1.318', '2..1', 2.1, ['2.1.318']]) {
+        assert.equal(logic.parseVersion(value), null, String(value));
+    }
+    // Numeric, not textual: 318 is newer than 99.
+    assert.ok(logic.compareVersions([2, 1, 318], [2, 1, 99]) > 0);
+    assert.ok(logic.compareVersions([2, 0, 999], [2, 1]) < 0);
+    assert.equal(logic.compareVersions([2, 1], [2, 1, 0]), 0);
+});
+
+test('cliUpdateFor names the newer Claude Code a restart would bring', () => {
+    const session = (overrides) => raw({ entrypoint: 'claude-vscode', host: 'VS Code', process_version: '2.1.318', ...overrides });
+    const updateOf = (target, others) => logic.cliUpdateFor(target, logic.newestCliVersions([target, ...others]));
+
+    // A sibling of the same app already runs a newer version.
+    assert.deepEqual(updateOf(session({ process_version: '2.1.317' }), [session()]), { running: '2.1.317', available: '2.1.318' });
+    // The newest one, and one on the same version, have nothing to gain.
+    assert.equal(updateOf(session(), [session({ process_version: '2.1.317' })]), null);
+    assert.equal(updateOf(session(), [session()]), null);
+    // Numeric comparison: 2.1.99 is the older one.
+    assert.deepEqual(updateOf(session({ process_version: '2.1.99' }), [session()]).available, '2.1.318');
+
+    // Another app, another editor or another root brings its own copy and says nothing.
+    const older = session({ process_version: '2.1.317' });
+    assert.equal(updateOf(older, [session({ entrypoint: 'claude-desktop', host: null })]), null);
+    assert.equal(updateOf(older, [session({ host: 'Cursor' })]), null);
+    assert.equal(updateOf(older, [session({ origin: 'wsl:Ubuntu' })]), null);
+    // An ended session runs nothing - neither as the reference nor as the target.
+    assert.equal(updateOf(older, [session({ alive: false })]), null);
+    assert.equal(updateOf(session({ process_version: '2.1.317', alive: false }), [session()]), null);
+    // Without an app or a readable version there is nothing to compare.
+    assert.equal(updateOf(session({ entrypoint: null, process_version: '2.1.317' }), [session({ entrypoint: null })]), null);
+    assert.equal(updateOf(session({ process_version: 'dev' }), [session()]), null);
+    assert.equal(updateOf(older, [session({ process_version: '2.1.999-beta' })]), null);
+});
+
+test('cliUpdateFor counts the installed version for the CLI only', () => {
+    // The CLI runs the machine's install, so its self-update is what a restart brings -
+    // even with no newer sibling running. Every terminal shares that install.
+    const cli = raw({ entrypoint: 'cli', host: 'Windows Terminal', process_version: '2.1.317', installed_version: '2.1.318' });
+    assert.deepEqual(logic.cliUpdateFor(cli, logic.newestCliVersions([cli])), { running: '2.1.317', available: '2.1.318' });
+    const sibling = raw({ entrypoint: 'cli', host: 'PowerShell', process_version: '2.1.318' });
+    const stale = { ...cli, installed_version: null };
+    assert.equal(logic.cliUpdateFor(stale, logic.newestCliVersions([stale, sibling])).available, '2.1.318');
+
+    // VS Code brings its own copy: the machine's install does not apply to it.
+    const vscode = raw({ entrypoint: 'claude-vscode', host: 'VS Code', process_version: '2.1.317', installed_version: '2.1.318' });
+    assert.equal(logic.cliUpdateFor(vscode, logic.newestCliVersions([vscode])), null);
+    // An install older than the running process is no update.
+    const ahead = raw({ entrypoint: 'cli', process_version: '2.1.318', installed_version: '2.1.294' });
+    assert.equal(logic.cliUpdateFor(ahead, logic.newestCliVersions([ahead])), null);
+});
+
+test('groupProjects marks each session a restart would update', () => {
+    const projects = logic.groupProjects([
+        raw({ session_id: 'old', cwd: 'd:\\a', entrypoint: 'cli', process_version: '2.1.317' }),
+        raw({ session_id: 'new', cwd: 'd:\\b', entrypoint: 'cli', process_version: '2.1.318' }),
+        raw({ session_id: 'past', cwd: 'd:\\b', alive: false, is_history: true }),
+    ], {});
+    const updates = new Map(projects.flatMap((project) => project.sessions).map((session) => [session.session_id, session.cli_update]));
+
+    // Compared across panels: the sibling that runs the newer version sits in another project.
+    assert.deepEqual(updates.get('old'), { running: '2.1.317', available: '2.1.318' });
+    assert.equal(updates.get('new'), null);
+    assert.equal(updates.get('past'), null);
+});
+
 test('buildSession carries the CLI version and its switch history', () => {
     const base = {
         session_id: 's', pid: 1, cwd: 'd:\\x', short_name: 's', alive: true, has_transcript: true,
@@ -2448,6 +2516,23 @@ test('group projects: the main branch goes to the header, only a row elsewhere n
     ], {}, {});
     assert.equal(groups[0].branch, 'main');
     assert.deepEqual(groups[0].sessions.map((session) => session.show_branch), [false, false, true, false, false]);
+});
+
+test('branchOf leaves out the branch Claude Desktop named after the worktree folder', () => {
+    const worktree = '/home/jens/dev/nova/.claude/worktrees/beautiful-heyrovsky-9c2e00';
+    // Desktop starts the chat in its own worktree on claude/<folder>: the panel path says as much.
+    assert.equal(logic.branchOf(raw({ cwd: worktree, git_branch: 'claude/beautiful-heyrovsky-9c2e00' })), '');
+    assert.equal(logic.branchOf(raw({ cwd: worktree + '/', git_branch: 'claude/beautiful-heyrovsky-9c2e00' })), '');
+    // The same for a session that switched into the worktree, and for a Windows path.
+    assert.equal(logic.branchOf(raw({ cwd: '/home/jens/dev/nova', worktree_cwd: worktree, git_branch: 'claude/beautiful-heyrovsky-9c2e00' })), '');
+    assert.equal(logic.branchOf(raw({ cwd: 'C:\\dev\\x\\.claude\\worktrees\\calm-otter-1a2b3c', git_branch: 'claude/calm-otter-1a2b3c' })), '');
+
+    // A branch of the agent's own, a claude/ branch of another folder, or a folder alone is shown as it is.
+    assert.equal(logic.branchOf(raw({ cwd: worktree, git_branch: 'bug/JDUT/Examine-the-stack-root' })), 'bug/JDUT/Examine-the-stack-root');
+    assert.equal(logic.branchOf(raw({ cwd: worktree, git_branch: 'claude/epic-cray-6b3840' })), 'claude/epic-cray-6b3840');
+    assert.equal(logic.branchOf(raw({ cwd: worktree, git_branch: 'beautiful-heyrovsky-9c2e00' })), 'beautiful-heyrovsky-9c2e00');
+    assert.equal(logic.branchOf(raw({ cwd: '/', git_branch: 'claude/' })), 'claude/');
+    assert.equal(logic.branchOf(raw({ cwd: worktree, git_branch: 7 })), '');
 });
 
 test('build session: details of a running process only while it is alive', () => {

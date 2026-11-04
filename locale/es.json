@@ -117,6 +117,7 @@
     "plan_tip": "Plan: paso {step} de {total}",
     "queued_tip": "Mensajes en cola: {count}",
     "budget_tip": "Presupuesto: {used} de {total} usado",
+    "cli_update_tip": "Claude Code {available} está disponible: este agente aún usa {running}. Reinícialo para cambiar.",
     "hook_errors_tip": "Hay hooks que fallan sin bloquear - revisa tu configuración de hooks",
     "hook_error_line": "{hook} (código de salida {code}): {count}",
     "effort_tip": "Esfuerzo de la última respuesta: {level}",

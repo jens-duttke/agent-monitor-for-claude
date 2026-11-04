@@ -13,13 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A usage limit names which limit was hit and counts down to its reset (*5-hour limit - resets in 2h 10m*). Once the reset has passed, it says that you can continue.
 - A Claude Desktop agent that ends its turn blocked on your decision reads *Blocked - needs your decision* under *Needs you*, and one that ends on a question reads *Finished with a question*. A question that only the session registry reports now reads *Question for you* instead of *Waiting for you*.
 - Hovering the status dot shows how long the agent has been in its status and, for a running turn, whether a finished background task or a message from another session started it.
-- A panel header names the git branch its agents are on, and a row names its own when it works on a different branch.
+- A panel header names the git branch its agents are on, and a row names its own when it works on a different branch. The branch Claude Desktop creates for a chat's own worktree is left out until the agent switches to a branch of its own.
 - Badges flag a context nearly full, a nearly spent dollar budget, a Claude Desktop agent's current plan step, prompts queued behind the running turn, and hooks that keep failing. A pull-request badge opens the newest pull request linked to the session in your browser.
 - The model column adds the latest reply's effort level when it differs from your default, and *fast* in fast mode.
 - Hovering a title shows it in full, with the context size, how often the context was compacted, how many files the agent edited, and its artifacts.
 - Hovering an agent's cost splits it into the main conversation, each kind of subagent (e.g. *next:reviewer $30*), each skill its turns ran under, and its web searches. Web searches now count toward the cost.
 - A branch that names a ticket (`feature/PNE-123/...`) adds up in its tooltip what all sessions on that ticket cost - the past ones in the *Older* time range too, once that filter has been turned on.
 - Past sessions under *Older* show their cost like running ones.
+- A badge marks a running agent that still runs an older Claude Code than a restart would bring - the version your CLI updated itself to, or one another agent of the same app already runs.
 
 ### Changed
 - A row that jumps to the agent's window now shows an alias cursor, and the background-process badge a help cursor. Rows with no window to jump to, such as a background agent's, no longer show a hand cursor.

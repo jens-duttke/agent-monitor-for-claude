@@ -27,7 +27,7 @@ from .platforms import IS_WINDOWS
 
 __all__ = [
     'SessionRoot', 'local_root', 'claude_temp_dir', 'config_dir', 'sessions_dir', 'projects_dir', 'model_catalog_dir',
-    'cwd_to_slug', 'transcript_path','find_transcript', 'task_output_dir', 'task_output_path', 'scratchpad_dir', 'host_path',
+    'update_result_path', 'cwd_to_slug', 'transcript_path','find_transcript', 'task_output_dir', 'task_output_path', 'scratchpad_dir', 'host_path',
 ]
 
 _NON_ALNUM_PATTERN = re.compile(r'[^A-Za-z0-9]')
@@ -144,6 +144,11 @@ def projects_dir(root: SessionRoot) -> Path:
 def model_catalog_dir(root: SessionRoot) -> Path:
     """Return the directory where Claude Code caches the model catalog it fetched (one file per account and surface)."""
     return root.config_dir / 'cache' / 'model-catalog'
+
+
+def update_result_path(root: SessionRoot) -> Path:
+    """Return the file in which Claude Code records the outcome of its last self-update."""
+    return root.config_dir / '.last-update-result.json'
 
 
 def cwd_to_slug(cwd: str) -> str:

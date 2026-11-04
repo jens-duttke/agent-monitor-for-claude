@@ -145,6 +145,22 @@ class SessionsTest(unittest.TestCase):
                 parsed = next(item for item in list_sessions(self.root) if item['pid'] == 20 + index)
                 self.assertIsNone(parsed['native_status_since'])
 
+    def test_parses_the_version_of_the_running_process(self) -> None:
+        self._write('9.json', {'pid': 9, 'sessionId': 's', 'cwd': 'd:\\x', 'version': '2.1.318'})
+        self.assertEqual(list_sessions(self.root)[0]['process_version'], '2.1.318')
+
+    def test_a_missing_or_malformed_version_is_none(self) -> None:
+        # An older Claude Code writes no such field; anything but dot-separated
+        # numbers must not reach the UI's version comparison.
+        for index, value in enumerate((None, '', '2', '2.1.318-beta', 'v2.1.318', 2.1, True, ['2.1.318'])):
+            with self.subTest(value=value):
+                record = {'pid': 30 + index, 'sessionId': 's', 'cwd': 'd:\\x'}
+                if value is not None:
+                    record['version'] = value
+                self._write(f'{30 + index}.json', record)
+                parsed = next(item for item in list_sessions(self.root) if item['pid'] == 30 + index)
+                self.assertIsNone(parsed['process_version'])
+
     def test_missing_directory_returns_empty(self) -> None:
         os.environ['CLAUDE_CONFIG_DIR'] = str(Path(self._temp.name) / 'does-not-exist')
         self.assertEqual(list_sessions(local_root()), [])

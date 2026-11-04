@@ -50,6 +50,7 @@ function rawSession(overrides) {
         // Every session runs the current CLI unless it says otherwise; the two
         // that do are what makes the conditional version column appear at all.
         cli_version: '2.1.228', cli_timeline: [{ time: '2026-07-11T09:25:21Z', version: '2.1.228' }],
+        process_version: '2.1.228', installed_version: '2.1.228',
         subagents_running: 0, subagents_done: 0, subagents_labels: [], workflows: [], age_seconds: 0,
         // Session details: a shared branch is named once in the panel header, so
         // only a panel with one session elsewhere shows the per-row badge.
@@ -336,8 +337,9 @@ window.__MOCK_SNAPSHOT__ = {
             age_seconds: 11,
             // Open since before the last CLI update, so it is still running the
             // older version while everything else has moved on - the case the
-            // version column exists for. No badge: it never switched, it stayed.
-            cli_version: '2.1.223',
+            // version column exists for. No "+N" badge: it never switched, it
+            // stayed - which is what the update badge points out instead.
+            cli_version: '2.1.223', process_version: '2.1.223',
             cli_timeline: [{ time: '2026-07-11T08:12:44Z', version: '2.1.223' }],
             ...priced('claude-opus-4-8[1m]', {
                 input_tokens: 9800, output_tokens: 1900, cache_read_input_tokens: 4200000,

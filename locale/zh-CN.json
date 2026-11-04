@@ -117,6 +117,7 @@
     "plan_tip": "计划：第 {step} 步，共 {total} 步",
     "queued_tip": "排队中的消息：{count}",
     "budget_tip": "预算：已用 {used}，共 {total}",
+    "cli_update_tip": "Claude Code {available} 已可用 - 此代理仍在运行 {running}。重启即可切换。",
     "hook_errors_tip": "有 hook 失败但未阻止运行 - 请检查 hook 配置",
     "hook_error_line": "{hook}（退出代码 {code}）：{count}",
     "effort_tip": "最新回复的 effort：{level}",

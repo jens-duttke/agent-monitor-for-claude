@@ -1978,6 +1978,87 @@ function cliColumnRelevant(sessions) {
     return false;
 }
 
+// A Claude Code version as its list of numbers, or null for anything that is not
+// dot-separated digits - the value comes from disk and must not be guessed at.
+const RELEASE_VERSION_PATTERN = /^\d{1,6}(\.\d{1,6}){1,3}$/;
+
+function parseVersion(text) {
+    if (typeof text !== 'string' || !RELEASE_VERSION_PATTERN.test(text)) {
+        return null;
+    }
+    return text.split('.').map(Number);
+}
+
+// Numeric, part by part, so 2.1.318 is newer than 2.1.99; a missing part counts as 0.
+function compareVersions(a, b) {
+    const length = Math.max(a.length, b.length);
+    for (let index = 0; index < length; index++) {
+        const difference = (a[index] || 0) - (b[index] || 0);
+        if (difference !== 0) {
+            return difference;
+        }
+    }
+    return 0;
+}
+
+// The entrypoints that run the Claude Code installed on the machine, and so pick
+// up its self-update when restarted. VS Code and Claude Desktop bring their own.
+const INSTALLED_CLI_ENTRYPOINTS = new Set(['cli']);
+
+// Which sessions share a Claude Code: one root, one app - and for an app that
+// brings its own copy, one host, since VS Code, its Insiders build and Cursor
+// update their extensions independently. Null for a record that names no app,
+// which therefore has nothing to be compared with.
+function cliUpdateGroup(raw) {
+    if (typeof raw.entrypoint !== 'string' || !raw.entrypoint) {
+        return null;
+    }
+    const host = INSTALLED_CLI_ENTRYPOINTS.has(raw.entrypoint) ? '' : (typeof raw.host === 'string' ? raw.host : '');
+    return sessionOrigin(raw) + '\n' + raw.entrypoint + '\n' + host;
+}
+
+// Per group (see cliUpdateGroup), the newest version a live session runs - and,
+// for the CLI, the version its root has installed - as {parts, text}.
+function newestCliVersions(rawSessions) {
+    const newest = new Map();
+    const consider = (group, text) => {
+        const parts = parseVersion(text);
+        const current = newest.get(group);
+        if (parts && (!current || compareVersions(parts, current.parts) > 0)) {
+            newest.set(group, { parts: parts, text: text });
+        }
+    };
+
+    for (const raw of rawSessions || []) {
+        const group = raw && raw.alive === true ? cliUpdateGroup(raw) : null;
+        if (group === null) {
+            continue;
+        }
+        consider(group, raw.process_version);
+        if (INSTALLED_CLI_ENTRYPOINTS.has(raw.entrypoint)) {
+            consider(group, raw.installed_version);
+        }
+    }
+    return newest;
+}
+
+// The newer Claude Code a live session would run after a restart, as
+// {running, available}, or null when it is already on the newest one its group
+// knows of. Only the process's own version counts: the transcript's may belong
+// to an earlier process of a reopened session.
+function cliUpdateFor(raw, newest) {
+    if (!raw || raw.alive !== true) {
+        return null;
+    }
+    const running = parseVersion(raw.process_version);
+    const group = cliUpdateGroup(raw);
+    const reference = group === null ? null : newest.get(group);
+    if (!running || !reference || compareVersions(reference.parts, running) <= 0) {
+        return null;
+    }
+    return { running: raw.process_version, available: reference.text };
+}
+
 // The pending tool the status label may name, or null when it may not.
 function namedPendingTool(raw) {
     const reason = pendingBlockReason(raw);
@@ -2079,6 +2160,8 @@ function buildSession(raw, labels, prices) {
         cli_version: typeof raw.cli_version === 'string' ? raw.cli_version : '',
         cli_switched: cliVersions.length > 1,
         cli_history: cliVersions,
+        // A newer Claude Code a restart would bring; set by groupProjects.
+        cli_update: null,
         usage_compact: usageCompact,
         usage_detail: usageDetail,
         usage_total: usageTotalTokens(usage),
@@ -2189,9 +2272,33 @@ function nonNegativeAmount(value) {
     return Number.isFinite(number) && number >= 0 ? number : null;
 }
 
-// The current git branch, or '' when the transcript names none.
+// The prefix of the branch Claude Desktop creates for a chat it starts in a
+// git worktree of its own, followed by that worktree's folder name.
+const DESKTOP_WORKTREE_BRANCH_PREFIX = 'claude/';
+
+// The last segment of a Windows or POSIX path, or ''.
+function lastPathSegment(path) {
+    if (typeof path !== 'string') {
+        return '';
+    }
+    const segments = path.split(/[\\/]/).filter(Boolean);
+    return segments.length > 0 ? segments[segments.length - 1] : '';
+}
+
+// The current git branch, or '' when the transcript names none - or when it is
+// only the branch Claude Desktop named after the worktree folder the session
+// works in, which the folder path already says. Once the agent switches to a
+// branch of its own, that one is shown.
 function branchOf(raw) {
-    return typeof raw.git_branch === 'string' ? raw.git_branch : '';
+    if (typeof raw.git_branch !== 'string') {
+        return '';
+    }
+    for (const folder of [lastPathSegment(raw.cwd), lastPathSegment(raw.worktree_cwd)]) {
+        if (folder && raw.git_branch === DESKTOP_WORKTREE_BRANCH_PREFIX + folder) {
+            return '';
+        }
+    }
+    return raw.git_branch;
 }
 
 // The latest reply's effort level, or ''.
@@ -2453,6 +2560,7 @@ function sortProjects(projects, byPriority) {
 // alone cannot tell two distros' identical paths apart.
 function groupProjects(rawSessions, labels, prices) {
     const groups = new Map();
+    const newestVersions = newestCliVersions(rawSessions);
     for (const raw of rawSessions || []) {
         const scratchRoot = scratchWorkspaceRoot(raw.cwd);
         const path = scratchRoot || raw.cwd;
@@ -2470,7 +2578,10 @@ function groupProjects(rawSessions, labels, prices) {
             };
             groups.set(key, group);
         }
-        group.sessions.push(buildSession(raw, labels, prices));
+        const session = buildSession(raw, labels, prices);
+        // Needs every session at once, which buildSession never sees.
+        session.cli_update = cliUpdateFor(raw, newestVersions);
+        group.sessions.push(session);
     }
 
     // The panel's main branch is named once in the header; a row names its own
@@ -2558,6 +2669,10 @@ const AMC_LOGIC = {
     cliHistory,
     changelogUrl,
     cliColumnRelevant,
+    parseVersion,
+    compareVersions,
+    newestCliVersions,
+    cliUpdateFor,
     hostLabel,
     entrypointLabel,
     isViaCli,

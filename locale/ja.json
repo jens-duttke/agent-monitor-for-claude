@@ -117,6 +117,7 @@
     "plan_tip": "プラン: ステップ {step} / {total}",
     "queued_tip": "キュー内のメッセージ: {count}",
     "budget_tip": "予算: {total} 中 {used} 使用",
+    "cli_update_tip": "Claude Code {available} が利用可能です - このエージェントはまだ {running} で動作しています。切り替えるには再起動してください。",
     "hook_errors_tip": "ブロックせずに失敗しているフックがあります - フックの設定を確認してください",
     "hook_error_line": "{hook} (終了コード {code}): {count}",
     "effort_tip": "最新の応答の effort: {level}",

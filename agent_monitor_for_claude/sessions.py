@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .cli_install import parse_version
 from .paths import SessionRoot, sessions_dir
 
 __all__ = ['list_sessions']
@@ -67,7 +68,8 @@ def list_sessions(root: SessionRoot) -> list[dict[str, Any]]:
 
     Each record has ``session_id``, ``pid``, ``cwd``, ``name``, ``kind``,
     ``job_id``, ``remote_control``, ``started_at``, ``native_status_since``,
-    ``origin``, and ``origin_label``.  Records that cannot be parsed are omitted.
+    ``process_version``, ``origin``, and ``origin_label``.  Records that cannot
+    be parsed are omitted.
 
     Parameters
     ----------
@@ -185,6 +187,10 @@ def _normalize(data: Any) -> dict[str, Any] | None:
         # When the native status last changed - how long a session has been busy,
         # idle or waiting, which the transcript cannot tell for a long turn.
         'native_status_since': _parse_epoch_ms(data.get('statusUpdatedAt')),
+        # The Claude Code version of the running process - unlike the version on
+        # the transcript's newest turn, it is known before the first turn and
+        # never belongs to an earlier process of a reopened session.
+        'process_version': parse_version(data.get('version')),
     }
 
 

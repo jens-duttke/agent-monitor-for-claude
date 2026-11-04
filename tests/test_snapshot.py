@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
+from agent_monitor_for_claude import cli_install
 from agent_monitor_for_claude import snapshot as snapshot_mod
 from agent_monitor_for_claude.paths import SessionRoot, transcript_path, local_root
 from agent_monitor_for_claude.snapshot import build_snapshot, live_or_recent_ids, registry_fingerprint
@@ -168,6 +169,25 @@ class RawSnapshotTest(_RegistryFixture):
         self.assertTrue(260 <= session['wakeup_in_seconds'] <= 271)
         self.assertIsNone(session['rate_limit_resets_in_seconds'])
         self.assertIsNone(session['api_retry_attempt'])
+
+    def test_record_carries_the_running_and_the_installed_version(self) -> None:
+        # The UI compares the two to tell a session it would get a newer Claude
+        # Code by restarting.
+        (Path(self._temp.name) / 'sessions' / 'v.json').write_text(json.dumps({
+            'pid': os.getpid(), 'sessionId': 'v', 'cwd': 'd:\\x', 'entrypoint': 'cli', 'version': '2.1.317',
+        }), encoding='utf-8')
+        (Path(self._temp.name) / '.last-update-result.json').write_text(json.dumps({
+            'outcome': 'success', 'status': 'success', 'version_from': '2.1.317', 'version_to': '2.1.318',
+        }), encoding='utf-8')
+        path = transcript_path(local_root(), 'v', 'd:\\x')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_END_TURN, encoding='utf-8')
+
+        with mock.patch.object(cli_install, '_versions', {}):
+            session = next(s for s in build_snapshot()['sessions'] if s['session_id'] == 'v')
+
+        self.assertEqual(session['process_version'], '2.1.317')
+        self.assertEqual(session['installed_version'], '2.1.318')
 
     def test_record_carries_the_api_error_fields(self) -> None:
         # All three fields an errored session's status is built from have to reach

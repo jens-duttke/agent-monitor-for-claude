@@ -117,6 +117,7 @@
     "plan_tip": "План: крок {step} з {total}",
     "queued_tip": "Повідомлення в черзі: {count}",
     "budget_tip": "Бюджет: використано {used} з {total}",
+    "cli_update_tip": "Доступний Claude Code {available} - цей агент досі працює на {running}. Перезапустіть його, щоб перейти.",
     "hook_errors_tip": "Хуки завершуються з помилкою без блокування - перевірте налаштування хуків",
     "hook_error_line": "{hook} (код виходу {code}): {count}",
     "effort_tip": "Зусилля останньої відповіді: {level}",
