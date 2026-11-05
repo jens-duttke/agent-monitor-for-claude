@@ -37,8 +37,10 @@ function initListControls() {
     try {
         const stored = localStorage.getItem('amc-group');
         state.group = GROUPS.includes(stored) ? stored : 'urgency';
+        state.graphRange = logic.graphRange(localStorage.getItem('amc-graph-range')).key;
     } catch (e) {
         state.group = 'urgency';
+        state.graphRange = logic.DEFAULT_GRAPH_RANGE;
     }
     document.querySelectorAll('#group-switch [data-group]').forEach((button) => {
         button.addEventListener('click', () => setGroup(button.dataset.group));
@@ -52,6 +54,18 @@ function setGroup(group) {
         localStorage.setItem('amc-group', state.group);
     } catch (e) { /* storage unavailable */ }
     refreshGroupSwitch();
+    if (state.last) {
+        render(state.last);
+    }
+}
+
+// How far back the graph reaches. Everything it needs is on the snapshot
+// already, so a switch only re-renders.
+function setGraphRange(key) {
+    state.graphRange = logic.graphRange(key).key;
+    try {
+        localStorage.setItem('amc-graph-range', state.graphRange);
+    } catch (e) { /* storage unavailable */ }
     if (state.last) {
         render(state.last);
     }

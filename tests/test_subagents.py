@@ -10,7 +10,13 @@ from dataclasses import asdict
 from pathlib import Path
 
 from agent_monitor_for_claude.paths import cwd_to_slug, projects_dir, local_root
-from agent_monitor_for_claude.subagents import count_subagents
+from agent_monitor_for_claude.subagents import agent_texts, count_subagents
+
+
+def _task(root, session_id: str, agent_id: str) -> str | None:
+    """The task :func:`agent_texts` reads for an agent, or None when it finds the agent without one or not at all."""
+    texts = agent_texts(root, session_id, agent_id)
+    return (texts['task'] or None) if texts is not None else None
 
 _SESSION_ID = 'sub-session-id'
 _CWD = 'd:\\WebDev\\proj'
@@ -68,8 +74,106 @@ class SubagentsTest(unittest.TestCase):
         mtime = time.time() - age_seconds
         os.utime(agent, (mtime, mtime))
 
+    def test_an_agents_whole_task_is_read_from_its_first_line(self) -> None:
+        task = 'Map the input handling.\n' + 'x' * 5000
+        first = json.dumps({'type': 'user', 'isSidechain': True, 'message': {'content': task}})
+        self._add_agent('a1b2c3d4e5f6a7b8c', 5, 'Map', body=first + '\n' + _assistant_end_turn())
+        # An agent filed under a worktree's project folder, its task in text blocks.
+        worktree_dir = projects_dir(local_root()) / cwd_to_slug('d:\\WebDev\\proj-worktrees\\fix') / _SESSION_ID / 'subagents'
+        worktree_dir.mkdir(parents=True)
+        blocks = {'type': 'user', 'message': {'content': [{'type': 'text', 'text': 'Part one'}, {'type': 'image'}, {'type': 'text', 'text': 'Part two'}]}}
+        (worktree_dir / 'agent-aw1.jsonl').write_text(json.dumps(blocks) + '\n', encoding='utf-8')
+
+        self.assertEqual(_task(local_root(), _SESSION_ID, 'a1b2c3d4e5f6a7b8c'), task)
+        self.assertEqual(_task(local_root(), _SESSION_ID, 'aw1'), 'Part one\n\nPart two')
+        self.assertIsNone(_task(local_root(), _SESSION_ID, 'missing'))
+        self.assertIsNone(_task(local_root(), 'other-session', 'a1b2c3d4e5f6a7b8c'))
+
+    def test_an_agents_result_is_its_newest_reply_whole(self) -> None:
+        first = json.dumps({'type': 'user', 'isSidechain': True, 'message': {'content': 'The task'}})
+        report = 'Findings:\n' + 'z' * 5000
+        lines = [
+            first,
+            json.dumps({'type': 'assistant', 'isSidechain': True, 'message': {'content': [{'type': 'text', 'text': 'Looking.'}]}}),
+            json.dumps({'type': 'assistant', 'isSidechain': True, 'message': {'content': [
+                {'type': 'thinking', 'thinking': 'never shown'}, {'type': 'text', 'text': report}]}}),
+            json.dumps({'type': 'assistant', 'isSidechain': True, 'message': {'content': [{'type': 'tool_use', 'id': 'u', 'name': 'Read', 'input': {}}]}}),
+            json.dumps({'type': 'user', 'isSidechain': True, 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'u', 'content': 'file text'}]}}),
+        ]
+        self._add_agent('a1', 5, 'Map', body='\n'.join(lines) + '\n')
+        self._add_agent('a2', 5, 'Fresh', body=first + '\n')
+
+        texts = agent_texts(local_root(), _SESSION_ID, 'a1')
+        self.assertEqual((texts['task'], texts['result']), ('The task', report))
+        # Every step in order: the replies' texts and the call with its input and
+        # result; the thinking stays unread.
+        self.assertEqual([(step['kind'], step.get('text') or step.get('tool')) for step in texts['steps']],
+                         [('text', 'Looking.'), ('text', report), ('call', 'Read')])
+        call = texts['steps'][2]
+        self.assertEqual((call['id'], call['input'], call['result'], call['error'], call['outcome']), ('u', {}, 'file text', False, ''))
+        self.assertNotIn('never shown', json.dumps(texts))
+        self.assertEqual(agent_texts(local_root(), _SESSION_ID, 'a2'), {'task': 'The task', 'result': '', 'steps': []})
+
+    def test_a_handed_back_report_or_a_structured_output_is_the_result(self) -> None:
+        first = json.dumps({'type': 'user', 'isSidechain': True, 'message': {'content': 'The task'}})
+
+        def call(name, tool_input):
+            return json.dumps({'type': 'assistant', 'isSidechain': True, 'message': {'content': [
+                {'type': 'tool_use', 'id': 'h', 'name': name, 'input': tool_input}]}})
+
+        said = json.dumps({'type': 'assistant', 'isSidechain': True, 'message': {'content': [{'type': 'text', 'text': 'Handing back now.'}]}})
+        ends = json.dumps({'type': 'user', 'isSidechain': True, 'toolEndsTurn': True,
+                           'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'h', 'content': 'Report delivered to your caller.'}]}})
+        self._add_agent('bg', 5, 'Bg', body='\n'.join([first, said, call('SubagentHandback', {'message': '  The report.  '}), ends]) + '\n')
+        self._add_agent('wf', 5, 'Wf', body='\n'.join([first, call('StructuredOutput', {'verdict': 'ok', 'count': 2}), ends]) + '\n')
+        self._add_agent('empty', 5, 'Empty', body='\n'.join([first, call('SubagentHandback', {'message': ' '}), said]) + '\n')
+
+        self.assertEqual(agent_texts(local_root(), _SESSION_ID, 'bg')['result'], 'The report.')
+        self.assertEqual(json.loads(agent_texts(local_root(), _SESSION_ID, 'wf')['result']), {'verdict': 'ok', 'count': 2})
+        self.assertEqual(agent_texts(local_root(), _SESSION_ID, 'empty')['result'], 'Handing back now.')
+
+    def test_each_step_says_how_it_ended(self) -> None:
+        first = json.dumps({'type': 'user', 'isSidechain': True, 'message': {'content': 'The task'}})
+        calls = json.dumps({'type': 'assistant', 'isSidechain': True, 'message': {'content': [
+            {'type': 'tool_use', 'id': f'u{index}', 'name': 'Bash', 'input': {}} for index in range(4)]}})
+
+        def result(tool_use_id, text, is_error, **extra):
+            return json.dumps({'type': 'user', 'isSidechain': True, **extra, 'message': {'content': [
+                {'type': 'tool_result', 'tool_use_id': tool_use_id, 'is_error': is_error, 'content': text}]}})
+
+        lines = [first, calls, result('u0', 'Exit code 127\nnot found', True), result('u1', "The user doesn't want to proceed with this tool use.", True),
+                 result('u2', 'partial', False, toolUseResult={'interrupted': True}), result('u3', 'ok', False)]
+        self._add_agent('a1', 5, 'Map', body='\n'.join(lines) + '\n')
+
+        steps = agent_texts(local_root(), _SESSION_ID, 'a1')['steps']
+
+        self.assertEqual([(step['outcome'], step['exit_code'], step['error']) for step in steps],
+                         [('failed', 127, True), ('rejected', None, False), ('interrupted', None, False), ('', None, False)])
+
+    def test_an_agent_id_that_could_name_a_path_is_refused(self) -> None:
+        self._add_agent('a1', 5, 'Map', body=_assistant_end_turn())
+        for agent_id in ('../a1', 'a1/../a1', '.a1', '', 'a1.jsonl', 'a' * 65):
+            self.assertIsNone(_task(local_root(), _SESSION_ID, agent_id), agent_id)
+
     def test_no_directory_is_empty(self) -> None:
         self.assertEqual(count_subagents(local_root(), 'other-id', _CWD).running, 0)
+
+    def test_agents_started_in_a_worktree_are_found_under_its_folder(self) -> None:
+        # The session's transcript stays under the launch directory's folder, but
+        # an agent it starts after switching into a worktree is filed under the
+        # worktree's - both count, and a worktree folder named twice once.
+        worktree = 'd:\\WebDev\\proj-worktrees\\fix'
+        self._add_agent('a1', 5, 'Before the switch', body=_assistant_tool_use())
+        worktree_dir = projects_dir(local_root()) / cwd_to_slug(worktree) / _SESSION_ID / 'subagents'
+        worktree_dir.mkdir(parents=True)
+        (worktree_dir / 'agent-a2.jsonl').write_text(_assistant_end_turn(), encoding='utf-8')
+
+        info = count_subagents(local_root(), _SESSION_ID, _CWD, (worktree, worktree, 'd:\\WebDev\\gone'))
+
+        self.assertEqual(info.running, 1)
+        self.assertEqual(info.recent_done, 1)
+        self.assertEqual(sorted(agent.agent_id for agent in info.agents), ['a1', 'a2'])
+        self.assertEqual([agent.agent_id for agent in count_subagents(local_root(), _SESSION_ID, _CWD).agents], ['a1'])
 
     def test_executing_tool_is_running(self) -> None:
         # Last entry is an unanswered tool_use -> executing -> running, however
@@ -113,16 +217,17 @@ class SubagentsTest(unittest.TestCase):
         self.assertEqual(info.running, 1)
         self.assertEqual(info.labels, ('Thinking',))
 
-    def test_the_connection_view_lists_the_agents_of_the_last_day_newest_first(self) -> None:
+    def test_the_connection_view_lists_every_agent_newest_first(self) -> None:
         self._add_agent('fresh', 5, 'Fresh', body=_assistant_tool_use())
         self._add_agent('hour', 3600, 'An hour ago', body=_assistant_end_turn())
         self._add_agent('wf', 7200, 'In a workflow', body=_assistant_end_turn(), nested=True)
-        self._add_agent('old', 2 * 86400, 'Two days ago', body=_assistant_end_turn())
+        self._add_agent('week', 7 * 86400, 'A week ago', body=_assistant_end_turn())
+        self._add_agent('old', 31 * 86400, 'A month ago', body=_assistant_end_turn())
 
         info = count_subagents(local_root(), _SESSION_ID, _CWD)
 
-        self.assertEqual([agent.agent_id for agent in info.agents], ['fresh', 'hour', 'wf'])
-        self.assertEqual([agent.running for agent in info.agents], [True, False, False])
+        self.assertEqual([agent.agent_id for agent in info.agents], ['fresh', 'hour', 'wf', 'week', 'old'])
+        self.assertEqual([agent.running for agent in info.agents], [True, False, False, False, False])
         self.assertEqual(info.agents[2].workflow, 'wf_1')
         self.assertEqual(info.agents[1].description, 'An hour ago')
         # Outside the recent window an agent no longer counts as recently finished.

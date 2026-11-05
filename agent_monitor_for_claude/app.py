@@ -36,7 +36,8 @@ from .search import run_search
 from .session_delete import delete_session as _delete_session
 from .sessions import list_sessions
 from .settings import POLL_INTERVAL, WINDOW_HEIGHT, WINDOW_WIDTH
-from .snapshot import build_snapshot, registry_fingerprint
+from .snapshot import build_snapshot, registry_fingerprint, session_texts
+from .subagents import agent_texts
 from .tasks import list_tasks
 from .tasks import read_task_output as _read_task_output
 from .test_results import TestSummary
@@ -528,6 +529,40 @@ class _MonitorApi:
             return False
 
         return _prioritize_session(root, session_id, cwd) > 0
+
+    def get_session_texts(self, session_id: object, cwd: object, origin: object = 'local') -> dict[str, Any] | None:
+        """Return the selected session's current call and last reply, whole, or None.
+
+        The snapshot carries both cut to a display length; the details ask for
+        the whole text of the one session they show, when it changed.  Reads the
+        transcript's tail only.  The session id must be a UUID and the origin a
+        currently available root.
+        """
+        if not isinstance(session_id, str) or not _SESSION_UUID.match(session_id) or not isinstance(cwd, str) or not cwd:
+            return None
+
+        root = root_for_origin(origin) if isinstance(origin, str) else None
+        if root is None:
+            return None
+
+        return session_texts(root, session_id, cwd)
+
+    def get_agent_texts(self, session_id: object, agent_id: object, origin: object = 'local') -> dict[str, Any] | None:
+        """Return the whole task one of the session's subagents was given, its result and its steps, or None.
+
+        Read on request for the agent the details show: its own transcript's
+        first line, its result, and each tool call with its input and result
+        and each reply between them - its thinking stays unread.  The session id must be a UUID, the agent id is checked by the
+        reader, and the file must lie inside ``projects/``.
+        """
+        if not isinstance(session_id, str) or not _SESSION_UUID.match(session_id) or not isinstance(agent_id, str):
+            return None
+
+        root = root_for_origin(origin) if isinstance(origin, str) else None
+        if root is None:
+            return None
+
+        return agent_texts(root, session_id, agent_id)
 
     def get_git_status(self, session_id: object, cwd: object, worktree_cwd: object = '', origin: object = 'local') -> dict[str, Any] | None:
         """Return what the session's working directory holds that is not committed yet, or None.

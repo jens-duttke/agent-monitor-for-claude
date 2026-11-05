@@ -223,29 +223,73 @@ function updateItem(el, session) {
 // Shorten each graph label to the width its box leaves, measured in the font it
 // is drawn in - a character count cannot know how wide a bold "W" is. Done once
 // per freshly written label; the full text stays in the node's tooltip.
+// The fitted form of each label already measured, by its class and text: a
+// rebuilt graph repeats nearly all of them, and every measurement forces a
+// layout - a thousand labels measured afresh on each poll froze the window.
+const graphTextFits = new Map();
+const GRAPH_TEXT_FITS_MAX = 5000;
+
 function fitGraphText(root) {
     root.querySelectorAll('.gnode text').forEach((text) => {
-        if (text.__fitted || typeof text.getComputedTextLength !== 'function') {
+        if (text.__fitted) {
             return;
         }
         text.__fitted = true;
-        if (text.getComputedTextLength() <= logic.GRAPH_TEXT_WIDTH) {
+        const cacheKey = text.getAttribute('class') + '|' + text.textContent;
+        if (graphTextFits.has(cacheKey)) {
+            text.textContent = graphTextFits.get(cacheKey);
             return;
         }
-        const full = text.textContent.replace(/…$/, '');
-        let fits = 0;
-        let tooLong = full.length;
-        while (tooLong - fits > 1) {
-            const middle = Math.floor((fits + tooLong) / 2);
-            text.textContent = full.slice(0, middle).trimEnd() + '…';
-            if (text.getComputedTextLength() <= logic.GRAPH_TEXT_WIDTH) {
-                fits = middle;
-            } else {
-                tooLong = middle;
-            }
+        fitOneGraphText(text);
+        if (graphTextFits.size >= GRAPH_TEXT_FITS_MAX) {
+            graphTextFits.clear();
         }
-        text.textContent = full.slice(0, fits).trimEnd() + '…';
+        graphTextFits.set(cacheKey, text.textContent);
     });
+}
+
+// Shorten one label to the room its box has, by halving the length that fits.
+// Measured on a canvas in the label's own font, which needs no layout: an SVG
+// text's own measurement forces one on every call.
+function fitOneGraphText(text) {
+    const measure = graphTextMeasurer(text);
+    const full = text.textContent.replace(/…$/, '');
+    if (measure(full) <= logic.GRAPH_TEXT_WIDTH) {
+        text.textContent = full;
+        return;
+    }
+    let fits = 0;
+    let tooLong = full.length;
+    while (tooLong - fits > 1) {
+        const middle = Math.floor((fits + tooLong) / 2);
+        if (measure(full.slice(0, middle).trimEnd() + '…') <= logic.GRAPH_TEXT_WIDTH) {
+            fits = middle;
+        } else {
+            tooLong = middle;
+        }
+    }
+    text.textContent = full.slice(0, fits).trimEnd() + '…';
+}
+
+// A width function for the font of `text`'s class, read once per class.
+const graphTextFonts = new Map();
+let graphTextCanvas = null;
+
+function graphTextMeasurer(text) {
+    const className = text.getAttribute('class') || '';
+    if (!graphTextFonts.has(className)) {
+        const style = getComputedStyle(text);
+        graphTextFonts.set(className, style.fontWeight + ' ' + style.fontSize + ' ' + style.fontFamily);
+    }
+    if (!graphTextCanvas) {
+        graphTextCanvas = document.createElement('canvas').getContext('2d');
+    }
+    const context = graphTextCanvas;
+    const font = graphTextFonts.get(className);
+    return (value) => {
+        context.font = font;
+        return context.measureText(value).width;
+    };
 }
 
 // The activity line: the call or question the session waits on, the call it
@@ -352,6 +396,16 @@ function historyRangeMarkup() {
         + attr('class', 'range-btn' + (range.key === state.historyRange ? ' active' : ''))
         + attr('data-range', range.key)
         + attr('aria-pressed', range.key === state.historyRange ? 'true' : 'false')
+        + '>' + esc(state.labels[range.label] || range.key) + '</button>').join('');
+}
+
+// How far back the graph reaches, as a row of buttons above it.
+function graphRangeMarkup() {
+    return logic.GRAPH_RANGES.map((range) => '<button'
+        + attr('type', 'button')
+        + attr('class', 'range-btn' + (range.key === state.graphRange ? ' active' : ''))
+        + attr('data-graph-range', range.key)
+        + attr('aria-pressed', range.key === state.graphRange ? 'true' : 'false')
         + '>' + esc(state.labels[range.label] || range.key) + '</button>').join('');
 }
 
@@ -583,6 +637,7 @@ function render(snapshot) {
     const grouping = compact ? 'urgency' : state.group;
     document.body.classList.toggle('group-urgency', grouping === 'urgency');
     document.body.classList.toggle('group-graph', grouping === 'graph');
+    applyListWidth();
 
     let outsideFilters = 0;
     const shown = [];
@@ -592,14 +647,17 @@ function render(snapshot) {
     if (grouping === 'graph') {
         // The live sessions the query leaves, with their subagents and the
         // messages between them; the sections do not apply here.
-        // Through setMarkup, so its cache sees the slot emptied and the toggles
-        // come back when the Project grouping writes the same markup again.
-        setMarkup(chipsSlot, '');
+        // The chip row holds the graph's time window here. Through setMarkup,
+        // so its cache sees the slot change and the toggles come back when the
+        // Project grouping writes the same markup again.
+        setMarkup(chipsSlot, graphRangeMarkup());
         listSlot.replaceChildren();
         const graphSessions = found.filter((session) => !session.is_history);
         shown.push(...graphSessions);
-        const model = logic.graphModel(graphSessions.map((session) => ({ key: rowKey(session), session: session })));
-        setMarkup(graphSlot, graphSessions.length > 0 ? logic.graphMarkup(logic.graphLayout(model), labels, state.selectedKey) : '');
+        const entries = graphSessions.map((session) => ({ key: rowKey(session), session: session }));
+        const selection = { key: state.selectedKey, agent: state.selectedAgent, process: state.selectedProcess, tool: state.selectedTool };
+        const model = logic.graphModel(entries, logic.graphRange(state.graphRange).seconds, selection);
+        setMarkup(graphSlot, graphSessions.length > 0 ? logic.graphMarkup(logic.graphLayout(model), labels, selection) : '');
         fitGraphText(graphSlot);
     } else if (grouping === 'urgency') {
         setMarkup(chipsSlot, '');
@@ -713,6 +771,8 @@ function ensureSelection() {
         return;
     }
     state.selectedKey = state.listKeys.length > 0 ? state.listKeys[0] : null;
+    state.selectedAgent = null;
+    state.selectedProcess = null;
     state.detailOpen = false;
     document.body.classList.remove('detail-open');
     markSelectedItem();
@@ -724,8 +784,14 @@ function markSelectedItem() {
         el.classList.remove('selected');
         el.setAttribute('aria-selected', 'false');
     });
+    // A node is marked when everything it names matches the selection: its
+    // session, and its subagent, process or tool, or none of them.
     document.querySelectorAll('.gnode[data-key]').forEach((el) => {
-        el.classList.toggle('selected', el.dataset.key === state.selectedKey);
+        const agent = el.dataset.agent || null;
+        const process = el.dataset.process ? Number(el.dataset.process) : null;
+        const tool = el.dataset.tool || null;
+        el.classList.toggle('selected', el.dataset.key === state.selectedKey && agent === (state.selectedAgent || null)
+            && process === (state.selectedProcess || null) && tool === (state.selectedTool || null));
     });
     if (!state.selectedKey) {
         return;

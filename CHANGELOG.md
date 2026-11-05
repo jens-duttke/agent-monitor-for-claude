@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - The window is now a list of agents beside the details of the one you select. The list is sorted by what each agent needs from you - *Needs you*, *Stopped*, *Running*, *Recent* and *Older* - and can be grouped by project instead.
+- Drag the line between the list and the details to make either wider; a double-click resets it. The list and the graph each keep their own width.
 - Every entry says its status in words and names up to two facts worth knowing, such as running processes, subagents or a nearly full context.
 - The details show the status with its reason, host, model, effort, mode and version, the cost and its breakdown, context, plan, budget and prompt cache, the live processes with their task output, the subagents and the session ID - nothing of it only on hover any more.
 - The details link to the artifacts an agent published, by their titles.
@@ -21,7 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The details show the lines an agent changed, and how long it worked and waited over the last day on a timeline.
 - The details list the selected agent's uncommitted files with their lines, the branch's distance to its upstream, and how many of the agent's own edits are not committed yet. This runs `git` in the agent's directory.
 - A background task that ran tests shows how many passed and failed, without expanding it.
-- The *Graph* grouping shows the running agents, the subagents they started and the messages between them, with moving dots on active connections.
+- The *Graph* grouping shows the running agents, every subagent they started, each background process under the process that started it, the tools and MCP servers each of them called with the number of calls (drawn for the session or subagent you select), and the messages between agents and sessions, with moving dots on active connections. Buttons above the graph choose how far back it reaches, from an hour to everything, and dragging it pans it.
+- Click a subagent in the graph to see its result, its whole task, every tool call with its request and result (failed calls in red, with their exit code), runtime, start, cost, tool calls, changed lines and how it was started; subagents are numbered in the order they started. Click a process to see its live CPU, memory and uptime, with the session's process table beside it.
+- Replies, plans and subagent tasks in the details can be shown formatted as Markdown or as written, switched in the box's header. The details show the current command and the last reply whole instead of cut short.
 
 ### Changed
 - The window opens with every agent listed at once; costs and details fill in as the transcripts are read, the selected agent first and then the most recently active ones. On Windows with WSL sessions, each refresh no longer reads every process of the distribution, which made the window noticeably slower.
@@ -59,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Sessions show up much sooner at startup when a WSL distribution holds many records of long-ended sessions, and the monitor puts less load on WSL while it runs. Such records used to be read in full on every refresh before being skipped.
 - Token counts and estimated costs were about twice as high as they really are, because each reply was counted once per part it is stored in. Each reply now counts once.
+- Subagents an agent started after switching into a git worktree were missing - from its running count, its cost and the graph. They are now found in the worktree's folder too.
 - An agent's cost now includes what its subagents spent. It used to cover only the main conversation, which for an agent that delegates a lot was often less than half of the real figure.
 - A chat that was reopened several times - typical for Claude Desktop and WSL - is listed once again. It used to appear once per earlier run, as identical grey rows next to the live one.
 - With *Older* on, a Claude Desktop chat that ran inside WSL is listed once instead of twice. Claude Desktop keeps a copy of such chats on Windows, which used to show up as a second row.

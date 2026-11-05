@@ -1432,6 +1432,108 @@ class ScanMonitoringTest(unittest.TestCase):
             tmod.MessageEvent('received', 'a1b2', _timestamp_epoch('2026-07-11T10:01:00Z'), 'Explore', True),
         ])
 
+    def test_a_message_queued_while_a_turn_ran_is_logged_as_received(self) -> None:
+        state = _ScanState()
+        origin = {'kind': 'peer', 'from': r'uds:\\.\pipe\LOCAL\cc-msg-1', 'msg_id': 'm1', 'name': 'Photo editor', 'body': 'long'}
+        # Written compact, as Claude Code writes it: the pre-filter looks for the peer marker without spaces.
+        for entry in (
+            {'type': 'attachment', 'timestamp': '2026-07-11T10:00:00Z', 'attachment': {'type': 'queued_command', 'prompt': 'long', 'origin': origin}},
+            {'type': 'attachment', 'timestamp': '2026-07-11T10:01:00Z', 'isSidechain': True, 'attachment': {'type': 'queued_command', 'origin': origin}},
+            {'type': 'attachment', 'timestamp': '2026-07-11T10:02:00Z', 'attachment': {'type': 'deferred_tools_delta', 'origin': origin}},
+        ):
+            _absorb_line(json.dumps(entry, separators=(',', ':')).encode('utf-8'), state)
+        self.assertEqual(state.messages, [
+            tmod.MessageEvent('received', origin['from'], _timestamp_epoch('2026-07-11T10:00:00Z'), 'Photo editor'),
+        ])
+
+    def test_how_each_subagent_was_started_is_recorded_by_its_id(self) -> None:
+        state = _ScanState()
+        compact = (lambda entry: _absorb_line(json.dumps(entry, separators=(',', ':')).encode('utf-8'), state))
+        calls = [
+            {'type': 'tool_use', 'id': 't1', 'name': 'Agent', 'input': {'prompt': 'p', 'run_in_background': True, 'effort': 'high'}},
+            {'type': 'tool_use', 'id': 't2', 'name': 'Task', 'input': {'prompt': 'p', 'effort': 'not a token!'}},
+        ]
+        compact(_assistant(calls, 'tool_use', '2026-07-11T10:00:00Z'))
+
+        def result(tool_use_id, **fields):
+            return {'type': 'user', 'timestamp': '2026-07-11T10:00:01Z', 'isSidechain': False, 'toolUseResult': fields,
+                    'message': {'content': [{'type': 'tool_result', 'tool_use_id': tool_use_id, 'content': 'x'}]}}
+
+        compact(result('t1', status='async_launched', agentId='a-bg', isAsync=True))
+        compact(result('t2', status='completed', agentId='a-fg'))
+        compact(result('t9', status='forked', agentId='a-skill', commandName='commit'))
+        compact(result('t3', status='completed', agentId=7))
+
+        self.assertEqual(state.agent_launches, {
+            'a-bg': tmod.AgentLaunch('background', 'high'),
+            'a-fg': tmod.AgentLaunch('foreground', ''),
+            'a-skill': tmod.AgentLaunch('skill'),
+        })
+        self.assertEqual(state.pending_launches, {})
+
+    def test_an_agent_file_scan_says_when_it_started_what_it_called_and_changed(self) -> None:
+        state = _ScanState(first_prompt='')
+        lines = [
+            {'type': 'user', 'isSidechain': True, 'agentId': 'a1', 'timestamp': '2026-07-11T10:00:00Z', 'message': {'content': 'task'}},
+            {'type': 'assistant', 'isSidechain': True, 'agentId': 'a1', 'timestamp': '2026-07-11T10:00:05Z',
+             'message': {'id': 'm1', 'model': 'claude-opus-5-5', 'stop_reason': 'tool_use', 'usage': {'output_tokens': 3},
+                         'content': [{'type': 'tool_use', 'id': 'u1', 'name': 'Edit', 'input': {'file_path': 'x'}},
+                                     {'type': 'tool_use', 'id': 'u2', 'name': 'Read', 'input': {}}]}},
+            {'type': 'user', 'isSidechain': True, 'agentId': 'a1', 'timestamp': '2026-07-11T10:00:06Z',
+             'toolUseResult': {'structuredPatch': [{'lines': ['+a', '+b', '-c']}]},
+             'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'u1'}]}},
+        ]
+        for entry in lines:
+            _absorb_line(json.dumps(entry, separators=(',', ':')).encode('utf-8'), state)
+
+        usage = state.usage()
+        self.assertEqual(usage.started_at, _timestamp_epoch('2026-07-11T10:00:00Z'))
+        self.assertEqual((usage.tool_calls, usage.lines_added, usage.lines_removed), (2, 2, 1))
+        # A subagent's own lines are not the main conversation's.
+        self.assertEqual((state.lines_added, state.lines_removed, state.agent_launches), (0, 0, {}))
+
+    def test_each_tool_called_is_counted_by_name_with_its_last_use(self) -> None:
+        state = _ScanState()
+        calls = [
+            {'type': 'tool_use', 'id': 'u1', 'name': 'Bash', 'input': {'command': 'ls'}},
+            {'type': 'tool_use', 'id': 'u2', 'name': 'mcp__discord__read_messages', 'input': {}},
+            {'type': 'tool_use', 'id': 'u3', 'name': 'not a name!', 'input': {}},
+        ]
+        self._absorb(state, _assistant(calls, 'tool_use', '2026-07-11T10:00:00Z'))
+        self._absorb(state, _assistant([{'type': 'tool_use', 'id': 'u4', 'name': 'Bash', 'input': {}}], 'tool_use', '2026-07-11T09:00:00Z'))
+
+        self.assertEqual(state.tool_calls, 4)
+        self.assertEqual(tmod._tool_use_tuples(state.tool_uses), {
+            'Bash': (2, _timestamp_epoch('2026-07-11T10:00:00Z'), 0),
+            'mcp__discord__read_messages': (1, _timestamp_epoch('2026-07-11T10:00:00Z'), 0),
+        })
+        self.assertEqual(state.usage().tools['Bash'][0], 2)
+
+    def test_a_failed_tool_call_counts_against_its_tool_but_a_rejected_one_does_not(self) -> None:
+        state = _ScanState()
+        calls = [{'type': 'tool_use', 'id': f'u{index}', 'name': 'Bash', 'input': {}} for index in range(4)]
+        self._absorb(state, _assistant(calls, 'tool_use', '2026-07-11T10:00:00Z'))
+
+        def result(tool_use_id, text, is_error):
+            return {'type': 'user', 'timestamp': '2026-07-11T10:00:01Z', 'message': {'content': [
+                {'type': 'tool_result', 'tool_use_id': tool_use_id, 'is_error': is_error, 'content': text}]}}
+
+        # Written compact, as Claude Code writes it: the pre-filter looks for the error marker without spaces.
+        for entry in (result('u0', 'Exit code 1\nboom', True), result('u1', 'fine', False),
+                      result('u2', "The user doesn't want to proceed with this tool use.", True),
+                      result('u3', [{'type': 'text', 'text': 'Exit code 2'}], True), result('u9', 'unknown call', True)):
+            _absorb_line(json.dumps(entry, separators=(',', ':')).encode('utf-8'), state)
+
+        self.assertEqual(state.tool_uses['Bash'][2], 2)
+
+    def test_every_worktree_entered_is_remembered_once(self) -> None:
+        state = _ScanState()
+        for path in ('D:\\repo-worktrees\\one', 'D:\\repo-worktrees\\two', 'D:\\repo-worktrees\\one'):
+            self._absorb(state, {'type': 'worktree-state', 'worktreeSession': {'originalCwd': 'D:\\repo', 'worktreePath': path}})
+        self._absorb(state, {'type': 'worktree-state', 'worktreeSession': None})
+        self.assertEqual(state.worktree_paths, ['D:\\repo-worktrees\\one', 'D:\\repo-worktrees\\two'])
+        self.assertIsNone(state.worktree)
+
 
 if __name__ == '__main__':
     unittest.main()

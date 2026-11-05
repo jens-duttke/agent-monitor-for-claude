@@ -50,12 +50,66 @@ function selectSession(key, drill) {
         return;
     }
     state.selectedKey = key;
+    state.selectedAgent = null;
+    state.selectedProcess = null;
+    state.selectedTool = null;
+    state.scrollToActivity = false;
     if (drill) {
         state.detailOpen = true;
         document.body.classList.add('detail-open');
     }
     markSelectedItem();
     renderDetail();
+    refreshGraphFocus();
+}
+
+// The graph draws the tool edges of what is selected, so a new selection
+// redraws it (a few milliseconds); the list needs nothing of the kind.
+function refreshGraphFocus() {
+    if (state.group === 'graph' && !state.compact && state.last) {
+        render(state.last);
+    }
+}
+
+// Select one of a session's subagents: the detail describes the agent, and the
+// session stays the selection the list and the keyboard work from.
+function selectAgent(key, agentId) {
+    if (!key || !agentId || !state.sessionsByKey.has(key)) {
+        return;
+    }
+    selectSession(key, true);
+    state.selectedAgent = agentId;
+    state.selectedTool = null;
+    markSelectedItem();
+    renderDetail();
+    refreshGraphFocus();
+}
+
+// Select one of a session's background processes, like a subagent.
+function selectProcess(key, pid) {
+    if (!key || !Number.isInteger(pid) || pid <= 0 || !state.sessionsByKey.has(key)) {
+        return;
+    }
+    selectSession(key, true);
+    state.selectedProcess = pid;
+    markSelectedItem();
+    renderDetail();
+    refreshGraphFocus();
+}
+
+// Select a tool under its caller: a subagent's tool narrows its activity to the
+// calls of that tool; a session's selects the session, which lists no steps.
+function selectTool(key, agentId, toolKey) {
+    if (!agentId) {
+        selectSession(key, true);
+        return;
+    }
+    selectAgent(key, agentId);
+    state.selectedTool = toolKey || null;
+    state.scrollToActivity = Boolean(toolKey);
+    markSelectedItem();
+    renderDetail();
+    refreshGraphFocus();
 }
 
 function closeDetail() {
@@ -187,9 +241,185 @@ async function transcriptPath(sessionId, cwd, origin) {
     return (mock && mock[sessionId]) ? mock[sessionId] : '';
 }
 
+/* --- dragging the graph: press anywhere on it and move to pan it both ways ---
+
+   The graph scrolls sideways in its slot and up and down with the list pane;
+   a drag moves both. A press that moves less than GRAPH_DRAG_THRESHOLD pixels
+   stays a click, so a node still selects. */
+const GRAPH_DRAG_THRESHOLD = 4;
+let graphDrag = null;
+let graphDragClick = false;
+
+function onGraphPointerDown(event) {
+    graphDragClick = false;
+    const slot = event.button === 0 ? event.target.closest('.graph-slot') : null;
+    if (!slot) {
+        return;
+    }
+    const content = document.getElementById('content');
+    graphDrag = { slot: slot, content: content, pointerId: event.pointerId, x: event.clientX, y: event.clientY,
+        left: slot.scrollLeft, top: content.scrollTop, moved: false };
+}
+
+function onGraphPointerMove(event) {
+    const drag = graphDrag;
+    if (!drag || event.pointerId !== drag.pointerId) {
+        return;
+    }
+    const dx = event.clientX - drag.x;
+    const dy = event.clientY - drag.y;
+    if (!drag.moved) {
+        if (Math.hypot(dx, dy) < GRAPH_DRAG_THRESHOLD) {
+            return;
+        }
+        drag.moved = true;
+        drag.slot.classList.add('dragging');
+        try {
+            drag.slot.setPointerCapture(drag.pointerId);
+        } catch (e) { /* the pointer is gone already */ }
+    }
+    drag.slot.scrollLeft = drag.left - dx;
+    drag.content.scrollTop = drag.top - dy;
+    event.preventDefault();
+}
+
+function onGraphPointerUp(event) {
+    const drag = graphDrag;
+    if (!drag || event.pointerId !== drag.pointerId) {
+        return;
+    }
+    graphDrag = null;
+    if (drag.moved) {
+        drag.slot.classList.remove('dragging');
+        graphDragClick = true;
+    }
+}
+
+/* --- the splitter between the list and the detail ---
+
+   Dragging it sets the list's width, which the detail gives up; a double-click
+   or Home gives the default back, the arrow keys move it a step. One width per
+   grouping (the graph wants more room than the list), remembered as
+   amc-list-width. CSS keeps the detail at its minimum however narrow the
+   window becomes. */
+const LIST_MIN_WIDTH = 260;
+const DETAIL_MIN_WIDTH = 320;
+const SPLITTER_KEY_STEP = 24;
+let splitterDrag = null;
+
+function listWidthKey() {
+    return state.group === 'graph' && !state.compact ? 'graph' : 'list';
+}
+
+function loadListWidths() {
+    try {
+        const stored = JSON.parse(localStorage.getItem('amc-list-width') || '{}');
+        const widths = {};
+        for (const key of ['list', 'graph']) {
+            if (Number.isFinite(stored[key]) && stored[key] > 0) {
+                widths[key] = stored[key];
+            }
+        }
+        return widths;
+    } catch (e) {
+        return {};
+    }
+}
+
+// Apply the current grouping's width, or the layout's default without one.
+function applyListWidth() {
+    const width = (state.listWidths || {})[listWidthKey()];
+    const workspace = document.getElementById('workspace');
+    if (!workspace) {
+        return;
+    }
+    // Set here rather than once, since the labels can arrive after the start.
+    const splitter = document.getElementById('splitter');
+    if (splitter) {
+        splitter.setAttribute('aria-label', state.labels.splitter_tip || '');
+    }
+    document.body.classList.toggle('list-sized', Number.isFinite(width));
+    if (Number.isFinite(width)) {
+        workspace.style.setProperty('--list-width', Math.round(width) + 'px');
+    } else {
+        workspace.style.removeProperty('--list-width');
+    }
+}
+
+function setListWidth(width, persist) {
+    const workspace = document.getElementById('workspace');
+    const widths = Object.assign({}, state.listWidths || {});
+    if (width === null) {
+        delete widths[listWidthKey()];
+    } else {
+        const max = Math.max(LIST_MIN_WIDTH, workspace.clientWidth - DETAIL_MIN_WIDTH);
+        widths[listWidthKey()] = Math.min(max, Math.max(LIST_MIN_WIDTH, width));
+    }
+    state.listWidths = widths;
+    applyListWidth();
+    if (persist) {
+        try {
+            localStorage.setItem('amc-list-width', JSON.stringify(widths));
+        } catch (e) { /* storage unavailable */ }
+    }
+}
+
+function initSplitter() {
+    state.listWidths = loadListWidths();
+    applyListWidth();
+    const splitter = document.getElementById('splitter');
+    if (!splitter) {
+        return;
+    }
+    splitter.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) {
+            return;
+        }
+        event.preventDefault();
+        const content = document.getElementById('content');
+        splitterDrag = { pointerId: event.pointerId, startX: event.clientX, startWidth: content.getBoundingClientRect().width };
+        splitter.setPointerCapture(event.pointerId);
+        splitter.classList.add('dragging');
+        document.body.classList.add('splitter-dragging');
+    });
+    splitter.addEventListener('pointermove', (event) => {
+        if (splitterDrag && event.pointerId === splitterDrag.pointerId) {
+            setListWidth(splitterDrag.startWidth + event.clientX - splitterDrag.startX, false);
+        }
+    });
+    const end = (event) => {
+        if (!splitterDrag || event.pointerId !== splitterDrag.pointerId) {
+            return;
+        }
+        splitterDrag = null;
+        splitter.classList.remove('dragging');
+        document.body.classList.remove('splitter-dragging');
+        setListWidth((state.listWidths || {})[listWidthKey()], true);
+    };
+    splitter.addEventListener('pointerup', end);
+    splitter.addEventListener('pointercancel', end);
+    splitter.addEventListener('dblclick', () => setListWidth(null, true));
+    splitter.addEventListener('keydown', (event) => {
+        const current = document.getElementById('content').getBoundingClientRect().width;
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+            event.preventDefault();
+            event.stopPropagation();
+            setListWidth(current + (event.key === 'ArrowLeft' ? -SPLITTER_KEY_STEP : SPLITTER_KEY_STEP), true);
+        } else if (event.key === 'Home') {
+            event.preventDefault();
+            setListWidth(null, true);
+        }
+    });
+}
+
 /* --- click routing: one delegated handler per pane --- */
 
 function onContentClick(event) {
+    // The click that ends a drag of the graph selects nothing.
+    if (graphDragClick) {
+        graphDragClick = false;
+        return;
+    }
     // The widened search's offer and its way back sit in slots of their own.
     const widen = event.target.closest('.empty-action');
     if (widen) {
@@ -198,6 +428,12 @@ function onContentClick(event) {
     }
     if (event.target.closest('.notice-reset')) {
         resetWidenedSearch();
+        return;
+    }
+
+    const graphRange = event.target.closest('[data-graph-range]');
+    if (graphRange) {
+        setGraphRange(graphRange.dataset.graphRange);
         return;
     }
 
@@ -239,10 +475,22 @@ function onContentClick(event) {
         return;
     }
 
-    // A session in the graph selects like an entry of the list.
+    // A session in the graph selects like an entry of the list; a subagent
+    // selects itself, so the detail describes it; a tool lists who called it.
+    const toolNode = event.target.closest('.gnode[data-tool]');
+    if (toolNode) {
+        selectTool(toolNode.dataset.key, toolNode.dataset.agent || null, toolNode.dataset.tool);
+        return;
+    }
     const graphNode = event.target.closest('.gnode[data-key]');
     if (graphNode) {
-        selectSession(graphNode.dataset.key, true);
+        if (graphNode.dataset.agent) {
+            selectAgent(graphNode.dataset.key, graphNode.dataset.agent);
+        } else if (graphNode.dataset.process) {
+            selectProcess(graphNode.dataset.key, Number(graphNode.dataset.process));
+        } else {
+            selectSession(graphNode.dataset.key, true);
+        }
         return;
     }
 
@@ -295,6 +543,12 @@ function onContentContextMenu(event) {
 }
 
 function onDetailClick(event) {
+    // A row of the process table selects that process.
+    const processRow = event.target.closest('[data-proc-pid]');
+    if (processRow) {
+        selectProcess(state.selectedKey, Number(processRow.dataset.procPid));
+        return;
+    }
     const pathOpen = event.target.closest('.path-open');
     if (pathOpen) {
         openPath(pathOpen.dataset.cwd, pathOpen.dataset.origin);
@@ -306,6 +560,30 @@ function onDetailClick(event) {
     }
     if (button.dataset.action === 'back') {
         closeDetail();
+        return;
+    }
+    if (button.dataset.action === 'markdown') {
+        setMarkdown(button.dataset.mode === 'formatted');
+        return;
+    }
+    // From an agent's details: back to its session, or on to the agent that started it.
+    if (button.dataset.action === 'agent-session') {
+        selectSession(state.selectedKey, true);
+        return;
+    }
+    if (button.dataset.action === 'agent-parent') {
+        selectAgent(state.selectedKey, button.dataset.agent);
+        return;
+    }
+    if (button.dataset.action === 'step-filter-clear') {
+        state.selectedTool = null;
+        markSelectedItem();
+        renderDetail();
+        refreshGraphFocus();
+        return;
+    }
+    if (button.dataset.action === 'process-parent') {
+        selectProcess(state.selectedKey, Number(button.dataset.process));
         return;
     }
     runSessionAction(button.dataset.action, selectedSession());

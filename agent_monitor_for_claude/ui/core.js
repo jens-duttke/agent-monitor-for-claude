@@ -94,6 +94,23 @@ const state = {
     // detailOpen is the narrow layout's drill-in: the detail replaces the list.
     selectedKey: null,
     detailOpen: false,
+    // One of the selected session's subagents, by agent id, when the graph's
+    // node for it was clicked: the detail then describes that agent instead.
+    selectedAgent: null,
+    // Likewise one of its background processes, by pid.
+    selectedProcess: null,
+    // A tool of the selected subagent, by its key (a tool name, or mcp:<server>):
+    // its activity then lists that tool's calls alone.
+    selectedTool: null,
+    // Set by a tool picked in the graph: the detail scrolls to the agent's
+    // activity once it is loaded.
+    scrollToActivity: false,
+    // Whether the details render the Markdown of a reply, a plan or a task, or
+    // show it as written (amc-markdown).
+    markdown: true,
+    // The list pane's width per grouping ('list', 'graph') the splitter set, in
+    // pixels; a grouping without one keeps the layout's default (amc-list-width).
+    listWidths: {},
     // The list entries in display order, and each one's session, as of the last
     // render - for the keyboard navigation and the detail pane.
     listKeys: [],
@@ -127,6 +144,8 @@ const state = {
     // cache holds nothing yet.
     historyRange: logic.DEFAULT_HISTORY_RANGE,
     historyLoadedSeconds: undefined,
+    // How far back the graph reaches (a logic.GRAPH_RANGES key).
+    graphRange: logic.DEFAULT_GRAPH_RANGE,
     // The compact view: the narrow, always-on-top window (see header.js).
     compact: false,
 };
@@ -362,6 +381,36 @@ const DEFAULT_LABELS = {
     graph_messages: 'Messages: {count}',
     graph_workflow: 'Workflow',
     graph_peer: 'Outside this list',
+    agent_running: 'Running',
+    agent_finished: 'Finished',
+    fact_agent_type: 'Type',
+    fact_skill: 'Skill',
+    fact_launch: 'Started as',
+    launch_foreground: 'Foreground',
+    launch_background: 'Background',
+    launch_skill: 'Forked skill',
+    fact_started_by: 'Started by',
+    kpi_runtime: 'Runtime',
+    kpi_runtime_sub: 'Started {time}',
+    kpi_tool_calls: 'Tool calls',
+    block_task: 'Task',
+    block_result: 'Result',
+    splitter_tip: 'Drag to resize the list. Double-click to reset.',
+    block_activity: 'Activity',
+    activity_note: 'Tool calls: {count}',
+    step_request: 'Request',
+    step_error: 'Error',
+    step_reply: 'Reply',
+    graph_tool_calls: 'Calls: {count}',
+    graph_mcp: 'MCP server',
+    graph_tool_failed: 'Failed: {count}',
+    step_exit: 'Exit {code}',
+    step_rejected: 'Rejected',
+    step_interrupted: 'Interrupted',
+    md_formatted: 'Formatted',
+    md_plain: 'Text',
+    fact_pid: 'PID',
+    fact_parent_process: 'Parent process',
     session_id_label: 'Session ID',
     model_history_label: 'Models',
     cli_history_label: 'Claude Code versions',

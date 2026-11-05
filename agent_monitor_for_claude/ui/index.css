@@ -382,12 +382,66 @@ button {
     flex: 1 1 auto;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
+    /* The list, the splitter between the panes (no width of its own), the detail. */
+    grid-template-columns: minmax(320px, 400px) 0 minmax(0, 1fr);
 }
 
 /* The graph needs the room the list does not. */
 body.group-graph .workspace {
-    grid-template-columns: minmax(420px, 1.25fr) minmax(380px, 1fr);
+    grid-template-columns: minmax(420px, 1.25fr) 0 minmax(380px, 1fr);
+}
+
+/* A width the splitter set (actions.js): never so wide the detail falls below its minimum. */
+body.list-sized .workspace {
+    grid-template-columns: min(var(--list-width), calc(100% - 320px)) 0 minmax(0, 1fr);
+}
+
+/* The line between the panes: an invisible grip (::before) wide enough to hit,
+   and a 2px marking (::after) centered on it. */
+.splitter {
+    position: relative;
+    z-index: 2;
+    outline: none;
+
+    &::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: -5px;
+        width: 10px;
+        cursor: col-resize;
+    }
+
+    &::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: -1px;
+        width: 2px;
+        background: var(--accent);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.15s ease;
+    }
+
+    /* A pointer passing over it shows nothing; one that rests on it does. */
+    &:hover::after {
+        opacity: 0.6;
+        transition-delay: 0.35s;
+    }
+
+    &:focus-visible::after,
+    &.dragging::after {
+        opacity: 0.6;
+        transition-delay: 0s;
+    }
+}
+
+body.splitter-dragging {
+    cursor: col-resize;
+    user-select: none;
 }
 
 /* The list pane. Its slots (chips, notice, list, state) are always in the DOM;
@@ -1067,6 +1121,22 @@ body.group-graph .workspace {
     }
 }
 
+/* A link inside the details that moves the selection: back to the session, on
+   to the agent that started this one. */
+.crumb-link {
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+
+    &:hover {
+        text-decoration: underline;
+    }
+}
+
 .detail-title {
     font-size: 20px;
     font-weight: 650;
@@ -1318,9 +1388,186 @@ body.group-graph .workspace {
     color: var(--fg-heading);
 
     .block-note {
+        margin-left: auto;
         font-weight: 400;
         color: var(--fg-faint);
         font-variant-numeric: tabular-nums;
+    }
+
+    .block-tools:empty {
+        display: none;
+    }
+}
+
+/* Formatted or as written, for a block that shows Markdown. */
+.md-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border-strong);
+    border-radius: 5px;
+    overflow: hidden;
+
+    .seg {
+        padding: 1px 8px;
+        border: none;
+        background: transparent;
+        color: var(--fg-dim);
+        font: inherit;
+        font-size: 11px;
+        font-weight: 500;
+        cursor: pointer;
+
+        &:hover {
+            color: var(--fg);
+        }
+
+        &.active {
+            background: var(--control-bg);
+            color: var(--fg-heading);
+            font-weight: 600;
+        }
+    }
+}
+
+/* Rendered Markdown: the text's own structure, at the pane's reading size. */
+.now-text.md {
+    white-space: normal;
+
+    > :first-child {
+        margin-top: 0;
+    }
+
+    > :last-child {
+        margin-bottom: 0;
+    }
+
+    p,
+    ul,
+    ol,
+    blockquote,
+    pre,
+    .md-table {
+        margin: 0 0 0.7em;
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6 {
+        margin: 1em 0 0.45em;
+        color: var(--fg-heading);
+        line-height: 1.3;
+    }
+
+    h1 {
+        font-size: 1.35em;
+    }
+
+    h2 {
+        font-size: 1.2em;
+    }
+
+    h3 {
+        font-size: 1.08em;
+    }
+
+    h4,
+    h5,
+    h6 {
+        font-size: 1em;
+    }
+
+    ul,
+    ol {
+        padding-left: 1.5em;
+    }
+
+    li > p {
+        margin: 0;
+    }
+
+    li > ul,
+    li > ol {
+        margin: 0.2em 0;
+    }
+
+    .md-task {
+        list-style: none;
+
+        .md-box {
+            margin-left: -1.3em;
+            margin-right: 0.35em;
+            float: left;
+        }
+    }
+
+    code {
+        padding: 0.1em 0.35em;
+        border-radius: 4px;
+        background: var(--surface);
+        font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+        font-size: 0.92em;
+    }
+
+    .md-code {
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: var(--surface);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+
+        code {
+            padding: 0;
+            background: none;
+        }
+    }
+
+    blockquote {
+        padding-left: 10px;
+        border-left: 3px solid var(--border-strong);
+        color: var(--fg-dim);
+    }
+
+    hr {
+        border: none;
+        border-top: 1px solid var(--border);
+        margin: 1em 0;
+    }
+
+    .md-table {
+        overflow-x: auto;
+    }
+
+    table {
+        border-collapse: collapse;
+        font-size: 0.95em;
+    }
+
+    th,
+    td {
+        padding: 3px 9px;
+        border: 1px solid var(--border);
+        text-align: left;
+        vertical-align: top;
+    }
+
+    th {
+        background: var(--surface);
+        color: var(--fg-heading);
+    }
+
+    .md-center {
+        text-align: center;
+    }
+
+    .md-right {
+        text-align: right;
+    }
+
+    .md-link {
+        color: var(--accent);
+        cursor: help;
     }
 }
 
@@ -1329,6 +1576,18 @@ body.group-graph .workspace {
     display: grid;
     gap: 8px;
     min-width: 0;
+}
+
+/* A block that holds nothing but a text - a task, a reply - is that text, edge
+   to edge and whole: the pane scrolls, not a box inside the block. */
+.block-body:has(> .now-text:only-child) {
+    padding: 0;
+
+    > .now-text {
+        max-height: none;
+        border-radius: 0;
+        padding: 10px 14px 12px;
+    }
 }
 
 .block-sub {
@@ -1628,6 +1887,14 @@ body.group-graph .workspace {
 .graph-slot {
     padding: 8px 6px 16px;
     overflow-x: auto;
+    /* A press and a move pans the graph (actions.js); its labels are not text to select. */
+    cursor: grab;
+    user-select: none;
+
+    &.dragging,
+    &.dragging * {
+        cursor: grabbing;
+    }
 
     &:empty {
         display: none;
@@ -1654,6 +1921,15 @@ body.group-graph .workspace {
         &.edge-message.active {
             stroke: var(--accent);
         }
+
+        &.edge-tool {
+            stroke: var(--border-strong);
+            stroke-dasharray: 2 3;
+        }
+
+        &.edge-tool.active {
+            stroke: var(--c-working);
+        }
     }
 
     .dot {
@@ -1666,6 +1942,11 @@ body.group-graph .workspace {
 
     .gnode {
         cursor: default;
+
+        /* A session, a subagent or a process selects on a click. */
+        &[data-key] {
+            cursor: pointer;
+        }
 
         rect {
             fill: var(--surface);
@@ -1697,7 +1978,8 @@ body.group-graph .workspace {
         }
 
         &.gnode-agent,
-        &.gnode-workflow {
+        &.gnode-workflow,
+        &.gnode-process {
             --s: var(--c-completed);
 
             &.running {
@@ -1707,6 +1989,23 @@ body.group-graph .workspace {
             .gnode-label {
                 font-weight: 500;
                 fill: var(--fg);
+            }
+        }
+
+        &.gnode-tool {
+            --s: var(--fg-dim);
+
+            rect {
+                fill: var(--sunken);
+            }
+
+            /* A tool with failed calls: its frame and its count in red. */
+            &.failed {
+                --s: var(--c-errored);
+
+                rect {
+                    stroke: var(--c-errored);
+                }
             }
         }
 
@@ -1725,7 +2024,174 @@ body.group-graph .workspace {
     }
 }
 
+/* The tool an agent's activity is narrowed to; a click lifts the filter. */
+.step-filter {
+    padding: 1px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 5px;
+    background: var(--control-bg);
+    color: var(--fg-heading);
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+
+    &:hover {
+        border-color: var(--accent);
+    }
+}
+
+/* --- A subagent's steps (detail block, see detail.js activityMarkup) --- */
+
+.activity-list {
+    display: grid;
+    gap: 2px;
+}
+
+.step {
+    border-radius: 6px;
+
+    > summary {
+        display: grid;
+        grid-template-columns: 4.5em minmax(7em, auto) minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: baseline;
+        padding: 5px 8px;
+        border-radius: 6px;
+        list-style: none;
+        cursor: pointer;
+        font-size: 12.5px;
+
+        &::-webkit-details-marker {
+            display: none;
+        }
+
+        &:hover {
+            background: var(--surface-hover);
+        }
+    }
+
+    &[open] > summary {
+        background: var(--surface);
+    }
+
+    .step-at,
+    .step-end {
+        color: var(--fg-faint);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+
+    .step-tool {
+        color: var(--fg-heading);
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .step-subject {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--fg-dim);
+        font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+        font-size: 11.5px;
+    }
+
+    &.step-text .step-subject {
+        font-family: inherit;
+        font-size: inherit;
+    }
+
+    .step-flag {
+        margin-right: 8px;
+        color: var(--c-processing);
+
+        &.failed {
+            color: var(--c-errored);
+            font-weight: 600;
+        }
+
+        &.declined {
+            color: var(--c-interrupted);
+        }
+    }
+
+    /* A failed call reads red at a glance, a rejected or stopped one yellow. */
+    &.failed {
+        > summary {
+            background: color-mix(in srgb, var(--c-errored) 12%, transparent);
+        }
+
+        .step-tool {
+            color: var(--c-errored);
+        }
+    }
+
+    &.declined .step-tool {
+        color: var(--c-interrupted);
+    }
+
+    .step-body {
+        display: grid;
+        gap: 6px;
+        padding: 8px 8px 12px 4.5em;
+        min-width: 0;
+    }
+
+    .step-sub {
+        font-size: 10.5px;
+        font-weight: 650;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--fg-faint);
+    }
+
+    .step-input {
+        display: grid;
+        grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+        gap: 4px 12px;
+        align-items: baseline;
+    }
+
+    .step-value {
+        margin: 0;
+        padding: 6px 8px;
+        border-radius: 5px;
+        background: var(--sunken);
+        color: var(--fg);
+        font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+        font-size: 11.5px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        user-select: text;
+    }
+
+    .step-result {
+        max-height: 420px;
+        overflow: auto;
+    }
+}
+
 /* --- Processes and task output (detail block, see proc-panel.js) --- */
+
+/* A process row selects that process; the selected one is marked. */
+.proc-row {
+    cursor: pointer;
+
+    &:hover td {
+        background: var(--surface-hover);
+    }
+
+    &.selected td {
+        background: var(--selected);
+    }
+}
+
+.proc-pid {
+    color: var(--fg-faint);
+    font-size: 0.92em;
+    font-variant-numeric: tabular-nums;
+}
 
 .proc-table {
     width: 100%;
@@ -2122,8 +2588,13 @@ body.compact .item:not(.is-history):not(.no-window) {
    and the graph grouping's 420 + 380. */
 
 @media (max-width: 799px) {
-    .workspace {
+    .workspace,
+    body.list-sized .workspace {
         grid-template-columns: minmax(0, 1fr);
+    }
+
+    .splitter {
+        display: none;
     }
 
     .detail {
@@ -2207,10 +2678,12 @@ body.compact {
         }
     }
 
-    .workspace {
+    .workspace,
+    &.list-sized .workspace {
         grid-template-columns: minmax(0, 1fr);
     }
 
+    .splitter,
     .detail {
         display: none;
     }

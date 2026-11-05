@@ -141,8 +141,10 @@ function renderProcTable(panel, stats) {
                 + '<td class="proc-num">-</td>'
                 + '</tr>';
         } else {
-            rows += '<tr>'
-                + '<td class="proc-name">' + esc(stat.name) + '</td>'
+            const selected = state.selectedProcess !== null && stat.pid === state.selectedProcess;
+            rows += '<tr' + attr('class', 'proc-row' + (selected ? ' selected' : ''))
+                + (Number.isInteger(stat.pid) ? attr('data-proc-pid', stat.pid) : '') + '>'
+                + '<td class="proc-name">' + esc(stat.name) + ' <span class="proc-pid">' + esc(stat.pid) + '</span></td>'
                 + '<td class="proc-num">' + esc(formatCpu(stat.cpu)) + '</td>'
                 + '<td class="proc-num">' + esc(formatBytes(stat.rss)) + '</td>'
                 + '<td class="proc-num">' + esc(formatDurationShort(stat.uptime)) + '</td>'
@@ -150,6 +152,8 @@ function renderProcTable(panel, stats) {
         }
     }
     tbody.innerHTML = rows;
+    // A selected process's own figures head the details.
+    updateProcessKpis(stats);
 }
 
 // Keyed reconcile (not innerHTML) so an expanded console and its scroll position

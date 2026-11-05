@@ -36,15 +36,19 @@ from .roots import session_roots
 from .sessions import list_sessions
 from .settings import ENDED_MAX_AGE, INCLUDE_COMPLETED
 from .subagents import count_subagents
-from .transcript import MessageEvent, ToolCall, TranscriptState, prune_scan_cache, state_for
+from .transcript import AgentLaunch, MessageEvent, ToolCall, TranscriptState, full_texts, prune_scan_cache, state_for
 from .usage_parts import UsageScan, session_usage
 from .worktrees import prune_worktree_cache, resolve_worktree
 from .wsl import probe_wsl_sessions
 
-__all__ = ['build_snapshot', 'live_or_recent_ids', 'registry_fingerprint']
+__all__ = ['build_snapshot', 'live_or_recent_ids', 'registry_fingerprint', 'session_texts']
 
-# How far back the worked intervals and the messages reach on the snapshot.
+# How far back the worked intervals reach on the snapshot.  The messages go out
+# whole (the scan keeps the newest ones); the graph narrows them to its window.
 _RECENT_WINDOW_SECONDS = 24 * 3600
+
+# The prefix a message names another session's messaging address with.
+_SOCKET_PEER_PREFIX = 'uds:'
 
 
 def build_snapshot() -> dict[str, Any]:
@@ -59,10 +63,11 @@ def _build_snapshot() -> dict[str, Any]:
 
     pairs = _collect_pairs()
     probe_map = _probe_map(pairs)
+    peers = _peer_index(pairs, probe_map)
 
     for root, record in _one_record_per_session(pairs, probe_map):
         try:
-            session = _build_session_record(root, record, probe_map)
+            session = _build_session_record(root, record, probe_map, peers)
         except Exception:
             # Last-resort per-record isolation: the individual readers already
             # degrade gracefully, but an unforeseen failure on one record must
@@ -85,7 +90,7 @@ def _build_snapshot() -> dict[str, Any]:
 
 
 def _build_session_record(
-    root: SessionRoot, record: dict[str, Any], probe_map: dict[tuple[str, int], ProcessInfo],
+    root: SessionRoot, record: dict[str, Any], probe_map: dict[tuple[str, int], ProcessInfo], peers: dict[tuple[str, str], tuple[str, str]],
 ) -> dict[str, Any] | None:
     """Assemble one raw session record, or None when an ended session is dropped.
 
@@ -107,7 +112,9 @@ def _build_session_record(
     if not info.alive and not _include_ended(transcript_state.age_seconds, seconds_since_alive(record['origin'], record['session_id'])):
         return None
 
-    subagents = count_subagents(root, record['session_id'], record['cwd'])
+    # A session that switched into worktrees filed the agents it started there under their project folders.
+    worktree_cwds = (record.get('worktree_cwd') or '', *transcript_state.worktree_paths)
+    subagents = count_subagents(root, record['session_id'], record['cwd'], worktree_cwds)
     process_age = _seconds_since_ms(record['started_at'])
     api_retry = transcript_state.api_retry
 
@@ -145,6 +152,7 @@ def _build_session_record(
         'origin_label': record['origin_label'],
         'alive': info.alive,
         'child_count': info.child_count,
+        'child_processes': [{'pid': child.pid, 'parent': child.parent, 'name': child.name} for child in info.children],
         'host': info.host,
         'via_cli': info.via_cli,
         'has_transcript': transcript_state.has_transcript,
@@ -194,11 +202,16 @@ def _build_session_record(
         'lines_removed': transcript_state.lines_removed,
         'work_intervals': _recent_intervals(transcript_state.work_intervals),
         'turn_open_seconds': _seconds_since(transcript_state.turn_open_since),
-        'messages': _recent_messages(transcript_state.messages),
+        'messages': _recent_messages(transcript_state.messages, record['origin'], peers),
+        'tools': _tool_records(transcript_state.tool_uses),
         'agents': [
             {
                 'id': agent.agent_id, 'type': agent.agent_type, 'description': agent.description, 'running': agent.running,
                 'age_seconds': agent.age, 'parent_id': agent.parent_id, 'workflow': agent.workflow,
+                'skill': agent.skill, 'usage_by_model': agent.usage_by_model,
+                'started_seconds': _seconds_since(agent.started_at), 'tool_calls': agent.tool_calls,
+                'lines_added': agent.lines_added, 'lines_removed': agent.lines_removed, 'tools': _tool_records(agent.tools),
+                **_launch_record(transcript_state.agent_launches.get(agent.agent_id)),
             }
             for agent in subagents.agents
         ],
@@ -231,6 +244,19 @@ def _build_session_record(
     }
 
 
+def session_texts(root: SessionRoot, session_id: str, cwd: str) -> dict[str, Any] | None:
+    """Return the call the session runs or waits on and its last reply, both whole, or None without a transcript.
+
+    The snapshot cuts them to a display length for every session; the details
+    ask for this for the one session they show.
+    """
+    state = full_texts(root, session_id, cwd)
+    if state is None:
+        return None
+
+    return {'current_tool': _tool_call_record(state.current_tool), 'last_reply': state.last_reply}
+
+
 def _tool_call_record(call: ToolCall | None) -> dict[str, Any] | None:
     """The call a session runs or waits on, as plain values."""
     if call is None:
@@ -240,6 +266,22 @@ def _tool_call_record(call: ToolCall | None) -> dict[str, Any] | None:
         'tool': call.tool, 'text': call.text, 'detail': call.detail,
         'questions': [{'text': question.text, 'options': list(question.options)} for question in call.questions],
     }
+
+
+def _tool_records(uses: dict[str, tuple[int, float | None, int]]) -> list[dict[str, Any]]:
+    """Each tool a conversation called, with how often, how long ago it last did, and how often it failed."""
+    return [
+        {'name': name, 'calls': calls, 'age_seconds': _seconds_since(last), 'failed': failed}
+        for name, (calls, last, failed) in sorted(uses.items())
+    ]
+
+
+def _launch_record(launch: AgentLaunch | None) -> dict[str, str]:
+    """How a subagent was started (``foreground``, ``background``, ``skill``; ``''`` when unknown) and the effort it asked for."""
+    if launch is None:
+        return {'launch': '', 'effort': ''}
+
+    return {'launch': launch.mode, 'effort': launch.effort}
 
 
 def _seconds_since(moment: float | None) -> float | None:
@@ -256,16 +298,66 @@ def _recent_intervals(intervals: tuple[tuple[float, float], ...]) -> list[list[f
     return [[max(0.0, now - start), max(0.0, now - end)] for start, end in intervals if now - end <= _RECENT_WINDOW_SECONDS]
 
 
-def _recent_messages(messages: tuple[MessageEvent, ...]) -> list[dict[str, Any]]:
-    """The messages of the last day, each with how long ago it was."""
+def _recent_messages(messages: tuple[MessageEvent, ...], origin: str, peers: dict[tuple[str, str], tuple[str, str]]) -> list[dict[str, Any]]:
+    """The session's messages, each with how long ago it was.
+
+    A message to or from another session names it by its messaging address or
+    by a name it went by; one that *peers* knows is reported under that
+    session's id instead, so the UI can draw it to the session.  The address
+    itself never reaches the snapshot.
+    """
     now = time.time()
-    return [
-        {
-            'direction': event.direction, 'peer': event.peer, 'label': event.label, 'handback': event.handback,
+    records: list[dict[str, Any]] = []
+    for event in messages:
+        peer, label = event.peer, event.label
+        known = None if event.handback else _peer_key(origin, peer)
+        if known is not None and known in peers:
+            peer, name = peers[known]
+            label = label or name
+        elif peer.startswith(_SOCKET_PEER_PREFIX):
+            # An address that names no current session says nothing to the reader.
+            peer = label or ''
+        if not peer:
+            continue
+        records.append({
+            'direction': event.direction, 'peer': peer, 'label': label, 'handback': event.handback,
             'age_seconds': max(0.0, now - event.at),
-        }
-        for event in messages if now - event.at <= _RECENT_WINDOW_SECONDS
-    ]
+        })
+
+    return records
+
+
+def _peer_index(pairs: list[tuple[SessionRoot, dict[str, Any]]], probe_map: dict[tuple[str, int], ProcessInfo]) -> dict[tuple[str, str], tuple[str, str]]:
+    """Map each session's messaging address and names, per origin, to its ``(session_id, name)``.
+
+    A live session is indexed first, so a name an ended session also carried
+    resolves to the one still running.
+    """
+    def alive(pair: tuple[SessionRoot, dict[str, Any]]) -> bool:
+        info = probe_map.get((pair[1]['origin'], pair[1]['pid']))
+        return bool(info and info.alive)
+
+    index: dict[tuple[str, str], tuple[str, str]] = {}
+    for _, record in sorted(pairs, key=lambda pair: not alive(pair)):
+        target = (record['session_id'], record['name'])
+        keys = [record['name'], *record.get('former_names', ())]
+        if record.get('messaging_socket'):
+            keys.append(_SOCKET_PEER_PREFIX + record['messaging_socket'])
+        for key in keys:
+            peer_key = _peer_key(record['origin'], key)
+            if peer_key is not None:
+                index.setdefault(peer_key, target)
+
+    return index
+
+
+def _peer_key(origin: str, peer: str) -> tuple[str, str] | None:
+    """The index key of a peer as a message names it: an address as written, a name case-insensitively."""
+    if not peer:
+        return None
+
+    return (origin, peer if peer.startswith(_SOCKET_PEER_PREFIX) else peer.casefold())
+
 
 
 def live_or_recent_ids() -> set[str]:

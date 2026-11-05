@@ -28,7 +28,7 @@ from typing import Any, Iterable
 
 import psutil
 
-from ..procinfo import ChildProcessStat, ProcessInfo, SESSION_HELPER_WINDOW_SECONDS
+from ..procinfo import ChildProcessStat, ProcessInfo, SESSION_HELPER_WINDOW_SECONDS, child_processes
 
 __all__ = [
     'IGNORED_ANCESTOR_NAMES', 'TERMINAL_WINDOW_OWNERS',
@@ -153,12 +153,15 @@ def probe_all(requests: Iterable[tuple[int, int | None]]) -> dict[int, ProcessIn
         ancestor_names = [name for _pid, name in _ancestors(pid, table, create_time_cache)]
         host, via_cli = _classify_ancestry(ancestor_names)
         children = _meaningful_children(pid, table, children_index, create_time_cache)
+        parent_of = {child_pid: table[child_pid][0] for child_pid, _name in children}
+        parent_of.update(_listed_ancestry(children, table, pid))
         result[pid] = ProcessInfo(
             alive=True,
             tool_running=bool(children),
             host=host,
             via_cli=via_cli,
             child_count=len(children),
+            children=child_processes(pid, children, parent_of),
         )
 
     return result
@@ -485,6 +488,20 @@ def _classify_ancestry(ancestor_names: list[str]) -> tuple[str | None, bool]:
         return first_shell, True
 
     return None, False
+
+
+def _listed_ancestry(children: list[tuple[int, str]], table: dict[int, tuple[int, str]], session_pid: int) -> dict[int, int]:
+    """The parent links between the session and its listed descendants, for the processes the walk skipped (a console host)."""
+    links: dict[int, int] = {}
+    for child_pid, _name in children:
+        current = table[child_pid][0]
+        for _ in range(32):
+            if current == session_pid or current in links or current not in table:
+                break
+            links[current] = table[current][0]
+            current = table[current][0]
+
+    return links
 
 
 def _meaningful_children(

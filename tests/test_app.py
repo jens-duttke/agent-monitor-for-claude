@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import json
 import tempfile
 import unittest
 from collections.abc import Callable
@@ -154,6 +155,58 @@ class TranscriptPathTest(unittest.TestCase):
         api = _MonitorApi()
         self.assertEqual(api.transcript_path(self._SESSION, self._CWD, origin='gone:X'), '')
         self.assertEqual(api.transcript_path(self._SESSION, self._CWD, origin=123), '')
+
+
+class SessionTextsTest(unittest.TestCase):
+    """The details' whole texts: the current call and the last reply uncut, and a subagent's task."""
+
+    _SESSION = '6e22e66f-6298-442a-9762-2a5b65052389'
+    _CWD = r'D:\WebDev\vs-edge264'
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self._root = SessionRoot('local', None, Path(tmp.name) / '.claude', None, Path(tmp.name) / 'temp')
+        self._transcript = self._root.config_dir / 'projects' / cwd_to_slug(self._CWD) / f'{self._SESSION}.jsonl'
+        self._transcript.parent.mkdir(parents=True)
+        patcher = mock.patch.object(app, 'root_for_origin', side_effect=lambda origin: self._root if origin == 'local' else None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_current_call_and_the_last_reply_come_whole(self) -> None:
+        command = 'echo ' + 'x' * 3000
+        reply = 'Done. ' + 'y' * 3000
+        lines = [
+            {'type': 'assistant', 'timestamp': '2026-07-11T10:00:00Z', 'message': {'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': reply}]}},
+            {'type': 'user', 'timestamp': '2026-07-11T10:01:00Z', 'message': {'content': 'again'}},
+            {'type': 'assistant', 'timestamp': '2026-07-11T10:01:05Z', 'message': {'stop_reason': 'tool_use', 'content': [
+                {'type': 'tool_use', 'id': 't1', 'name': 'Bash', 'input': {'command': command}}]}},
+        ]
+        self._transcript.write_text('\n'.join(json.dumps(line) for line in lines) + '\n', encoding='utf-8')
+
+        texts = _MonitorApi().get_session_texts(self._SESSION, self._CWD)
+
+        self.assertEqual(texts['current_tool']['text'], command)
+        self.assertEqual(texts['last_reply'], reply)
+
+    def test_session_texts_refuse_a_bad_request(self) -> None:
+        api = _MonitorApi()
+        self.assertIsNone(api.get_session_texts(self._SESSION, self._CWD))
+        self.assertIsNone(api.get_session_texts('../' + self._SESSION, self._CWD))
+        self.assertIsNone(api.get_session_texts(self._SESSION, ''))
+        self.assertIsNone(api.get_session_texts(self._SESSION, self._CWD, origin='gone:X'))
+
+    def test_an_agents_task_is_read_only_for_a_valid_request(self) -> None:
+        agents = self._transcript.parent / self._SESSION / 'subagents'
+        agents.mkdir(parents=True)
+        (agents / 'agent-a1b2c3d4e5f6a7b8c.jsonl').write_text(json.dumps({'type': 'user', 'message': {'content': 'The task'}}) + '\n', encoding='utf-8')
+        api = _MonitorApi()
+
+        self.assertEqual(api.get_agent_texts(self._SESSION, 'a1b2c3d4e5f6a7b8c'), {'task': 'The task', 'result': '', 'steps': []})
+        self.assertIsNone(api.get_agent_texts('not-a-uuid', 'a1b2c3d4e5f6a7b8c'))
+        self.assertIsNone(api.get_agent_texts(self._SESSION, '../a1b2c3d4e5f6a7b8c'))
+        self.assertIsNone(api.get_agent_texts(self._SESSION, 17))
+        self.assertIsNone(api.get_agent_texts(self._SESSION, 'a1b2c3d4e5f6a7b8c', origin='gone:X'))
 
 
 class RunSearchFailureTest(unittest.TestCase):

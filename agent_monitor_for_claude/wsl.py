@@ -49,7 +49,7 @@ from typing import Iterable
 from . import procfs
 from .paths import SessionRoot, claude_temp_dir
 from .platforms import IS_WINDOWS, no_window_kwargs
-from .procinfo import ChildProcessStat, ProcessInfo
+from .procinfo import ChildProcessStat, ProcessInfo, child_processes
 from .process_probe import vmmem_present as _vmmem_present
 from .settings import WSL_MONITORING
 
@@ -371,7 +371,8 @@ def probe_wsl_sessions(root: SessionRoot, requests: Iterable[tuple[int, int | No
             result[pid] = ProcessInfo(alive=False, tool_running=False)
             continue
 
-        result[pid] = ProcessInfo(alive=True, tool_running=bool(descendants), host=None, via_cli=False, child_count=len(descendants))
+        children = child_processes(pid, descendants, {child: entry.ppid for child, entry in table.items()})
+        result[pid] = ProcessInfo(alive=True, tool_running=bool(descendants), host=None, via_cli=False, child_count=len(descendants), children=children)
 
     return result
 

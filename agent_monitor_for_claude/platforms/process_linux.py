@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .. import procfs
-from ..procinfo import ChildProcessStat, ProcessInfo
+from ..procinfo import ChildProcessStat, ProcessInfo, child_processes
 
 __all__ = [
     'IGNORED_ANCESTOR_NAMES', 'TERMINAL_WINDOW_OWNERS',
@@ -182,6 +182,7 @@ def probe_all(requests: Iterable[tuple[int, int | None]]) -> dict[int, ProcessIn
             host=host,
             via_cli=via_cli,
             child_count=len(descendants),
+            children=child_processes(pid, descendants, {child: entry.ppid for child, entry in table.items()}),
         )
 
     return result

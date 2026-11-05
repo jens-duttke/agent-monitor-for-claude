@@ -2407,6 +2407,7 @@ function buildSession(raw, labels, prices) {
         workflow_total: workflowTotal,
         workflow_done: workflowDone,
         processes: raw.child_count || 0,
+        process_list: processesOf(raw),
         tool_running: toolRunning,
         origin: origin,
         wsl: wsl,
@@ -2447,8 +2448,9 @@ function buildSession(raw, labels, prices) {
         plan_items: alive ? planItemsOf(raw) : [],
         lines: linesOf(raw),
         work: workSummary(raw, status),
-        agents: agentsOf(raw),
+        agents: agentsOf(raw, prices),
         messages: messagesOf(raw),
+        tools: toolsOf(raw.tools),
         pull_requests: pullRequestsOf(raw),
         files_edited: positiveInteger(raw.files_edited) || 0,
         compactions: positiveInteger(raw.compactions) || 0,
@@ -2864,16 +2866,268 @@ function testsLabel(tests, labels) {
     return { ok: failed === 0, text: (failed === 0 ? '✓ ' : '✗ ') + parts.join(' · ') };
 }
 
+/* --- Markdown, for the texts the details show whole ---
+
+   A small renderer for the Markdown Claude writes: headings, paragraphs,
+   emphasis, inline and fenced code, lists (nested, with task boxes), quotes,
+   tables and rules. Every piece of text passes through esc, and the only
+   markup is the fixed set of elements written here. A link becomes its text,
+   with its address as a tooltip (attr) - never an href, since the address is
+   conversation text. */
+
+const MD_FENCE = /^\s{0,3}(`{3,}|~{3,})/;
+const MD_HEADING = /^\s{0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/;
+const MD_RULE = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/;
+const MD_QUOTE = /^\s{0,3}>\s?(.*)$/;
+const MD_ITEM = /^( *)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+const MD_TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
+const MD_TASK = /^\[([ xX])\]\s+/;
+const MD_INLINE = /(`+)([\s\S]*?[^`])\1(?!`)|\[([^\]\n]+)\]\(([^()\s]+)\)/g;
+// Quotes and lists inside quotes and lists render as text past this depth.
+const MD_MAX_DEPTH = 8;
+
+function markdownToHtml(text) {
+    const lines = String(text == null ? '' : text).replace(/\r\n?/g, '\n').replace(/\t/g, '    ').split('\n');
+    return mdBlocks(lines, 0);
+}
+
+function mdBlocks(lines, depth) {
+    if (depth > MD_MAX_DEPTH) {
+        return '<p>' + mdInline(lines.join('\n')) + '</p>';
+    }
+    let html = '';
+    let paragraph = [];
+    const flush = () => {
+        if (paragraph.length > 0) {
+            html += '<p>' + mdInline(paragraph.join('\n')) + '</p>';
+            paragraph = [];
+        }
+    };
+    let index = 0;
+    while (index < lines.length) {
+        const line = lines[index];
+        if (!line.trim()) {
+            flush();
+            index += 1;
+            continue;
+        }
+
+        const fence = MD_FENCE.exec(line);
+        if (fence) {
+            flush();
+            const body = [];
+            index += 1;
+            while (index < lines.length && !mdClosesFence(lines[index], fence[1])) {
+                body.push(lines[index]);
+                index += 1;
+            }
+            index += 1;
+            html += '<pre class="md-code"><code>' + esc(body.join('\n')) + '</code></pre>';
+            continue;
+        }
+
+        const heading = MD_HEADING.exec(line);
+        if (heading) {
+            flush();
+            const level = heading[1].length;
+            html += '<h' + level + '>' + mdInline(heading[2]) + '</h' + level + '>';
+            index += 1;
+            continue;
+        }
+
+        if (MD_RULE.test(line)) {
+            flush();
+            html += '<hr>';
+            index += 1;
+            continue;
+        }
+
+        if (MD_QUOTE.test(line)) {
+            flush();
+            const body = [];
+            while (index < lines.length && MD_QUOTE.test(lines[index])) {
+                body.push(MD_QUOTE.exec(lines[index])[1]);
+                index += 1;
+            }
+            html += '<blockquote>' + mdBlocks(body, depth + 1) + '</blockquote>';
+            continue;
+        }
+
+        if (line.includes('|') && index + 1 < lines.length && lines[index + 1].includes('-') && MD_TABLE_RULE.test(lines[index + 1])) {
+            flush();
+            const table = mdTable(lines, index);
+            html += table.html;
+            index = table.next;
+            continue;
+        }
+
+        if (MD_ITEM.test(line)) {
+            flush();
+            const list = mdList(lines, index, depth);
+            html += list.html;
+            index = list.next;
+            continue;
+        }
+
+        paragraph.push(line);
+        index += 1;
+    }
+    flush();
+    return html;
+}
+
+// Whether `line` closes a fence opened by `marker`: the same character, at
+// least as many of them, and nothing else on the line.
+function mdClosesFence(line, marker) {
+    const trimmed = line.trim();
+    return trimmed.length >= marker.length && trimmed === marker[0].repeat(trimmed.length);
+}
+
+function mdLeadingSpaces(line) {
+    let count = 0;
+    while (count < line.length && line[count] === ' ') {
+        count += 1;
+    }
+    return count;
+}
+
+function mdDedent(line, width) {
+    return line.slice(Math.min(width, mdLeadingSpaces(line)));
+}
+
+// A list from lines[start]: its items at that indentation and of that kind,
+// each with the lines indented under it (a nested list, a second paragraph).
+function mdList(lines, start, depth) {
+    const first = MD_ITEM.exec(lines[start]);
+    const indent = first[1].length;
+    const ordered = /\d/.test(first[2]);
+    const items = [];
+    let index = start;
+    while (index < lines.length) {
+        const match = MD_ITEM.exec(lines[index]);
+        if (!match || match[1].length !== indent || /\d/.test(match[2]) !== ordered) {
+            break;
+        }
+        const width = indent + match[2].length + 1;
+        const body = [match[3]];
+        index += 1;
+        while (index < lines.length) {
+            const next = lines[index];
+            if (!next.trim()) {
+                let ahead = index + 1;
+                while (ahead < lines.length && !lines[ahead].trim()) {
+                    ahead += 1;
+                }
+                if (ahead < lines.length && mdLeadingSpaces(lines[ahead]) > indent) {
+                    body.push('');
+                    index += 1;
+                    continue;
+                }
+                break;
+            }
+            if (mdLeadingSpaces(next) > indent) {
+                body.push(mdDedent(next, width));
+                index += 1;
+                continue;
+            }
+            // A line that starts nothing new continues the item's text.
+            const startsBlock = MD_ITEM.test(next) || MD_FENCE.test(next) || MD_HEADING.test(next) || MD_QUOTE.test(next) || MD_RULE.test(next);
+            if (!startsBlock && body[body.length - 1].trim()) {
+                body.push(next);
+                index += 1;
+                continue;
+            }
+            break;
+        }
+        items.push(body);
+    }
+
+    const tag = ordered ? 'ol' : 'ul';
+    const number = parseInt(first[2], 10);
+    let html = '<' + tag + (ordered && number !== 1 ? attr('start', number) : '') + '>';
+    for (const body of items) {
+        const task = MD_TASK.exec(body[0]);
+        if (task) {
+            body[0] = body[0].slice(task[0].length);
+        }
+        const box = task ? '<span class="md-box">' + (task[1] === ' ' ? '☐' : '☑') + '</span>' : '';
+        html += '<li' + (task ? ' class="md-task"' : '') + '>' + box + mdBlocks(body, depth + 1) + '</li>';
+    }
+    return { html: html + '</' + tag + '>', next: index };
+}
+
+// A table from its head line at lines[start], its rule line and the rows under it.
+function mdTable(lines, start) {
+    const head = mdCells(lines[start]);
+    const aligns = mdCells(lines[start + 1]).map((cell) => {
+        if (cell.startsWith(':') && cell.endsWith(':')) {
+            return 'center';
+        }
+        return cell.endsWith(':') ? 'right' : '';
+    });
+    let index = start + 2;
+    const rows = [];
+    while (index < lines.length && lines[index].trim() && lines[index].includes('|')) {
+        rows.push(mdCells(lines[index]));
+        index += 1;
+    }
+    const cell = (tag, text, align) => '<' + tag + (align ? attr('class', 'md-' + align) : '') + '>' + mdInline(text) + '</' + tag + '>';
+    const html = '<div class="md-table"><table><thead><tr>' + head.map((text, column) => cell('th', text, aligns[column])).join('') + '</tr></thead>'
+        + '<tbody>' + rows.map((row) => '<tr>' + head.map((_, column) => cell('td', row[column] || '', aligns[column])).join('') + '</tr>').join('')
+        + '</tbody></table></div>';
+    return { html: html, next: index };
+}
+
+function mdCells(line) {
+    let text = line.trim();
+    if (text.startsWith('|')) {
+        text = text.slice(1);
+    }
+    if (text.endsWith('|') && !text.endsWith('\\|')) {
+        text = text.slice(0, -1);
+    }
+    return text.split(/(?<!\\)\|/).map((cell) => cell.trim().replace(/\\\|/g, '|'));
+}
+
+// Inline code and links first, on the raw text - neither is emphasized inside -
+// then emphasis on the escaped rest.
+function mdInline(raw) {
+    const text = String(raw);
+    let html = '';
+    let last = 0;
+    for (const match of text.matchAll(MD_INLINE)) {
+        html += mdEmphasis(esc(text.slice(last, match.index)));
+        if (match[1]) {
+            html += '<code>' + esc(match[2].replace(/^ (.+) $/, '$1')) + '</code>';
+        } else {
+            html += '<span class="md-link"' + attr('data-tip', match[4]) + '>' + mdEmphasis(esc(match[3])) + '</span>';
+        }
+        last = match.index + match[0].length;
+    }
+    return html + mdEmphasis(esc(text.slice(last)));
+}
+
+// Emphasis on already escaped text: the markers are plain characters esc
+// leaves alone, and every captured run is escaped text.
+function mdEmphasis(escaped) {
+    return escaped
+        .replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '<strong>$1</strong>')
+        .replace(/(^|[^\w])__(?=\S)([\s\S]*?\S)__(?!\w)/g, '$1<strong>$2</strong>')
+        .replace(/~~(?=\S)([\s\S]*?\S)~~/g, '<del>$1</del>')
+        .replace(/(^|[^*\w])\*(?=[^\s*])([\s\S]*?[^\s*]|[^\s*])\*(?![*\w])/g, '$1<em>$2</em>')
+        .replace(/(^|[^\w])_(?=[^\s_])([\s\S]*?[^\s_]|[^\s_])_(?!\w)/g, '$1<em>$2</em>');
+}
+
 /* --- the connection graph ---
 
    The live sessions, the subagents they started (grouped under their workflow
-   run) and the messages between them. An edge with traffic in the last minute
+   run), their background processes and the messages between them. An edge with traffic in the last minute
    - a running subagent, a message just sent - carries moving dots. */
 
 const GRAPH_ACTIVE_SECONDS = 60;
-const GRAPH_NODE_W = 200;
+const GRAPH_NODE_W = 230;
 const GRAPH_NODE_H = 38;
-const GRAPH_COL_W = 244;
+const GRAPH_COL_W = 274;
 const GRAPH_ROW_H = 48;
 const GRAPH_PAD = 16;
 // Room left of the first column for the bend of a message between two sessions.
@@ -2887,14 +3141,21 @@ const GRAPH_TEXT_WIDTH = GRAPH_NODE_W - GRAPH_TEXT_X - 14;
 // that is no longer in the recent window has nothing left to point at.
 const AGENT_ID = /^a[0-9a-f]{12,24}$/;
 
-// The subagents of the recent window, from the raw record.
-function agentsOf(raw) {
+// The subagents of the recent window, from the raw record, each with the model
+// it mostly ran on and what it cost under `prices` (null without a rate).
+function agentsOf(raw, prices) {
     const result = [];
     for (const agent of Array.isArray(raw.agents) ? raw.agents : []) {
         if (!agent || typeof agent.id !== 'string' || !agent.id) {
             continue;
         }
+        const usage = agent.usage_by_model && typeof agent.usage_by_model === 'object' && !Array.isArray(agent.usage_by_model)
+            ? agent.usage_by_model
+            : {};
         result.push({
+            skill: typeof agent.skill === 'string' ? agent.skill : '',
+            model: mainModel(usage),
+            cost_usd: sessionCostUsd(usage, prices),
             id: agent.id,
             type: typeof agent.type === 'string' ? agent.type : '',
             description: typeof agent.description === 'string' ? agent.description : '',
@@ -2902,9 +3163,193 @@ function agentsOf(raw) {
             age_seconds: finiteOrNull(agent.age_seconds),
             parent_id: typeof agent.parent_id === 'string' ? agent.parent_id : '',
             workflow: typeof agent.workflow === 'string' ? agent.workflow : '',
+            started_seconds: finiteOrNull(agent.started_seconds),
+            tool_calls: countOrZero(agent.tool_calls),
+            lines_added: countOrZero(agent.lines_added),
+            lines_removed: countOrZero(agent.lines_removed),
+            launch: AGENT_LAUNCHES.has(agent.launch) ? agent.launch : '',
+            effort: typeof agent.effort === 'string' ? agent.effort : '',
+            tools: toolsOf(agent.tools),
         });
     }
     return result;
+}
+
+// How a subagent can have been started; anything else on disk reads as unknown.
+const AGENT_LAUNCHES = new Set(['foreground', 'background', 'skill']);
+
+function countOrZero(value) {
+    return Number.isInteger(value) && value > 0 ? value : 0;
+}
+
+// A subagent's title: its task description, the skill it ran when it has none
+// (a forked skill writes no description), else its type.
+function agentTitle(agent) {
+    return agent.description || (agent.skill ? '/' + agent.skill : '') || agent.type || '';
+}
+
+// The agents in the order they started, earliest first, each with its number
+// in that order. An agent whose start is still unknown (its file not scanned
+// yet) sorts by its last activity; ties keep their id order, so the numbers
+// stay put between polls.
+function agentsByStart(agents) {
+    const startOf = (agent) => (agent.started_seconds !== null ? agent.started_seconds : (agent.age_seconds !== null ? agent.age_seconds : 0));
+    return agents.slice()
+        .sort((left, right) => startOf(right) - startOf(left) || (left.id < right.id ? -1 : (left.id > right.id ? 1 : 0)))
+        .map((agent, index) => Object.assign({}, agent, { number: index + 1 }));
+}
+
+// How long a subagent ran: from its start to its last write, or to now while it
+// runs; null while its start is unknown.
+function agentRuntime(agent) {
+    if (!agent || agent.started_seconds === null || agent.started_seconds === undefined) {
+        return null;
+    }
+    const end = agent.running || agent.age_seconds === null ? 0 : agent.age_seconds;
+    return Math.max(0, agent.started_seconds - end);
+}
+
+// The tools a conversation called: each with how often and how long ago last.
+function toolsOf(list) {
+    const result = [];
+    for (const tool of Array.isArray(list) ? list : []) {
+        if (!tool || typeof tool.name !== 'string' || !tool.name || !Number.isInteger(tool.calls) || tool.calls <= 0) {
+            continue;
+        }
+        result.push({ name: tool.name, calls: tool.calls, age_seconds: finiteOrNull(tool.age_seconds), failed: countOrZero(tool.failed) });
+    }
+    return result;
+}
+
+// The tools the graph draws under their caller. A subagent call, a message and
+// a hand-back already are edges of their own, so they are not drawn twice.
+const GRAPH_EDGE_TOOLS = new Set(['Agent', 'Task', 'SendMessage', 'SubagentHandback', 'StructuredOutput']);
+// An MCP tool is named mcp__<server>__<tool>; the graph draws one node per server.
+const MCP_TOOL = /^mcp__(.+?)__.+$/;
+
+// The node a tool belongs to: its server for an MCP tool, else the tool itself.
+function toolNodeKey(name) {
+    const mcp = MCP_TOOL.exec(name);
+    return mcp ? 'mcp:' + mcp[1] : name;
+}
+
+function toolNodeLabel(key) {
+    return key.startsWith('mcp:') ? key.slice(4) : key;
+}
+
+// A subagent's steps as the details list them: tool calls with their input and
+// result, and its replies between them, in order. Anything malformed is left out.
+function agentStepsOf(steps) {
+    const result = [];
+    for (const step of Array.isArray(steps) ? steps : []) {
+        if (!step || typeof step !== 'object') {
+            continue;
+        }
+        if (step.kind === 'text' && typeof step.text === 'string' && step.text) {
+            result.push({ kind: 'text', text: step.text, at: finiteOrNull(step.at) });
+        } else if (step.kind === 'call' && typeof step.id === 'string' && step.id) {
+            const input = step.input && typeof step.input === 'object' && !Array.isArray(step.input) ? step.input : {};
+            result.push({
+                kind: 'call', id: step.id, tool: typeof step.tool === 'string' ? step.tool : '', input: input,
+                result: typeof step.result === 'string' ? step.result : null, error: step.error === true,
+                outcome: STEP_OUTCOMES.has(step.outcome) ? step.outcome : '',
+                exit_code: Number.isInteger(step.exit_code) ? step.exit_code : null,
+                at: finiteOrNull(step.at), result_at: finiteOrNull(step.result_at),
+            });
+        }
+    }
+    return result;
+}
+
+// How a step can have ended besides normally: it failed, you rejected it, or it
+// was stopped before it finished.
+const STEP_OUTCOMES = new Set(['failed', 'rejected', 'interrupted']);
+
+// What a tool call acts on, in one line: its description, command, path,
+// pattern, address, query or prompt - else its first text input.
+const STEP_SUBJECT_KEYS = ['description', 'command', 'file_path', 'notebook_path', 'pattern', 'url', 'query', 'prompt', 'path', 'skill'];
+
+function stepSubject(step) {
+    const input = step && step.input ? step.input : {};
+    let subject = '';
+    for (const key of STEP_SUBJECT_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(input, key) && typeof input[key] === 'string' && input[key].trim()) {
+            subject = input[key];
+            break;
+        }
+    }
+    if (!subject) {
+        subject = Object.values(input).find((value) => typeof value === 'string' && value.trim()) || '';
+    }
+    return firstLine(subject);
+}
+
+// When a step happened, from the first one: "+0:05", "+12:34", "+1:02:03".
+function formatClock(seconds) {
+    const total = Math.max(0, Math.floor(Number(seconds) || 0));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const secs = String(total % 60).padStart(2, '0');
+    return hours > 0 ? hours + ':' + String(minutes).padStart(2, '0') + ':' + secs : minutes + ':' + secs;
+}
+
+// How long a step took: tenths below ten seconds, whole seconds below a
+// minute, then like an age.
+function stepDuration(seconds, labels) {
+    const value = Math.max(0, Number(seconds) || 0);
+    if (value < 10) {
+        return value.toFixed(1) + 's';
+    }
+    if (value < 60) {
+        return Math.round(value) + 's';
+    }
+    return formatAge(value, labels || {});
+}
+
+// One input value as text: a string as written, anything else as indented JSON.
+function stepInputText(value) {
+    if (typeof value === 'string') {
+        return value;
+    }
+    try {
+        return JSON.stringify(value, null, 2);
+    } catch (e) {
+        return String(value);
+    }
+}
+
+// The session's background processes as a tree: each with its pid, its name and
+// the nearest listed process above it (0: the session itself).
+function processesOf(raw) {
+    const result = [];
+    for (const item of Array.isArray(raw.child_processes) ? raw.child_processes : []) {
+        if (!item || !Number.isInteger(item.pid) || item.pid <= 0 || typeof item.name !== 'string') {
+            continue;
+        }
+        result.push({ pid: item.pid, parent: Number.isInteger(item.parent) && item.parent > 0 ? item.parent : 0, name: item.name });
+    }
+    return result;
+}
+
+// The model that wrote most of a usage-by-model map's output, or null.
+function mainModel(usageByModel) {
+    let best = null;
+    let bestOutput = -1;
+    for (const modelId of Object.keys(usageByModel)) {
+        const usage = usageByModel[modelId];
+        const output = usage && Number.isFinite(Number(usage.output_tokens)) ? Number(usage.output_tokens) : 0;
+        if (modelId && output > bestOutput) {
+            best = modelId;
+            bestOutput = output;
+        }
+    }
+    return best;
+}
+
+// The line under an agent node's title: its model, its cost and how long ago it
+// was active. Everything else about it is in the details, on a click.
+function agentFacts(node, labels) {
+    return [formatModel(node.model), formatCost(node.cost_usd), formatAge(node.age_seconds, labels || {})].filter(Boolean);
 }
 
 // The messages of the last day, from the raw record.
@@ -2928,8 +3373,54 @@ function messagesOf(raw) {
     return result;
 }
 
-// Nodes and edges from `entries` ([{key, session}], the built sessions to show).
-function graphModel(entries) {
+// How far back the graph reaches, "all" included. The backend lists every agent
+// and message; the graph narrows them itself, so a switch costs no read.
+const GRAPH_RANGES = HISTORY_RANGES;
+const DEFAULT_GRAPH_RANGE = '24h';
+
+// The range for a key, the default for an unknown one (a stale stored value).
+function graphRange(key) {
+    return GRAPH_RANGES.find((range) => range.key === key)
+        || GRAPH_RANGES.find((range) => range.key === DEFAULT_GRAPH_RANGE);
+}
+
+// The agents inside the window: every running one, every one active within
+// `maxAgeSeconds`, and the agents above them, so a subagent never loses the
+// agent that started it. `null` keeps them all.
+function agentsInWindow(agents, maxAgeSeconds) {
+    if (maxAgeSeconds === null || maxAgeSeconds === undefined) {
+        return agents;
+    }
+    const byId = new Map(agents.map((agent) => [agent.id, agent]));
+    const keep = new Set();
+    for (const agent of agents) {
+        if (!agent.running && (agent.age_seconds === null || agent.age_seconds > maxAgeSeconds)) {
+            continue;
+        }
+        let current = agent;
+        while (current && !keep.has(current.id)) {
+            keep.add(current.id);
+            current = current.parent_id ? byId.get(current.parent_id) : null;
+        }
+    }
+    return agents.filter((agent) => keep.has(agent.id));
+}
+
+// Whether a caller's tools (a session's, `agentId` null, or one of its
+// subagents') are drawn: a selected subagent's own, a selected session's and
+// those of all its subagents. Nothing selected, or a process, draws none.
+function toolsInFocus(focus, key, agentId) {
+    if (!focus || focus.process || focus.key !== key) {
+        return false;
+    }
+    return !focus.agent || focus.agent === agentId;
+}
+
+// Nodes and edges from `entries` ([{key, session}], the built sessions to show),
+// limited to the agents and messages of the last `maxAgeSeconds` (null: all);
+// `focus` ({key, agent, process, tool}) decides whose tools are drawn.
+function graphModel(entries, maxAgeSeconds = null, focus = null) {
+    const inWindow = (ageSeconds) => maxAgeSeconds === null || (ageSeconds !== null && ageSeconds <= maxAgeSeconds);
     const nodes = [];
     const byId = new Map();
     const edges = new Map();
@@ -2940,15 +3431,38 @@ function graphModel(entries) {
         }
         return byId.get(node.id);
     };
-    const addEdge = (from, to, kind, ageSeconds, active) => {
+    const addEdge = (from, to, kind, ageSeconds, active, count = 1) => {
         const id = from + '>' + to + '>' + kind;
         const edge = edges.get(id) || { from: from, to: to, kind: kind, count: 0, active: false, age_seconds: null };
-        edge.count += 1;
+        edge.count += count;
         edge.active = edge.active || Boolean(active);
         if (ageSeconds !== null && (edge.age_seconds === null || ageSeconds < edge.age_seconds)) {
             edge.age_seconds = ageSeconds;
         }
         edges.set(id, edge);
+    };
+    // The tools a session or a subagent called within the window, each a node of
+    // its own under that caller (one per MCP server), carrying the calls - drawn
+    // only for what is in focus, since every caller's tools at once would bury
+    // the graph.
+    const addToolNodes = (actorNode, tools, key, agentId, root) => {
+        if (!toolsInFocus(focus, key, agentId)) {
+            return;
+        }
+        for (const tool of tools || []) {
+            if (GRAPH_EDGE_TOOLS.has(tool.name) || !inWindow(tool.age_seconds)) {
+                continue;
+            }
+            const toolKey = toolNodeKey(tool.name);
+            const node = addNode({
+                id: actorNode + '/t:' + toolKey, kind: 'tool', key: key, agent: agentId, tool: toolKey, label: toolNodeLabel(toolKey),
+                mcp: toolKey.startsWith('mcp:'), calls: 0, failed: 0, parent: actorNode, root: root,
+            });
+            node.calls += tool.calls;
+            node.failed += tool.failed || 0;
+            const age = tool.age_seconds;
+            addEdge(actorNode, node.id, 'tool', age, age !== null && age < GRAPH_ACTIVE_SECONDS, tool.calls);
+        }
     };
 
     // A message names its peer by session id, by name or by agent id.
@@ -2977,7 +3491,9 @@ function graphModel(entries) {
 
     for (const { key, session } of entries) {
         const sessionNode = 's:' + key;
-        const agents = session.agents || [];
+        // Numbered over every listed agent, so a number stays the same whatever
+        // the window shows; drawn top to bottom in the order they started.
+        const agents = agentsInWindow(agentsByStart(session.agents || []), maxAgeSeconds);
         const agentNodes = new Map(agents.map((agent) => [agent.id, sessionNode + '/a:' + agent.id]));
         for (const agent of agents) {
             let parent = sessionNode;
@@ -2996,13 +3512,38 @@ function graphModel(entries) {
                 parent = agentNodes.get(agent.parent_id);
             }
             addNode({
-                id: agentNodes.get(agent.id), kind: 'agent', label: agent.type, detail: agent.description,
+                id: agentNodes.get(agent.id), kind: 'agent', key: key, agent: agent.id, number: agent.number, label: agentTitle(agent),
+                model: agent.model, cost_usd: agent.cost_usd, age_seconds: agent.age_seconds,
                 running: agent.running, parent: parent, root: sessionNode,
             });
             addEdge(parent, agentNodes.get(agent.id), 'spawn', agent.age_seconds, agent.running);
+            addToolNodes(agentNodes.get(agent.id), agent.tools, key, agent.id, sessionNode);
+        }
+
+        // The background processes the session's tools started, each under the
+        // process that started it; only a count when the list is unknown.
+        const processes = session.process_list || [];
+        const listed = new Set(processes.map((process) => process.pid));
+        for (const process of processes) {
+            const processNode = sessionNode + '/p:' + process.pid;
+            const parent = process.parent && listed.has(process.parent) && process.parent !== process.pid ? sessionNode + '/p:' + process.parent : sessionNode;
+            addNode({
+                id: processNode, kind: 'process', key: key, process: process.pid, label: process.name,
+                parent: parent, root: sessionNode, running: true,
+            });
+            addEdge(parent, processNode, 'spawn', 0, true);
+        }
+        addToolNodes(sessionNode, session.tools, key, null, sessionNode);
+        if (processes.length === 0 && session.processes > 0) {
+            const processNode = sessionNode + '/p';
+            addNode({ id: processNode, kind: 'process', count: session.processes, parent: sessionNode, root: sessionNode, running: true });
+            addEdge(sessionNode, processNode, 'spawn', 0, true);
         }
 
         for (const message of session.messages || []) {
+            if (!inWindow(message.age_seconds)) {
+                continue;
+            }
             let other = agentNodes.get(message.peer) || findSession(message.peer);
             if (!other && (message.handback || AGENT_ID.test(message.peer))) {
                 continue;
@@ -3136,17 +3677,24 @@ function clipLabel(text, max) {
 
 // The graph as SVG markup. Every text and attribute value passes through
 // esc/attr; the animated dots follow their edge by reference to its path id.
-function graphMarkup(layout, labels, selectedKey) {
+// `selection` is the selected session's key, or {key, agent, process} when one
+// of its subagents or processes is selected; such a node carries its session's
+// key beside its own id, so a click can select it.
+function graphMarkup(layout, labels, selection) {
     const strings = labels || {};
+    const selected = selection && typeof selection === 'object' ? selection : { key: selection, agent: null };
     const width = Math.max(layout.width, 1);
     const height = Math.max(layout.height, 1);
     let edgesHtml = '';
     let dotsHtml = '';
     layout.edges.forEach((edge, index) => {
         const id = 'graph-edge-' + index;
-        const tip = edge.kind === 'message'
-            ? fmt(strings.graph_messages, { count: edge.count })
-            : '';
+        let tip = '';
+        if (edge.kind === 'message') {
+            tip = fmt(strings.graph_messages, { count: edge.count });
+        } else if (edge.kind === 'tool') {
+            tip = fmt(strings.graph_tool_calls, { count: edge.count });
+        }
         edgesHtml += '<path' + attr('id', id) + attr('class', 'edge edge-' + edge.kind + (edge.active ? ' active' : ''))
             + attr('d', edge.path) + (tip ? attr('data-tip', tip) : '') + '></path>';
         if (edge.active) {
@@ -3160,15 +3708,41 @@ function graphMarkup(layout, labels, selectedKey) {
 
     let nodesHtml = '';
     for (const node of layout.nodes) {
-        const label = node.kind === 'workflow' ? (strings.graph_workflow || '') : node.label;
-        const sub = node.kind === 'agent' ? node.detail : (node.kind === 'peer' ? (strings.graph_peer || '') : '');
-        const tip = [label, node.kind === 'agent' ? node.detail : ''].filter(Boolean).join('\n');
+        let label = node.label;
+        if (node.kind === 'agent') {
+            label = '#' + node.number + ' ' + node.label;
+        } else if (node.kind === 'workflow') {
+            label = strings.graph_workflow || '';
+        } else if (node.kind === 'process' && !node.process) {
+            label = fmt(strings.signal_processes, { count: node.count });
+        }
+        let sub = '';
+        if (node.kind === 'agent') {
+            sub = agentFacts(node, strings).join(' · ');
+        } else if (node.kind === 'process' && node.process) {
+            sub = (strings.fact_pid || 'PID') + ' ' + node.process;
+        } else if (node.kind === 'peer') {
+            sub = strings.graph_peer || '';
+        } else if (node.kind === 'tool') {
+            sub = (node.mcp ? (strings.graph_mcp || '') + ' · ' : '') + fmt(strings.graph_tool_calls, { count: node.calls })
+                + (node.failed > 0 ? ' · ' + fmt(strings.graph_tool_failed, { count: node.failed }) : '');
+        }
+        // The tooltip only completes a title the box cut short.
+        const tip = node.kind === 'workflow' ? '' : label;
+        // A node is selected when everything it names matches the selection: its
+        // session, and its subagent, process or tool, or none of them.
+        const isSelected = Boolean(node.key) && node.key === selected.key && (node.agent || null) === (selected.agent || null)
+            && (node.process || null) === (selected.process || null) && (node.tool || null) === (selected.tool || null);
         const classes = 'gnode gnode-' + node.kind
             + (node.kind === 'session' ? ' status-' + node.status : '')
             + (node.running ? ' running' : '')
-            + (node.key && node.key === selectedKey ? ' selected' : '');
+            + (node.failed > 0 ? ' failed' : '')
+            + (isSelected ? ' selected' : '');
         nodesHtml += '<g' + attr('class', classes) + attr('transform', 'translate(' + node.x + ' ' + node.y + ')')
-            + (node.key ? attr('data-key', node.key) : '') + (tip ? attr('data-tip', tip) : '') + '>'
+            + (node.key ? attr('data-key', node.key) : '') + (node.agent ? attr('data-agent', node.agent) : '')
+            + (node.process ? attr('data-process', node.process) : '')
+            + (node.kind === 'tool' ? attr('data-tool', node.tool) : '')
+            + (tip ? attr('data-tip', tip) : '') + '>'
             + '<rect' + attr('width', GRAPH_NODE_W) + attr('height', GRAPH_NODE_H) + ' rx="7"></rect>'
             + '<circle class="gnode-dot" cx="13"' + attr('cy', GRAPH_NODE_H / 2) + ' r="4"></circle>'
             + '<text class="gnode-label"' + attr('x', GRAPH_TEXT_X) + attr('y', sub ? 16 : GRAPH_NODE_H / 2 + 4) + '>' + esc(clipLabel(label, GRAPH_LABEL_MAX)) + '</text>'
@@ -3474,8 +4048,28 @@ const AMC_LOGIC = {
     workSummary,
     testsLabel,
     agentsOf,
+    processesOf,
+    toolsOf,
+    toolNodeKey,
+    toolNodeLabel,
+    toolsInFocus,
+    agentStepsOf,
+    stepSubject,
+    stepInputText,
+    formatClock,
+    stepDuration,
+    agentFacts,
+    markdownToHtml,
+    agentTitle,
+    agentsByStart,
+    agentRuntime,
+    mainModel,
     messagesOf,
     GRAPH_ACTIVE_SECONDS,
+    GRAPH_RANGES,
+    DEFAULT_GRAPH_RANGE,
+    graphRange,
+    agentsInWindow,
     GRAPH_TEXT_WIDTH,
     graphModel,
     graphLayout,

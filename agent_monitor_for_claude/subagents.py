@@ -41,13 +41,14 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .paths import SessionRoot, cwd_to_slug, projects_dir
 from .settings import SUBAGENT_RECENT_SECONDS
-from .transcript import usage_scan, usage_scan_once
+from .transcript import agent_steps, final_reply, usage_scan, usage_scan_once
 from .usage_parts import UsageScan, merge_scans
 
-__all__ = ['SubagentInfo', 'WorkflowActivity', 'count_subagents', 'past_subagent_usage']
+__all__ = ['AgentNode', 'SubagentInfo', 'WorkflowActivity', 'agent_texts', 'count_subagents', 'past_subagent_usage']
 
 _SUBAGENT_TAIL_BYTES = 65536
 
@@ -72,16 +73,17 @@ _SUBAGENT_SETTLE_SECONDS = 30
 _WORKFLOW_GRACE_SECONDS = 30
 
 
-# The agents listed per session for the connection view, newest first.
-_MAX_AGENT_NODES = 40
-# How far back the connection view lists agents - a day, like the messages.
-_GRAPH_WINDOW_SECONDS = 86400
 # Each listed agent's type, description and parent, by path: ``meta.json`` is
 # written once when the agent starts.
 _node_meta_cache: dict[str, tuple[str, str, str]] = {}
-_NODE_META_CACHE_MAX = 2048
+_NODE_META_CACHE_MAX = 20000
 # The length of a listed agent's type and description.
 _NODE_TEXT_MAX_CHARS = 160
+# An agent id as it appears in its file name - letters, digits, ``_`` and
+# ``-`` only, so one can never name a path outside the agent's folder - and the
+# longest first line read for its task.
+_AGENT_ID_PATTERN = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$')
+_PROMPT_LINE_MAX_BYTES = 4 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -100,7 +102,12 @@ class AgentNode:
 
     ``agent_id`` is the id in its file name, which a hand-back message names as
     its sender; ``parent_id`` the agent that started it, when not the session
-    itself; ``workflow`` the workflow run it belongs to, or ``''``.
+    itself; ``workflow`` the workflow run it belongs to, or ``''``.  ``skill``
+    is the skill that ran as this agent (a forked skill has no description of
+    its own) and ``usage_by_model`` what it spent, ``started_at`` when its first
+    entry was written (POSIX seconds), ``tool_calls`` and the lines it changed -
+    all from the usage scan its cost already needs, empty while that scan is
+    pending.
     """
 
     agent_id: str
@@ -110,6 +117,13 @@ class AgentNode:
     age: float
     parent_id: str = ''
     workflow: str = ''
+    skill: str = ''
+    usage_by_model: dict[str, dict[str, int]] = field(default_factory=dict)
+    started_at: float | None = None
+    tool_calls: int = 0
+    lines_added: int = 0
+    lines_removed: int = 0
+    tools: dict[str, tuple[int, float | None, int]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -136,10 +150,16 @@ class SubagentInfo:
     agents: tuple[AgentNode, ...] = ()
 
 
-def count_subagents(root: SessionRoot, session_id: str, cwd: str) -> SubagentInfo:
-    """Return running/recently-finished subagent counts and running labels for a session under *root*, and their usage."""
-    directory = _subagents_dir(root, session_id, cwd)
-    if directory is None:
+def count_subagents(root: SessionRoot, session_id: str, cwd: str, worktree_cwds: Iterable[str] = ()) -> SubagentInfo:
+    """Return running/recently-finished subagent counts and running labels for a session under *root*, and their usage.
+
+    A session that switched into a worktree writes the agents it starts there
+    under the worktree's project folder, while its transcript and its earlier
+    agents stay under *cwd*'s - so the folder of every one of *worktree_cwds*
+    is read too.
+    """
+    directories = _subagents_dirs(root, session_id, cwd, worktree_cwds)
+    if not directories:
         return SubagentInfo()
 
     now = time.time()
@@ -148,11 +168,11 @@ def count_subagents(root: SessionRoot, session_id: str, cwd: str) -> SubagentInf
     recent_done = 0
     candidates: list[tuple[float, Path, bool]] = []
 
-    agent_paths = _agent_paths(directory)
-    if agent_paths is None:
-        return SubagentInfo()
+    agent_paths: list[Path] = []
+    for directory in directories:
+        agent_paths.extend(_agent_paths(directory) or ())
 
-    usage_by_type, usage_pending = _usage_by_type(agent_paths, usage_scan)
+    usage_by_type, usage_pending, usage_by_path = _usage_by_type(agent_paths, usage_scan)
 
     for path in agent_paths:
         try:
@@ -161,10 +181,10 @@ def count_subagents(root: SessionRoot, session_id: str, cwd: str) -> SubagentInf
             continue
 
         # Older than the recent window: definitely long finished - only the
-        # connection view still lists it, for a day.
+        # connection view still lists it (every agent the session ran; the view
+        # narrows them to its time window itself).
         if age > SUBAGENT_RECENT_SECONDS:
-            if age <= _GRAPH_WINDOW_SECONDS:
-                candidates.append((age, path, False))
+            candidates.append((age, path, False))
             continue
 
         # A subagent is running while it is executing a tool or actively
@@ -183,18 +203,18 @@ def count_subagents(root: SessionRoot, session_id: str, cwd: str) -> SubagentInf
             running_age = clamped_age
 
     labels = tuple(label for label in (_label(path) for path in running_paths) if label)
-    workflows = _workflow_activity(directory, now)
-    newest = sorted(candidates, key=lambda item: item[0])[:_MAX_AGENT_NODES]
+    workflows = tuple(activity for directory in directories for activity in _workflow_activity(directory, now))
+    newest = sorted(candidates, key=lambda item: item[0])
 
     return SubagentInfo(
         running=len(running_paths), recent_done=recent_done, labels=labels, workflows=workflows, running_age=running_age,
         usage_by_type=usage_by_type, usage_pending=usage_pending,
-        agents=tuple(_agent_node(path, running, age) for age, path, running in newest),
+        agents=tuple(_agent_node(path, running, age, usage_by_path.get(path)) for age, path, running in newest),
     )
 
 
-def _agent_node(path: Path, running: bool, age: float) -> AgentNode:
-    """Describe one agent file for the connection view from its file name, its folder and its ``meta.json``."""
+def _agent_node(path: Path, running: bool, age: float, usage: UsageScan | None) -> AgentNode:
+    """Describe one agent file for the connection view from its file name, its folder, its ``meta.json`` and its *usage*."""
     key = str(path)
     cached = _node_meta_cache.get(key)
     if cached is None:
@@ -211,7 +231,103 @@ def _agent_node(path: Path, running: bool, age: float) -> AgentNode:
     agent_id = path.stem[len('agent-'):] if path.stem.startswith('agent-') else path.stem
     workflow = path.parent.name if path.parent.parent.name == 'workflows' else ''
 
-    return AgentNode(agent_id, cached[0], cached[1], running, age, cached[2], workflow)
+    if usage is None:
+        return AgentNode(agent_id, cached[0], cached[1], running, age, cached[2], workflow)
+
+    by_model = {model: dict(counts) for model, counts in usage.by_model.items()}
+    return AgentNode(
+        agent_id, cached[0], cached[1], running, age, cached[2], workflow, _main_skill(usage), by_model,
+        usage.started_at, usage.tool_calls, usage.lines_added, usage.lines_removed, dict(usage.tools),
+    )
+
+
+def _main_skill(usage: UsageScan | None) -> str:
+    """The skill most of the agent's output was written under, or ``''`` when none was."""
+    best, best_output = '', 0
+    for skill, by_model in (usage.by_skill.items() if usage is not None else ()):
+        output = sum(counts.get('output_tokens', 0) for counts in by_model.values())
+        if output > best_output:
+            best, best_output = skill, output
+
+    return best
+
+
+def agent_texts(root: SessionRoot, session_id: str, agent_id: str) -> dict[str, Any] | None:
+    """Return the task one of the session's subagents was given, its result and every step it took, all whole, or None when it cannot be found.
+
+    The task is the first entry of the agent's own transcript - the prompt the
+    session wrote for it, or a forked skill's instructions; the result is its
+    newest reply - what the session receives once it finishes, its latest word
+    while it runs; the steps are its tool calls with their inputs and results
+    and its replies between them (see :func:`transcript.agent_steps`).  They
+    are read only on request, for the agent the details show.  The agent may lie under any project folder (one the
+    session switched into as a worktree files its agents there), so every
+    folder is checked for the session's own ``subagents`` directory; the file
+    found must resolve inside ``projects/``.  The caller validates
+    *session_id*; *agent_id* is checked here.
+    """
+    path = _agent_file(root, session_id, agent_id)
+    if path is None:
+        return None
+
+    return {'task': _first_prompt(path) or '', 'result': final_reply(path) or '', 'steps': agent_steps(path)}
+
+
+def _agent_file(root: SessionRoot, session_id: str, agent_id: str) -> Path | None:
+    """The transcript of one of the session's subagents under any project folder, confined to ``projects/``, or None."""
+    if not session_id or not isinstance(agent_id, str) or not _AGENT_ID_PATTERN.fullmatch(agent_id):
+        return None
+
+    projects = projects_dir(root)
+    try:
+        folders = [Path(entry.path) for entry in os.scandir(projects) if entry.is_dir()]
+    except OSError:
+        return None
+
+    name = f'agent-{agent_id}.jsonl'
+    for folder in folders:
+        directory = folder / session_id / 'subagents'
+        if not directory.is_dir():
+            continue
+        for path in _agent_paths(directory) or ():
+            if path.name == name and _inside(path, projects):
+                return path
+
+    return None
+
+
+def _inside(path: Path, directory: Path) -> bool:
+    """Whether *path* resolves to a file inside *directory*."""
+    try:
+        path.resolve().relative_to(directory.resolve())
+    except (OSError, ValueError):
+        return False
+
+    return True
+
+
+def _first_prompt(path: Path) -> str | None:
+    """The text of the first entry of an agent's transcript, or None when it holds none."""
+    try:
+        with path.open('rb') as handle:
+            line = handle.readline(_PROMPT_LINE_MAX_BYTES)
+    except OSError:
+        return None
+
+    try:
+        entry = json.loads(line.decode('utf-8', errors='replace'))
+    except ValueError:
+        return None
+    message = entry.get('message') if isinstance(entry, dict) else None
+    content = message.get('content') if isinstance(message, dict) else None
+    if isinstance(content, str):
+        return content.strip() or None
+    if not isinstance(content, list):
+        return None
+
+    parts = [block.get('text') for block in content if isinstance(block, dict) and block.get('type') == 'text' and isinstance(block.get('text'), str)]
+    text = '\n\n'.join(part.strip() for part in parts if part.strip())
+    return text or None
 
 
 def past_subagent_usage(transcript: Path) -> dict[str, UsageScan]:
@@ -228,7 +344,7 @@ def past_subagent_usage(transcript: Path) -> dict[str, UsageScan]:
     if agent_paths is None:
         return {}
 
-    usage_by_type, _ = _usage_by_type(agent_paths, usage_scan_once)
+    usage_by_type, _, _ = _usage_by_type(agent_paths, usage_scan_once)
     return usage_by_type
 
 
@@ -245,18 +361,22 @@ def _agent_paths(directory: Path) -> list[Path] | None:
         return None
 
 
-def _usage_by_type(agent_paths: Iterable[Path], scan: Callable[[Path], UsageScan | None]) -> tuple[dict[str, UsageScan], bool]:
-    """Return the usage *scan* reads from each agent transcript, summed per ``agentType``, and whether any scan was pending."""
+def _usage_by_type(
+    agent_paths: Iterable[Path], scan: Callable[[Path], UsageScan | None],
+) -> tuple[dict[str, UsageScan], bool, dict[Path, UsageScan]]:
+    """Return the usage *scan* reads from each agent transcript, summed per ``agentType``, whether any scan was pending, and each one's own."""
     scans_by_type: dict[str, list[UsageScan]] = {}
+    by_path: dict[Path, UsageScan] = {}
     pending = False
     for path in agent_paths:
         usage = scan(path)
         if usage is None:
             pending = True
             continue
+        by_path[path] = usage
         scans_by_type.setdefault(_agent_type(path), []).append(usage)
 
-    return {agent_type: merge_scans(scans) for agent_type, scans in scans_by_type.items()}, pending
+    return {agent_type: merge_scans(scans) for agent_type, scans in scans_by_type.items()}, pending, by_path
 
 
 def _is_finished(agent_path: Path, age: float) -> bool:
@@ -434,13 +554,20 @@ def _journal_counts(journal_path: Path) -> tuple[int, int]:
     return counts
 
 
-def _subagents_dir(root: SessionRoot, session_id: str, cwd: str) -> Path | None:
-    """Return the session's subagents directory under root, or None if it does not exist."""
+def _subagents_dirs(root: SessionRoot, session_id: str, cwd: str, worktree_cwds: Iterable[str]) -> list[Path]:
+    """Return the session's existing subagents directories under *root*: *cwd*'s, then each worktree's."""
     if not session_id or not cwd:
-        return None
+        return []
 
-    directory = projects_dir(root) / cwd_to_slug(cwd) / session_id / 'subagents'
-    return directory if directory.is_dir() else None
+    directories: list[Path] = []
+    for directory_cwd in (cwd, *worktree_cwds):
+        if not directory_cwd:
+            continue
+        directory = projects_dir(root) / cwd_to_slug(directory_cwd) / session_id / 'subagents'
+        if directory not in directories and directory.is_dir():
+            directories.append(directory)
+
+    return directories
 
 
 def _label(agent_path: Path) -> str:

@@ -21,7 +21,7 @@ Last reviewed: 2026-11-05
 | Does it send telemetry, analytics, or crash reports? | No. None, of any kind. |
 | Does it send your data anywhere? | No. It never transmits anything it reads, and the page it renders declares a Content-Security-Policy that forbids network requests outright, so the browser engine would refuse one even if the code asked. |
 | Does it read your conversations? | It scans transcript files for control metadata and takes a bounded set of display fields out of them: the title, what a session is running or waiting on (a command, a file path, a question with its answers, a plan to review), its last answer, its plan's step texts, and a failing hook's first error line. Two on-demand features read more: the content search, which matches your query against conversation text and shows short excerpts of what it found, and the background-task console. |
-| Does it display conversation text? | Yes, in bounded pieces: the session title, each subagent's task description, a background task's label, the call a session runs or waits on (cut to 400 characters, a plan to 4,000), the first 600 characters of its last answer, its plan's step texts, and the first line of a failing hook's error output. Beyond those, only what a search you typed found: up to five short excerpts around the hits, each clipped to about 60 characters either side. One further line comes from Claude Code itself: the message of a turn that stopped on an API error. All of it stays on your machine. |
+| Does it display conversation text? | Yes. In bounded pieces for every session: the session title, each subagent's task description, a background task's label, the call a session runs or waits on (cut to 400 characters, a plan to 4,000), the first 600 characters of its last answer, its plan's step texts, and the first line of a failing hook's error output. Whole, only for what you select: the selected session's current call and last answer, and the task and result of a subagent you click in the graph. Beyond those, only what a search you typed found: up to five short excerpts around the hits, each clipped to about 60 characters either side. One further line comes from Claude Code itself: the message of a turn that stopped on an API error. All of it stays on your machine. |
 | Does it write to disk? | Only its own files. On Windows in three places: the browser profile that stores your interface preferences, a session deletion you explicitly confirm, and its own program bundle unpacked into your temp folder at startup. On Linux the profile and the deletion, plus a lock file in the session's runtime directory; there is no bundle to unpack, since the app runs from source there. |
 | Does it modify your Claude Code data? | Never. The only removal is the session deletion you confirm yourself. |
 
@@ -181,7 +181,9 @@ each running session. Fields taken: session id, process id, working directory, p
 kind and entry point, the native status and its waiting reason, the background-agent job id, whether
 Remote Control is on (only that - the cloud session id it names is not kept), the Claude Code version
 the process runs, and three timestamps - two for when the process started, one for when its native
-status last changed. No conversation data is in these files.
+status last changed. The session's messaging address and the names it went by before are read too,
+to tie a message between two sessions to its sender or recipient; the address is used for that match
+only and never shown. No conversation data is in these files.
 
 ### The last self-update's result
 
@@ -247,8 +249,10 @@ And a few more describe the session beside its status:
   subagent's own totals) - the changed text itself is not kept;
 - when each turn started and ended, so the details can show when the session worked and when it waited;
 - the messages a session exchanged with other sessions or its subagents: the recipient a message was
-  sent to, a received message's sender id and name, and whether it was a subagent handing its result
-  back - the message text stays unread;
+  sent to, a received message's sender id and name (also when it arrived while a turn ran and was queued),
+  and whether it was a subagent handing its result back - the message text stays unread;
+- the folder of every git worktree the session switched into, because the subagents it started there
+  are filed under that worktree's project folder;
 - the artifacts the session published - each one's title and `claude.ai` address, so its details can link
   to them;
 - a linked pull request's repository, number, and web address (see [Network
@@ -292,9 +296,21 @@ and never shown:
   and task description, for any other tool its first text value. A command, path or question is clipped
   to 400 characters, a plan to 4,000. It is shown in the session's list entry and details, so you can see
   what a permission prompt asks for or what is running, and dropped as soon as the call has a result.
+  For the session selected in the details the same call is read again from the transcript's tail, uncut,
+  whenever it changes - only for that one session, and only while it is selected.
 - **The last answer** (displayed). The text of the newest reply that contains any, clipped to 600
-  characters. A finished session's list entry shows its first line, and its details show it in full.
-  Thinking blocks and tool calls in that reply are not read.
+  characters. A finished session's list entry shows its first line; the details read it again, uncut,
+  for the selected session, like the call above. Thinking blocks and tool calls in that reply are not read.
+- **Which tools a conversation called** (displayed in the connection graph). The name of each tool call's
+  tool, counted per tool with the time of its last call - for the session's own transcript and for each
+  subagent's. A name is taken only when it looks like one (letters, digits and `_ . : -`); the call's input
+  stays unread here. A tool result marked as an error is counted against its tool as a failure, unless its
+  text opens with Claude Code's fixed wording for a call you rejected - that comparison is all that is read
+  of it.
+- **How each subagent was started** (displayed in its details). From a subagent call (`Agent`, `Task`)
+  whether it runs in the background and the effort it asked for, and from the call's result the agent's
+  id and whether it was a forked skill - the task, its description and the result's text are not taken
+  here.
 - **The interrupt marker** (not displayed). To tell "you stopped this turn" apart from "you sent a
   new prompt", a user entry's text is prefix-matched against Claude Code's fixed marker
   `[Request interrupted by user`. Only the yes/no result is kept; the text itself is neither returned
@@ -312,19 +328,30 @@ Nothing from these files is transmitted anywhere, because there is nowhere for i
 
 ### Subagent and workflow files
 
-`~/.claude/projects/<project>/<session>/subagents/**` - to count how many subagents are running and
+`~/.claude/projects/<project>/<session>/subagents/**` - for a session that switched into a git worktree,
+also the same folder under each worktree's project folder - to count how many subagents are running and
 how many just finished. Per subagent this reads the last 64 KB of its `agent-*.jsonl` transcript and
 parses only the final entry's control fields (entry type, stop reason, content-block type), plus that
 subagent's `agent-<id>.meta.json` for its agent type, the task description named above, and the id of
 the agent that started it, so the connection graph can draw who started whom. For that graph the
-`meta.json` of a session's newest 40 subagents of the last day is read, and kept in memory. For a
+`meta.json` of every subagent of a session is read, and kept in memory. For a
 background workflow, the run's `journal.jsonl` is scanned line by line, and only each event's type and
 agent id are taken - which gives the run's agent count and whether it is still active.
 
 A session's cost includes what its subagents spent, so every `agent-*.jsonl` transcript is also read in
 full once, and afterwards only its newly appended lines - the same scan as a session's own transcript
 (see above). From a subagent's transcript only the token-usage numbers, the model id, the response id,
-the skill name and the web-search count are taken. No subagent's messages, reasoning, or returned
+the skill name and the web-search count are taken, plus when the file's first entry was written, how many tool
+calls its replies made and the lines its edits changed; the connection graph and a subagent's details show
+these per agent. When you click a subagent in the graph, its **task** and its **result** are read and shown whole: the
+first line of that agent's own transcript, which is the prompt the session gave it (or a forked skill's
+instructions), and its result, which is the report the session receives - the `message` it handed back
+through the `SubagentHandback` tool, a workflow agent's `StructuredOutput`, or else the text of its newest
+reply (while the agent still runs, its latest reply, read again when the file grows) - only those two, only for that agent, and only
+from a file inside `projects/`. With them comes its **activity**: every tool call it made with its whole
+input and its whole result (a command and its output, a file path and the file's content as the tool
+returned it, a search and what it found), and each reply between the calls - read from that one agent's
+transcript, on that click, and shown in its details. Its thinking stays unread. No subagent's messages, reasoning, or returned
 results are read or shown.
 
 ### Transcripts, for the content search (on demand)
@@ -387,8 +414,9 @@ To tell a live session from a finished one and to count its background work, eac
 snapshot of the process table - the Windows process table on Windows, the `/proc` directory on Linux,
 where only each process's own `stat` file is opened. Either snapshot is machine-wide by nature - it
 yields the process id, parent process id, and name of every running process - and the application uses
-it to walk the ancestry and descendants of the session processes. Nothing else about a process is
-read: no command line, no environment, no open handles, no memory contents. For the sessions on screen
+it to walk the ancestry and descendants of the session processes. The name, id and parent of each
+counted descendant are passed to the window, so the connection graph can draw them as a tree. Nothing else
+about a process is read: no command line, no environment, no open handles, no memory contents. For the sessions on screen
 it additionally samples CPU, memory, and start time; when you select a **Windows**
 session whose tools run through the `wsl.exe`/`wslhost.exe` relay, the shared WSL virtual machine's CPU
 and memory are sampled too, which its details label as machine-wide because that figure is not specific to
@@ -481,9 +509,10 @@ second window from starting - and no bundle to unpack, since the application run
 1. **Its interface-preference profile**, in `%LOCALAPPDATA%\AgentMonitorForClaude` on Windows and
    `~/.local/share/agent-monitor-for-claude` on Linux (or below `$XDG_DATA_HOME` when you have set
    it). This is the browser profile of the engine the window renders in - WebView2 or WebKitGTK - and
-   the application uses it for one purpose: so the window can remember your choices in `localStorage`. The current version stores six values there - which list
-   sections are open, how far back *Older* reaches, how the list is grouped, your three search
-   toggles, whether the compact view is on, and which project groups you collapsed. The
+   the application uses it for one purpose: so the window can remember your choices in `localStorage`. The current version stores nine values there - which list
+   sections are open, how far back *Older* and the graph reach, how the list is grouped, how wide the list is,
+   your three search toggles, whether texts are shown formatted, whether the compact view is on, and which
+   project groups you collapsed. The
    collapsed-group entry stores project directory paths, since that is what identifies
    a group; the others are short flags. (An older version's leftover keys - the theme, the sort order,
    keep-on-top - may still sit there unused.)
@@ -655,11 +684,12 @@ of them is accounted for here, so that nothing looks like a hidden exception:
   filled by the browser engine, which [app.py](agent_monitor_for_claude/app.py) points at that
   location, and the temp extraction is done by the single-file launcher before any application code
   runs.
-- The dynamic-execution search matches two lines of code and two comments. The lines of code are in
-  `ui/logic.js`: regular expressions' `.exec()` calls, one to strip terminal color codes and one to
-  recognize the folder Claude Desktop runs a chat without a project in. The two
-  comments, in `ui/index.html` and `app.py`, are the ones explaining the `'unsafe-eval'` in the page's
-  policy - see below. There is no `eval`, no `exec`, no `__import__`, and no encoded payload anywhere
+- The dynamic-execution search matches lines of code in `ui/logic.js` and two comments. The lines of
+  code are all regular expressions' `.exec()` calls: one strips terminal color codes, one recognizes
+  the folder Claude Desktop runs a chat without a project in, the Markdown renderer's match a fence, a
+  heading, a quote, a list item and a task box, and one recognizes an MCP tool's server in its name.
+  The two comments, in `ui/index.html` and `app.py`, are the ones explaining the `'unsafe-eval'` in the
+  page's policy - see below. There is no `eval`, no `exec`, no `__import__`, and no encoded payload anywhere
   in the application. (`compile` does occur, as `re.compile`, which builds a regular expression and
   cannot execute code.)
 

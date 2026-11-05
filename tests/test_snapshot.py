@@ -13,7 +13,9 @@ from unittest import mock
 from agent_monitor_for_claude import cli_install
 from agent_monitor_for_claude import snapshot as snapshot_mod
 from agent_monitor_for_claude.paths import SessionRoot, transcript_path, local_root
+from agent_monitor_for_claude.procinfo import ProcessInfo
 from agent_monitor_for_claude.snapshot import build_snapshot, live_or_recent_ids, registry_fingerprint
+from agent_monitor_for_claude.transcript import MessageEvent
 
 _END_TURN = json.dumps({
     'type': 'assistant',
@@ -757,6 +759,54 @@ class WorktreeSessionTest(_RegistryFixture):
             handle.write(_END_TURN + '\n')
 
         self.assertNotEqual(before, registry_fingerprint())
+
+
+class MessagePeerTest(unittest.TestCase):
+    """A message to or from another session is reported under that session's id."""
+
+    _SOCKET = r'\\.\pipe\LOCAL\cc-msg-1'
+
+    def _pairs(self) -> tuple[list, dict]:
+        def record(session_id: str, pid: int, name: str, **extra: object) -> dict:
+            return {'origin': 'local', 'session_id': session_id, 'pid': pid, 'name': name, 'former_names': (), 'messaging_socket': None, **extra}
+
+        pairs = [
+            (local_root(), record('ended', 1, 'Photo editor')),
+            (local_root(), record('editor', 2, 'Photo editor', messaging_socket=self._SOCKET, former_names=('Old editor',))),
+        ]
+        probe_map = {('local', 1): ProcessInfo(alive=False, tool_running=False), ('local', 2): ProcessInfo(alive=True, tool_running=False)}
+
+        return pairs, probe_map
+
+    def test_an_address_and_a_name_resolve_to_the_live_session(self) -> None:
+        pairs, probe_map = self._pairs()
+        peers = snapshot_mod._peer_index(pairs, probe_map)
+        now = time.time()
+        messages = (
+            MessageEvent('sent', 'uds:' + self._SOCKET, now),
+            MessageEvent('received', 'uds:' + self._SOCKET, now, 'Photo editor'),
+            MessageEvent('sent', 'photo EDITOR', now),
+            MessageEvent('sent', 'Old editor', now),
+            MessageEvent('received', 'a1b2c3d4e5f6a7b8c', now, 'Explore', True),
+        )
+
+        records = snapshot_mod._recent_messages(messages, 'local', peers)
+
+        self.assertEqual([(item['peer'], item['label']) for item in records], [
+            ('editor', 'Photo editor'), ('editor', 'Photo editor'), ('editor', 'Photo editor'), ('editor', 'Photo editor'),
+            ('a1b2c3d4e5f6a7b8c', 'Explore'),
+        ])
+        # Another origin's sessions are not this one's peers.
+        self.assertEqual(snapshot_mod._recent_messages(messages[2:3], 'wsl:Ubuntu', peers)[0]['peer'], 'photo EDITOR')
+
+    def test_an_unknown_address_never_reaches_the_snapshot(self) -> None:
+        now = time.time()
+        messages = (MessageEvent('received', 'uds:' + self._SOCKET, now, 'Gone session'), MessageEvent('sent', 'uds:' + self._SOCKET, now))
+
+        records = snapshot_mod._recent_messages(messages, 'local', {})
+
+        self.assertEqual([(item['peer'], item['label']) for item in records], [('Gone session', 'Gone session')])
+        self.assertNotIn('cc-msg', json.dumps(records))
 
 
 def _write_stat(proc_dir: Path, pid: int, comm: str, ppid: int, starttime: int) -> None:

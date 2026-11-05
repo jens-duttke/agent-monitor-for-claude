@@ -6,6 +6,7 @@ import os
 import tempfile
 import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -235,6 +236,37 @@ class SubagentUsageTest(_ConfigDirTest):
 
         self.assertIsNone(transcript._scan_cache[os.path.normcase(str(agent))].title())
 
+    def test_each_listed_agent_carries_its_own_usage_and_main_skill(self) -> None:
+        self._add_agent('s', 'general-purpose', [_reply('s1', 3, 'claude-sonnet-5-5', skill='commit'), _reply('s2', 1, skill='review')])
+        self._add_agent('p', 'Explore', [_reply('p1', 7)])
+
+        agents = {agent.agent_id: agent for agent in count_subagents(local_root(), _SESSION_ID, _CWD).agents}
+
+        self.assertEqual(agents['s'].skill, 'commit')
+        self.assertEqual(agents['s'].usage_by_model['claude-sonnet-5-5']['output_tokens'], 3)
+        self.assertEqual(agents['s'].usage_by_model['claude-opus-5-5']['output_tokens'], 1)
+        self.assertEqual((agents['p'].skill, agents['p'].usage_by_model['claude-opus-5-5']['output_tokens']), ('', 7))
+        # When it started comes through the cached scan, like its usage.
+        self.assertEqual(agents['p'].started_at, datetime(2026, 11, 4, 10, tzinfo=timezone.utc).timestamp())
+        self.assertEqual(agents['p'].tool_calls, 0)
+
+    def test_merged_scans_add_tool_calls_and_keep_the_newest_use(self) -> None:
+        merged = merge_scans([
+            UsageScan(tools={'Bash': (2, 100.0, 1), 'Read': (1, None, 0)}, tool_calls=3),
+            UsageScan(tools={'Bash': (3, 50.0, 2), 'Read': (2, 70.0, 0)}, tool_calls=5),
+        ])
+
+        self.assertEqual(merged.tools, {'Bash': (5, 100.0, 3), 'Read': (3, 70.0, 0)})
+        self.assertEqual(merged.tool_calls, 8)
+
+    def test_a_listed_agent_whose_scan_is_pending_carries_no_usage(self) -> None:
+        self._add_agent('a', 'fork', [_reply('a1', 4, skill='commit')])
+
+        with mock.patch.object(transcript, '_SYNC_SCAN_BYTES', 0), mock.patch.object(transcript, 'queue_scan'):
+            agent = count_subagents(local_root(), _SESSION_ID, _CWD).agents[0]
+
+        self.assertEqual((agent.skill, agent.usage_by_model), ('', {}))
+
     def test_pruning_keeps_the_agent_scans_of_a_live_session(self) -> None:
         self._write_transcript([_reply('m1', 1)])
         agent = self._add_agent('a', 'fork', [_reply('a1', 4)])
@@ -245,6 +277,23 @@ class SubagentUsageTest(_ConfigDirTest):
 
         prune_scan_cache([])
         self.assertNotIn(os.path.normcase(str(agent)), transcript._scan_cache)
+
+    def test_pruning_keeps_the_agent_scans_a_session_left_in_a_worktree_folder(self) -> None:
+        # An agent started after a switch into a worktree lies under the
+        # worktree's project folder, in a folder named after the session.
+        agent = Path(self._temp.name) / 'projects' / 'd--proj-worktrees-fix' / _SESSION_ID / 'subagents' / 'agent-w.jsonl'
+        agent.parent.mkdir(parents=True)
+        agent.write_text(_reply('w1', 2) + '\n', encoding='utf-8')
+        stranger = Path(self._temp.name) / 'projects' / 'd--proj-worktrees-fix' / 'other-session' / 'subagents' / 'agent-x.jsonl'
+        stranger.parent.mkdir(parents=True)
+        stranger.write_text(_reply('x1', 2) + '\n', encoding='utf-8')
+        usage_scan(agent)
+        usage_scan(stranger)
+
+        prune_scan_cache([(local_root(), _SESSION_ID, _CWD)])
+
+        self.assertIn(os.path.normcase(str(agent)), transcript._scan_cache)
+        self.assertNotIn(os.path.normcase(str(stranger)), transcript._scan_cache)
 
     def test_a_past_session_reads_its_agents_once_without_caching(self) -> None:
         path = self._write_transcript([_reply('m1', 1)])

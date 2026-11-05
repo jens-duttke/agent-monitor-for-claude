@@ -185,6 +185,7 @@ async function boot() {
         // An unknown or missing key resolves to the default window, so a stale
         // stored value can never leave the listing unbounded.
         state.historyRange = logic.historyRange(localStorage.getItem('amc-history-range')).key;
+        state.markdown = localStorage.getItem('amc-markdown') !== 'plain';
         state.collapsed = new Set(JSON.parse(localStorage.getItem('amc-collapsed') || '[]'));
         const searchOpts = JSON.parse(localStorage.getItem('amc-search-opts') || '{}');
         state.searchMatchCase = !!searchOpts.matchCase;
@@ -229,8 +230,15 @@ async function boot() {
         const content = document.getElementById('content');
         content.addEventListener('click', onContentClick);
         content.addEventListener('dblclick', onContentDoubleClick);
+        content.addEventListener('pointerdown', onGraphPointerDown);
+        initSplitter();
+        document.addEventListener('pointermove', onGraphPointerMove);
+        document.addEventListener('pointerup', onGraphPointerUp);
+        document.addEventListener('pointercancel', onGraphPointerUp);
         content.addEventListener('contextmenu', onContentContextMenu);
         document.getElementById('detail').addEventListener('click', onDetailClick);
+        // A <details> toggle does not bubble; the capture phase sees it.
+        document.getElementById('detail').addEventListener('toggle', onStepToggle, true);
         document.addEventListener('keydown', onKeyDown);
     } catch (err) {
         reportUiError(err);

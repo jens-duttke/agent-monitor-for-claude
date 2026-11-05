@@ -52,8 +52,9 @@ from .paths import SessionRoot, transcript_path
 from .usage_parts import UsageScan
 
 __all__ = [
-    'ApiRetry', 'Artifact', 'HookError', 'MessageEvent', 'PlanItem', 'PullRequest', 'Question', 'ToolCall', 'TranscriptState',
-    'HistoryState', 'WorktreeState', 'state_for', 'history_state_for', 'worktree_for', 'edited_files', 'prioritize_session', 'prune_scan_cache', 'usage_scan', 'usage_scan_once',
+    'AgentLaunch', 'ApiRetry', 'Artifact', 'HookError', 'MessageEvent', 'PlanItem', 'PullRequest', 'Question', 'ToolCall', 'TranscriptState',
+    'HistoryState', 'WorktreeState', 'agent_steps', 'final_reply', 'full_texts', 'state_for', 'history_state_for', 'worktree_for', 'edited_files',
+    'prioritize_session', 'prune_scan_cache', 'usage_scan', 'usage_scan_once',
 ]
 
 # Bytes read from the end of the transcript.  Large enough to contain the last
@@ -215,9 +216,39 @@ _PATCH_MARKER = b'"structuredPatch"'
 _TOOL_STATS_MARKER = b'"toolStats"'
 _PEER_MARKER = b'"kind":"peer"'
 _SEND_MESSAGE_TOOL = 'SendMessage'
+# A message that arrives while a turn runs is recorded as this attachment, its
+# sender in the attachment's own ``origin`` - not as a prompt entry.
+_QUEUED_COMMAND_ATTACHMENT = 'queued_command'
+# The tools a subagent ends its work with, handing its result to the session:
+# a background agent's report, and a workflow agent's structured answer.
+_HANDBACK_TOOL = 'SubagentHandback'
+_STRUCTURED_OUTPUT_TOOL = 'StructuredOutput'
+# How the session started each subagent: the tool call (``Agent``, or ``Task``
+# in older versions) names whether it runs in the background and its effort,
+# and the call's result - the only line carrying both - names the agent's id.
+# A subagent's own lines carry an ``agentId`` too, and are told apart by being
+# sidechain lines.  Launches kept per session, newest last.
+_AGENT_TOOLS = frozenset({'Agent', 'Task'})
+_AGENT_ID_MARKER = b'"agentId"'
+_SIDECHAIN_MARKER = b'"isSidechain":true'
+_MAX_AGENT_LAUNCHES = 200
+# A tool's name as the graph shows it: what Claude Code and an MCP server name
+# their tools, nothing that could carry text.
+_TOOL_NAME_PATTERN = re.compile(r'^[A-Za-z0-9_.:-]{1,128}$')
+_MAX_TOOL_NAMES = 200
+# A failed tool call: its result carries ``is_error``.  That byte marker lets
+# just those lines through the pre-filter, and the call's id names the tool
+# (the ids of recent calls are kept for that).  A call you rejected is marked
+# the same way but is no failure, told apart by Claude Code's fixed wording.
+_ERROR_RESULT_MARKER = b'"is_error":true'
+_REJECTED_RESULT_PREFIX = "The user doesn't want to proceed with this tool use"
+_MAX_TOOL_IDS = 500
+# A command's own exit status, as Claude Code opens a failed command's result.
+_EXIT_CODE = re.compile(r'^\s*Exit code (\d{1,4})\b')
+_MAX_PENDING_LAUNCHES = 50
 # The worked intervals and messages kept per session, newest last.
 _MAX_INTERVALS = 400
-_MAX_MESSAGES = 60
+_MAX_MESSAGES = 500
 
 # What opened the newest turn, from the prompt entry's own ``origin.kind`` (or
 # the older ``turnOrigin`` spelling): typed by you, a background task that
@@ -264,6 +295,9 @@ _USER_MARKER = b'"user"'
 # follows it into the worktree - this entry is what ties the two together.
 _WORKTREE_STATE_MARKER = b'worktree-state'
 _WORKTREE_STATE_TYPE = 'worktree-state'
+# Worktrees remembered per session; a session that hops between more than this
+# many finds the agents of the later ones only through the registry's cwd.
+_MAX_WORKTREE_PATHS = 20
 
 # A context compaction is recorded as a ``system`` entry of this subtype.  Rare
 # lines, so the extra marker costs one more byte search per line - measured at
@@ -367,6 +401,24 @@ class _ScanState:
     turn_started_at: float | None = None
     intervals: list[tuple[float, float]] = field(default_factory=list)
     messages: list[MessageEvent] = field(default_factory=list)
+    # Every worktree the session switched into, first seen first: a subagent
+    # started there is filed under that worktree's project folder.
+    worktree_paths: list[str] = field(default_factory=list)
+    # When the file's first entry was written; the tool calls its replies made,
+    # and the lines its sidechain edits changed - for a subagent's own file,
+    # where every entry is a sidechain one, that is the agent's work.
+    started_at: float | None = None
+    tool_calls: int = 0
+    sidechain_lines_added: int = 0
+    sidechain_lines_removed: int = 0
+    # How each subagent was started, by agent id, and the subagent calls still
+    # waiting for the result that names their agent (tool-use id -> launch).
+    agent_launches: dict[str, AgentLaunch] = field(default_factory=dict)
+    pending_launches: dict[str, AgentLaunch] = field(default_factory=dict)
+    # Each tool the replies called, by name: how often, when last (POSIX) and how
+    # often it failed; the tool each recent call id belongs to.
+    tool_uses: dict[str, list] = field(default_factory=dict)
+    tool_names_by_id: dict[str, str] = field(default_factory=dict)
     # Memoized run-compressed timelines, one per value field, each kept with the
     # event count it was built from.  Deliberately the last field, so the
     # positional ``copy()`` below stays correct without carrying it over - a copy
@@ -414,7 +466,9 @@ class _ScanState:
             self.auto_denials_consecutive, self.auto_denials_total, self.worktree, dict(self.counted_output_by_message),
             set(self.edited_files), self.compactions, _copy_skill_usage(self.by_skill), self.web_searches,
             dict(self.artifacts), self.lines_added, self.lines_removed, self.turn_started_at, list(self.intervals),
-            list(self.messages),
+            list(self.messages), list(self.worktree_paths), self.started_at, self.tool_calls,
+            self.sidechain_lines_added, self.sidechain_lines_removed, dict(self.agent_launches), dict(self.pending_launches),
+            {name: list(use) for name, use in self.tool_uses.items()}, dict(self.tool_names_by_id),
         )
 
     def usage(self) -> UsageScan:
@@ -423,6 +477,11 @@ class _ScanState:
             by_model={model: dict(usage) for model, usage in self.by_model.items()},
             by_skill=_copy_skill_usage(self.by_skill),
             web_searches=self.web_searches,
+            started_at=self.started_at,
+            tool_calls=self.tool_calls,
+            lines_added=self.sidechain_lines_added,
+            lines_removed=self.sidechain_lines_removed,
+            tools=_tool_use_tuples(self.tool_uses),
         )
 
 
@@ -449,6 +508,13 @@ class _ScanResult:
     work_intervals: tuple[tuple[float, float], ...]
     turn_open_since: float | None
     messages: tuple[MessageEvent, ...]
+    worktree_paths: tuple[str, ...]
+    agent_launches: dict[str, AgentLaunch]
+    started_at: float | None
+    tool_calls: int
+    sidechain_lines_added: int
+    sidechain_lines_removed: int
+    tool_uses: dict[str, tuple[int, float | None, int]]
 
 
 @dataclass(frozen=True)
@@ -501,13 +567,14 @@ def prune_scan_cache(active: Iterable[tuple[SessionRoot, str, str]]) -> None:
         case-normalized), so the two always agree - and including the root
         keeps two roots' transcripts apart even when a session_id/cwd pair
         happens to repeat across them.  The scans of the session's subagent
-        transcripts (see :func:`usage_scan`) are kept with it: they all lie in
-        the folder named after the transcript.
+        transcripts (see :func:`usage_scan`) are kept with it: they lie in a
+        folder named after the session - the transcript's, or that of a
+        worktree the session switched into, under another project folder.
     """
     keep = _ScanKeys()
     for root, session_id, cwd in active:
         if session_id and cwd:
-            keep.add(os.path.normcase(str(transcript_path(root, session_id, cwd))))
+            keep.add(os.path.normcase(str(transcript_path(root, session_id, cwd))), os.path.normcase(session_id))
 
     with _scan_lock:
         for key in list(_scan_cache):
@@ -520,19 +587,22 @@ def prune_scan_cache(active: Iterable[tuple[SessionRoot, str, str]]) -> None:
 
 
 class _ScanKeys:
-    """The scan-cache keys of a set of session transcripts and of every file in their session folders."""
+    """The scan-cache keys of a set of session transcripts and of every file below a folder named after one of the sessions."""
 
     def __init__(self) -> None:
         self._transcripts: set[str] = set()
-        self._folders: tuple[str, ...] = ()
+        self._session_ids: set[str] = set()
 
-    def add(self, transcript_key: str) -> None:
+    def add(self, transcript_key: str, session_id: str) -> None:
         self._transcripts.add(transcript_key)
-        # The session folder is the transcript's path without its extension.
-        self._folders += (os.path.splitext(transcript_key)[0] + os.sep,)
+        self._session_ids.add(session_id)
 
     def __contains__(self, key: object) -> bool:
-        return isinstance(key, str) and (key in self._transcripts or key.startswith(self._folders))
+        if not isinstance(key, str):
+            return False
+
+        # The last part is the file itself; a folder above it may be a session's.
+        return key in self._transcripts or not self._session_ids.isdisjoint(key.split(os.sep)[:-1])
 
 
 @dataclass(frozen=True)
@@ -604,6 +674,14 @@ class MessageEvent:
     at: float
     label: str = ''
     handback: bool = False
+
+
+@dataclass(frozen=True)
+class AgentLaunch:
+    """How the session started one subagent: ``foreground``, ``background`` or ``skill`` (a forked skill), and the effort it asked for."""
+
+    mode: str
+    effort: str = ''
 
 
 @dataclass(frozen=True)
@@ -710,6 +788,12 @@ class TranscriptState:
     # When the turn still running started (a prompt with no final reply yet).
     turn_open_since: float | None = None
     messages: tuple[MessageEvent, ...] = ()
+    # Every worktree the session switched into, and how each subagent was
+    # started, by agent id (full scan).
+    worktree_paths: tuple[str, ...] = ()
+    agent_launches: dict[str, AgentLaunch] = field(default_factory=dict)
+    # Each tool the conversation called: how often, and when last (full scan).
+    tool_uses: dict[str, tuple[int, float | None, int]] = field(default_factory=dict)
     files_edited: int | None = None
     compactions: int | None = None
     age_seconds: float | None = None
@@ -786,7 +870,171 @@ def state_for(root: SessionRoot, session_id: str, cwd: str) -> TranscriptState:
                    auto_denials_total=scan.auto_denials_total,
                    files_edited=scan.files_edited, compactions=scan.compactions, artifacts=scan.artifacts,
                    lines_added=scan.lines_added, lines_removed=scan.lines_removed,
-                   work_intervals=scan.work_intervals, turn_open_since=scan.turn_open_since, messages=scan.messages)
+                   work_intervals=scan.work_intervals, turn_open_since=scan.turn_open_since, messages=scan.messages,
+                   worktree_paths=scan.worktree_paths, agent_launches=scan.agent_launches, tool_uses=scan.tool_uses)
+
+
+def full_texts(root: SessionRoot, session_id: str, cwd: str) -> TranscriptState | None:
+    """Return the session's tail state with its current call and last reply uncut, or None without a transcript.
+
+    The snapshot cuts both to a display length for every session on every poll;
+    this reads them whole for the one session the details show, on request.
+    Only those two values differ from :func:`state_for`'s tail parse.
+    """
+    if not session_id or not cwd:
+        return None
+
+    path = transcript_path(root, session_id, cwd)
+    if not path.is_file():
+        return None
+
+    state = _parse(_read_tail(path), full=True)
+    for window in _TAIL_ESCALATION[1:]:
+        if state.any_parsed:
+            break
+        state = _parse(_read_tail(path, window), full=True)
+
+    return state
+
+
+def final_reply(path: Path) -> str | None:
+    """Return a subagent's result, whole, or None when it has given none yet.
+
+    The result is what the session it reports to receives: the report a
+    background agent hands back through the ``SubagentHandback`` tool (its
+    ``message``), a workflow agent's ``StructuredOutput`` (its input, as JSON),
+    or else its newest reply's text - whichever of them is newest.  Every entry
+    of its file is a sidechain one, which the tail parse skips, so the tail is
+    read here for that one value and nothing else of the entry.  The window
+    grows like :func:`state_for`'s when the tail holds none of them.
+    """
+    for window in _TAIL_ESCALATION:
+        for line in reversed(_read_tail(path, window)):
+            if '"assistant"' not in line:
+                continue
+            entry = _load(line)
+            if entry is None or entry.get('type') != 'assistant':
+                continue
+            message = entry.get('message')
+            content = message.get('content') if isinstance(message, dict) else None
+            result = _handed_back(content) or _reply_text(content, full=True)
+            if result:
+                return result
+
+    return None
+
+
+def agent_steps(path: Path) -> list[dict[str, Any]]:
+    """Return everything a subagent did, in order: each tool call with its input and its result, and each reply's text.
+
+    Read in full, on request, for the one agent the details show - the whole
+    file, since a step's request and result are the point.  A call is
+    ``{kind: 'call', id, tool, input, at, result, error, result_at}`` (the
+    result ``None`` while it runs, ``error`` the result's own ``is_error``),
+    a reply ``{kind: 'text', text, at}``; ``at`` is POSIX seconds or None.
+    Thinking blocks stay unread.  An unreadable file has no steps.
+    """
+    steps: list[dict[str, Any]] = []
+    calls: dict[str, dict[str, Any]] = {}
+    try:
+        handle = path.open('rb')
+    except OSError:
+        return steps
+
+    with handle:
+        for raw_line in handle:
+            if b'"assistant"' not in raw_line and _TOOL_RESULT_MARKER not in raw_line:
+                continue
+            entry = _load(raw_line.decode('utf-8', errors='replace'))
+            if entry is None:
+                continue
+            message = entry.get('message')
+            content = message.get('content') if isinstance(message, dict) else None
+            if not isinstance(content, list):
+                continue
+            at = _timestamp_epoch(entry.get('timestamp'))
+            if entry.get('type') == 'assistant':
+                _note_steps(content, at, steps, calls)
+            elif entry.get('type') == 'user':
+                _note_results(entry, content, at, calls)
+
+    return steps
+
+
+def _note_steps(content: list, at: float | None, steps: list[dict[str, Any]], calls: dict[str, dict[str, Any]]) -> None:
+    """Add a reply's tool calls and texts to *steps*, each call kept by its id for its result."""
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get('type') == 'tool_use' and isinstance(block.get('id'), str):
+            name = block.get('name')
+            tool_input = block.get('input')
+            step = {
+                'kind': 'call', 'id': block['id'], 'tool': name if isinstance(name, str) else '',
+                'input': tool_input if isinstance(tool_input, dict) else {}, 'at': at, 'result': None, 'error': False,
+                'outcome': '', 'exit_code': None, 'result_at': None,
+            }
+            calls[block['id']] = step
+            steps.append(step)
+        elif block.get('type') == 'text' and isinstance(block.get('text'), str) and block['text'].strip():
+            steps.append({'kind': 'text', 'text': block['text'].strip(), 'at': at})
+
+
+def _note_results(entry: dict, content: list, at: float | None, calls: dict[str, dict[str, Any]]) -> None:
+    """Attach each tool result in a user entry to the call it answers, with how it ended.
+
+    ``outcome`` is ``failed`` for an error result (``exit_code`` its command's
+    exit status when it opens with one), ``rejected`` for a call you turned
+    down, ``interrupted`` for a command stopped before it finished, else ``''``.
+    """
+    tool_result = entry.get('toolUseResult')
+    interrupted = isinstance(tool_result, dict) and tool_result.get('interrupted') is True
+    for block in content:
+        if not isinstance(block, dict) or block.get('type') != 'tool_result' or block.get('tool_use_id') not in calls:
+            continue
+        step = calls[block['tool_use_id']]
+        text = _result_text(block.get('content'))
+        error = block.get('is_error') is True
+        exit_code = _EXIT_CODE.match(text) if error else None
+        if error and text.lstrip().startswith(_REJECTED_RESULT_PREFIX):
+            outcome = 'rejected'
+        elif interrupted:
+            outcome = 'interrupted'
+        else:
+            outcome = 'failed' if error else ''
+        step['result'] = text
+        step['error'] = outcome == 'failed'
+        step['outcome'] = outcome
+        step['exit_code'] = int(exit_code.group(1)) if exit_code else None
+        step['result_at'] = at
+
+
+def _result_text(content: object) -> str:
+    """A tool result's text: the string itself, or its text blocks joined, an image standing in as ``[image]``."""
+    if isinstance(content, str):
+        return content
+    parts: list[str] = []
+    for block in content if isinstance(content, list) else ():
+        if isinstance(block, dict) and block.get('type') == 'text' and isinstance(block.get('text'), str):
+            parts.append(block['text'])
+        elif isinstance(block, dict) and block.get('type') == 'image':
+            parts.append('[image]')
+
+    return '\n'.join(parts)
+
+
+def _handed_back(content: object) -> str | None:
+    """The report a reply's result tool hands back - a ``SubagentHandback`` message, a ``StructuredOutput`` as JSON - or None."""
+    for block in content if isinstance(content, list) else ():
+        if not isinstance(block, dict) or block.get('type') != 'tool_use' or not isinstance(block.get('input'), dict):
+            continue
+        tool_input = block['input']
+        if block.get('name') == _HANDBACK_TOOL and isinstance(tool_input.get('message'), str) and tool_input['message'].strip():
+            return tool_input['message'].strip()
+        if block.get('name') == _STRUCTURED_OUTPUT_TOOL and tool_input:
+            return json.dumps(tool_input, ensure_ascii=False, indent=2)
+
+    return None
 
 
 def worktree_for(path: Path) -> WorktreeState | None:
@@ -855,7 +1103,10 @@ def usage_scan(path: Path) -> UsageScan | None:
     if scan is None:
         return None
 
-    return UsageScan(by_model=scan.usage_by_model, by_skill=scan.usage_by_skill, web_searches=scan.web_searches)
+    return UsageScan(
+        by_model=scan.usage_by_model, by_skill=scan.usage_by_skill, web_searches=scan.web_searches, started_at=scan.started_at,
+        tool_calls=scan.tool_calls, lines_added=scan.sidechain_lines_added, lines_removed=scan.sidechain_lines_removed, tools=scan.tool_uses,
+    )
 
 
 def usage_scan_once(path: Path) -> UsageScan:
@@ -1031,10 +1282,13 @@ def _is_local_command_output(content: object) -> bool:
     return _leading_text_starts_with(content, _LOCAL_COMMAND_OUTPUT_MARKERS)
 
 
-def _parse(lines: list[str]) -> TranscriptState:
+def _parse(lines: list[str], full: bool = False) -> TranscriptState:
     """Extract control-metadata from transcript lines.
 
     Only structural keys are read; no conversation content is ever accessed.
+    *full* leaves the call the session runs or waits on and its last reply
+    uncut (see :func:`full_texts`); the snapshot's parse cuts them to a
+    display length.
     """
     resolved_tool_ids: set[str] = set()
     last_tool_id: str | None = None
@@ -1148,7 +1402,7 @@ def _parse(lines: list[str]) -> TranscriptState:
                 if isinstance(entry_model, str) and entry_model and entry_model != _SYNTHETIC_MODEL:
                     model = entry_model
                 details.absorb_reply(entry, message)
-                reply = _reply_text(content)
+                reply = _reply_text(content, full)
                 if reply:
                     last_reply = reply
                 if isinstance(content, list):
@@ -1222,7 +1476,7 @@ def _parse(lines: list[str]) -> TranscriptState:
             api_retry = _api_retry(entry)
 
     pending_tool = last_tool_id is not None and last_tool_id not in resolved_tool_ids
-    current_tool = _tool_call(last_tool_block) if pending_tool and last_tool_block is not None else None
+    current_tool = _tool_call(last_tool_block, full) if pending_tool and last_tool_block is not None else None
 
     return TranscriptState(
         has_transcript=True,
@@ -1797,11 +2051,13 @@ def prioritize_session(root: SessionRoot, session_id: str, cwd: str) -> int:
     if not session_id or not cwd:
         return 0
 
-    path = transcript_path(root, session_id, cwd)
-    transcript_key = os.path.normcase(str(path))
-    folder_prefix = os.path.normcase(str(path.with_suffix(''))) + os.sep
+    transcript_key = os.path.normcase(str(transcript_path(root, session_id, cwd)))
+    # Its agents lie in folders named after it - the transcript's, and those of
+    # the worktrees it switched into (see prune_scan_cache).
+    keys = _ScanKeys()
+    keys.add(transcript_key, os.path.normcase(session_id))
 
-    return prioritize(lambda key: key == transcript_key or key.startswith(folder_prefix))
+    return prioritize(lambda key: key in keys)
 
 
 def edited_files(root: SessionRoot, session_id: str, cwd: str) -> tuple[str, ...]:
@@ -1930,6 +2186,13 @@ def _scan_result(state: _ScanState) -> _ScanResult:
         work_intervals=tuple(state.intervals),
         turn_open_since=state.turn_started_at,
         messages=tuple(state.messages),
+        worktree_paths=tuple(state.worktree_paths),
+        agent_launches=dict(state.agent_launches),
+        started_at=state.started_at,
+        tool_calls=state.tool_calls,
+        sidechain_lines_added=state.sidechain_lines_added,
+        sidechain_lines_removed=state.sidechain_lines_removed,
+        tool_uses=_tool_use_tuples(state.tool_uses),
     )
 
 
@@ -2042,6 +2305,8 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
         or _PATCH_MARKER in raw_line
         or _TOOL_STATS_MARKER in raw_line
         or _PEER_MARKER in raw_line
+        or (_AGENT_ID_MARKER in raw_line and _SIDECHAIN_MARKER not in raw_line)
+        or _ERROR_RESULT_MARKER in raw_line
     )
     # A prompt opens a worked interval, so every prompt is parsed - a tool
     # result, the bulk of a transcript's user lines, is not one.
@@ -2076,18 +2341,30 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
         state.auto_denials_total += 1
 
     entry_type = entry.get('type')
+    if state.started_at is None:
+        state.started_at = _timestamp_epoch(entry.get('timestamp'))
 
     if entry_type == 'user':
         state.web_searches += _search_count(entry)
+        _note_tool_failures(entry, state)
         if entry.get('isSidechain') is not True:
             _note_user_entry(entry, state)
+        else:
+            added, removed = _edit_lines(entry)
+            state.sidechain_lines_added += added
+            state.sidechain_lines_removed += removed
+
+    if entry_type == 'attachment' and entry.get('isSidechain') is not True:
+        _note_queued_message(entry, state)
 
     if entry_type == 'frame-link':
         _note_artifact(entry, state.artifacts)
 
     if entry_type == 'assistant':
         message = entry.get('message')
-        _note_edited_files(message.get('content') if isinstance(message, dict) else None, state.edited_files)
+        content = message.get('content') if isinstance(message, dict) else None
+        _note_edited_files(content, state.edited_files)
+        state.tool_calls += _note_tool_uses(content, _timestamp_epoch(entry.get('timestamp')), state)
         if entry.get('isSidechain') is not True and isinstance(message, dict):
             _note_assistant_entry(entry, message, state)
         usage = message.get('usage') if isinstance(message, dict) else None
@@ -2162,6 +2439,8 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
             worktree = _worktree_state(entry.get('worktreeSession'))
             if worktree is not None:
                 state.worktree = worktree
+                if worktree.path not in state.worktree_paths and len(state.worktree_paths) < _MAX_WORKTREE_PATHS:
+                    state.worktree_paths.append(worktree.path)
 
     elif entry_type == 'system' and entry.get('subtype') == _COMPACT_BOUNDARY_SUBTYPE:
         if entry.get('isSidechain') is not True:
@@ -2193,25 +2472,12 @@ def _note_user_entry(entry: dict, state: _ScanState) -> None:
     message = entry.get('message')
     content = message.get('content') if isinstance(message, dict) else None
 
-    result = entry.get('toolUseResult')
-    if isinstance(result, dict):
-        added, removed = _patch_lines(result)
-        stats = result.get('toolStats')
-        if isinstance(stats, dict):
-            added += stats.get('linesAdded') if _is_count(stats.get('linesAdded')) else 0
-            removed += stats.get('linesRemoved') if _is_count(stats.get('linesRemoved')) else 0
-        state.lines_added += added
-        state.lines_removed += removed
+    added, removed = _edit_lines(entry)
+    state.lines_added += added
+    state.lines_removed += removed
+    _note_agent_launch(entry, content, state)
 
-    origin = entry.get('origin')
-    if isinstance(origin, dict) and origin.get('kind') == 'peer' and at is not None:
-        sender = origin.get('from')
-        if isinstance(sender, str) and sender:
-            name = origin.get('name')
-            _append_capped(state.messages, MessageEvent(
-                'received', _clip(sender, _NAME_MAX_CHARS), at, _clip(name, _NAME_MAX_CHARS) if isinstance(name, str) else '',
-                origin.get('handback') is True,
-            ), _MAX_MESSAGES)
+    _note_peer_message(entry.get('origin'), at, state)
 
     if at is None or entry.get('isMeta') is True or _carries_tool_result(content):
         return
@@ -2225,11 +2491,142 @@ def _note_user_entry(entry: dict, state: _ScanState) -> None:
         state.turn_started_at = at
 
 
+def _note_tool_uses(content: object, at: float | None, state: _ScanState) -> int:
+    """Count a reply's tool calls by tool name (how often, when last), keep each call's tool by its id, and return how many it made."""
+    uses = state.tool_uses
+    count = 0
+    for block in content if isinstance(content, list) else ():
+        if not isinstance(block, dict) or block.get('type') != 'tool_use':
+            continue
+        count += 1
+        name = block.get('name')
+        if not isinstance(name, str) or not _TOOL_NAME_PATTERN.fullmatch(name):
+            continue
+        use = uses.get(name)
+        if use is None:
+            if len(uses) >= _MAX_TOOL_NAMES:
+                continue
+            use = uses[name] = [0, None, 0]
+        use[0] += 1
+        if at is not None and (use[1] is None or at > use[1]):
+            use[1] = at
+        if isinstance(block.get('id'), str):
+            state.tool_names_by_id[block['id']] = name
+            while len(state.tool_names_by_id) > _MAX_TOOL_IDS:
+                state.tool_names_by_id.pop(next(iter(state.tool_names_by_id)))
+
+    return count
+
+
+def _note_tool_failures(entry: dict, state: _ScanState) -> None:
+    """Count each failed tool result in a user entry against its tool; a call you rejected is no failure."""
+    message = entry.get('message')
+    content = message.get('content') if isinstance(message, dict) else None
+    for block in content if isinstance(content, list) else ():
+        if not isinstance(block, dict) or block.get('type') != 'tool_result' or block.get('is_error') is not True:
+            continue
+        name = state.tool_names_by_id.get(block.get('tool_use_id'))
+        if name in state.tool_uses and not _result_starts_with(block.get('content'), _REJECTED_RESULT_PREFIX):
+            state.tool_uses[name][2] += 1
+
+
+def _result_starts_with(content: object, prefix: str) -> bool:
+    """Whether a tool result's text opens with *prefix*; the text itself is not kept."""
+    if isinstance(content, list):
+        content = next((block.get('text') for block in content if isinstance(block, dict) and block.get('type') == 'text'), None)
+
+    return isinstance(content, str) and content.lstrip().startswith(prefix)
+
+
+def _tool_use_tuples(uses: dict[str, list]) -> dict[str, tuple[int, float | None, int]]:
+    """The per-tool counts as plain ``(calls, last, failed)`` triples that share nothing with the scan state."""
+    return {name: (use[0], use[1], use[2]) for name, use in uses.items()}
+
+
+def _edit_lines(entry: dict) -> tuple[int, int]:
+    """The lines a tool result's edit added and removed, plus a subagent's own totals on its result."""
+    result = entry.get('toolUseResult')
+    if not isinstance(result, dict):
+        return 0, 0
+
+    added, removed = _patch_lines(result)
+    stats = result.get('toolStats')
+    if isinstance(stats, dict):
+        added += stats.get('linesAdded') if _is_count(stats.get('linesAdded')) else 0
+        removed += stats.get('linesRemoved') if _is_count(stats.get('linesRemoved')) else 0
+
+    return added, removed
+
+
+def _note_agent_launch(entry: dict, content: object, state: _ScanState) -> None:
+    """Record how the subagent a tool result names was started: its call's mode and effort, or a forked skill."""
+    result = entry.get('toolUseResult')
+    agent_id = result.get('agentId') if isinstance(result, dict) else None
+    if not isinstance(agent_id, str) or not agent_id:
+        return
+
+    tool_use_id = next((block.get('tool_use_id') for block in (content if isinstance(content, list) else ())
+                        if isinstance(block, dict) and block.get('type') == 'tool_result'), None)
+    call = state.pending_launches.pop(tool_use_id, None) if isinstance(tool_use_id, str) else None
+    effort = call.effort if call is not None else ''
+    if result.get('status') == 'forked':
+        launch = AgentLaunch('skill')
+    elif result.get('isAsync') is True or (call is not None and call.mode == 'background'):
+        launch = AgentLaunch('background', effort)
+    else:
+        launch = AgentLaunch('foreground', effort)
+
+    state.agent_launches.pop(agent_id, None)
+    state.agent_launches[agent_id] = launch
+    while len(state.agent_launches) > _MAX_AGENT_LAUNCHES:
+        state.agent_launches.pop(next(iter(state.agent_launches)))
+
+
+def _note_agent_call(block: dict, state: _ScanState) -> None:
+    """Remember a subagent call until its result names the agent: whether it runs in the background, and its effort."""
+    tool_use_id = block.get('id')
+    tool_input = block.get('input')
+    if not isinstance(tool_use_id, str) or not isinstance(tool_input, dict):
+        return
+
+    effort = tool_input.get('effort')
+    mode = 'background' if tool_input.get('run_in_background') is True else 'foreground'
+    state.pending_launches[tool_use_id] = AgentLaunch(mode, effort if isinstance(effort, str) and _LABEL_TOKEN_PATTERN.fullmatch(effort) else '')
+    while len(state.pending_launches) > _MAX_PENDING_LAUNCHES:
+        state.pending_launches.pop(next(iter(state.pending_launches)))
+
+
+def _note_queued_message(entry: dict, state: _ScanState) -> None:
+    """Log a peer's message that arrived while a turn ran: Claude Code queues it as a ``queued_command`` attachment instead of a prompt."""
+    attachment = entry.get('attachment')
+    if not isinstance(attachment, dict) or attachment.get('type') != _QUEUED_COMMAND_ATTACHMENT:
+        return
+
+    _note_peer_message(attachment.get('origin'), _timestamp_epoch(entry.get('timestamp')), state)
+
+
+def _note_peer_message(origin: object, at: float | None, state: _ScanState) -> None:
+    """Log a received message from its ``origin``: the sender's id and the name it goes by, never the body."""
+    if not isinstance(origin, dict) or origin.get('kind') != 'peer' or at is None:
+        return
+    sender = origin.get('from')
+    if not isinstance(sender, str) or not sender:
+        return
+
+    name = origin.get('name')
+    _append_capped(state.messages, MessageEvent(
+        'received', _clip(sender, _NAME_MAX_CHARS), at, _clip(name, _NAME_MAX_CHARS) if isinstance(name, str) else '',
+        origin.get('handback') is True,
+    ), _MAX_MESSAGES)
+
+
 def _note_assistant_entry(entry: dict, message: dict, state: _ScanState) -> None:
     """Fold a main-conversation reply: a finished turn closes its worked interval, a sent message is logged."""
     at = _timestamp_epoch(entry.get('timestamp'))
     content = message.get('content')
     for block in content if isinstance(content, list) else ():
+        if isinstance(block, dict) and block.get('type') == 'tool_use' and block.get('name') in _AGENT_TOOLS:
+            _note_agent_call(block, state)
         if not isinstance(block, dict) or block.get('type') != 'tool_use' or block.get('name') != _SEND_MESSAGE_TOOL or at is None:
             continue
         tool_input = block.get('input')
@@ -2280,8 +2677,8 @@ def _append_capped(items: list, item: object, limit: int) -> None:
         del items[:len(items) - limit]
 
 
-def _tool_call(block: dict) -> ToolCall | None:
-    """Describe a tool call by what it acts on: a command, a path, a question, a plan - cut to a display length."""
+def _tool_call(block: dict, full: bool = False) -> ToolCall | None:
+    """Describe a tool call by what it acts on: a command, a path, a question, a plan - cut to a display length unless *full*."""
     name = block.get('name')
     if not isinstance(name, str) or not name:
         return None
@@ -2291,25 +2688,26 @@ def _tool_call(block: dict) -> ToolCall | None:
         for key in keys:
             value = tool_input.get(key)
             if isinstance(value, str) and value.strip():
-                return _clip(value.strip(), limit)
+                return _clip_unless(full, value.strip(), limit)
         return ''
 
     description = text_of('description', limit=_NAME_MAX_CHARS)
     if name == 'AskUserQuestion':
-        return ToolCall(name, questions=_questions(tool_input.get('questions')))
+        return ToolCall(name, questions=_questions(tool_input.get('questions'), full))
     if name == 'ExitPlanMode':
         return ToolCall(name, text=text_of('plan', limit=_PLAN_TEXT_MAX_CHARS))
     if name in ('Agent', 'Task'):
         return ToolCall(name, text=text_of('subagent_type', limit=_NAME_MAX_CHARS), detail=description)
     subject = text_of('command', 'file_path', 'notebook_path', 'url', 'query', 'pattern', 'path', 'prompt')
     if not subject:
-        subject = next((_clip(value.strip(), _TOOL_TEXT_MAX_CHARS) for value in tool_input.values() if isinstance(value, str) and value.strip()), '')
+        values = (value.strip() for value in tool_input.values() if isinstance(value, str) and value.strip())
+        subject = next((_clip_unless(full, value, _TOOL_TEXT_MAX_CHARS) for value in values), '')
 
     return ToolCall(name, text=subject, detail=description)
 
 
-def _questions(questions: object) -> tuple[Question, ...]:
-    """The questions of an open question dialog with their answer labels, cut to display lengths."""
+def _questions(questions: object, full: bool = False) -> tuple[Question, ...]:
+    """The questions of an open question dialog with their answer labels, cut to display lengths unless *full*."""
     result: list[Question] = []
     for question in questions[:_MAX_QUESTIONS] if isinstance(questions, list) else ():
         if not isinstance(question, dict) or not isinstance(question.get('question'), str):
@@ -2319,19 +2717,24 @@ def _questions(questions: object) -> tuple[Question, ...]:
         for option in (options if isinstance(options, list) else ())[:_MAX_OPTIONS]:
             if isinstance(option, dict) and isinstance(option.get('label'), str):
                 labels.append(_clip(option['label'], _NAME_MAX_CHARS))
-        result.append(Question(_clip(question['question'], _TOOL_TEXT_MAX_CHARS), tuple(labels)))
+        result.append(Question(_clip_unless(full, question['question'], _TOOL_TEXT_MAX_CHARS), tuple(labels)))
 
     return tuple(result)
 
 
-def _reply_text(content: object) -> str | None:
-    """The text of a reply's text blocks, joined and cut to a display length; None when it has none."""
+def _reply_text(content: object, full: bool = False) -> str | None:
+    """The text of a reply's text blocks, joined and cut to a display length unless *full*; None when it has none."""
     if not isinstance(content, list):
         return None
     parts = [block.get('text') for block in content if isinstance(block, dict) and block.get('type') == 'text' and isinstance(block.get('text'), str)]
     text = '\n'.join(part.strip() for part in parts if part.strip())
 
-    return _clip(text, _REPLY_MAX_CHARS) if text else None
+    return _clip_unless(full, text, _REPLY_MAX_CHARS) if text else None
+
+
+def _clip_unless(full: bool, text: str, limit: int) -> str:
+    """*text* cut to *limit*, or whole when *full*."""
+    return text if full else _clip(text, limit)
 
 
 def _hook_message(stderr: object) -> str:

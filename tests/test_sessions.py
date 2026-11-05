@@ -98,6 +98,18 @@ class SessionsTest(unittest.TestCase):
         for record in records:
             self.assertIs(record['remote_control'], False)
 
+    def test_parses_the_messaging_address_and_former_names(self) -> None:
+        self._write('1.json', {
+            'pid': 1, 'sessionId': 'a', 'cwd': 'd:\\x', 'messagingSocketPath': r'\\.\pipe\LOCAL\cc-msg-1',
+            'formerNames': [{'name': 'Old title', 'until': 1, 'sessionId': 'a'}, {'name': ''}, 'bare', {'name': 7}],
+        })
+        self._write('2.json', {'pid': 2, 'sessionId': 'b', 'cwd': 'd:\\x', 'messagingSocketPath': 5, 'formerNames': 'Old'})
+        records = {record['session_id']: record for record in list_sessions(self.root)}
+        self.assertEqual(records['a']['messaging_socket'], r'\\.\pipe\LOCAL\cc-msg-1')
+        self.assertEqual(records['a']['former_names'], ('Old title',))
+        self.assertIsNone(records['b']['messaging_socket'])
+        self.assertEqual(records['b']['former_names'], ())
+
     def test_name_defaults_to_session_prefix(self) -> None:
         self._write('9.json', {'pid': 9, 'sessionId': 'abcdefghij', 'cwd': 'd:\\x'})
         records = list_sessions(self.root)

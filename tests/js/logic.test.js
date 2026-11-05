@@ -3002,9 +3002,9 @@ test('tests label: failed first, a hostile count reads as zero', () => {
 test('graph model: subagents hang off their session, messages link sessions and peers', () => {
     const lead = { name: 'Lead', session_id: 'aaaaaaaa-1111-2222-3333-444444444444', status: 'working',
         agents: logic.agentsOf({ agents: [
-            { id: 'a1', type: 'Explore', description: 'Find', running: true, age_seconds: 2, parent_id: '', workflow: '' },
-            { id: 'a2', type: 'Plan', description: '', running: false, age_seconds: 90, parent_id: 'a1', workflow: '' },
-            { id: 'w1', type: 'worker', running: true, workflow: 'run-1' },
+            { id: 'a1', type: 'Explore', description: 'Find', running: true, age_seconds: 2, parent_id: '', workflow: '', started_seconds: 400 },
+            { id: 'a2', type: 'Plan', description: '', running: false, age_seconds: 90, parent_id: 'a1', workflow: '', started_seconds: 300 },
+            { id: 'w1', type: 'worker', running: true, workflow: 'run-1', started_seconds: 100 },
             { id: '', type: 'broken' },
         ] }),
         messages: logic.messagesOf({ messages: [
@@ -3048,6 +3048,214 @@ test('graph markup: hostile names stay text, dots ride only on active edges', ()
     assert.ok(html.includes(' selected'));
     assert.equal((html.match(/<animateMotion/g) || []).length, 2);
     assert.ok(!/https?:/.test(html));
+});
+
+test('graph agents: a forked skill is titled by its skill, and every node says model, cost and age', () => {
+    const rate = { input: 3, output: 15, cache_read: 0.3, cache_write_5m: 3.75, cache_write_1h: 6 };
+    const prices = { 'sonnet-5-5': rate, 'opus-5-5': rate };
+    const raw = { agents: [
+        { id: 'a1', type: 'general-purpose', description: '', skill: 'commit', running: false, age_seconds: 7200, parent_id: '', workflow: '',
+            usage_by_model: { 'claude-sonnet-5-5': { input_tokens: 1000, output_tokens: 2000 }, 'claude-opus-5-5': { output_tokens: 5 } } },
+        { id: 'a2', type: 'Explore', description: 'Map the input', skill: '', running: true, age_seconds: 30, parent_id: '', workflow: '',
+            usage_by_model: [] },
+        { id: 'a3', type: 'general-purpose', running: false, age_seconds: 60, usage_by_model: 'nope' },
+    ] };
+    const agents = logic.agentsOf(raw, prices);
+    assert.equal(agents[0].model, 'claude-sonnet-5-5');
+    assert.equal(agents[1].model, null);
+    assert.equal(agents[1].cost_usd, null);
+    const session = { name: 'Lead', session_id: 'bbbbbbbb-1111-2222-3333-444444444444', status: 'working', agents: agents, messages: [], processes: 0 };
+    // Without a known start the agents order by their last activity, oldest first.
+    const nodes = logic.graphModel([{ key: 'k', session: session }]).nodes.filter((node) => node.kind === 'agent');
+    assert.deepEqual(nodes.map((node) => [node.number, node.label]), [[1, '/commit'], [2, 'general-purpose'], [3, 'Map the input']]);
+    const labels = { age_seconds: '{s}s', age_minutes: '{m}m', age_hours: '{h}h', age_days: '{d}d' };
+    assert.deepEqual(logic.agentFacts(nodes[0], labels), ['Sonnet 5.5', '<$1', '2h']);
+    assert.deepEqual(logic.agentFacts(nodes[2], labels), ['30s']);
+    // The box carries the number, the title and the short facts; the tooltip
+    // only completes the title, and the node names its session and agent for a click.
+    const html = logic.graphMarkup(logic.graphLayout(logic.graphModel([{ key: 'k', session: session }])), labels, { key: 'k', agent: 'a1' });
+    assert.ok(html.includes('data-tip="#1 /commit"'));
+    assert.ok(html.includes('>Sonnet 5.5 · &lt;$1 · 2h<'));
+    assert.ok(/class="gnode gnode-agent selected"[^>]*data-key="k" data-agent="a1"/.test(html));
+    assert.ok(!/gnode-session[^"]*selected/.test(html));
+});
+
+test('graph agents: numbered in the order they started, with their runtime', () => {
+    const agents = logic.agentsOf({ agents: [
+        { id: 'late', running: true, age_seconds: 5, started_seconds: 60 },
+        { id: 'early', running: false, age_seconds: 600, started_seconds: 3600 },
+        { id: 'pending', running: false, age_seconds: 1800 },
+        { id: 'twin-b', running: false, age_seconds: 10, started_seconds: 120 },
+        { id: 'twin-a', running: false, age_seconds: 10, started_seconds: 120 },
+    ] }, {});
+    const ordered = logic.agentsByStart(agents);
+    assert.deepEqual(ordered.map((agent) => [agent.number, agent.id]), [[1, 'early'], [2, 'pending'], [3, 'twin-a'], [4, 'twin-b'], [5, 'late']]);
+    assert.equal(logic.agentRuntime(ordered[0]), 3000);
+    assert.equal(logic.agentRuntime(ordered[4]), 60);
+    assert.equal(logic.agentRuntime(ordered[1]), null);
+    const launches = logic.agentsOf({ agents: [{ id: 'x', launch: 'constructor', effort: 'high', tool_calls: 4, lines_added: -2 }] }, {});
+    assert.deepEqual([launches[0].launch, launches[0].effort, launches[0].tool_calls, launches[0].lines_added], ['', 'high', 4, 0]);
+});
+
+test('markdown: the structure Claude writes renders as its elements', () => {
+    const md = logic.markdownToHtml([
+        '# Title', '', 'Some **bold**, *it*, _it2_, ~~gone~~, snake_case_name and \u0060a|b\u0060.', 'same paragraph', '',
+        '- one', '- two', '  - nested', '- [x] done', '- [ ] open', '', '3. third', '4. fourth', '',
+        '> quoted', '', '| A | B |', '|---|--:|', '| 1 | 2 |', '', '\u0060\u0060\u0060js', 'const x = 1;', '\u0060\u0060\u0060', '', '---',
+    ].join('\n'));
+    assert.ok(md.startsWith('<h1>Title</h1><p>Some <strong>bold</strong>, <em>it</em>, <em>it2</em>, <del>gone</del>, snake_case_name and <code>a|b</code>.\nsame paragraph</p>'));
+    assert.ok(md.includes('<ul><li><p>one</p></li><li><p>two</p><ul><li><p>nested</p></li></ul></li>'));
+    assert.ok(md.includes('<li class="md-task"><span class="md-box">☑</span><p>done</p></li><li class="md-task"><span class="md-box">☐</span><p>open</p></li>'));
+    assert.ok(md.includes('<ol start="3"><li><p>third</p></li><li><p>fourth</p></li></ol>'));
+    assert.ok(md.includes('<blockquote><p>quoted</p></blockquote>'));
+    assert.ok(md.includes('<th>A</th><th class="md-right">B</th>') && md.includes('<td>1</td><td class="md-right">2</td>'));
+    assert.ok(md.includes('<pre class="md-code"><code>const x = 1;</code></pre><hr>'));
+    assert.equal(logic.markdownToHtml(''), '');
+    assert.equal(logic.markdownToHtml(null), '');
+    // An unclosed fence runs to the end; a deep nest stays text past the limit.
+    assert.equal(logic.markdownToHtml('\u0060\u0060\u0060\nopen'), '<pre class="md-code"><code>open</code></pre>');
+    assert.ok(!logic.markdownToHtml('>'.repeat(40) + ' deep').includes('<blockquote><blockquote><blockquote><blockquote><blockquote><blockquote><blockquote><blockquote><blockquote><blockquote>'));
+});
+
+test('markdown: html safety - conversation text never becomes markup, a link never an href', () => {
+    const hostile = [
+        '<script>alert(1)</script>', '<img src=x onerror=alert(1)>', '# <b onclick=x>head</b>',
+        '[click](javascript:void0) and [x](https://a.b/"onmouseover=x)', '**<i>bold</i>**', '\u0060<code>\u0060',
+        '| <b> | " |', '|---|---|', '| \' | & |', '- <u>item</u>', '> <svg onload=x>', '\u0060\u0060\u0060', '</code></pre><script>x</script>', '\u0060\u0060\u0060',
+    ].join('\n');
+    const html = logic.markdownToHtml(hostile);
+    const allowed = new Set(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 'del', 'code', 'pre', 'span', 'ul', 'ol', 'li',
+        'blockquote', 'div', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr']);
+    for (const match of html.matchAll(/<\/?([a-zA-Z0-9]+)([^>]*)>/g)) {
+        assert.ok(allowed.has(match[1]), 'unexpected element ' + match[1]);
+        // Only the renderer's own attributes: a fixed class, a list start, a link's tooltip.
+        for (const attribute of match[2].matchAll(/\s([a-zA-Z-]+)=/g)) {
+            assert.ok(['class', 'start', 'data-tip'].includes(attribute[1]), 'unexpected attribute ' + attribute[1]);
+        }
+    }
+    assert.ok(!html.includes('href'));
+    assert.ok(!/<script|<img|<svg|<b |<i>|<u>/.test(html));
+    assert.ok(html.includes('data-tip="javascript:void0"') && html.includes('data-tip="https://a.b/&quot;onmouseover=x"'));
+    assert.ok(html.includes('&lt;/code&gt;&lt;/pre&gt;&lt;script&gt;'));
+});
+
+test('graph window: old agents drop out, running ones and the parents of kept ones stay', () => {
+    const agents = [
+        { id: 'a-old', running: false, age_seconds: 90000, parent_id: '' },
+        { id: 'a-parent', running: false, age_seconds: 200000, parent_id: '' },
+        { id: 'a-child', running: false, age_seconds: 600, parent_id: 'a-parent' },
+        { id: 'a-busy', running: true, age_seconds: 500000, parent_id: '' },
+        { id: 'a-unknown', running: false, age_seconds: null, parent_id: '' },
+    ];
+    assert.deepEqual(logic.agentsInWindow(agents, 86400).map((agent) => agent.id), ['a-parent', 'a-child', 'a-busy']);
+    assert.equal(logic.agentsInWindow(agents, null).length, 5);
+});
+
+test('graph window: messages outside it draw no edge, and an unknown range key falls back to 24 h', () => {
+    const lead = { name: 'Lead', session_id: 'aaaaaaaa-1111-2222-3333-444444444444', status: 'working', agents: [], processes: 0,
+        messages: logic.messagesOf({ messages: [
+            { direction: 'sent', peer: 'Reviewer', age_seconds: 4000 },
+            { direction: 'sent', peer: 'Archivist', age_seconds: 400000 },
+        ] }) };
+    const kinds = (seconds) => logic.graphModel([{ key: 'k', session: lead }], seconds).nodes.map((node) => node.label);
+    assert.deepEqual(kinds(logic.graphRange('24h').seconds), ['Lead', 'Reviewer']);
+    assert.deepEqual(kinds(logic.graphRange('1h').seconds), ['Lead']);
+    assert.deepEqual(kinds(logic.graphRange('30d').seconds), ['Lead', 'Reviewer', 'Archivist']);
+    assert.equal(logic.graphRange('constructor').key, logic.DEFAULT_GRAPH_RANGE);
+    assert.deepEqual(kinds(logic.graphRange('all').seconds), ['Lead', 'Reviewer', 'Archivist']);
+});
+
+test('agent steps: calls and replies in order, each call named by what it acts on', () => {
+    const steps = logic.agentStepsOf([
+        { kind: 'text', text: 'Looking.', at: 100 },
+        { kind: 'call', id: 'u1', tool: 'Bash', input: { command: 'npm test\nmore', description: 'Run the tests' }, result: 'ok', error: false, at: 101, result_at: 113.5 },
+        { kind: 'call', id: 'u2', tool: 'Read', input: { file_path: 'a.txt' }, result: null, at: 120 },
+        { kind: 'call', id: 'u3', tool: 'X', input: [1], result: 5, error: 'yes', outcome: 'constructor', exit_code: '1' },
+        { kind: 'call', id: 'u4', tool: 'Bash', input: {}, result: 'Exit code 2', error: true, outcome: 'failed', exit_code: 2 },
+        { kind: 'call', id: '', tool: 'Bad' }, { kind: 'other' }, null,
+    ]);
+    assert.deepEqual(steps.map((step) => step.kind + ':' + (step.tool || step.text)), ['text:Looking.', 'call:Bash', 'call:Read', 'call:X', 'call:Bash']);
+    assert.deepEqual([steps[3].input, steps[3].result, steps[3].error, steps[3].outcome, steps[3].exit_code], [{}, null, false, '', null]);
+    assert.deepEqual([steps[4].outcome, steps[4].exit_code], ['failed', 2]);
+    assert.equal(logic.stepSubject(steps[1]), 'Run the tests');
+    assert.equal(logic.stepSubject({ input: { command: 'npm test\nmore' } }), 'npm test');
+    assert.equal(logic.stepSubject({ input: { limit: 3, target: 'chan' } }), 'chan');
+    assert.equal(logic.stepSubject({ input: { constructor: 'x' } }), 'x');
+    assert.equal(logic.stepInputText({ a: 1 }), '{\n  "a": 1\n}');
+    assert.deepEqual([logic.formatClock(5), logic.formatClock(754), logic.formatClock(3723)], ['0:05', '12:34', '1:02:03']);
+    assert.deepEqual([logic.stepDuration(0.42), logic.stepDuration(12.5)], ['0.4s', '13s']);
+});
+
+test('graph tools: each caller has its own tool nodes, drawn for what is in focus', () => {
+    const session = { name: 'Lead', session_id: 'aaaaaaaa-1111-2222-3333-444444444444', status: 'working', messages: [], processes: 0,
+        tools: logic.toolsOf([
+            { name: 'Bash', calls: 12, age_seconds: 30, failed: 2 }, { name: 'mcp__discord__read_messages', calls: 3, age_seconds: 4000, failed: -1 },
+            { name: 'mcp__discord__send', calls: 2, age_seconds: 5000 }, { name: 'Agent', calls: 2, age_seconds: 30 },
+            { name: 'Old', calls: 1, age_seconds: 200000 }, { name: '', calls: 4 }, { name: 'Zero', calls: 0 },
+        ]),
+        agents: logic.agentsOf({ agents: [{ id: 'a1', type: 'Explore', running: false, age_seconds: 100, started_seconds: 200,
+            tools: [{ name: 'Bash', calls: 5, age_seconds: 100 }, { name: 'SubagentHandback', calls: 1, age_seconds: 100 }] }] }, {}) };
+    const day = logic.graphRange('24h').seconds;
+    const toolNodes = (focus) => logic.graphModel([{ key: 'k', session: session }], day, focus).nodes
+        .filter((node) => node.kind === 'tool').map((node) => [node.id, node.parent, node.calls]);
+
+    // Nothing selected, a process, or another session: no tools at all.
+    assert.deepEqual(toolNodes(null), []);
+    assert.deepEqual(toolNodes({ key: 'k', process: 400 }), []);
+    assert.deepEqual(toolNodes({ key: 'other' }), []);
+    // A subagent: its own tools under it.
+    assert.deepEqual(toolNodes({ key: 'k', agent: 'a1' }), [['s:k/a:a1/t:Bash', 's:k/a:a1', 5]]);
+    // A session: its own tools (an MCP server's folded into one) and its subagents'.
+    assert.deepEqual(toolNodes({ key: 'k' }), [
+        ['s:k/a:a1/t:Bash', 's:k/a:a1', 5], ['s:k/t:Bash', 's:k', 12], ['s:k/t:mcp:discord', 's:k', 5],
+    ]);
+
+    const model = logic.graphModel([{ key: 'k', session: session }], day, { key: 'k' });
+    const edge = model.edges.find((item) => item.to === 's:k/t:Bash');
+    assert.deepEqual([edge.from, edge.kind, edge.count, edge.active], ['s:k', 'tool', 12, true]);
+    const labels = { graph_tool_calls: 'Calls: {count}', graph_mcp: 'MCP server' };
+    const html = logic.graphMarkup(logic.graphLayout(model), labels, { key: 'k', agent: 'a1', tool: 'Bash' });
+    assert.ok(/class="gnode gnode-tool selected"[^>]*data-key="k" data-agent="a1" data-tool="Bash"/.test(html));
+    assert.ok(html.includes('>MCP server · Calls: 5<'));
+    // A tool with failed calls says how many, and is marked.
+    const failing = logic.graphMarkup(logic.graphLayout(model), Object.assign({ graph_tool_failed: 'Failed: {count}' }, labels), null);
+    assert.ok(failing.includes('>Calls: 12 · Failed: 2<'));
+    assert.ok(/class="gnode gnode-tool running failed"|class="gnode gnode-tool failed"/.test(failing));
+    assert.ok(!/gnode-agent[^"]*selected/.test(html));
+    assert.equal(logic.toolNodeKey('mcp__a__b__c'), 'mcp:a');
+});
+
+test('graph processes: each process is a node under the one that started it, and selectable', () => {
+    const processes = logic.processesOf({ child_processes: [
+        { pid: 300, parent: 0, name: 'bash' }, { pid: 400, parent: 300, name: 'python' }, { pid: 500, parent: 400, name: 'tool' },
+        { pid: 600, parent: 999, name: 'orphan' }, { pid: -1, parent: 0, name: 'bad' }, { pid: 7, name: 7 }, null,
+    ] });
+    assert.deepEqual(processes.map((process) => [process.pid, process.parent]), [[300, 0], [400, 300], [500, 400], [600, 999]]);
+    const session = { name: 'Build', session_id: 'eeeeeeee-1111-2222-3333-444444444444', status: 'working', agents: [], messages: [],
+        processes: 4, process_list: processes };
+    const model = logic.graphModel([{ key: 'k', session: session }]);
+    const parentOf = new Map(model.nodes.map((node) => [node.id, node.parent]));
+    assert.equal(parentOf.get('s:k/p:300'), 's:k');
+    assert.equal(parentOf.get('s:k/p:400'), 's:k/p:300');
+    assert.equal(parentOf.get('s:k/p:500'), 's:k/p:400');
+    assert.equal(parentOf.get('s:k/p:600'), 's:k');
+    assert.ok(!model.nodes.some((node) => node.id === 's:k/p'));
+
+    const html = logic.graphMarkup(logic.graphLayout(model), { fact_pid: 'PID' }, { key: 'k', agent: null, process: 400 });
+    assert.ok(html.includes('>python<') && html.includes('>PID 400<'));
+    assert.ok(/class="gnode gnode-process running selected"[^>]*data-key="k" data-process="400"/.test(html));
+    assert.ok(!/gnode-session[^"]*selected/.test(html));
+});
+
+test('graph model: a session with background processes gets one running process node', () => {
+    const session = { name: 'Build', session_id: 'eeeeeeee-1111-2222-3333-444444444444', status: 'working', agents: [], messages: [], processes: 3 };
+    const idle = { name: 'Idle', session_id: 'ffffffff-1111-2222-3333-444444444444', status: 'awaiting_input', agents: [], messages: [], processes: 0 };
+    const model = logic.graphModel([{ key: 'k', session: session }, { key: 'i', session: idle }]);
+    assert.deepEqual(model.nodes.map((node) => [node.id, node.kind]), [['s:k', 'session'], ['s:i', 'session'], ['s:k/p', 'process']]);
+    assert.deepEqual(model.edges.map((edge) => [edge.from, edge.to, edge.active]), [['s:k', 's:k/p', true]]);
+    const html = logic.graphMarkup(logic.graphLayout(model), { signal_processes: 'Processes: {count}' }, null);
+    assert.ok(html.includes('>Processes: 3<'));
+    assert.ok(html.includes('gnode gnode-process running'));
 });
 
 test('graph model: a message to or from a subagent no longer listed draws nothing', () => {

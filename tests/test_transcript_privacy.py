@@ -859,6 +859,28 @@ class PrivacyTest(TranscriptEnvTest):
         for secret in _SECRETS:
             self.assertNotIn(secret, serialized)
 
+    def test_how_a_subagent_was_started_reads_control_values_never_its_task(self) -> None:
+        # The subagent call's mode and effort, and the result's status and agent
+        # id: the task, its description and the result's text stay unread.
+        self._write_transcript(_SESSION_ID, _CWD, [
+            json.dumps({'type': 'assistant', 'timestamp': '2026-07-11T13:19:05Z', 'isSidechain': False,
+                        'message': {'stop_reason': 'tool_use', 'model': 'claude-opus-5-5', 'content': [
+                            {'type': 'tool_use', 'id': 't1', 'name': 'Agent', 'input': {
+                                'description': 'SECRET_INPUT', 'prompt': 'SECRET_INPUT', 'subagent_type': 'Explore',
+                                'run_in_background': True, 'effort': 'SECRET_INPUT'}},
+                        ]}}, separators=(',', ':')),
+            json.dumps({'type': 'user', 'timestamp': '2026-07-11T13:19:06Z', 'isSidechain': False,
+                        'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't1', 'content': 'SECRET_RESULT'}]},
+                        'toolUseResult': {'status': 'async_launched', 'agentId': 'a1b2c3d4e5f6a7b8c', 'isAsync': True,
+                                          'prompt': 'SECRET_INPUT', 'description': 'SECRET_INPUT'}}, separators=(',', ':')),
+        ])
+        state = state_for(local_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual(state.agent_launches, {'a1b2c3d4e5f6a7b8c': transcript.AgentLaunch('background', '')})
+        serialized = _guarded(state)
+        for secret in _SECRETS:
+            self.assertNotIn(secret, serialized)
+
     def test_the_session_details_read_names_and_numbers_never_text(self) -> None:
         # Each detail is a control value beside text that must stay unread: the
         # plan's step texts, a failing hook's output and command, a queued

@@ -66,12 +66,17 @@ _lock = threading.Lock()
 # Registry files read at once on a first listing (see list_sessions).
 _READ_WORKERS = 16
 
+# Former names kept per record: enough to resolve a message sent before a
+# rename, without letting a record that was renamed endlessly grow the cache.
+_MAX_FORMER_NAMES = 10
+
 
 def list_sessions(root: SessionRoot) -> list[dict[str, Any]]:
     """Return normalized session records from *root*'s on-disk registry.
 
     Each record has ``session_id``, ``pid``, ``cwd``, ``name``, ``kind``,
-    ``job_id``, ``remote_control``, ``started_at``, ``native_status_since``,
+    ``job_id``, ``remote_control``, ``messaging_socket``, ``former_names``,
+    ``started_at``, ``native_status_since``,
     ``process_version``, ``origin``, and ``origin_label``.  Records that cannot
     be parsed are omitted.
 
@@ -179,6 +184,11 @@ def _normalize(data: Any) -> dict[str, Any] | None:
     # bridged to.  Only whether one is named is taken - the id itself is a
     # cloud identifier no feature here needs.
     bridge_session_id = data.get('bridgeSessionId')
+    # The address other sessions send this one messages at, and the names it
+    # went by before - a message names its recipient by either, and only these
+    # tie it back to a session.
+    messaging_socket = data.get('messagingSocketPath')
+    former_names = data.get('formerNames')
 
     return {
         'native_status': native_status if isinstance(native_status, str) else None,
@@ -192,6 +202,8 @@ def _normalize(data: Any) -> dict[str, Any] | None:
         'entrypoint': entrypoint if isinstance(entrypoint, str) else None,
         'job_id': job_id if isinstance(job_id, str) and job_id else None,
         'remote_control': isinstance(bridge_session_id, str) and bool(bridge_session_id),
+        'messaging_socket': messaging_socket if isinstance(messaging_socket, str) and messaging_socket else None,
+        'former_names': _former_names(former_names),
         'started_at': _parse_epoch_ms(data.get('startedAt')),
         # When the native status last changed - how long a session has been busy,
         # idle or waiting, which the transcript cannot tell for a long turn.
@@ -214,6 +226,20 @@ def _parse_proc_start(value: Any) -> int | None:
         return None
 
     return ticks if ticks > 0 else None
+
+
+def _former_names(value: Any) -> tuple[str, ...]:
+    """The names in the registry's ``formerNames`` (``{name, until, sessionId}`` entries), the newest ``_MAX_FORMER_NAMES``."""
+    if not isinstance(value, list):
+        return ()
+
+    names: list[str] = []
+    for entry in value:
+        name = entry.get('name') if isinstance(entry, dict) else None
+        if isinstance(name, str) and name:
+            names.append(name)
+
+    return tuple(names[-_MAX_FORMER_NAMES:])
 
 
 def _parse_epoch_ms(value: Any) -> float | None:
