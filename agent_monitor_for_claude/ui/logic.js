@@ -3083,6 +3083,9 @@ function mdTable(lines, start) {
     return { html: html, next: index };
 }
 
+// A table row's cells. A pipe separates cells unless it is escaped or sits in
+// inline code - Claude writes `a|b` in a code span without escaping it, and
+// splitting there tore the row apart.
 function mdCells(line) {
     let text = line.trim();
     if (text.startsWith('|')) {
@@ -3091,7 +3094,58 @@ function mdCells(line) {
     if (text.endsWith('|') && !text.endsWith('\\|')) {
         text = text.slice(0, -1);
     }
-    return text.split(/(?<!\\)\|/).map((cell) => cell.trim().replace(/\\\|/g, '|'));
+    const cells = [];
+    let cell = '';
+    let fence = 0;
+    let index = 0;
+    while (index < text.length) {
+        const char = text[index];
+        if (char === '\\' && text[index + 1] === '|') {
+            cell += fence ? '\\|' : '|';
+            index += 2;
+            continue;
+        }
+        if (char === '`') {
+            let run = 0;
+            while (text[index + run] === '`') {
+                run += 1;
+            }
+            // A run opens a code span only when a run as long closes it later.
+            if (!fence && mdClosingRun(text, index + run, run)) {
+                fence = run;
+            } else if (run === fence) {
+                fence = 0;
+            }
+            cell += text.slice(index, index + run);
+            index += run;
+            continue;
+        }
+        if (char === '|' && !fence) {
+            cells.push(cell.trim());
+            cell = '';
+        } else {
+            cell += char;
+        }
+        index += 1;
+    }
+    cells.push(cell.trim());
+    return cells;
+}
+
+// Whether a run of exactly `run` backticks follows from `from` on.
+function mdClosingRun(text, from, run) {
+    let index = text.indexOf('`', from);
+    while (index >= 0) {
+        let length = 0;
+        while (text[index + length] === '`') {
+            length += 1;
+        }
+        if (length === run) {
+            return true;
+        }
+        index = text.indexOf('`', index + length);
+    }
+    return false;
 }
 
 // Inline code and links first, on the raw text - neither is emphasized inside -

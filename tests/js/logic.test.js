@@ -3109,6 +3109,10 @@ test('markdown: the structure Claude writes renders as its elements', () => {
     assert.ok(md.includes('<ol start="3"><li><p>third</p></li><li><p>fourth</p></li></ol>'));
     assert.ok(md.includes('<blockquote><p>quoted</p></blockquote>'));
     assert.ok(md.includes('<th>A</th><th class="md-right">B</th>') && md.includes('<td>1</td><td class="md-right">2</td>'));
+    // A pipe in inline code or escaped stays in its cell; an unclosed code span does not swallow the row.
+    const table = logic.markdownToHtml(['| Flag | Meaning |', '|---|---|', '| \u0060a|b\u0060 | x \\| y |', '| \u0060open | z |'].join('\n'));
+    assert.ok(table.includes('<td><code>a|b</code></td><td>x | y</td>'));
+    assert.ok(table.includes('<td>\u0060open</td><td>z</td>'));
     assert.ok(md.includes('<pre class="md-code"><code>const x = 1;</code></pre><hr>'));
     assert.equal(logic.markdownToHtml(''), '');
     assert.equal(logic.markdownToHtml(null), '');
