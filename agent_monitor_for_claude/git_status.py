@@ -89,7 +89,7 @@ def _read_status(directory: str, edited: tuple[str, ...]) -> dict[str, Any] | No
     if status is None:
         return None
     # A repository without a commit has no HEAD to diff against; its files are all untracked or staged.
-    numstat = _git(directory, 'diff', '--numstat', 'HEAD') or ''
+    numstat = _git(directory, 'diff', '--numstat', '-z', 'HEAD') or ''
 
     branch, upstream, ahead, behind, entries = _parse_status(status)
     lines = _parse_numstat(numstat)
@@ -164,14 +164,29 @@ def _parse_branch(text: str) -> tuple[str, str, int, int]:
 
 
 def _parse_numstat(output: str) -> dict[str, tuple[int | None, int | None]]:
-    """Map each path of ``diff --numstat`` output to the lines it adds and removes; a binary file has neither."""
+    """Map each path of ``diff --numstat -z`` output to the lines it adds and removes; a binary file has neither.
+
+    With ``-z`` git writes every path as it is - without it a path with a
+    non-ASCII character comes quoted and escaped, and a rename as
+    ``old => new``, and neither matched the paths ``status -z`` lists.  A
+    record is ``added<TAB>removed<TAB>path``; for a rename or copy the path is
+    empty and the old and the new path follow as records of their own, the
+    lines counted under the new one.
+    """
     lines: dict[str, tuple[int | None, int | None]] = {}
-    for line in output.splitlines():
-        parts = line.split('\t')
+    records = output.split('\0')
+    index = 0
+    while index < len(records):
+        parts = records[index].split('\t')
+        index += 1
         if len(parts) != 3:
             continue
         added, removed, path = parts
-        lines[path] = (int(added) if added.isdigit() else None, int(removed) if removed.isdigit() else None)
+        if not path:
+            path = records[index + 1] if index + 1 < len(records) else ''
+            index += 2
+        if path:
+            lines[path] = (int(added) if added.isdigit() else None, int(removed) if removed.isdigit() else None)
 
     return lines
 

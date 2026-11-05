@@ -117,7 +117,7 @@ directory are not committed yet, the lines they add and remove, how far the bran
 behind its upstream, and how many of the files the session itself edited are still uncommitted. To get
 that, the application runs three read-only git commands in the session's directory (or the worktree it
 switched into): `rev-parse --show-toplevel`, `status --porcelain=v1 --branch -z
---untracked-files=normal`, and `diff --numstat HEAD`. Details:
+--untracked-files=normal`, and `diff --numstat -z HEAD`. Details:
 
 - It runs only for the selected session, again every five seconds while it stays selected, and never
   on the regular refresh.

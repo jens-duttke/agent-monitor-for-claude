@@ -30,8 +30,12 @@ class ParseStatusTest(unittest.TestCase):
         self.assertEqual(gmod._parse_branch('No commits yet on main'), ('main', '', 0, 0))
 
     def test_numstat_counts_lines_and_leaves_a_binary_file_without(self) -> None:
-        lines = gmod._parse_numstat('3\t1\tsrc/a.py\n-\t-\timage.png\ngarbage\n')
+        lines = gmod._parse_numstat('3\t1\tsrc/a.py\0-\t-\timage.png\0garbage\0')
         self.assertEqual(lines, {'src/a.py': (3, 1), 'image.png': (None, None)})
+
+    def test_numstat_counts_a_rename_under_its_new_path_and_keeps_paths_unescaped(self) -> None:
+        lines = gmod._parse_numstat('2\t0\t\0old/a.py\0new/a.py\0' '1\t1\tdocs/Übersicht.md\0' '4\t0\t\0truncated')
+        self.assertEqual(lines, {'new/a.py': (2, 0), 'docs/Übersicht.md': (1, 1)})
 
 
 class GitExecutableTest(unittest.TestCase):
@@ -65,19 +69,28 @@ class GitStatusTest(unittest.TestCase):
             tracked.write_text('one\ntwo\n', encoding='utf-8')
             git('add', 'tracked.txt')
             git('commit', '-q', '-m', 'first')
+            moving = Path(directory) / 'notes.txt'
+            moving.write_text('a\nb\nc\nd\ne\n', encoding='utf-8')
+            git('add', 'notes.txt')
+            git('commit', '-q', '-m', 'second')
             tracked.write_text('one\nthree\nfour\n', encoding='utf-8')
             (Path(directory) / 'new.txt').write_text('x\n', encoding='utf-8')
+            git('mv', 'notes.txt', 'Übersicht.txt')
+            (Path(directory) / 'Übersicht.txt').write_text('a\nb\nc\nd\ne\nf\n', encoding='utf-8')
+            git('add', 'Übersicht.txt')
             committed = Path(directory) / 'committed.txt'
 
             result = gmod.git_status(directory, [str(tracked), str(committed), os.path.join(tempfile.gettempdir(), 'elsewhere.txt')])
 
         self.assertIsNotNone(result)
-        self.assertEqual((result['changed'], result['untracked']), (1, 1))
-        self.assertEqual((result['added'], result['removed']), (2, 1))
+        self.assertEqual((result['changed'], result['untracked']), (2, 1))
+        self.assertEqual((result['added'], result['removed']), (3, 1))
         self.assertEqual((result['edited_total'], result['edited_uncommitted']), (2, 1))
         by_path = {record['path']: record for record in result['files']}
         self.assertTrue(by_path['tracked.txt']['edited'])
         self.assertEqual(by_path['new.txt']['status'], '??')
+        # A renamed file keeps its line counts, and a non-ASCII name its own spelling.
+        self.assertEqual((by_path['Übersicht.txt']['status'], by_path['Übersicht.txt']['added']), ('R', 1))
 
     def test_a_directory_outside_any_repository_reports_none(self) -> None:
         with mock.patch.object(gmod, '_git', return_value=None):

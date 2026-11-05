@@ -110,7 +110,7 @@ The session registry, the project-slug scheme, the temp-directory layout, and th
 
 ## Uncommitted changes
 
-When you select a session, Agent Monitor runs `git rev-parse --show-toplevel`, `git status --porcelain=v1 --branch -z` and `git diff --numstat HEAD` in its working directory - the worktree it switched into, if any. It repeats them every five seconds while the session stays selected, never on the regular refresh. `GIT_OPTIONAL_LOCKS=0` keeps `git status` from writing the index. The files the session edited, collected by the transcript scan, are matched against git's list, which gives the count of the session's own edits that are still uncommitted.
+When you select a session, Agent Monitor runs `git rev-parse --show-toplevel`, `git status --porcelain=v1 --branch -z` and `git diff --numstat -z HEAD` in its working directory - the worktree it switched into, if any. It repeats them every five seconds while the session stays selected, never on the regular refresh. `GIT_OPTIONAL_LOCKS=0` keeps `git status` from writing the index. The files the session edited, collected by the transcript scan, are matched against git's list, which gives the count of the session's own edits that are still uncommitted.
 
 ## Test results
 
