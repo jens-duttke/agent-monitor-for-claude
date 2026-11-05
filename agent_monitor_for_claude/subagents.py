@@ -37,6 +37,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -74,8 +75,11 @@ _WORKFLOW_GRACE_SECONDS = 30
 
 
 # Each listed agent's type, description and parent, by path: ``meta.json`` is
-# written once when the agent starts.
+# written once when the agent starts.  pywebview answers each bridge call on
+# its own thread, so overlapping snapshots share the cache; the lock keeps one
+# from evicting while another iterates.
 _node_meta_cache: dict[str, tuple[str, str, str]] = {}
+_node_meta_lock = threading.Lock()
 _NODE_META_CACHE_MAX = 20000
 # The length of a listed agent's type and description.
 _NODE_TEXT_MAX_CHARS = 160
@@ -216,7 +220,8 @@ def count_subagents(root: SessionRoot, session_id: str, cwd: str, worktree_cwds:
 def _agent_node(path: Path, running: bool, age: float, usage: UsageScan | None) -> AgentNode:
     """Describe one agent file for the connection view from its file name, its folder, its ``meta.json`` and its *usage*."""
     key = str(path)
-    cached = _node_meta_cache.get(key)
+    with _node_meta_lock:
+        cached = _node_meta_cache.get(key)
     if cached is None:
         meta = _meta(path)
         agent_type = meta.get('agentType') if isinstance(meta.get('agentType'), str) else ''
@@ -225,9 +230,10 @@ def _agent_node(path: Path, running: bool, age: float, usage: UsageScan | None) 
         cached = (agent_type[:_NODE_TEXT_MAX_CHARS], description[:_NODE_TEXT_MAX_CHARS], parent)
         # Only a file that had its meta keeps the answer; one written a moment later is asked again.
         if meta:
-            while len(_node_meta_cache) >= _NODE_META_CACHE_MAX:
-                _node_meta_cache.pop(next(iter(_node_meta_cache)))
-            _node_meta_cache[key] = cached
+            with _node_meta_lock:
+                while len(_node_meta_cache) >= _NODE_META_CACHE_MAX:
+                    _node_meta_cache.pop(next(iter(_node_meta_cache)))
+                _node_meta_cache[key] = cached
     agent_id = path.stem[len('agent-'):] if path.stem.startswith('agent-') else path.stem
     workflow = path.parent.name if path.parent.parent.name == 'workflows' else ''
 
