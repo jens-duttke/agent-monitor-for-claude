@@ -509,10 +509,32 @@ function onContentClick(event) {
         }
         return;
     }
-    selectSession(item.dataset.key, true);
+    selectEntry(item.dataset.key);
+}
+
+// The narrow layout swaps the list for the details on a click, which would
+// leave a double-click's second click nothing to land on: there the swap waits
+// out the double-click span, and a double-click cancels it to raise the window.
+const NARROW_LAYOUT = '(max-width: 799px)';
+const DRILL_DELAY_MS = 260;
+let pendingDrill = null;
+
+function selectEntry(key) {
+    clearTimeout(pendingDrill);
+    if (!window.matchMedia || !window.matchMedia(NARROW_LAYOUT).matches) {
+        selectSession(key, true);
+        return;
+    }
+    selectSession(key, false);
+    pendingDrill = setTimeout(() => {
+        pendingDrill = null;
+        selectSession(key, true);
+    }, DRILL_DELAY_MS);
 }
 
 function onContentDoubleClick(event) {
+    clearTimeout(pendingDrill);
+    pendingDrill = null;
     const graphNode = event.target.closest('.gnode[data-key]');
     if (graphNode) {
         focusSession(state.sessionsByKey.get(graphNode.dataset.key));
@@ -525,6 +547,9 @@ function onContentDoubleClick(event) {
     const session = state.sessionsByKey.get(item.dataset.key);
     if (state.compact) {
         runSessionAction('details', session);
+    } else if (session && !hasWindow(session)) {
+        // Nothing to raise: the double-click opens the details it held back.
+        selectSession(item.dataset.key, true);
     } else {
         focusSession(session);
     }
