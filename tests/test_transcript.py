@@ -1511,7 +1511,7 @@ class ScanMonitoringTest(unittest.TestCase):
 
     def test_a_failed_tool_call_counts_against_its_tool_but_a_rejected_one_does_not(self) -> None:
         state = _ScanState()
-        calls = [{'type': 'tool_use', 'id': f'u{index}', 'name': 'Bash', 'input': {}} for index in range(4)]
+        calls = [{'type': 'tool_use', 'id': f'u{index}', 'name': 'Bash', 'input': {}} for index in range(6)]
         self._absorb(state, _assistant(calls, 'tool_use', '2026-07-11T10:00:00Z'))
 
         def result(tool_use_id, text, is_error):
@@ -1521,7 +1521,9 @@ class ScanMonitoringTest(unittest.TestCase):
         # Written compact, as Claude Code writes it: the pre-filter looks for the error marker without spaces.
         for entry in (result('u0', 'Exit code 1\nboom', True), result('u1', 'fine', False),
                       result('u2', "The user doesn't want to proceed with this tool use.", True),
-                      result('u3', [{'type': 'text', 'text': 'Exit code 2'}], True), result('u9', 'unknown call', True)):
+                      result('u3', [{'type': 'text', 'text': 'Exit code 2'}], True), result('u9', 'unknown call', True),
+                      result('u4', 'Permission for this command was denied by a rule.', True),
+                      result('u5', '[Tool call interrupted: the session ended before it finished]', True)):
             _absorb_line(json.dumps(entry, separators=(',', ':')).encode('utf-8'), state)
 
         self.assertEqual(state.tool_uses['Bash'][2], 2)

@@ -305,8 +305,8 @@ and never shown:
   tool, counted per tool with the time of its last call - for the session's own transcript and for each
   subagent's. A name is taken only when it looks like one (letters, digits and `_ . : -`); the call's input
   stays unread here. A tool result marked as an error is counted against its tool as a failure, unless its
-  text opens with Claude Code's fixed wording for a call you rejected - that comparison is all that is read
-  of it.
+  text opens with one of Claude Code's fixed wordings for a call you rejected, a permission rule denied, or
+  the session's end cut off - that comparison is all that is read of it.
 - **How each subagent was started** (displayed in its details). From a subagent call (`Agent`, `Task`)
   whether it runs in the background and the effort it asked for, and from the call's result the agent's
   id and whether it was a forked skill - the task, its description and the result's text are not taken

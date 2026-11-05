@@ -238,10 +238,17 @@ _TOOL_NAME_PATTERN = re.compile(r'^[A-Za-z0-9_.:-]{1,128}$')
 _MAX_TOOL_NAMES = 200
 # A failed tool call: its result carries ``is_error``.  That byte marker lets
 # just those lines through the pre-filter, and the call's id names the tool
-# (the ids of recent calls are kept for that).  A call you rejected is marked
-# the same way but is no failure, told apart by Claude Code's fixed wording.
+# (the ids of recent calls are kept for that).  Three kinds of call are marked
+# the same way without the tool having failed, each told apart by the fixed
+# wording Claude Code opens its result with: one you rejected, one a
+# permission rule or the classifier denied, and one cut off because the
+# session ended first.
 _ERROR_RESULT_MARKER = b'"is_error":true'
-_REJECTED_RESULT_PREFIX = "The user doesn't want to proceed with this tool use"
+_DECLINED_RESULTS = (
+    (re.compile(r"^The user doesn't want to proceed with this tool use"), 'rejected'),
+    (re.compile(r'^Permission for this \w+ was denied'), 'rejected'),
+    (re.compile(r'^\[Tool call interrupted'), 'interrupted'),
+)
 _MAX_TOOL_IDS = 500
 # A command's own exit status, as Claude Code opens a failed command's result.
 _EXIT_CODE = re.compile(r'^\s*Exit code (\d{1,4})\b')
@@ -999,8 +1006,9 @@ def _note_results(entry: dict, content: list, at: float | None, calls: dict[str,
         text = _result_text(block.get('content'))
         error = block.get('is_error') is True
         exit_code = _EXIT_CODE.match(text) if error else None
-        if error and text.lstrip().startswith(_REJECTED_RESULT_PREFIX):
-            outcome = 'rejected'
+        declined = _declined_outcome(text) if error else None
+        if declined is not None:
+            outcome = declined
         elif interrupted:
             outcome = 'interrupted'
         else:
@@ -2522,23 +2530,33 @@ def _note_tool_uses(content: object, at: float | None, state: _ScanState) -> int
 
 
 def _note_tool_failures(entry: dict, state: _ScanState) -> None:
-    """Count each failed tool result in a user entry against its tool; a call you rejected is no failure."""
+    """Count each failed tool result in a user entry against its tool; a rejected, denied or cut-off call is no failure."""
     message = entry.get('message')
     content = message.get('content') if isinstance(message, dict) else None
     for block in content if isinstance(content, list) else ():
         if not isinstance(block, dict) or block.get('type') != 'tool_result' or block.get('is_error') is not True:
             continue
         name = state.tool_names_by_id.get(block.get('tool_use_id'))
-        if name in state.tool_uses and not _result_starts_with(block.get('content'), _REJECTED_RESULT_PREFIX):
+        if name in state.tool_uses and _declined_outcome(_leading_result_text(block.get('content'))) is None:
             state.tool_uses[name][2] += 1
 
 
-def _result_starts_with(content: object, prefix: str) -> bool:
-    """Whether a tool result's text opens with *prefix*; the text itself is not kept."""
+def _declined_outcome(text: str) -> str | None:
+    """``rejected`` or ``interrupted`` when an error result is one of Claude Code's fixed refusals, else None."""
+    opening = text.lstrip()
+    for pattern, outcome in _DECLINED_RESULTS:
+        if pattern.match(opening):
+            return outcome
+
+    return None
+
+
+def _leading_result_text(content: object) -> str:
+    """A tool result's text, or its first text block's, for the refusal check alone."""
     if isinstance(content, list):
         content = next((block.get('text') for block in content if isinstance(block, dict) and block.get('type') == 'text'), None)
 
-    return isinstance(content, str) and content.lstrip().startswith(prefix)
+    return content if isinstance(content, str) else ''
 
 
 def _tool_use_tuples(uses: dict[str, list]) -> dict[str, tuple[int, float | None, int]]:

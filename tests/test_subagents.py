@@ -135,20 +135,23 @@ class SubagentsTest(unittest.TestCase):
     def test_each_step_says_how_it_ended(self) -> None:
         first = json.dumps({'type': 'user', 'isSidechain': True, 'message': {'content': 'The task'}})
         calls = json.dumps({'type': 'assistant', 'isSidechain': True, 'message': {'content': [
-            {'type': 'tool_use', 'id': f'u{index}', 'name': 'Bash', 'input': {}} for index in range(4)]}})
+            {'type': 'tool_use', 'id': f'u{index}', 'name': 'Bash', 'input': {}} for index in range(6)]}})
 
         def result(tool_use_id, text, is_error, **extra):
             return json.dumps({'type': 'user', 'isSidechain': True, **extra, 'message': {'content': [
                 {'type': 'tool_result', 'tool_use_id': tool_use_id, 'is_error': is_error, 'content': text}]}})
 
         lines = [first, calls, result('u0', 'Exit code 127\nnot found', True), result('u1', "The user doesn't want to proceed with this tool use.", True),
-                 result('u2', 'partial', False, toolUseResult={'interrupted': True}), result('u3', 'ok', False)]
+                 result('u2', 'partial', False, toolUseResult={'interrupted': True}), result('u3', 'ok', False),
+                 result('u4', 'Permission for this action was denied by the classifier.', True),
+                 result('u5', '[Tool call interrupted: the session ended before it finished]', True)]
         self._add_agent('a1', 5, 'Map', body='\n'.join(lines) + '\n')
 
         steps = agent_texts(local_root(), _SESSION_ID, 'a1')['steps']
 
         self.assertEqual([(step['outcome'], step['exit_code'], step['error']) for step in steps],
-                         [('failed', 127, True), ('rejected', None, False), ('interrupted', None, False), ('', None, False)])
+                         [('failed', 127, True), ('rejected', None, False), ('interrupted', None, False), ('', None, False),
+                          ('rejected', None, False), ('interrupted', None, False)])
 
     def test_an_agent_id_that_could_name_a_path_is_refused(self) -> None:
         self._add_agent('a1', 5, 'Map', body=_assistant_end_turn())
