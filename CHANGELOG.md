@@ -60,6 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A row that jumps to the agent's window now shows an alias cursor, and the background-process badge a help cursor. Rows with no window to jump to, such as a background agent's, no longer show a hand cursor.
 
 ### Fixed
+- The overview refreshes with far less data while the graph is not shown: the subagents, tools and messages only the graph draws are loaded just for it.
 - Sessions show up much sooner at startup when a WSL distribution holds many records of long-ended sessions, and the monitor puts less load on WSL while it runs. Such records used to be read in full on every refresh before being skipped.
 - Token counts and estimated costs were about twice as high as they really are, because each reply was counted once per part it is stored in. Each reply now counts once.
 - Subagents an agent started after switching into a git worktree were missing - from its running count, its cost and the graph. They are now found in the worktree's folder too.

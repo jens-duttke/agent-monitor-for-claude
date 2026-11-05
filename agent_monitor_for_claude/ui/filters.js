@@ -49,6 +49,7 @@ function initListControls() {
 }
 
 function setGroup(group) {
+    const wasGraph = state.group === 'graph';
     state.group = GROUPS.includes(group) ? group : 'urgency';
     try {
         localStorage.setItem('amc-group', state.group);
@@ -56,6 +57,10 @@ function setGroup(group) {
     refreshGroupSwitch();
     if (state.last) {
         render(state.last);
+    }
+    // The graph's subagents come with the snapshot only while it is shown.
+    if (!wasGraph && state.group === 'graph') {
+        tick();
     }
 }
 

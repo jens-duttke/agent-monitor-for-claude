@@ -204,9 +204,9 @@ class _MonitorApi:
 
         print('[UI]', _sanitize_log(message), file=sys.stderr, flush=True)
 
-    def get_snapshot(self) -> dict[str, Any]:
-        """Return the current session overview grouped by project."""
-        return build_snapshot()
+    def get_snapshot(self, graph: object = False) -> dict[str, Any]:
+        """Return the current session overview; *graph* adds what only the connection graph shows."""
+        return build_snapshot(graph is True)
 
     def get_fingerprint(self) -> str:
         """Return the cheap registry/transcript change fingerprint."""

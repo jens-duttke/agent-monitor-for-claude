@@ -562,6 +562,20 @@ class SubagentRawTest(_RegistryFixture):
 
         self.assertEqual(session['subagents_running'], 1)
 
+    def test_the_subagents_themselves_come_only_for_the_graph(self) -> None:
+        # The counts are on every snapshot; each agent, its tools and the
+        # messages fill only the graph, so only it asks for them.
+        self._add_session('s', 'd:\\WebDev\\proj')
+        subagents = transcript_path(local_root(), 's', 'd:\\WebDev\\proj').parent / 's' / 'subagents'
+        subagents.mkdir(parents=True, exist_ok=True)
+        (subagents / 'agent-a1.jsonl').write_text(_SUBAGENT_RUNNING, encoding='utf-8')
+
+        plain = build_snapshot()['sessions'][0]
+        graph = build_snapshot(graph=True)['sessions'][0]
+
+        self.assertEqual((plain['subagents_running'], plain['agents'], plain['tools'], plain['messages']), (1, [], [], []))
+        self.assertEqual([agent['id'] for agent in graph['agents']], ['a1'])
+
 
 class DelegatedTurnAgeTest(_RegistryFixture):
     """A session working inside a subagent must not read as having gone quiet.

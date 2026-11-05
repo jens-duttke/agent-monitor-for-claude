@@ -35,7 +35,7 @@ from .process_probe import ProcessInfo, probe_all
 from .roots import session_roots
 from .sessions import list_sessions
 from .settings import ENDED_MAX_AGE, INCLUDE_COMPLETED
-from .subagents import count_subagents
+from .subagents import SubagentInfo, count_subagents
 from .transcript import AgentLaunch, MessageEvent, ToolCall, TranscriptState, full_texts, prune_scan_cache, state_for
 from .usage_parts import UsageScan, session_usage
 from .worktrees import prune_worktree_cache, resolve_worktree
@@ -51,13 +51,19 @@ _RECENT_WINDOW_SECONDS = 24 * 3600
 _SOCKET_PEER_PREFIX = 'uds:'
 
 
-def build_snapshot() -> dict[str, Any]:
-    """Return the raw session overview as a flat list of per-session records, across every session root."""
+def build_snapshot(graph: bool = False) -> dict[str, Any]:
+    """Return the raw session overview as a flat list of per-session records, across every session root.
+
+    Each session's subagents, the tools it called and its messages fill only
+    the connection graph and an agent's details, and with every agent a session
+    ever ran they are most of the snapshot's size - so they are filled in only
+    when *graph* asks for them, and empty otherwise.
+    """
     with pause_background_scans():
-        return _build_snapshot()
+        return _build_snapshot(graph)
 
 
-def _build_snapshot() -> dict[str, Any]:
+def _build_snapshot(graph: bool) -> dict[str, Any]:
     """Assemble :func:`build_snapshot`'s result."""
     sessions: list[dict[str, Any]] = []
 
@@ -67,7 +73,7 @@ def _build_snapshot() -> dict[str, Any]:
 
     for root, record in _one_record_per_session(pairs, probe_map):
         try:
-            session = _build_session_record(root, record, probe_map, peers)
+            session = _build_session_record(root, record, probe_map, peers, graph)
         except Exception:
             # Last-resort per-record isolation: the individual readers already
             # degrade gracefully, but an unforeseen failure on one record must
@@ -91,6 +97,7 @@ def _build_snapshot() -> dict[str, Any]:
 
 def _build_session_record(
     root: SessionRoot, record: dict[str, Any], probe_map: dict[tuple[str, int], ProcessInfo], peers: dict[tuple[str, str], tuple[str, str]],
+    graph: bool = False,
 ) -> dict[str, Any] | None:
     """Assemble one raw session record, or None when an ended session is dropped.
 
@@ -202,19 +209,7 @@ def _build_session_record(
         'lines_removed': transcript_state.lines_removed,
         'work_intervals': _recent_intervals(transcript_state.work_intervals),
         'turn_open_seconds': _seconds_since(transcript_state.turn_open_since),
-        'messages': _recent_messages(transcript_state.messages, record['origin'], peers),
-        'tools': _tool_records(transcript_state.tool_uses),
-        'agents': [
-            {
-                'id': agent.agent_id, 'type': agent.agent_type, 'description': agent.description, 'running': agent.running,
-                'age_seconds': agent.age, 'parent_id': agent.parent_id, 'workflow': agent.workflow,
-                'skill': agent.skill, 'usage_by_model': agent.usage_by_model,
-                'started_seconds': _seconds_since(agent.started_at), 'tool_calls': agent.tool_calls,
-                'lines_added': agent.lines_added, 'lines_removed': agent.lines_removed, 'tools': _tool_records(agent.tools),
-                **_launch_record(transcript_state.agent_launches.get(agent.agent_id)),
-            }
-            for agent in subagents.agents
-        ],
+        **(_graph_fields(transcript_state, subagents, record['origin'], peers) if graph else {'messages': [], 'tools': [], 'agents': []}),
         'artifact_count': transcript_state.artifact_count,
         'pr_links': [
             {'repository': link.repository, 'number': link.number, 'url': link.url}
@@ -265,6 +260,27 @@ def _tool_call_record(call: ToolCall | None) -> dict[str, Any] | None:
     return {
         'tool': call.tool, 'text': call.text, 'detail': call.detail,
         'questions': [{'text': question.text, 'options': list(question.options)} for question in call.questions],
+    }
+
+
+def _graph_fields(
+    transcript_state: TranscriptState, subagents: SubagentInfo, origin: str, peers: dict[tuple[str, str], tuple[str, str]],
+) -> dict[str, Any]:
+    """What only the connection graph needs of a session: its messages, the tools it called, and every subagent."""
+    return {
+        'messages': _recent_messages(transcript_state.messages, origin, peers),
+        'tools': _tool_records(transcript_state.tool_uses),
+        'agents': [
+            {
+                'id': agent.agent_id, 'type': agent.agent_type, 'description': agent.description, 'running': agent.running,
+                'age_seconds': agent.age, 'parent_id': agent.parent_id, 'workflow': agent.workflow,
+                'skill': agent.skill, 'usage_by_model': agent.usage_by_model,
+                'started_seconds': _seconds_since(agent.started_at), 'tool_calls': agent.tool_calls,
+                'lines_added': agent.lines_added, 'lines_removed': agent.lines_removed, 'tools': _tool_records(agent.tools),
+                **_launch_record(transcript_state.agent_launches.get(agent.agent_id)),
+            }
+            for agent in subagents.agents
+        ],
     }
 
 

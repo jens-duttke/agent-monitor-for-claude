@@ -494,7 +494,8 @@ async function callBootstrap() {
 async function callSnapshot() {
     const bridge = apiBridge();
     if (bridge) {
-        return bridge.get_snapshot();
+        // Every subagent with its tools only while the graph shows them.
+        return bridge.get_snapshot(state.group === 'graph' && !state.compact);
     }
     return window.__MOCK_SNAPSHOT__ || { generated_at: '', sessions: [] };
 }
