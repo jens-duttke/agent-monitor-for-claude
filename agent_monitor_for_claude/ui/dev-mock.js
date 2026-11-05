@@ -102,6 +102,12 @@ window.__MOCK_SNAPSHOT__ = {
             remote_control: true,
             title: 'Add spectral upsampling to the BRDF sampler', permission_mode: 'default',
             last_stop_reason: 'tool_use', pending_tool: true, last_tool_name: 'AskUserQuestion',
+            current_tool: { tool: 'AskUserQuestion', text: '', detail: '', questions: [
+                { text: 'Which upsampling basis should the sampler use?', options: ['Jakob-Hanika sigmoid', 'Smits RGB', 'Measured spectra'] },
+            ] },
+            current_tool_age_seconds: 38,
+            work_intervals: [[7200, 6100], [5400, 3900], [1800, 38]],
+            lines_added: 412, lines_removed: 96, files_edited: 9,
             // A pull request Claude Code linked; without an address it is listed
             // in the tooltip rather than linked.
             pr_links: [{ repository: 'helios/renderer', number: 482, url: null }],
@@ -120,6 +126,8 @@ window.__MOCK_SNAPSHOT__ = {
             session_id: 'h2p', short_name: 'helios-shader-cache', pid: 27140, entrypoint: 'claude-vscode', host: 'VS Code',
             title: 'Warm the pipeline cache on first frame', permission_mode: 'auto',
             last_stop_reason: 'tool_use', pending_tool: true, last_tool_name: 'Bash',
+            current_tool: { tool: 'Bash', text: 'cmake --build build --target shader-cache --parallel 16', detail: 'Rebuild the shader cache', questions: [] },
+            current_tool_age_seconds: 145,
             auto_denials_consecutive: 3, auto_denials_total: 7,
             age_seconds: 145,
             ...priced('claude-opus-4-8[1m]', {
@@ -156,6 +164,30 @@ window.__MOCK_SNAPSHOT__ = {
             // On a branch of its own, so the Helios rows name theirs; mid-plan in
             // Claude Desktop's progress list, with a prompt queued behind the turn.
             git_branch: 'fix/HEL-214-hot-reload-race', plan_step: 3, plan_total: 7, queued: 1,
+            plan_items: [
+                { text: 'Reproduce the race with a forced hot reload', status: 'completed' },
+                { text: 'Capture a GPU trace around the fence wait', status: 'completed' },
+                { text: 'Bisect the frame where the fence deadlocks', status: 'in_progress' },
+                { text: 'Compare SPIR-V before and after the reload', status: 'pending' },
+                { text: 'Fix the pipeline-cache invalidation', status: 'pending' },
+                { text: 'Add a regression test for the reload path', status: 'pending' },
+                { text: 'Write up the root cause', status: 'pending' },
+            ],
+            current_tool: { tool: 'Agent', text: 'Explore', detail: 'Bisect the frame where the GPU fence deadlocks', questions: [] },
+            current_tool_age_seconds: 312, turn_open_seconds: 1500,
+            work_intervals: [[14400, 12000], [9000, 7600], [5200, 4400]],
+            agents: [
+                { id: 'e1', type: 'Explore', description: 'Bisect the frame where the GPU fence deadlocks', running: true, age_seconds: 3 },
+                { id: 'e2', type: 'Explore', description: 'Reproduce descriptor-set corruption under vsync', running: true, age_seconds: 9 },
+                { id: 'e3', type: 'general-purpose', description: 'Diff SPIR-V output across a hot reload', running: true, age_seconds: 1, parent_id: 'e1' },
+                { id: 'w1', type: 'auditor', description: 'Audit the pipeline-cache invalidation path', running: true, age_seconds: 4, workflow: 'wf-cache' },
+                { id: 'w2', type: 'auditor', description: 'Audit descriptor pool reuse', running: false, age_seconds: 220, workflow: 'wf-cache' },
+                { id: 'p1', type: 'Plan', description: 'Outline the fix', running: false, age_seconds: 900 },
+            ],
+            messages: [
+                { direction: 'received', peer: 'p1', label: 'Plan', handback: true, age_seconds: 880 },
+                { direction: 'sent', peer: 'helios-shader-audit', age_seconds: 20 },
+            ],
             age_seconds: 12,
             // Most of its spend went to its subagents, mostly under one skill, and
             // a few web searches - the cost's tooltip breaks that down.
@@ -224,6 +256,10 @@ window.__MOCK_SNAPSHOT__ = {
             session_id: 'h4d', short_name: 'helios-renderer-2f', pid: 21030, entrypoint: 'claude-vscode', host: 'VS Code',
             title: 'Retune the importance sampler across models', permission_mode: 'default',
             last_entry_kind: 'assistant', last_stop_reason: 'end_turn', age_seconds: 210,
+            last_reply: 'Retuned the importance sampler for all three models. The variance dropped by 18% on the Cornell box '
+                + 'and 11% on the Sponza scene; the glossy case still needs a second pass.\n\nShall I start on that next?',
+            work_intervals: [[4000, 3100], [2600, 210]],
+            lines_added: 64, lines_removed: 52, files_edited: 3,
             model_id: 'claude-opus-4-8[1m]', effort: 'max', speed: 'fast',
             usage: {
                 input_tokens: 3600, output_tokens: 244000, cache_read_input_tokens: 512000000,
@@ -324,7 +360,14 @@ window.__MOCK_SNAPSHOT__ = {
             title: 'Implement adaptive token-bucket rate limiting', permission_mode: 'default',
             native_status: 'busy', last_entry_kind: 'user_text', last_stop_reason: 'end_turn',
             // A hook that keeps failing without blocking - worth a look at its configuration.
-            hook_errors: [{ hook: 'PostToolUse:Bash', exit_code: 7, count: 12 }, { hook: 'UserPromptSubmit', exit_code: 7, count: 2 }],
+            hook_errors: [
+                { hook: 'PostToolUse:Bash', exit_code: 7, count: 12, message: 'eslint: 3 problems (2 errors, 1 warning)' },
+                { hook: 'UserPromptSubmit', exit_code: 7, count: 2, message: 'ticket key missing in branch name' },
+            ],
+            current_tool: { tool: 'Bash', text: 'npm test -- --runInBand', detail: 'Run the gateway tests', questions: [] },
+            current_tool_age_seconds: 47, turn_open_seconds: 380,
+            work_intervals: [[3000, 2400], [2000, 1500]],
+            lines_added: 188, lines_removed: 41, files_edited: 6,
             age_seconds: 4,
             ...priced('claude-sonnet-5', {
                 input_tokens: 21500, output_tokens: 4300, cache_read_input_tokens: 14100000,
@@ -433,7 +476,7 @@ window.__MOCK_TASKS__ = {
         { id: 'a7f3k9', size: 4200, age: 1, label: 'Build spectral upsampling in the background' },
     ],
     h3c: [
-        { id: 'r1n8xq', size: 91800, age: 2, label: 'Run the ReSTIR frame regression suite' },
+        { id: 'r1n8xq', size: 91800, age: 2, label: 'Run the ReSTIR frame regression suite', tests: { runner: 'pytest', passed: 182, failed: 3, skipped: 1 } },
         { id: 'w2k5vt', size: 640, age: 420, label: 'Warm up the shader cache' },
     ],
     c2j: [
@@ -525,3 +568,23 @@ window.__MOCK_HISTORY__ = [
         cwd: 'D:\\Projects\\atlas-cli', title: null, age_seconds: 2592000,
     }),
 ];
+
+// --- uncommitted changes preview (get_git_status), by session id ---
+window.__MOCK_GIT__ = {
+    h1a: {
+        branch: 'feature/spectral-upsampling', upstream: 'origin/feature/spectral-upsampling', ahead: 2, behind: 0,
+        changed: 5, untracked: 1, added: 318, removed: 74, edited_total: 9, edited_uncommitted: 5,
+        files: [
+            { path: 'src/brdf/sampler.cpp', status: 'M', added: 182, removed: 40, edited: true },
+            { path: 'src/brdf/sampler.h', status: 'M', added: 12, removed: 3, edited: true },
+            { path: 'src/spectral/upsample.cpp', status: '??', added: null, removed: null, edited: true },
+            { path: 'src/spectral/tables.inc', status: 'M', added: 96, removed: 22, edited: true },
+            { path: 'tests/brdf_test.cpp', status: 'M', added: 28, removed: 9, edited: true },
+            { path: 'CMakeLists.txt', status: 'M', added: 0, removed: 0, edited: false },
+        ],
+    },
+    h4d: {
+        branch: 'main', upstream: 'origin/main', ahead: 0, behind: 3,
+        changed: 0, untracked: 0, added: 0, removed: 0, edited_total: 3, edited_uncommitted: 0, files: [],
+    },
+};

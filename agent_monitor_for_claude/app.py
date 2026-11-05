@@ -23,6 +23,7 @@ import webview  # type: ignore[import-untyped]  # no type stubs available
 
 from . import __version__
 from .clipboard import copy_text as _copy_text
+from .git_status import git_status
 from .history import list_history
 from .i18n import T
 from .paths import config_dir, host_path, local_root, projects_dir, scratchpad_dir
@@ -38,10 +39,13 @@ from .settings import POLL_INTERVAL, WINDOW_HEIGHT, WINDOW_WIDTH
 from .snapshot import build_snapshot, registry_fingerprint
 from .tasks import list_tasks
 from .tasks import read_task_output as _read_task_output
+from .test_results import TestSummary
+from .transcript import edited_files
+from .transcript import prioritize_session as _prioritize_session
 from .verbose import print_runtime_diagnostics
 from .window_background import apply_native_background, window_background_color
 from .window_focus import focus_session_window, focus_terminal_window, open_directory, open_vscode_session, reveal_in_file_manager
-from .window_layout import NORMAL_MIN_SIZE, enter_compact, keep_on_top, leave_compact
+from .window_layout import NORMAL_MIN_SIZE, enter_compact, keep_on_top, leave_compact, show_attention
 from .wsl import wsl_process_stats
 
 __all__ = ['run']
@@ -90,6 +94,14 @@ def _proc_start_ticks_for(records: list[dict[str, Any]], pid_value: int) -> int 
             return record.get('proc_start_ticks')
 
     return None
+
+
+def _tests_record(tests: TestSummary | None) -> dict[str, Any] | None:
+    """A task's test summary as plain values for the bridge, or None when its output holds none."""
+    if tests is None:
+        return None
+
+    return {'runner': tests.runner, 'passed': tests.passed, 'failed': tests.failed, 'skipped': tests.skipped}
 
 
 class _MonitorApi:
@@ -162,6 +174,20 @@ class _MonitorApi:
             return False
 
         return keep_on_top(window, enabled)
+
+    def set_attention(self, count: object, flash: object = False) -> bool:
+        """Show on the taskbar button how many sessions need you, and flash it for a new one.
+
+        The page counts them (it derives every status) and reports a change of
+        the count, with *flash* set when a session newly started waiting.  A
+        count must be a non-negative int and *flash* a bool; anything else is
+        refused.
+        """
+        window = self._window
+        if window is None or isinstance(count, bool) or not isinstance(count, int) or count < 0 or not isinstance(flash, bool):
+            return False
+
+        return show_attention(window, count, flash)
 
     def log(self, message: object) -> None:
         """Forward a UI-side diagnostic message to stderr.
@@ -280,7 +306,7 @@ class _MonitorApi:
         infos, total = list_tasks(root, session_id, cwd, recent_seconds=recent)
         return {
             'tasks': [
-                {'id': info.task_id, 'size': info.size_bytes, 'age': info.age_seconds, 'label': info.label}
+                {'id': info.task_id, 'size': info.size_bytes, 'age': info.age_seconds, 'label': info.label, 'tests': _tests_record(info.tests)}
                 for info in infos
             ],
             'total': total,
@@ -485,6 +511,44 @@ class _MonitorApi:
             return str(directory) if directory.is_dir() else ''
         except OSError:
             return ''
+
+    def prioritize_session(self, session_id: object, cwd: object, origin: object = 'local') -> bool:
+        """Move the selected session's pending first scans to the front of the background queue.
+
+        The UI calls this when a session whose figures are still being read is
+        selected, so its cost and details are the next to complete.  Only the
+        queue order changes; nothing is read here.  The session id must be a
+        UUID and the origin a currently available root.
+        """
+        if not isinstance(session_id, str) or not _SESSION_UUID.match(session_id) or not isinstance(cwd, str) or not cwd:
+            return False
+
+        root = root_for_origin(origin) if isinstance(origin, str) else None
+        if root is None:
+            return False
+
+        return _prioritize_session(root, session_id, cwd) > 0
+
+    def get_git_status(self, session_id: object, cwd: object, worktree_cwd: object = '', origin: object = 'local') -> dict[str, Any] | None:
+        """Return what the session's working directory holds that is not committed yet, or None.
+
+        Called for the selected session only, never on the poll.  Git runs in the
+        worktree the session switched into when it has one, else in its own
+        directory; a WSL path is translated to the host's form first.  The files
+        the session itself edited (from its full scan) are matched against the
+        result, so the detail can say how many of them are still uncommitted.
+        The session id must be a UUID and the origin a currently available root.
+        """
+        if not isinstance(session_id, str) or not _SESSION_UUID.match(session_id) or not isinstance(cwd, str) or not cwd:
+            return None
+
+        root = root_for_origin(origin) if isinstance(origin, str) else None
+        if root is None:
+            return None
+
+        directory = worktree_cwd if isinstance(worktree_cwd, str) and worktree_cwd else cwd
+        edited = [host_path(root, path) for path in edited_files(root, session_id, cwd)]
+        return git_status(host_path(root, directory), edited)
 
     def transcript_path(self, session_id: object, cwd: object, origin: object = 'local') -> str:
         """Return the session's transcript file if it exists, else ''.

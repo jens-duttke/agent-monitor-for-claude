@@ -23,6 +23,7 @@ import ctypes.wintypes
 import os
 import platform
 import sys
+import uuid
 import winreg
 from pathlib import Path
 from typing import Any
@@ -31,21 +32,18 @@ __all__ = [
     'DIAGNOSTIC_PACKAGES', 'activate_window', 'ask_yes_no', 'apply_native_background', 'copy_text', 'diagnostic_display_rows',
     'diagnostic_post_init_rows', 'diagnostic_runtime_rows', 'diagnostic_system_rows', 'enum_windows',
     'no_window_kwargs', 'open_path', 'open_uri', 'paint_window', 'prepare_gui_environment', 'reveal_file',
-    'set_keep_on_top', 'set_min_window_size', 'setup_console', 'show_error_box', 'storage_dir', 'window_background_color',
+    'set_keep_on_top', 'set_min_window_size', 'set_taskbar_attention', 'setup_console', 'show_error_box', 'storage_dir',
+    'window_background_color',
 ]
 
 # Third-party packages worth reporting in the diagnostics output.  pythonnet and
 # clr-loader are part of the WebView2 host and exist only here.
 DIAGNOSTIC_PACKAGES = ('pywebview', 'pythonnet', 'clr-loader', 'psutil')
 
-# Initial window colours, held identical to the content area's --bg in
+# Initial window colour, held identical to the content area's --bg in
 # index.css so the bare window matches the content instead of flashing a
-# mismatched colour.  The page itself picks the stored theme (or the system
-# preference) before first paint.
-_WINDOW_BACKGROUND_DARK = '#191918'
-_WINDOW_BACKGROUND_LIGHT = '#faf9f5'
-
-_THEME_KEY = r'SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+# mismatched colour.
+_WINDOW_BACKGROUND = '#262624'
 
 # SetClassLongPtr index for the class background brush (GCLP_HBRBACKGROUND).
 _GCLP_HBRBACKGROUND = -10
@@ -125,6 +123,51 @@ _set_class_long_ptr.restype = ctypes.c_void_p
 
 _gdi32.CreateSolidBrush.argtypes = [ctypes.wintypes.COLORREF]
 _gdi32.CreateSolidBrush.restype = ctypes.c_void_p
+
+# The taskbar button's overlay icon goes through the shell's ITaskbarList3: the
+# class and interface ids, and the slots of the three methods called in its
+# vtable (IUnknown takes 0-2, ITaskbarList 3-7, ITaskbarList2 8, ITaskbarList3
+# from 9 on).
+_CLSID_TASKBAR_LIST = '56FDF344-FD6D-11D0-958A-006097C9A090'
+_IID_TASKBAR_LIST3 = 'EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF'
+_CLSCTX_INPROC_SERVER = 0x1
+_VTBL_RELEASE = 2
+_VTBL_HR_INIT = 3
+_VTBL_SET_OVERLAY_ICON = 18
+
+# FlashWindowEx: flash the taskbar button only, twice; Windows then keeps it
+# highlighted until the window is activated.
+_FLASHW_TRAY = 0x2
+_FLASH_COUNT = 2
+
+# The badge: the UI's "needs you" orange, white digits, drawn at twice the
+# 16 px overlay size so it stays sharp on a scaled display.
+_BADGE_ARGB = (255, 0xD2, 0x4A, 0x0E)
+_BADGE_SIZE = 32
+
+
+class _Guid(ctypes.Structure):
+    _fields_ = [
+        ('data1', ctypes.c_ulong), ('data2', ctypes.c_ushort), ('data3', ctypes.c_ushort), ('data4', ctypes.c_ubyte * 8),
+    ]
+
+
+class _FlashWindowInfo(ctypes.Structure):
+    _fields_ = [
+        ('cbSize', ctypes.wintypes.UINT), ('hwnd', ctypes.wintypes.HWND), ('dwFlags', ctypes.wintypes.DWORD),
+        ('uCount', ctypes.wintypes.UINT), ('dwTimeout', ctypes.wintypes.DWORD),
+    ]
+
+
+_ole32.CoCreateInstance.argtypes = [
+    ctypes.POINTER(_Guid), ctypes.c_void_p, ctypes.wintypes.DWORD, ctypes.POINTER(_Guid), ctypes.POINTER(ctypes.c_void_p),
+]
+_ole32.CoCreateInstance.restype = ctypes.c_long
+_user32.FlashWindowEx.argtypes = [ctypes.POINTER(_FlashWindowInfo)]
+_user32.FlashWindowEx.restype = ctypes.wintypes.BOOL
+_user32.GetForegroundWindow.restype = ctypes.wintypes.HWND
+_user32.DestroyIcon.argtypes = [ctypes.c_void_p]
+_user32.DestroyIcon.restype = ctypes.wintypes.BOOL
 
 
 def show_error_box(message: str, title: str) -> None:
@@ -308,21 +351,8 @@ def activate_window(handle: int) -> bool:
 
 
 def window_background_color() -> str:
-    """Return the content-area background colour matching the Windows app theme.
-
-    Returns
-    -------
-    str
-        The light content colour when the app theme is light, otherwise the
-        dark one; the dark colour also stands in when the preference is missing.
-    """
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _THEME_KEY) as key:
-            apps_use_light, _ = winreg.QueryValueEx(key, 'AppsUseLightTheme')
-    except OSError:
-        return _WINDOW_BACKGROUND_DARK
-
-    return _WINDOW_BACKGROUND_LIGHT if apps_use_light else _WINDOW_BACKGROUND_DARK
+    """Return the content-area background colour the window starts with (the UI has one, dark theme)."""
+    return _WINDOW_BACKGROUND
 
 
 def paint_window(handle: int, hex_color: str) -> bool:
@@ -508,6 +538,132 @@ def set_keep_on_top(native: object, on_top: bool) -> bool:
         return True
     except Exception:  # noqa: BLE001  # .NET interop only present at runtime
         return False
+
+
+def set_taskbar_attention(native: object, badge: str, flash: bool) -> bool:
+    """Show a badge on the window's taskbar button, and flash the button on request.
+
+    The badge is an overlay icon drawn from *badge* (``''`` removes it); the
+    flash runs only while the window is not in front, twice, after which Windows
+    keeps the button highlighted until the window is activated.  Both are calls
+    on the application's own taskbar button - no file, no registry, no other
+    window.  Marshalled onto the UI thread like every other window call: the
+    taskbar object belongs to the UI thread's COM apartment.
+
+    Parameters
+    ----------
+    native : object
+        pywebview's native window (the WinForms ``BrowserForm``).
+    badge : str
+        The text to show on the button, at most a few characters.
+    flash : bool
+        Whether to flash the button.
+
+    Returns
+    -------
+    bool
+        True if the badge was applied.  Best-effort otherwise: the .NET interop
+        only exists inside a running WebView2 host, so any failure (including
+        off a real window) is swallowed and reported as False.
+    """
+    if native is None or not isinstance(badge, str):
+        return False
+
+    try:
+        from System import Action
+
+        applied = False
+
+        def _apply() -> None:
+            nonlocal applied
+            try:
+                hwnd = int(native.Handle.ToInt64())
+                applied = _set_overlay_badge(hwnd, badge)
+                if flash and _user32.GetForegroundWindow() != hwnd:
+                    info = _FlashWindowInfo(ctypes.sizeof(_FlashWindowInfo), hwnd, _FLASHW_TRAY, _FLASH_COUNT, 0)
+                    _user32.FlashWindowEx(ctypes.byref(info))
+            except Exception:  # noqa: BLE001  # a shell failure must not raise into the UI thread
+                applied = False
+
+        if native.InvokeRequired:
+            native.Invoke(Action(_apply))
+        else:
+            _apply()
+
+        return applied
+    except Exception:  # noqa: BLE001  # .NET interop only present at runtime
+        return False
+
+
+def _set_overlay_badge(hwnd: int, badge: str) -> bool:
+    """Set (or with an empty *badge* remove) the taskbar button's overlay icon."""
+    taskbar = ctypes.c_void_p()
+    hresult = _ole32.CoCreateInstance(
+        ctypes.byref(_guid(_CLSID_TASKBAR_LIST)), None, _CLSCTX_INPROC_SERVER, ctypes.byref(_guid(_IID_TASKBAR_LIST3)),
+        ctypes.byref(taskbar),
+    )
+    if hresult != _S_OK or not taskbar:
+        return False
+
+    icon = _badge_icon(badge) if badge else None
+    try:
+        if _com_method(taskbar, _VTBL_HR_INIT)(taskbar) != _S_OK:
+            return False
+        set_overlay = _com_method(taskbar, _VTBL_SET_OVERLAY_ICON, ctypes.wintypes.HWND, ctypes.c_void_p, ctypes.wintypes.LPCWSTR)
+        return set_overlay(taskbar, hwnd, icon, badge or None) == _S_OK
+    finally:
+        # The taskbar keeps its own copy of the icon.
+        if icon:
+            _user32.DestroyIcon(icon)
+        _com_method(taskbar, _VTBL_RELEASE, restype=ctypes.c_ulong)(taskbar)
+
+
+def _com_method(pointer: ctypes.c_void_p, index: int, *argtypes: Any, restype: Any = ctypes.c_long) -> Any:
+    """The method in slot *index* of a COM object's vtable, called with the object first."""
+    vtable = ctypes.cast(pointer, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+    return ctypes.WINFUNCTYPE(restype, ctypes.c_void_p, *argtypes)(vtable[index])
+
+
+def _guid(text: str) -> _Guid:
+    """A GUID structure from its ``XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`` form."""
+    value = uuid.UUID(text)
+    data4 = (ctypes.c_ubyte * 8)(*value.bytes[8:])
+    return _Guid(value.time_low, value.time_mid, value.time_hi_version, data4)
+
+
+def _badge_icon(text: str) -> int | None:
+    """Draw *text* white on an orange disc and return the icon handle (the caller destroys it)."""
+    import clr
+
+    clr.AddReference('System.Drawing')
+    from System.Drawing import (
+        Bitmap, Brushes, Color, Font, FontStyle, Graphics, GraphicsUnit, RectangleF, SolidBrush, StringAlignment, StringFormat,
+    )
+    from System.Drawing.Drawing2D import SmoothingMode
+    from System.Drawing.Text import TextRenderingHint
+
+    bitmap = Bitmap(_BADGE_SIZE, _BADGE_SIZE)
+    graphics = Graphics.FromImage(bitmap)
+    disc = SolidBrush(Color.FromArgb(*_BADGE_ARGB))
+    font = Font('Segoe UI', 20.0 if len(text) == 1 else 15.0, FontStyle.Bold, GraphicsUnit.Pixel)
+    layout = StringFormat()
+    try:
+        graphics.SmoothingMode = SmoothingMode.AntiAlias
+        graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit
+        graphics.Clear(Color.Transparent)
+        graphics.FillEllipse(disc, 0, 0, _BADGE_SIZE - 1, _BADGE_SIZE - 1)
+        layout.Alignment = StringAlignment.Center
+        layout.LineAlignment = StringAlignment.Center
+        graphics.DrawString(text, font, Brushes.White, RectangleF(0.0, 1.0, float(_BADGE_SIZE), float(_BADGE_SIZE)), layout)
+    finally:
+        # GDI+ handles are not freed until the garbage collector finalizes them.
+        for resource in (layout, font, disc, graphics):
+            resource.Dispose()
+
+    try:
+        return int(bitmap.GetHicon().ToInt64()) or None
+    finally:
+        bitmap.Dispose()
 
 
 def setup_console() -> None:

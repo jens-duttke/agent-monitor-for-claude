@@ -358,6 +358,32 @@ class UnknownOriginRefusalTest(unittest.TestCase):
         self.assertEqual(api.scratchpad_path(self._SESSION, self._CWD, origin=123), '')
 
 
+class PrioritizeSessionTest(unittest.TestCase):
+    """Selecting a session whose figures are still being read moves its scans to the front - nothing else."""
+
+    _SESSION = '6e22e66f-6298-442a-9762-2a5b65052389'
+    _CWD = r'D:\proj'
+
+    def test_a_valid_session_reaches_the_queue(self) -> None:
+        api = _MonitorApi()
+        with mock.patch.object(app, '_prioritize_session', return_value=2) as prioritize:
+            self.assertTrue(api.prioritize_session(self._SESSION, self._CWD, 'local'))
+        prioritize.assert_called_once_with(local_root(), self._SESSION, self._CWD)
+
+    def test_nothing_queued_reports_false(self) -> None:
+        with mock.patch.object(app, '_prioritize_session', return_value=0):
+            self.assertFalse(_MonitorApi().prioritize_session(self._SESSION, self._CWD, 'local'))
+
+    def test_a_malformed_request_is_refused(self) -> None:
+        api = _MonitorApi()
+        with mock.patch.object(app, '_prioritize_session') as prioritize, mock.patch.object(app, 'root_for_origin', return_value=None):
+            for arguments in (('not-a-uuid', self._CWD, 'local'), (self._SESSION, '', 'local'), (self._SESSION, self._CWD, 7),
+                              (self._SESSION, self._CWD, 'gone:X')):
+                with self.subTest(arguments=arguments):
+                    self.assertFalse(api.prioritize_session(*arguments))
+        prioritize.assert_not_called()
+
+
 class WslOriginTasksTest(unittest.TestCase):
     """As of Task 14, a WSL origin's task queries route through to ``tasks`` with the resolved root.
 
@@ -381,7 +407,7 @@ class WslOriginTasksTest(unittest.TestCase):
              mock.patch.object(app, 'list_tasks', return_value=([info], 1)) as list_tasks_mock:
             result = api.get_tasks(self._SESSION, self._CWD, origin='wsl:U')
 
-        self.assertEqual(result, {'tasks': [{'id': 't1', 'size': 10, 'age': 1.5, 'label': 'build'}], 'total': 1})
+        self.assertEqual(result, {'tasks': [{'id': 't1', 'size': 10, 'age': 1.5, 'label': 'build', 'tests': None}], 'total': 1})
         list_tasks_mock.assert_called_once_with(wsl_root, self._SESSION, self._CWD, recent_seconds=None)
 
     def test_read_task_output_calls_read_task_output_with_the_resolved_root(self) -> None:
@@ -442,7 +468,7 @@ class WindowsOriginPassthroughTest(unittest.TestCase):
              mock.patch.object(app, 'list_tasks', return_value=([info], 1)) as list_tasks_mock:
             result = api.get_tasks(self._SESSION, self._CWD)
 
-        self.assertEqual(result, {'tasks': [{'id': 't1', 'size': 10, 'age': 1.5, 'label': 'build'}], 'total': 1})
+        self.assertEqual(result, {'tasks': [{'id': 't1', 'size': 10, 'age': 1.5, 'label': 'build', 'tests': None}], 'total': 1})
         list_tasks_mock.assert_called_once_with(windows_root_value, self._SESSION, self._CWD, recent_seconds=None)
 
     def test_read_task_output_calls_read_task_output(self) -> None:

@@ -149,8 +149,8 @@ INCLUDE_COMPLETED: bool = _S.get('include_completed', False)
 SUBAGENT_RECENT_SECONDS: int = _S.get('subagent_recent_seconds', 900)
 
 # Window size (logical pixels)
-WINDOW_WIDTH: int = _S.get('window_width', 920)
-WINDOW_HEIGHT: int = _S.get('window_height', 680)
+WINDOW_WIDTH: int = _S.get('window_width', 1180)
+WINDOW_HEIGHT: int = _S.get('window_height', 760)
 
 # Language override (empty = auto-detect from system locale)
 LANGUAGE: str = _S.get('language', '')

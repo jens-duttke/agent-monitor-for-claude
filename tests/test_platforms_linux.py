@@ -37,32 +37,14 @@ class StorageDirTest(unittest.TestCase):
 
 @_LINUX_ONLY
 class WindowBackgroundColorTest(unittest.TestCase):
-    """The portal reports a colour scheme; anything else must read as dark."""
-
-    def _with_scheme(self, value: object):
-        return mock.patch.object(linux, '_read_color_scheme', return_value=value)
-
-    def test_light_preference(self) -> None:
-        with self._with_scheme(2):
-            self.assertEqual(linux.window_background_color(), '#faf9f5')
-
-    def test_dark_preference(self) -> None:
-        with self._with_scheme(1):
-            self.assertEqual(linux.window_background_color(), '#191918')
-
-    def test_no_preference_reads_as_dark(self) -> None:
-        with self._with_scheme(0):
-            self.assertEqual(linux.window_background_color(), '#191918')
-
-    def test_unreachable_portal_reads_as_dark(self) -> None:
-        with self._with_scheme(None):
-            self.assertEqual(linux.window_background_color(), '#191918')
+    def test_the_window_starts_in_the_content_colour(self) -> None:
+        self.assertEqual(linux.window_background_color(), '#262624')
 
 
 @_LINUX_ONLY
 class HexColorTest(unittest.TestCase):
     def test_accepts_both_spellings(self) -> None:
-        self.assertTrue(linux._is_hex_color('#191918'))
+        self.assertTrue(linux._is_hex_color('#262624'))
         self.assertTrue(linux._is_hex_color('191918'))
 
     def test_rejects_malformed(self) -> None:
@@ -75,20 +57,20 @@ class PaintWindowTest(unittest.TestCase):
     def test_reports_the_missing_capability_rather_than_pretending(self) -> None:
         # GTK has no per-class background brush to point anywhere; the window's
         # own CSS background is what apply_native_background sets instead.
-        self.assertFalse(linux.paint_window(1234, '#191918'))
+        self.assertFalse(linux.paint_window(1234, '#262624'))
 
 
 @_LINUX_ONLY
 class ApplyNativeBackgroundTest(unittest.TestCase):
     def test_none_native_is_a_no_op(self) -> None:
-        self.assertFalse(linux.apply_native_background(None, '#191918'))
+        self.assertFalse(linux.apply_native_background(None, '#262624'))
 
     def test_malformed_colour_is_a_no_op(self) -> None:
         self.assertFalse(linux.apply_native_background(object(), 'not-a-colour'))
 
     def test_without_pygobject_it_reports_false(self) -> None:
         with mock.patch.object(linux, '_import_gi', return_value=None):
-            self.assertFalse(linux.apply_native_background(object(), '#191918'))
+            self.assertFalse(linux.apply_native_background(object(), '#262624'))
 
 
 @_LINUX_ONLY
@@ -329,7 +311,7 @@ class ImportWithoutPyGObjectTest(unittest.TestCase):
             "sys.modules['gi'] = None\n"
             'from agent_monitor_for_claude.platforms import linux\n'
             'assert linux._import_gi() is None\n'
-            "assert linux.window_background_color() == '#191918'\n"
+            "assert linux.window_background_color() == '#262624'\n"
             "assert linux.copy_text('x') is False\n"
             'print("ok")\n'
         )

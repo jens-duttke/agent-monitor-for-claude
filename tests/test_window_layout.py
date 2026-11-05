@@ -1,4 +1,4 @@
-"""Tests for the compact-view window sizing and its bridge methods."""
+"""Tests for the tower window sizing, the taskbar badge and their bridge methods."""
 from __future__ import annotations
 
 import unittest
@@ -6,7 +6,7 @@ from unittest import mock
 
 from agent_monitor_for_claude import window_layout
 from agent_monitor_for_claude.app import _MonitorApi
-from agent_monitor_for_claude.window_layout import COMPACT_WIDTH, NORMAL_MIN_SIZE, enter_compact, leave_compact
+from agent_monitor_for_claude.window_layout import COMPACT_WIDTH, NORMAL_MIN_SIZE, attention_badge, enter_compact, leave_compact
 
 
 class _FakeWindow:
@@ -176,6 +176,52 @@ class SetOnTopBridgeTest(unittest.TestCase):
     def test_without_a_window_it_is_a_no_op(self) -> None:
         self.assertFalse(_MonitorApi().set_on_top(True))
         self.set_keep_on_top.assert_not_called()
+
+
+class AttentionBadgeTest(unittest.TestCase):
+    def test_no_session_shows_no_badge(self) -> None:
+        self.assertEqual(attention_badge(0), '')
+        self.assertEqual(attention_badge(-3), '')
+
+    def test_counts_up_to_nine_are_spelled_out(self) -> None:
+        self.assertEqual(attention_badge(1), '1')
+        self.assertEqual(attention_badge(9), '9')
+
+    def test_more_than_nine_reads_nine_plus(self) -> None:
+        self.assertEqual(attention_badge(10), '9+')
+        self.assertEqual(attention_badge(400), '9+')
+
+
+class SetAttentionBridgeTest(unittest.TestCase):
+    def setUp(self) -> None:
+        patcher = mock.patch.object(window_layout, 'set_taskbar_attention', return_value=True)
+        self.set_taskbar_attention = patcher.start()
+        self.addCleanup(patcher.stop)
+
+        self.window = _FakeWindow()
+        self.api = _MonitorApi()
+        self.api.attach_window(self.window)
+
+    def test_the_count_reaches_the_platform_layer_as_badge_text(self) -> None:
+        self.assertTrue(self.api.set_attention(4, True))
+        self.assertTrue(self.api.set_attention(0, False))
+
+        self.assertEqual(self.set_taskbar_attention.call_args_list,
+                         [mock.call(self.window.native, '4', True), mock.call(self.window.native, '', False)])
+
+    def test_flash_defaults_to_off(self) -> None:
+        self.api.set_attention(2)
+        self.set_taskbar_attention.assert_called_once_with(self.window.native, '2', False)
+
+    def test_anything_but_a_count_and_a_flag_is_refused(self) -> None:
+        for count, flash in ((True, False), ('4', False), (2.5, False), (-1, False), (3, 'yes'), (3, 1)):
+            with self.subTest(count=count, flash=flash):
+                self.assertFalse(self.api.set_attention(count, flash))
+        self.set_taskbar_attention.assert_not_called()
+
+    def test_without_a_window_it_is_a_no_op(self) -> None:
+        self.assertFalse(_MonitorApi().set_attention(1, True))
+        self.set_taskbar_attention.assert_not_called()
 
 
 if __name__ == '__main__':

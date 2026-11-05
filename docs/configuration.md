@@ -21,11 +21,9 @@ Invalid JSON or invalid values are reported in a dialog; invalid individual entr
 | `include_completed` | boolean | `false` | Show finished agents regardless of `ended_max_age`. |
 | `wsl` | boolean | `true` | Windows only. Discover and monitor Claude Code sessions running inside WSL distributions, alongside native Windows sessions. Set to `false` to turn this off entirely - no `wsl.exe` call and no `\\wsl.localhost` read ever happens. On Linux nothing here runs, whatever it is set to. |
 | `subagent_recent_seconds` | integer (>= 1) | `900` | How long (seconds) a subagent transcript is still counted as part of the current run - as running until it ends, then as recently finished. Older ones are ignored. |
-| `window_width` | integer (>= 320) | `920` | Initial window width in logical pixels. |
-| `window_height` | integer (>= 240) | `680` | Initial window height in logical pixels. |
+| `window_width` | integer (>= 320) | `1180` | Initial window width in logical pixels. The list and the details sit side by side from 800; below that, a click on a session shows its details in place of the list. |
+| `window_height` | integer (>= 240) | `760` | Initial window height in logical pixels. |
 | `language` | string | `""` | Force a language by locale code (see below). Empty means auto-detect from the system locale. |
-
-The light/dark appearance is not a settings-file option. Set it with the toggle in the window's header; it follows your system preference by default.
 
 ## Example
 

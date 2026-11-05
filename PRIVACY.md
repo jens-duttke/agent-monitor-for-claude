@@ -9,19 +9,19 @@ It runs on Windows and Linux. Where the two differ - which programs are run, wha
 window is raised - each is stated separately below rather than merged into a claim that would only be
 true on one of them.
 
-Last reviewed: 2026-11-04
+Last reviewed: 2026-11-05
 
 ## At a glance
 
 | Question | Answer |
 | --- | --- |
 | Does the application connect to the internet? | No. It has no HTTP client in any of its own modules, and opens no connection of any kind - its one use of a network socket binds a port on your own machine to check that the interface server can have it. It carries exactly one remote address - a link to Claude Code's public changelog - which it never requests itself; clicking it opens your normal browser. It can also link a pull request Claude Code itself recorded for a session, opened the same way and only on your click. See [Network Communication](#network-communication). The embedded Microsoft browser engine it renders in is a separate matter, stated there too. |
-| Does it run any other program? | On Windows, exactly one, and only to list which WSL distributions are currently running: `wsl.exe --list --running --quiet`, invoked by its absolute `System32` path so no same-named file elsewhere can ever be run in its place. Nothing is ever run *inside* a distribution. On Linux it runs no program at all. See [Programs it runs](#programs-it-runs). |
+| Does it run any other program? | Two. `git`, on both systems, only for the session you selected, to show which of its changes are not committed yet - read-only, with fixed arguments. And on Windows `wsl.exe --list --running --quiet`, to list which WSL distributions are currently running, invoked by its absolute `System32` path. Nothing is ever run *inside* a distribution. See [Programs it runs](#programs-it-runs). |
 | Does it read your credentials? | No. It never opens `.credentials.json` and never reads a token, key, or cookie. |
 | Does it send telemetry, analytics, or crash reports? | No. None, of any kind. |
 | Does it send your data anywhere? | No. It never transmits anything it reads, and the page it renders declares a Content-Security-Policy that forbids network requests outright, so the browser engine would refuse one even if the code asked. |
-| Does it read your conversations? | It scans transcript files for control metadata, and takes three short display fields out of them, plus one line of Claude Code's own error text. Two on-demand features read more: the content search, which matches your query against conversation text and shows short excerpts of what it found, and the background-task console. |
-| Does it display conversation text? | Three short fields: the session title, each subagent's task description, and a background task's label. Beyond those, only what a search you typed found: a matching session's row lists up to five short excerpts around the hits, each clipped to about 60 characters either side. One further line comes from Claude Code itself rather than from a conversation: the message of a turn that stopped on an API error, shown in that session's status tooltip. |
+| Does it read your conversations? | It scans transcript files for control metadata and takes a bounded set of display fields out of them: the title, what a session is running or waiting on (a command, a file path, a question with its answers, a plan to review), its last answer, its plan's step texts, and a failing hook's first error line. Two on-demand features read more: the content search, which matches your query against conversation text and shows short excerpts of what it found, and the background-task console. |
+| Does it display conversation text? | Yes, in bounded pieces: the session title, each subagent's task description, a background task's label, the call a session runs or waits on (cut to 400 characters, a plan to 4,000), the first 600 characters of its last answer, its plan's step texts, and the first line of a failing hook's error output. Beyond those, only what a search you typed found: up to five short excerpts around the hits, each clipped to about 60 characters either side. One further line comes from Claude Code itself: the message of a turn that stopped on an API error. All of it stays on your machine. |
 | Does it write to disk? | Only its own files. On Windows in three places: the browser profile that stores your interface preferences, a session deletion you explicitly confirm, and its own program bundle unpacked into your temp folder at startup. On Linux the profile and the deletion, plus a lock file in the session's runtime directory; there is no bundle to unpack, since the app runs from source there. |
 | Does it modify your Claude Code data? | Never. The only removal is the session deletion you confirm yourself. |
 
@@ -57,7 +57,7 @@ address does and does not mean:
 One more kind of address can appear in the window, though none is written in the code:
 
 - **Pull request links.** When Claude Code links a pull request to a session, it records the pull
-  request's web address in the transcript, and the row's pull-request badge links to the newest one.
+  request's web address in the transcript, and the session's details link to it.
   The application never requests it either: a click hands it to your normal browser, exactly like the
   changelog link. The address is shown as a link only in one plain shape - `https://`, a host name, and
   a path of letters, digits and `. _ ~ % + -` - with no query, fragment, quote or `user@` part. Anything
@@ -109,12 +109,32 @@ displayed.
 ## Programs it runs
 
 Everything described so far is about reading files and probing the process table - not running other
-software. **On Linux no external program is ever run**: WSL is a Windows feature, and the actions that
-open a folder or a link there go through the desktop's own interfaces rather than a command line (see
-[Actions performed on your behalf](#actions-performed-on-your-behalf)).
+software. Two external programs are run. Actions that open a folder or a link go through the desktop's
+own interfaces instead (see [Actions performed on your behalf](#actions-performed-on-your-behalf)).
 
-On Windows exactly one external program is ever run, and only when a WSL distribution might be
-involved:
+**`git`, on both systems.** When you select a session, its details show which files in its working
+directory are not committed yet, the lines they add and remove, how far the branch is ahead of or
+behind its upstream, and how many of the files the session itself edited are still uncommitted. To get
+that, the application runs three read-only git commands in the session's directory (or the worktree it
+switched into): `rev-parse --show-toplevel`, `status --porcelain=v1 --branch -z
+--untracked-files=normal`, and `diff --numstat HEAD`. Details:
+
+- It runs only for the selected session, again every five seconds while it stays selected, and never
+  on the regular refresh.
+- The executable is looked up on `PATH` only; a relative `PATH` entry and the current directory are
+  skipped, so a file named `git` planted in the application's working directory is never run.
+- The arguments are fixed. The only value from your data is the working directory, which must be an
+  existing directory and is passed as git's `-C` argument, never through a shell.
+- Nothing is written. `GIT_OPTIONAL_LOCKS=0` keeps `git status` from refreshing the index, and
+  `GIT_TERMINAL_PROMPT=0` keeps git from asking for anything. `-c safe.directory=*` applies to this one
+  call, so a repository owned by another user (a WSL distribution's, reached over
+  `\\wsl.localhost`) can still be read; your git configuration is not changed.
+- Each call has an eight-second timeout and runs without a window. If git is not installed, the
+  directory is not a repository, or a call fails, the block is simply not shown.
+- To say which uncommitted files the session edited, the paths of the session's own file-writing tool
+  calls (see below) are compared with git's list in memory.
+
+**`wsl.exe`, on Windows only**, and only when a WSL distribution might be involved:
 
 `wsl.exe --list --running --quiet` - Windows' own command, invoked by its absolute path
 (`%SystemRoot%\System32\wsl.exe`, so nothing planted next to the application or in its working
@@ -123,10 +143,9 @@ currently running right now. Always these three fixed arguments and nothing else
 nothing from your session data is ever placed on its command line. It runs in a hidden window with a
 five-second timeout; only its output - a list of distribution names - is read, and nothing else happens
 with it. This is enumeration only: no code is ever executed *inside* a WSL distribution, by this
-application or through it, and it is the only external program the application ever runs. This differs
-from the shell actions under [Actions performed on your behalf](#actions-performed-on-your-behalf) -
-those hand a path or a URI to Windows and let it decide what opens; this is the one place the
-application itself starts a process, waits for it, and reads what it printed.
+application or through it. This differs from the shell actions under [Actions performed on your
+behalf](#actions-performed-on-your-behalf) - those hand a path or a URI to Windows and let it decide
+what opens; here the application itself starts a process, waits for it, and reads what it printed.
 
 It runs rarely, not on every refresh. A dedicated pass over the process table - separate from the one
 [Processes and windows](#processes-and-windows) describes, and cached for five seconds - checks for a
@@ -210,7 +229,7 @@ only as a count. A few more control values refine the status label:
 - on Claude Desktop's turn-ending call, whether it is marked blocked and whether it asks you anything,
   as two yes/no values - the recap, the question and the suggested actions stay unread;
 - on a prompt, the one-word label of what sent it (you, a finished background task, another session) -
-  the message itself, and a sending session's name, stay unread.
+  the message itself stays unread.
 
 And a few more describe the session beside its status:
 
@@ -221,45 +240,61 @@ And a few more describe the session beside its status:
   timestamp, so a row can say when the cache lapses;
 - the dollar budget a session runs under, as two numbers;
 - whether a queued prompt was added or taken off the queue - the prompt itself stays unread;
-- in Claude Desktop's progress list, the status of each step (pending, in progress, completed) - the
-  step texts stay unread;
-- a hook that failed without blocking: its name and exit code - its output and command stay unread;
-- how many artifacts the session made - their titles and addresses stay unread;
+- in Claude Desktop's progress list, each step's text and status (pending, in progress, completed);
+- a hook that failed without blocking: its name, its exit code and the first line of its error output,
+  clipped to 200 characters - the rest of its output and its command stay unread;
+- the lines each edit added and removed, counted from the change Claude Code records for it (and a
+  subagent's own totals) - the changed text itself is not kept;
+- when each turn started and ended, so the details can show when the session worked and when it waited;
+- the messages a session exchanged with other sessions or its subagents: the recipient a message was
+  sent to, a received message's sender id and name, and whether it was a subagent handing its result
+  back - the message text stays unread;
+- the artifacts the session published - each one's title and `claude.ai` address, so its details can link
+  to them;
 - a linked pull request's repository, number, and web address (see [Network
   Communication](#network-communication));
 - how many times the context was compacted;
-- the name of the skill a reply ran under (`review`, `next:review-fix`), so the cost tooltip can say
+- the name of the skill a reply ran under (`review`, `next:review-fix`), so the cost breakdown can say
   what each skill cost;
 - how many searches a web search made - the query and its results stay unread.
 
 Message text, thinking blocks, tool inputs, and tool results are not taken, with these deliberate
-exceptions - five that are displayed to you, and three that are reduced to a flag, an id, or a count
+exceptions - seven that are displayed to you, and three that are reduced to a flag, an id, or a count
 and never shown:
 
 - **The session title** (displayed). In order of preference: a title you set yourself, the title
   Claude Code generated for its own session list, or - if neither exists - your **first prompt** in
   that session, stripped of editor wrapper blocks and truncated to 80 characters. This is
-  conversation text, it is the row label you see in the window, and it is exactly what Claude Code
+  conversation text, it is the label you see in the list, and it is exactly what Claude Code
   shows you in its own session list. Only prompts are considered, and only until one yields
   displayable text: an entry that holds tool output, or nothing but wrapper blocks, is skipped in
   favour of the next one.
 - **Subagent task descriptions** (displayed). The one-line description of what each running subagent
-  was asked to do, so the subagent badge can say what is in flight. Read from each subagent's own
+  was asked to do, so the session's details can say what is in flight. Read from each subagent's own
   `agent-<id>.meta.json` file, not from its messages.
 - **Background-task labels** (displayed). The `description` (or, failing that, the command line) of a
   background shell command, so a task row can be named instead of showing an opaque id. This is a
   tool input.
 - **An API error's own message line** (displayed). When the last turn stopped on an API error, the
-  **first line** of that entry's message, clipped to 160 characters, shown as the second line of the
-  status tooltip when you hover the status dot. The error code alone cannot say which limit was hit or
+  **first line** of that entry's message, clipped to 160 characters, shown under the status in the
+  session's details and in the status tooltip. The error code alone cannot say which limit was hit or
   when it resets; that wording can. This text is generated by Claude Code itself - not by you and not
   by the model - and it is passed through verbatim, never parsed for meaning. Only the first line of
   the first text block is read, and only for an entry Claude Code flagged as an API error: an ordinary
   turn's text stays unread, which `tests/test_transcript_privacy.py` asserts.
 - **A retried request's summary line** (displayed). While Claude Code retries a failed request, the
   **first line** of its own short summary of the failure ("Connection dropped (ECONNRESET)"), clipped
-  to 160 characters, shown in the same tooltip. Like the error line above, it is generated by Claude
+  to 160 characters, shown in the same places. Like the error line above, it is generated by Claude
   Code itself; the raw error message beside it is not read.
+- **What a session runs or waits on** (displayed). The input of the newest tool call that has no result
+  yet: for a shell command its command line and description, for a file tool its path, for a question
+  dialog each question and its answer labels, for a plan to review the plan text, for a subagent its type
+  and task description, for any other tool its first text value. A command, path or question is clipped
+  to 400 characters, a plan to 4,000. It is shown in the session's list entry and details, so you can see
+  what a permission prompt asks for or what is running, and dropped as soon as the call has a result.
+- **The last answer** (displayed). The text of the newest reply that contains any, clipped to 600
+  characters. A finished session's list entry shows its first line, and its details show it in full.
+  Thinking blocks and tool calls in that reply are not read.
 - **The interrupt marker** (not displayed). To tell "you stopped this turn" apart from "you sent a
   new prompt", a user entry's text is prefix-matched against Claude Code's fixed marker
   `[Request interrupted by user`. Only the yes/no result is kept; the text itself is neither returned
@@ -269,8 +304,9 @@ and never shown:
   "Output is being written to" line. Only the id mapping is kept.
 - **The files a tool wrote to** (not displayed). To say how many files a session edited, the file path
   of each file-writing tool call (`Edit`, `MultiEdit`, `Write`, `NotebookEdit`) is read. This is a tool
-  input. Only the number of distinct paths is reported; the paths are not shown, and what was written
-  stays unread.
+  input. The number of distinct paths is reported, and for the selected session the paths are compared
+  with git's list of uncommitted files (see [Programs it runs](#programs-it-runs)); the list of paths
+  itself is not shown, and what was written stays unread.
 
 Nothing from these files is transmitted anywhere, because there is nowhere for it to go.
 
@@ -279,7 +315,9 @@ Nothing from these files is transmitted anywhere, because there is nowhere for i
 `~/.claude/projects/<project>/<session>/subagents/**` - to count how many subagents are running and
 how many just finished. Per subagent this reads the last 64 KB of its `agent-*.jsonl` transcript and
 parses only the final entry's control fields (entry type, stop reason, content-block type), plus that
-subagent's `agent-<id>.meta.json` for its agent type and the task description named above. For a
+subagent's `agent-<id>.meta.json` for its agent type, the task description named above, and the id of
+the agent that started it, so the connection graph can draw who started whom. For that graph the
+`meta.json` of a session's newest 40 subagents of the last day is read, and kept in memory. For a
 background workflow, the run's `journal.jsonl` is scanned line by line, and only each event's type and
 agent id are taken - which gives the run's agent count and whether it is still active.
 
@@ -297,12 +335,12 @@ feature that matches conversation text against something you supplied, so it is 
 - It runs only when there is a query you typed. While a search is active it also re-runs by itself
   when your session data changes, so a match that has only just appeared shows up without you
   retyping. With the search box empty, no transcript is ever opened for it.
-- It reads only the transcripts of the sessions currently shown by your filters. A session
-  hidden by a filter is not opened - the single exception being the widening in the next point, which
+- It reads only the transcripts of the sessions in the list sections you have open. A session in a
+  closed section is not opened - the single exception being the widening in the next point, which
   only a click of yours can start. On a self-triggered refresh the scope is narrower still: only live
   sessions that have not already matched.
 - That scope widens only when you click to widen it. When a search finds nothing, the empty result
-  offers one button - first to include the sessions your filters hide, then to reach further back in
+  offers one button - first to include the sessions of the closed sections, then to reach further back in
   time - and each click adds exactly that one step for exactly that one query. Nothing widens on its
   own. It narrows back the moment you edit the search text, or immediately when you use the "Reset"
   control on the line above the results.
@@ -323,8 +361,13 @@ feature that matches conversation text against something you supplied, so it is 
 ### Background-task output (on demand)
 
 Expanding a background task's row shows that task's live console output. This surfaces **process
-output** - what a build, test run, or script printed - and never conversation content. It is read only
-while you have that row expanded, never in the background, and only the tail of the file.
+output** - what a build, test run, or script printed - and never conversation content. The full tail
+is read only while you have that row expanded, never in the background.
+
+While a session with background processes is selected, the task list additionally reads the last
+16 KB of each task's output to recognize a test runner's summary (pytest, unittest, Jest, Vitest,
+Node's test runner, cargo, go test), so the row can say how many tests passed and failed without
+being expanded. Only those counts leave that read; the file is parsed again only once it changed.
 
 The file read is the output file Claude Code writes for the task, in the per-session tree it keeps
 under the system temp directory (`<temp>\claude\...` on Windows, `<temp>/claude-<uid>/...` on Linux,
@@ -346,9 +389,9 @@ where only each process's own `stat` file is opened. Either snapshot is machine-
 yields the process id, parent process id, and name of every running process - and the application uses
 it to walk the ancestry and descendants of the session processes. Nothing else about a process is
 read: no command line, no environment, no open handles, no memory contents. For the sessions on screen
-it additionally samples CPU, memory, and start time; when you open the process panel for a **Windows**
+it additionally samples CPU, memory, and start time; when you select a **Windows**
 session whose tools run through the `wsl.exe`/`wslhost.exe` relay, the shared WSL virtual machine's CPU
-and memory are sampled too, which the panel labels as machine-wide because that figure is not specific to
+and memory are sampled too, which its details label as machine-wide because that figure is not specific to
 your session. (This is not the same as a session running natively inside a WSL distribution - see
 [Sessions running inside WSL](#sessions-running-inside-wsl) below.)
 
@@ -361,9 +404,8 @@ application, and nothing is done to work around that.
 
 ### Configuration and appearance
 
-Its own optional settings file (`agent-monitor-settings.json`, read-only), its bundled translation and
-price files, and one system preference telling it whether you are in light or dark mode: a registry
-value under `HKEY_CURRENT_USER` on Windows, the desktop portal's `color-scheme` setting on Linux.
+Its own optional settings file (`agent-monitor-settings.json`, read-only) and its bundled translation
+and price files. The interface has one, dark appearance, so no system theme preference is read.
 
 Started with `--verbose`, it prints environment diagnostics to the console. On Windows this reads the
 registry entries recording the installed WebView2 runtime (under both `HKEY_CURRENT_USER` and
@@ -375,14 +417,14 @@ yourself.
 
 ### The history listing (on demand)
 
-Enabling the *Older* filter lists finished sessions by scanning the `projects/` folder. Each past
+Opening the *Older* section lists finished sessions by scanning the `projects/` folder. Each past
 transcript, and each of its subagents' transcripts, is read once in full through the same scan as a
 live session. Taken from it are the title fields, the first prompt (as the fallback title described
 above), the session's working directory, which is needed to group it under its project, and the
 usage, skill and web-search numbers its cost is priced from. The git branch comes from the last
-entries, so a past session's cost can be added to its ticket.
+entries.
 
-The listing reaches back only as far as the window selected under that filter (24 hours by default).
+The listing reaches back only as far as the window selected in that section (24 hours by default).
 A transcript whose file has not been written within that window is skipped on its timestamp alone and
 never opened, so with the default window the scan reads only the handful of sessions from the last day
 - not every session you have ever run.
@@ -407,14 +449,17 @@ distribution's own Linux process table, exposed read-only over the same mount. E
 for the Windows process-table scan described under [Processes and windows](#processes-and-windows) -
 process names and parent-process links, so a session's liveness and its running child processes can be
 determined, plus each process's recorded start time, compared the same way `procStart` is on Windows.
+Only the session processes and their descendants are read: the walk starts at the session pids and
+follows each thread's `task/<tid>/children` list, so the distribution's other processes are never
+opened. (A kernel that keeps no such lists gets the full table instead.)
 
-Opening the process panel for a session running inside WSL reads that same mount further, on demand,
-exactly as the panel does for a Windows session: the memory size and accumulated CPU time of each of the
-session's own descendant processes, so the panel shows live CPU, memory, and uptime for a WSL session too.
+Selecting a session running inside WSL that has background processes reads that same mount further,
+on demand, exactly as for a Windows session: the memory size and accumulated CPU time of each of the
+session's own descendant processes, so its details show live CPU, memory, and uptime for a WSL session too.
 Nothing beyond those figures is ever taken from it: no command line, no environment variable, no open file
 handle, and no actual memory content - only the byte count and CPU-time figures the kernel reports for
 each process. Because this is the session's own Linux process tree rather than a Windows-side relay, the
-panel never adds the shared `vmmem*` row described above - these rows already are the session's real work,
+table never adds the shared `vmmem*` row described above - these rows already are the session's real work,
 not a stand-in for work happening elsewhere.
 
 The background-task output console reads the same way for a WSL session, from the distribution's own
@@ -436,12 +481,12 @@ second window from starting - and no bundle to unpack, since the application run
 1. **Its interface-preference profile**, in `%LOCALAPPDATA%\AgentMonitorForClaude` on Windows and
    `~/.local/share/agent-monitor-for-claude` on Linux (or below `$XDG_DATA_HOME` when you have set
    it). This is the browser profile of the engine the window renders in - WebView2 or WebKitGTK - and
-   the application uses it for one purpose: so the window can remember your choices in `localStorage`. The current version stores ten values there - theme, which filters
-   are on and how far back the *Older* filter reaches, sort field and direction, whether priority
-   ordering is on, your three search toggles, whether the compact view and keep-on-top are on, and
-   which project panels you collapsed. The collapsed-panel entry stores project directory paths,
-   since that is what identifies a panel; the others are short flags. (An older version's leftover key
-   may still sit there unused.)
+   the application uses it for one purpose: so the window can remember your choices in `localStorage`. The current version stores six values there - which list
+   sections are open, how far back *Older* reaches, how the list is grouped, your three search
+   toggles, whether the compact view is on, and which project groups you collapsed. The
+   collapsed-group entry stores project directory paths, since that is what identifies
+   a group; the others are short flags. (An older version's leftover keys - the theme, the sort order,
+   keep-on-top - may still sit there unused.)
 
    Be aware that the rest of that folder is the engine's own, and it looks like what it is - a browser
    profile. A Chromium profile keeps HTTP, code, GPU, and shader caches, its own logs, and
@@ -452,7 +497,7 @@ second window from starting - and no bundle to unpack, since the application run
    it is written by the engine, not by this application, and none of it contains your session data.
    Deleting the folder is safe: the engine rebuilds it and your interface preferences start from their
    defaults.
-2. **A session deletion you ask for.** A past session's row menu offers to permanently delete that
+2. **A session deletion you ask for.** A past session's details and menu offer to permanently delete that
    session's transcript file and its subagent folder. It happens only on your click, after an
    in-application confirmation, and it is guarded three ways: the session id must be a well-formed
    UUID, both target paths must resolve inside the `projects/` folder, and the session registry is
@@ -507,12 +552,12 @@ something you did:
   and this is the only URI the application itself launches. The launch goes through the system's own
   "open this" entry point - the Windows shell, or GIO's default-handler call on Linux - so the desktop,
   not this application, decides what runs.
-- **Opening the changelog.** Clicking a version number in the CLI-version column follows an ordinary
+- **Opening the changelog.** Clicking the Claude Code version in a session's details follows an ordinary
   link, which the window host passes to your default browser (see [Network
   Communication](#network-communication)). The link is only built when the version reads as a plain
   release number - three groups of digits separated by dots - so the address can never hold anything
   but digits and dots, whatever a transcript claims its version is.
-- **Opening a pull request.** Clicking a row's pull-request badge follows an ordinary link to the
+- **Opening a pull request.** Clicking a pull request in a session's details follows an ordinary link to the
   address Claude Code recorded, passed to your default browser the same way - and only when that
   address has the plain shape described under [Network Communication](#network-communication).
 - **Opening a folder, or showing a file in one.** Opening a session's project folder or its scratchpad
@@ -525,9 +570,15 @@ something you did:
   `org.freedesktop.FileManager1` interface, which is a message to the file manager you already run.
   Either way the application hands over a path and lets the desktop decide what opens, and starts no
   program of its own.
-- **Copying a session id.** The row menu's copy action places the session id on your clipboard. It is
+- **Copying a session id.** The copy action - a button in the details, the session menu, or Ctrl+C on
+  the selected session - places the session id on your clipboard. It is
   the only thing ever copied there, and only when you ask for it. Like any clipboard write it replaces
   what was there before.
+- **Marking the taskbar button.** On Windows the window's own taskbar button carries a small badge
+  with how many sessions are waiting for you, and flashes once when one newly starts to wait while the
+  window is in the background - two standard shell calls on the application's own button. On Linux,
+  where there is no such badge, the window instead asks the window manager for attention (the urgency
+  hint). Neither touches another window, a file, or the registry, and the count is all they carry.
 - **Replacing an already-running instance.** Only one window may run at a time. On Windows a second
   launch finds the first through a named mutex, and a named shared-memory block - holding this
   application's own process id and version, nothing else - identifies it; on Linux the same two facts
@@ -545,7 +596,7 @@ a hand-maintained local `pricing.json` in the installation, never fetched from a
 It has two direct Python dependencies, `pywebview` and `psutil`. Through pywebview it also uses
 `bottle` (the loopback file server described above) and, on Windows, `pythonnet`/`clr_loader` (the .NET
 bridge to the window host, which the application calls directly to keep the window background in step
-with your theme and to let the compact view make the window narrower). On Linux the same role is filled by PyGObject, the GTK bindings your distribution
+with the page and to let the compact view make the window narrower). On Linux the same role is filled by PyGObject, the GTK bindings your distribution
 ships. Rendering is done by the browser engine your system provides: Microsoft Edge WebView2 on
 Windows, WebKitGTK on Linux.
 
@@ -560,7 +611,9 @@ These guarantees are meant to be checked, not taken on faith. In a clone of the 
 grep -rnE "^\s*(import|from)\s+(requests|urllib|http|socket|ssl)\b" agent_monitor_for_claude/
 
 # Every remote address in the application code - interface files included, not
-# just Python. Exactly one hit, the changelog link described above:
+# just Python. Two hits: the changelog link described above, and the check that
+# an artifact address recorded in a transcript starts with https://
+#   transcript.py: if not isinstance(url, str) or not url.startswith('https://') ...
 #   ui/logic.js: const CHANGELOG_URL = 'https://github.com/anthropics/claude-code/...'
 grep -rn "https\?://" agent_monitor_for_claude/ --include=*.py --include=*.js --include=*.html --include=*.css
 
@@ -585,8 +638,10 @@ of them is accounted for here, so that nothing looks like a hidden exception:
   to find out whether the interface server can have it and closes it again. The only address it names
   is `127.0.0.1`, and all it does with the socket is bind it and read back which port it got - there
   is no connect, and nothing is ever sent or received.
-- The remote-address search finds exactly one hit, the changelog link named in the comment above it.
-- The credential search matches two docstrings, both stating that no credentials are read.
+- The remote-address search finds two hits: the changelog link, and a scheme check in
+  [transcript.py](agent_monitor_for_claude/transcript.py) that drops any artifact address not starting
+  with `https://`. The second names no destination; it only filters addresses Claude Code recorded.
+- The credential search matches one docstring, stating that no credentials are read.
 - The write search matches the two deletion calls in
   [session_delete.py](agent_monitor_for_claude/session_delete.py) - the confirmed session deletion
   described above - two `open('CONOUT$', 'w')` calls in
@@ -619,26 +674,31 @@ into the page is a fixed function call handing over a search's results, whose on
 is a `json.dumps` payload of those results - the matching ids, their hit counts, and the bounded
 excerpts described above. The call itself is a constant; nothing is ever assembled into code.
 
-One more guarantee is worth checking directly: that the one external program this application ever runs
-on Windows is invoked from exactly one place, and that the module owning it never spawns a process any
-other way. (On Linux there is nothing to check here - no program is run at all.)
+One more guarantee is worth checking directly: that each external program is started from exactly one
+place, and that nothing else in the application starts a process.
 
 ```sh
+# Every process-spawning call in the application. Exactly two hits:
+#   git_status.py: result = subprocess.run(
+#   wsl.py:        result = subprocess.run(
+grep -rnE "subprocess\.[A-Za-z_]*\(|os\.system|os\.popen|Popen\(|ShellExecute|CreateProcess|os\.exec" agent_monitor_for_claude/ --include=*.py
+
 # Where wsl.exe is actually invoked, across the whole application
 grep -rn "_WSL_EXE" agent_monitor_for_claude/ --include=*.py
-
-# Proof that wsl.py itself never spawns a process any other way
-grep -nE "subprocess\.[A-Za-z_]*\(|os\.system|os\.popen|Popen\(|ShellExecute|CreateProcess|os\.exec" agent_monitor_for_claude/wsl.py
 ```
 
-The first command prints exactly two lines, both in `wsl.py`: line 63, where the absolute path is built
+The git call in [git_status.py](agent_monitor_for_claude/git_status.py) builds its argument list from
+the executable found on `PATH`, the fixed options described under [Programs it runs](#programs-it-runs),
+the working directory and one of the three fixed subcommands - and runs it without a shell.
+
+The `_WSL_EXE` search prints exactly two lines, both in `wsl.py`: line 63, where the absolute path is built
 (`_WSL_EXE = str(Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32' / 'wsl.exe')`), and
 line 189, the `[_WSL_EXE, '--list', '--running', '--quiet']` argument list - the single place in the
 entire codebase where that command line is used. The absolute path matters: a relative `wsl.exe` would
 resolve through the Win32 process-creation search order, which checks the application's own directory
 and the current directory before System32, so a same-named file planted next to the executable could
-otherwise be run in its place. The second command prints exactly one line, `wsl.py:188`,
-`result = subprocess.run(` - the only process-spawning call anywhere in the file. (`process_probe.py`
+otherwise be run in its place. The spawning call it feeds is the `wsl.py:188` hit of the first search.
+(`process_probe.py`
 separately holds the string `'wsl.exe'` too, but only as a name to *recognize* an already-running
 Windows process as a WSL relay child, never to invoke anything - a broader
 `grep -rn "wsl.exe" agent_monitor_for_claude/ --include=*.py` finds that mention alongside several
@@ -660,9 +720,12 @@ so a green run means everything applicable to your system passed.
   from the first prompt and that a later message's text never appears in that data, and that an API
   error's message is read no further than its first line - a second line, a further block, and every
   ordinary turn stay unread. The same goes for a retried request's summary, for the calls and
-  prompts the status label reads flags from, and for the session details: a plan's step texts, a
-  failing hook's output and command, a queued prompt, an artifact's title, and the path and text of a
-  file a tool wrote never appear either.
+  prompts the status label reads flags from, and for the session details: a failing hook's command, a
+  queued prompt, and the path and text of a file a tool wrote never appear either. The display fields
+  listed above - the current call, the last answer, the plan's steps and the messages - are exempt by
+  name, so a marker can reach the interface only through them.
+- [tests/test_git_status.py](tests/test_git_status.py) asserts that git is never looked up through a
+  relative `PATH` entry, and reads a real repository to check the reported files and counts.
 - [tests/test_search.py](tests/test_search.py) asserts the search boundary: that a session reports at
   most five excerpts however many hits it holds, that text beyond the context window either side of a
   hit is never reported, that a greedy regular expression still cannot return more than its clipped
@@ -685,12 +748,12 @@ so a green run means everything applicable to your system passed.
   from running on every poll; `test_stopped_distro_never_globbed` asserts the never-wake guarantee
   directly - a distribution absent from the running list is never looked at, even when its own `.claude`
   directory already exists on disk.
-- [tests/test_wsl.py](tests/test_wsl.py)'s `WslProcessStatsTests` guards the process panel's on-demand
+- [tests/test_wsl.py](tests/test_wsl.py)'s `WslProcessStatsTests` guards the process table's on-demand
   procfs reads: `test_first_call_yields_no_cpu_with_correct_rss_and_uptime` asserts memory and uptime come
   straight from the same scan while a first CPU reading has nothing to diff against yet;
   `test_recycled_child_starttime_resets_cpu_to_none` asserts a recycled pid resets the CPU baseline instead
   of diffing against an unrelated process's ticks; `test_prune_is_scoped_to_this_origin` asserts one
-  distribution's cached CPU baselines are never evicted by another distribution's panel refresh.
+  distribution's cached CPU baselines are never evicted by another distribution's refresh.
 - [tests/test_search.py](tests/test_search.py)'s `SearchOriginTest` extends the confinement guard to WSL:
   `test_wsl_confinement_refuses_escaping_cwd` asserts a crafted working directory cannot escape a WSL
   root's own `projects/` tree, and `test_unknown_origin_scans_nothing` asserts an origin naming no

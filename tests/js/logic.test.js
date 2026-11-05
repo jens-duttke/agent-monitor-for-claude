@@ -875,10 +875,10 @@ test('filterHistoryByAge: narrows to the window, keeps records it cannot date', 
     assert.deepEqual(logic.filterHistoryByAge(undefined, null), []);
 });
 
-test('sessionMatchesSearch: a not-yet-run search (null matches) shows everything', () => {
+test('sessionMatchesSearch: only a result that arrived counts, a pending search finds nothing yet', () => {
     const set = new Set(['a']);
     assert.equal(logic.sessionMatchesSearch('a', false, null), true);       // no query
-    assert.equal(logic.sessionMatchesSearch('a', true, null), true);        // query pending in debounce -> show all
+    assert.equal(logic.sessionMatchesSearch('a', true, null), false);       // query pending in debounce -> nothing found yet
     assert.equal(logic.sessionMatchesSearch('a', true, set), true);         // matched
     assert.equal(logic.sessionMatchesSearch('z', true, set), false);        // not matched
     assert.equal(logic.sessionMatchesSearch('z', true, new Set()), false);  // ran, matched nothing -> hide
@@ -1206,58 +1206,6 @@ test('defaultFilterKeys: excludes off-by-default chips (the history scan opt-out
     assert.deepEqual(logic.defaultFilterKeys(defs), ['needs', 'idle']);
     assert.equal(logic.defaultFilterKeys(defs).includes('history'), false);
     assert.deepEqual(logic.defaultFilterKeys(), []);
-});
-
-test('sortDirectionOptions: names each direction in the field\'s own terms, asc first', () => {
-    const labels = { sort_dir_newest: 'Newest first', sort_dir_oldest: 'Oldest first', sort_dir_a_z: 'A to Z', sort_dir_z_a: 'Z to A' };
-
-    assert.deepEqual(logic.sortDirectionOptions('activity', labels), [
-        { dir: 'asc', label: 'Newest first' },
-        { dir: 'desc', label: 'Oldest first' },
-    ]);
-    assert.deepEqual(logic.sortDirectionOptions('host', labels).map((option) => option.label), ['A to Z', 'Z to A']);
-    // An unknown field reads like the activity sort it falls back to; an
-    // inherited object key is not a field (the map is a Map for that reason).
-    assert.equal(logic.sortDirectionOptions('bogus', labels)[0].label, 'Newest first');
-    assert.equal(logic.sortDirectionOptions('constructor', labels)[0].label, 'Newest first');
-    // A missing label falls back to its key rather than to an empty entry.
-    assert.equal(logic.sortDirectionOptions('usage', {})[1].label, 'sort_dir_highest');
-});
-
-test('sortSummary: priority first when on, then the field, then the direction', () => {
-    const labels = { priority_order: 'Priority order', sort_dir_newest: 'Newest first', sort_dir_oldest: 'Oldest first' };
-
-    assert.equal(logic.sortSummary('activity', 'Last activity', 'asc', true, labels), 'Priority order, Last activity, Newest first');
-    assert.equal(logic.sortSummary('activity', 'Last activity', 'desc', false, labels), 'Last activity, Oldest first');
-    // An unknown direction reads as the ascending default the sort applies.
-    assert.equal(logic.sortSummary('activity', 'Last activity', 'sideways', false, labels), 'Last activity, Newest first');
-});
-
-test('filterSummary: names the active filters in definition order, comma-separated', () => {
-    const defs = [
-        { key: 'needs', label: 'filter_needs' },
-        { key: 'idle', label: 'filter_idle' },
-        { key: 'quiet', label: 'filter_quiet' },
-        { key: 'history', label: 'filter_history', offByDefault: true },
-    ];
-    const labels = {
-        filter_needs: 'Needs you', filter_idle: 'Idle', filter_quiet: 'Quiet', filter_history: 'Older',
-        filter_all: 'All current', filter_none: 'Nothing',
-    };
-
-    // Order follows the definitions, not the order the keys were switched on.
-    assert.equal(logic.filterSummary(defs, ['quiet', 'needs'], labels, '24 h'), 'Needs you, Quiet');
-    // Every on-by-default filter collapses to one word ...
-    assert.equal(logic.filterSummary(defs, new Set(['needs', 'idle', 'quiet']), labels, '24 h'), 'All current');
-    // ... while the opt-in one stays named, with its window.
-    assert.equal(logic.filterSummary(defs, ['needs', 'idle', 'quiet', 'history'], labels, '24 h'), 'All current, Older (24 h)');
-    assert.equal(logic.filterSummary(defs, ['history'], labels, '7 days'), 'Older (7 days)');
-    assert.equal(logic.filterSummary(defs, ['history'], labels, ''), 'Older');
-    assert.equal(logic.filterSummary(defs, [], labels, '24 h'), 'Nothing');
-    // A key without a definition is not a filter and is never named.
-    assert.equal(logic.filterSummary(defs, ['bogus'], labels, '24 h'), 'Nothing');
-    // A missing label falls back to the key rather than to an empty entry.
-    assert.equal(logic.filterSummary(defs, ['needs'], {}, ''), 'needs');
 });
 
 test('settleCall: a synchronous throw runs onError, not the caller', () => {
@@ -1882,26 +1830,6 @@ test('entrypointLabel names the known origins and falls back to the token', () =
     assert.equal(logic.entrypointLabel(undefined), null);
 });
 
-test('cliColumnRelevant only when the version says something', () => {
-    // Every session on one version: the column would repeat that value per row.
-    assert.equal(logic.cliColumnRelevant([
-        { cli_version: '2.1.228' }, { cli_version: '2.1.228' },
-    ]), false);
-    // Two versions side by side - one session is running an outdated CLI.
-    assert.equal(logic.cliColumnRelevant([
-        { cli_version: '2.1.228' }, { cli_version: '2.1.223' },
-    ]), true);
-    // One session that outlived an update, everything else current: its "+N" is
-    // the information, so the column is shown even though the current versions match.
-    assert.equal(logic.cliColumnRelevant([
-        { cli_version: '2.1.228' }, { cli_version: '2.1.228', cli_switched: true },
-    ]), true);
-    // Nothing to say, and nothing to crash on either.
-    assert.equal(logic.cliColumnRelevant([{ cli_version: '' }, null, {}]), false);
-    assert.equal(logic.cliColumnRelevant([]), false);
-    assert.equal(logic.cliColumnRelevant(null), false);
-});
-
 test('parseVersion and compareVersions order releases numerically', () => {
     assert.deepEqual(logic.parseVersion('2.1.318'), [2, 1, 318]);
     for (const value of [null, undefined, '', '2', '2.1.318-beta', 'v2.1.318', '2..1', 2.1, ['2.1.318']]) {
@@ -2002,11 +1930,6 @@ test('grouping helpers', () => {
     assert.equal(logic.groupKey('d:\\WebDev\\proj'), logic.groupKey('D:\\WebDev\\proj'));
     assert.equal(logic.displayCwd('d:\\WebDev\\proj'), 'D:\\WebDev\\proj');
     assert.equal(logic.projectName('D:\\WebDev\\oku3d-app'), 'oku3d-app');
-});
-
-test('modelRank orders by capability, unknown last', () => {
-    assert.ok(logic.modelRank('Haiku 4.5') < logic.modelRank('Opus 4.8'));
-    assert.equal(logic.modelRank(null), logic.MODEL_RANK.length);
 });
 
 test('STATUS_ORDER: needs -> working -> background -> errored -> idle -> interrupted -> quiet', () => {
@@ -2479,14 +2402,14 @@ test('budget: used and total, only with a positive total', () => {
 
 test('hook errors: malformed entries are dropped, an unknown exit code stays unknown', () => {
     assert.deepEqual(logic.hookErrorsOf({ hook_errors: [
-        { hook: 'PostToolUse:Bash', exit_code: 7, count: 3 },
-        { hook: 'Stop', exit_code: 'x', count: 1 },
+        { hook: 'PostToolUse:Bash', exit_code: 7, count: 3, message: 'lint failed' },
+        { hook: 'Stop', exit_code: 'x', count: 1, message: 7 },
         { hook: '', exit_code: 1, count: 1 },
         { hook: 'Zero', exit_code: 1, count: 0 },
         null,
     ] }), [
-        { hook: 'PostToolUse:Bash', exit_code: 7, count: 3 },
-        { hook: 'Stop', exit_code: null, count: 1 },
+        { hook: 'PostToolUse:Bash', exit_code: 7, count: 3, message: 'lint failed' },
+        { hook: 'Stop', exit_code: null, count: 1, message: '' },
     ]);
     assert.deepEqual(logic.hookErrorsOf({ hook_errors: 'nope' }), []);
 });
@@ -2626,16 +2549,6 @@ test('build session: the cache line does not wait for a pending scan', () => {
     assert.equal(session.cost_tip, 'Expired: 400k again ($4)');
 });
 
-test('session info tip: the full title, then the details without a column', () => {
-    const session = logic.buildSession(raw({
-        title: 'A long title', git_branch: 'main', context_tokens: 450000, context_window: 1000000,
-        compactions: 2, files_edited: 5, artifact_count: 0,
-    }), DETAIL_LABELS, {});
-    assert.equal(session.info_tip, [
-        'A long title', 'Git branch: main', 'Context: 450k of 1.0M tokens (45%)', 'Context compactions: 2', 'Files edited: 5',
-    ].join('\n'));
-});
-
 test('pull request addresses: only a plain https address may reach an href', () => {
     assert.equal(logic.pullRequestUrl('https://gitlab.example.com/group/repo/-/merge_requests/217'),
         'https://gitlab.example.com/group/repo/-/merge_requests/217');
@@ -2666,7 +2579,7 @@ test('pull requests: a hostile address is kept as a listing without a link', () 
     ] }), [{ repository: 'group/repo', number: 3, url: null }]);
 });
 
-/* --- cost parts and tickets --- */
+/* --- cost parts --- */
 
 const COST_LABELS = {
     cost_main: 'Main: {cost}',
@@ -2674,9 +2587,6 @@ const COST_LABELS = {
     cost_agent_unknown: 'other',
     cost_skills: 'Skills:',
     cost_web_search: 'Searches: {count} · {cost}',
-    ticket_cost: '{ticket}: {cost} · sessions: {count}',
-    ticket_scope_live: 'live only',
-    ticket_scope_history: 'with history',
 };
 
 // One million output tokens on opus-4-8 cost $25.
@@ -2754,39 +2664,399 @@ test('costTipLines: an on-disk name like __proto__ stays a name, never a prototy
     assert.equal({}.output_tokens, undefined);
 });
 
-test('ticketKey: finds a tracker key standing on its own in the branch', () => {
-    assert.equal(logic.ticketKey('feature/PNE-10617/JDUT/Measure-compare'), 'PNE-10617');
-    assert.equal(logic.ticketKey('PNE-1-fix'), 'PNE-1');
-    assert.equal(logic.ticketKey('fix/HEL-214-hot-reload-race'), 'HEL-214');
-    for (const branch of ['main', 'development', 'claude/magical-burnell-23ae0a', 'feature/pne-12', 'XPNE-0', 'v2-123', null, 42]) {
-        assert.equal(logic.ticketKey(branch), null, String(branch));
+/* --- list sections, signals, search over the list, taskbar attention --- */
+
+const ALL_FILTER_KEYS = ['needs', 'errored', 'interrupted', 'new', 'idle', 'working', 'background', 'quiet', 'history'];
+
+test('list sections cover every filter bucket exactly once', () => {
+    const buckets = logic.LIST_SECTIONS.flatMap((section) => section.buckets);
+    assert.deepEqual([...buckets].sort(), [...ALL_FILTER_KEYS].sort());
+    assert.equal(new Set(buckets).size, buckets.length);
+    assert.deepEqual(logic.LIST_SECTIONS.map((section) => section.key), ['needs', 'stopped', 'running', 'recent', 'older']);
+});
+
+test('sectionOf: a session lands in the section of its status, a past one in "older"', () => {
+    assert.equal(logic.sectionOf({ status: 'awaiting_permission' }), 'needs');
+    assert.equal(logic.sectionOf({ status: 'errored' }), 'stopped');
+    assert.equal(logic.sectionOf({ status: 'interrupted' }), 'stopped');
+    assert.equal(logic.sectionOf({ status: 'working' }), 'running');
+    assert.equal(logic.sectionOf({ status: 'processing' }), 'running');
+    assert.equal(logic.sectionOf({ status: 'awaiting_input' }), 'recent');
+    assert.equal(logic.sectionOf({ status: 'new' }), 'recent');
+    assert.equal(logic.sectionOf({ status: 'completed' }), 'recent');
+    assert.equal(logic.sectionOf({ status: 'completed', is_history: true }), 'older');
+    assert.equal(logic.sectionOf({ status: 'bogus' }), null);
+});
+
+test('sections open and close all their buckets at once', () => {
+    const opened = logic.toggledSectionKeys('stopped', new Set(['needs']));
+    assert.deepEqual([...opened].sort(), ['errored', 'interrupted', 'needs']);
+    assert.equal(logic.sectionActive('stopped', opened), true);
+
+    const closed = logic.toggledSectionKeys('stopped', opened);
+    assert.deepEqual([...closed], ['needs']);
+    assert.equal(logic.sectionActive('stopped', closed), false);
+
+    // A selection stored before the sections existed holds only part of one:
+    // the section reads open, and a click closes all of it.
+    const partial = new Set(['idle']);
+    assert.equal(logic.sectionActive('recent', partial), true);
+    assert.deepEqual([...logic.toggledSectionKeys('recent', partial)], []);
+
+    // The input is never mutated, and an unknown section changes nothing.
+    assert.deepEqual([...partial], ['idle']);
+    assert.deepEqual([...logic.toggledSectionKeys('nope', partial)], ['idle']);
+});
+
+test('sortSectionSessions: longest wait first, newest first, or by process start', () => {
+    const sessions = [
+        { name: 'b', session_id: '2', pid: 2, age_seconds: 30, process_age_seconds: 500 },
+        { name: 'a', session_id: '1', pid: 1, age_seconds: 300, process_age_seconds: 50 },
+        { name: 'c', session_id: '3', pid: 3, age_seconds: null, process_age_seconds: null },
+    ];
+    const names = (list) => list.map((session) => session.name);
+
+    assert.deepEqual(names(logic.sortSectionSessions(sessions, 'waiting')), ['a', 'b', 'c']);
+    assert.deepEqual(names(logic.sortSectionSessions(sessions, 'newest')), ['b', 'a', 'c']);
+    assert.deepEqual(names(logic.sortSectionSessions(sessions, 'started')), ['a', 'b', 'c']);
+    // The input keeps its order.
+    assert.deepEqual(names(sessions), ['b', 'a', 'c']);
+});
+
+test('sortSectionSessions: equal keys fall back to name, id and pid, so the order is total', () => {
+    const sessions = [
+        { name: 'same', session_id: 'b', pid: 1, age_seconds: 10 },
+        { name: 'same', session_id: 'a', pid: 2, age_seconds: 10 },
+        { name: 'same', session_id: 'a', pid: 1, age_seconds: 10 },
+        { name: 'other', session_id: 'z', pid: 9, age_seconds: 10 },
+    ];
+    const keys = logic.sortSectionSessions(sessions, 'newest').map((session) => session.session_id + session.pid);
+    assert.deepEqual(keys, ['z9', 'a1', 'a2', 'b1']);
+});
+
+test('buildSections: every section in order, with its sessions and whether it is open', () => {
+    const sessions = [
+        { name: 'w', status: 'working', age_seconds: 1 },
+        { name: 'p', status: 'awaiting_permission', age_seconds: 5 },
+        { name: 'h', status: 'completed', is_history: true, age_seconds: 9 },
+    ];
+    const sections = logic.buildSections(sessions, new Set(['needs', 'working', 'background']));
+
+    assert.deepEqual(sections.map((section) => section.key), ['needs', 'stopped', 'running', 'recent', 'older']);
+    assert.deepEqual(sections.map((section) => section.active), [true, false, true, false, false]);
+    assert.deepEqual(sections.map((section) => section.sessions.map((session) => session.name)), [['p'], [], ['w'], [], ['h']]);
+});
+
+test('flattenProjects: each session carries the project it was grouped under', () => {
+    const flat = logic.flattenProjects([
+        { key: 'local|d:/p', name: 'p', cwd: 'D:\\p', origin: 'local', origin_display: '', sessions: [{ session_id: 's1' }] },
+        { key: 'wsl|/q', name: 'q', cwd: '/q', origin: 'wsl:Ubuntu', origin_display: 'Ubuntu', sessions: [{ session_id: 's2' }] },
+    ]);
+
+    assert.deepEqual(flat.map((session) => [session.session_id, session.project_name, session.project_cwd, session.project_origin_display]),
+        [['s1', 'p', 'D:\\p', ''], ['s2', 'q', '/q', 'Ubuntu']]);
+});
+
+const SIGNAL_LABELS = {
+    signal_processes: 'Processes: {count}',
+    signal_agents: 'Agents: {count}',
+    signal_workflow: 'Workflow {done}/{total}',
+    signal_context: 'Context {percent}%',
+    signal_budget: 'Budget {percent}%',
+    signal_cache: 'Cache expired · {cost}',
+    signal_auto_paused: 'Auto mode paused',
+    signal_update: 'Update {version}',
+    signal_hook_errors: 'Hook errors: {count}',
+    signal_queued: 'Queued: {count}',
+};
+
+test('sessionSignals: the facts worth spelling out, in rank order', () => {
+    const signals = logic.sessionSignals({
+        processes: 2,
+        workflow_active: false,
+        subagents_running: 4,
+        context_warn: true,
+        context: { used: 870000, size: 1000000, ratio: 0.87 },
+        budget: { used: 41, total: 50, ratio: 0.82 },
+        cache_warn: true,
+        cache: { rewrite_usd: 2.4 },
+        auto_paused: true,
+        cli_update: { available: '2.1.228', running: '2.1.223' },
+        hook_errors: [{ hook: 'pre', exit_code: 1, count: 10 }, { hook: 'post', exit_code: 2, count: 4 }],
+        queued: 1,
+    }, SIGNAL_LABELS);
+
+    assert.deepEqual(signals.map((signal) => signal.text), [
+        'Processes: 2', 'Agents: 4', 'Context 87%', 'Budget 82%', 'Cache expired · $2', 'Auto mode paused',
+        'Update 2.1.228', 'Hook errors: 14', 'Queued: 1',
+    ]);
+    assert.deepEqual(signals.slice(0, logic.LIST_SIGNAL_LIMIT).map((signal) => signal.tone), ['work', 'background']);
+});
+
+test('sessionSignals: a workflow names its progress instead of the agent count, a quiet session none', () => {
+    const signals = logic.sessionSignals({ workflow_active: true, workflow_done: 6, workflow_total: 12, subagents_running: 3, hook_errors: [] }, SIGNAL_LABELS);
+    assert.deepEqual(signals.map((signal) => signal.text), ['Workflow 6/12']);
+    assert.deepEqual(logic.sessionSignals({ processes: 0, hook_errors: [] }, SIGNAL_LABELS), []);
+});
+
+test('sessionMetaMatch: title, project, branch and the start of the id, without a file', () => {
+    const session = {
+        name: 'Port the ReSTIR denoiser', project_name: 'helios-renderer', branch: 'fix/HEL-214-hot-reload',
+        session_id: '4c8e1f20-9b7a-4d3e-8f61-2a5c0e9d7b13',
+    };
+    assert.equal(logic.sessionMetaMatch(session, 'restir', {}), 'title');
+    assert.equal(logic.sessionMetaMatch(session, 'helios', {}), 'project');
+    assert.equal(logic.sessionMetaMatch(session, 'HEL-214', {}), 'branch');
+    assert.equal(logic.sessionMetaMatch(session, '4c8e1f20-9b7a', {}), 'id');
+    assert.equal(logic.sessionMetaMatch(session, '4C8E', {}), 'id');
+    // A short hex run anywhere in the id is not a match; the id only matches from its start.
+    assert.equal(logic.sessionMetaMatch(session, '9b7a', {}), null);
+    assert.equal(logic.sessionMetaMatch(session, '4c8', {}), null);
+    assert.equal(logic.sessionMetaMatch(session, 'nothing', {}), null);
+    assert.equal(logic.sessionMetaMatch(session, '   ', {}), null);
+});
+
+test('sessionMetaMatch: the editor options apply, an invalid pattern matches nothing', () => {
+    const session = { name: 'Port the ReSTIR denoiser', project_name: 'helios', branch: '', session_id: 'abcd' };
+    assert.equal(logic.sessionMetaMatch(session, 'restir', { match_case: true }), null);
+    assert.equal(logic.sessionMetaMatch(session, 'ReSTIR', { match_case: true }), 'title');
+    assert.equal(logic.sessionMetaMatch(session, 'deno', { whole_word: true }), null);
+    assert.equal(logic.sessionMetaMatch(session, 'denoiser', { whole_word: true }), 'title');
+    assert.equal(logic.sessionMetaMatch(session, 'Re.TIR', { use_regex: true }), 'title');
+    assert.equal(logic.sessionMetaMatch(session, 'Re.TIR', {}), null);
+    assert.equal(logic.sessionMetaMatch(session, '(', { use_regex: true }), null);
+    assert.equal(logic.searchRegExp('(', { use_regex: true }), null);
+});
+
+test('attentionUpdate: counts the sessions blocked on you, flashes only for a newcomer', () => {
+    const blocked = (id) => ({ session_id: id, pid: 1, status: 'awaiting_permission' });
+    const first = logic.attentionUpdate(null, [blocked('a'), { session_id: 'b', pid: 2, status: 'working' }]);
+    assert.equal(first.count, 1);
+    assert.equal(first.newlyWaiting, false);
+
+    const same = logic.attentionUpdate(first.keys, [blocked('a')]);
+    assert.equal(same.newlyWaiting, false);
+
+    const more = logic.attentionUpdate(same.keys, [blocked('a'), blocked('c')]);
+    assert.equal(more.count, 2);
+    assert.equal(more.newlyWaiting, true);
+
+    const fewer = logic.attentionUpdate(more.keys, [blocked('c')]);
+    assert.equal(fewer.count, 1);
+    assert.equal(fewer.newlyWaiting, false);
+
+    // A past session is never counted, whatever its status.
+    assert.equal(logic.attentionUpdate(null, [{ session_id: 'h', pid: 0, status: 'awaiting_permission', is_history: true }]).count, 0);
+});
+
+test('searchHitsMarkup: a limit shows the first excerpts and counts the rest as not shown', () => {
+    const hit = {
+        count: 3,
+        snippets: [
+            { kind: 'user', before: 'a ', match: 'x', after: ' b' },
+            { kind: 'user', before: 'c ', match: 'x', after: ' d' },
+        ],
+    };
+    const labels = { search_hits_count: 'Hits: {count}', search_hits_more: 'Not shown: {count}' };
+    const limited = logic.searchHitsMarkup(hit, labels, 1);
+    assert.equal((limited.match(/<mark>/g) || []).length, 1);
+    assert.ok(limited.includes('Not shown: 2'));
+
+    const all = logic.searchHitsMarkup(hit, labels);
+    assert.equal((all.match(/<mark>/g) || []).length, 2);
+    assert.ok(all.includes('Not shown: 1'));
+});
+
+test('costShares: the main conversation against its subagents, only when both are priced', () => {
+    const usage = (input) => ({ input_tokens: input, output_tokens: 0 });
+    const shares = logic.costShares({
+        usage_parts: {
+            main: { 'claude-opus-4-8': usage(1000000) },
+            agents: { Explore: { 'claude-haiku-4-5': usage(2000000) } },
+        },
+    }, PRICES);
+    assert.deepEqual(shares, { main: 5, agents: 2 });
+
+    assert.equal(logic.costShares({ usage_parts: { main: { 'claude-opus-4-8': usage(1) }, agents: {} } }, PRICES), null);
+    assert.equal(logic.costShares({ usage_parts: { main: { 'mystery-model': usage(1) }, agents: { x: { 'claude-opus-4-8': usage(1) } } } }, PRICES), null);
+    assert.equal(logic.costShares({}, PRICES), null);
+});
+
+test('artifactsOf: links only a safe address, and names an untitled artifact by its address', () => {
+    const artifacts = logic.artifactsOf({ artifacts: [
+        { title: 'Concepts', url: 'https://claude.ai/artifact/a1' },
+        { title: '', url: 'https://claude.ai/artifact/b2' },
+        { title: 'Hostile', url: 'javascript:alert(1)' },
+        { title: 'Quoted', url: 'https://claude.ai/artifact/"onmouseover' },
+        { title: 'No address' },
+        null,
+    ] });
+    assert.deepEqual(artifacts, [
+        { title: 'Concepts', url: 'https://claude.ai/artifact/a1' },
+        { title: 'https://claude.ai/artifact/b2', url: 'https://claude.ai/artifact/b2' },
+        { title: 'Hostile', url: null },
+        { title: 'Quoted', url: null },
+    ]);
+    assert.deepEqual(logic.artifactsOf({}), []);
+    assert.deepEqual(logic.artifactsOf({ artifacts: 'nope' }), []);
+});
+
+/* --- monitoring: current call, activity line, plan, lines, worked time, tests, graph --- */
+
+const LIVE = { alive: true, has_transcript: true, has_activity: true, age_seconds: 5, process_age_seconds: 600 };
+
+test('current call: a pending command names itself, a question carries its answers', () => {
+    const call = logic.currentToolOf({ current_tool: { tool: 'Bash', text: 'npm test', detail: 'Run tests', questions: [] }, current_tool_age_seconds: 12 });
+    assert.equal(call.name, 'Bash');
+    assert.equal(call.age_seconds, 12);
+    assert.equal(logic.toolCallLine(call), 'Bash · npm test');
+    const ask = logic.currentToolOf({ current_tool: { tool: 'AskUserQuestion', questions: [
+        { text: 'Which?', options: ['A', 3, 'B'] }, { text: '', options: [] }, null,
+    ] } });
+    assert.deepEqual(ask.questions, [{ text: 'Which?', options: ['A', 'B'] }]);
+    assert.equal(logic.currentToolOf({ current_tool: { tool: '' } }), null);
+    assert.equal(logic.currentToolOf({ current_tool: 'Bash' }), null);
+    assert.equal(logic.toolDisplayName('mcp__github__create_issue'), 'create_issue');
+    const agent = logic.currentToolOf({ current_tool: { tool: 'Agent', text: 'Explore', detail: 'Find the parser' } });
+    assert.equal(logic.toolCallLine(agent), 'Agent · Explore: Find the parser');
+});
+
+test('activity line: what it waits on, what it runs, or what it last said', () => {
+    const labels = { activity_plan: 'Plan to review' };
+    const bash = logic.currentToolOf({ current_tool: { tool: 'Bash', text: 'npm test\nmore' }, current_tool_age_seconds: 30 });
+    assert.deepEqual(logic.activityOf({}, 'awaiting_permission', bash, labels), { kind: 'tool', text: 'Bash · npm test', since: null });
+    assert.deepEqual(logic.activityOf({}, 'working', bash, labels), { kind: 'tool', text: 'Bash · npm test', since: 30 });
+    const ask = logic.currentToolOf({ current_tool: { tool: 'AskUserQuestion', questions: [{ text: 'Q1', options: [] }, { text: 'Q2', options: [] }] } });
+    assert.equal(logic.activityOf({}, 'awaiting_permission', ask, labels).text, 'Q1 (+1)');
+    const plan = logic.currentToolOf({ current_tool: { tool: 'ExitPlanMode', text: '' } });
+    assert.equal(logic.activityOf({}, 'awaiting_permission', plan, labels).text, 'Plan to review');
+    assert.deepEqual(logic.activityOf({ last_reply: '\n Done: all green.\nDetails' }, 'awaiting_input', null, labels),
+        { kind: 'reply', text: 'Done: all green.', since: null });
+    assert.equal(logic.activityOf({ last_reply: 'x' }, 'working', null, labels), null);
+    assert.equal(logic.activityOf({ last_reply: 'x' }, 'errored', null, labels), null);
+});
+
+test('build session: a stopped or ended turn has no call in flight', () => {
+    const raw = Object.assign({}, LIVE, {
+        last_entry_kind: 'assistant_tool_use', pending_tool: true, last_tool_name: 'Bash', child_count: 1,
+        current_tool: { tool: 'Bash', text: 'make' }, current_tool_age_seconds: 3,
+    });
+    assert.equal(logic.buildSession(raw, {}, null).current_tool.text, 'make');
+    assert.equal(logic.buildSession(Object.assign({}, raw, { alive: false }), {}, null).current_tool, null);
+    assert.equal(logic.buildSession(Object.assign({}, raw, { last_entry_kind: 'user_interrupt' }), {}, null).current_tool, null);
+});
+
+test('plan items and lines changed: malformed values show nothing', () => {
+    assert.deepEqual(logic.planItemsOf({ plan_items: [
+        { text: 'Read', status: 'completed' }, { text: 'Fix', status: 'weird' }, { text: '' }, null,
+    ] }), [{ text: 'Read', status: 'completed' }, { text: 'Fix', status: 'pending' }]);
+    assert.deepEqual(logic.linesOf({ lines_added: 12, lines_removed: 3 }), { added: 12, removed: 3 });
+    assert.equal(logic.linesOf({ lines_added: 0, lines_removed: 0 }), null);
+    assert.equal(logic.linesOf({ lines_added: 5, scan_pending: true }), null);
+    assert.equal(logic.linesOf({ lines_added: '<b>', lines_removed: -1 }), null);
+});
+
+test('worked time: intervals of the last day, the open turn counted up to now', () => {
+    const raw = Object.assign({}, LIVE, { work_intervals: [[3600, 3000], [1200, 600], 'x', [5, 10]], turn_open_seconds: 100 });
+    const work = logic.workSummary(raw, 'working');
+    assert.equal(work.work_seconds, 600 + 600 + 100);
+    assert.equal(work.span_seconds, 3600);
+    assert.equal(work.wait_seconds, 3600 - 1300);
+    assert.equal(work.turns, 3);
+    assert.deepEqual(work.segments[0], { left: 0, width: 600 / 3600 });
+    // An ended session's span stops at its last turn, and an open turn no longer counts.
+    const ended = logic.workSummary(Object.assign({}, raw, { alive: false }), 'completed');
+    assert.equal(ended.span_seconds, 3600 - 600);
+    assert.equal(ended.work_seconds, 1200);
+    assert.equal(logic.workSummary({ work_intervals: [] }, 'completed'), null);
+    // A turn waiting on a dialog counts up to its newest entry.
+    const waiting = logic.workSummary(Object.assign({}, LIVE, { work_intervals: [], turn_open_seconds: 300, age_seconds: 120 }), 'awaiting_permission');
+    assert.equal(waiting.work_seconds, 180);
+    assert.equal(waiting.wait_seconds, 120);
+    // A turn an earlier process left open counts only from this process's start.
+    const reopened = logic.workSummary(Object.assign({}, LIVE, { work_intervals: [], turn_open_seconds: 72000, age_seconds: 2 }), 'working');
+    assert.equal(reopened.work_seconds, 600);
+});
+
+test('project group order: most urgent status first, then newest activity, a missing age last', () => {
+    const sessions = [
+        { session_id: 'a', name: 'A', status: 'completed', age_seconds: 1 },
+        { session_id: 'b', name: 'B', status: 'working', age_seconds: 50 },
+        { session_id: 'c', name: 'C', status: 'working', age_seconds: null },
+        { session_id: 'd', name: 'D', status: 'working', age_seconds: 5 },
+        { session_id: 'e', name: 'E', status: 'awaiting_permission', age_seconds: 900 },
+        { session_id: 'f', name: 'F', status: 'not-a-status', age_seconds: 0 },
+    ];
+    assert.deepEqual(logic.sortGroupSessions(sessions).map((session) => session.session_id), ['e', 'd', 'b', 'c', 'a', 'f']);
+    assert.deepEqual(logic.sortGroupSessions(undefined), []);
+});
+
+test('tests label: failed first, a hostile count reads as zero', () => {
+    const labels = { tests_passed: '{count} passed', tests_failed: '{count} failed', tests_skipped: '{count} skipped' };
+    assert.deepEqual(logic.testsLabel({ passed: 42, failed: 0, skipped: 0 }, labels), { ok: true, text: '✓ 42 passed' });
+    assert.deepEqual(logic.testsLabel({ passed: 39, failed: 3, skipped: 2 }, labels), { ok: false, text: '✗ 3 failed · 39 passed · 2 skipped' });
+    assert.deepEqual(logic.testsLabel({ passed: '<b>', failed: -1 }, labels), { ok: true, text: '✓ 0 passed' });
+    assert.equal(logic.testsLabel(null, labels), null);
+});
+
+test('graph model: subagents hang off their session, messages link sessions and peers', () => {
+    const lead = { name: 'Lead', session_id: 'aaaaaaaa-1111-2222-3333-444444444444', status: 'working',
+        agents: logic.agentsOf({ agents: [
+            { id: 'a1', type: 'Explore', description: 'Find', running: true, age_seconds: 2, parent_id: '', workflow: '' },
+            { id: 'a2', type: 'Plan', description: '', running: false, age_seconds: 90, parent_id: 'a1', workflow: '' },
+            { id: 'w1', type: 'worker', running: true, workflow: 'run-1' },
+            { id: '', type: 'broken' },
+        ] }),
+        messages: logic.messagesOf({ messages: [
+            { direction: 'sent', peer: 'Reviewer', age_seconds: 10 },
+            { direction: 'received', peer: 'a1', label: 'Explore', handback: true, age_seconds: 300 },
+            { direction: 'sent', peer: 'outside-team', age_seconds: 4000 },
+            { direction: 'sideways', peer: 'x' },
+        ] }) };
+    const reviewer = { name: 'Reviewer', session_id: 'bbbbbbbb-1111-2222-3333-444444444444', status: 'awaiting_input', agents: [], messages: [] };
+    const model = logic.graphModel([{ key: 'k1', session: lead }, { key: 'k2', session: reviewer }]);
+    const ids = model.nodes.map((node) => node.id);
+    assert.deepEqual(ids, ['s:k1', 's:k2', 's:k1/a:a1', 's:k1/a:a2', 's:k1/w:run-1', 's:k1/a:w1', 'p:outside-team']);
+    const edge = (from, to, kind) => model.edges.find((item) => item.from === from && item.to === to && item.kind === kind);
+    assert.equal(edge('s:k1', 's:k1/a:a1', 'spawn').active, true);
+    assert.equal(edge('s:k1/a:a1', 's:k1/a:a2', 'spawn').active, false);
+    assert.equal(edge('s:k1', 's:k1/w:run-1', 'spawn').active, true);
+    assert.equal(edge('s:k1', 's:k2', 'message').active, true);
+    assert.equal(edge('s:k1/a:a1', 's:k1', 'message').active, false);
+    assert.equal(edge('s:k1', 'p:outside-team', 'message').active, false);
+
+    const layout = logic.graphLayout(model);
+    assert.equal(layout.nodes.length, model.nodes.length);
+    assert.equal(layout.edges.length, model.edges.length);
+    const at = new Map(layout.nodes.map((node) => [node.id, node]));
+    assert.ok(at.get('s:k1/a:a2').x > at.get('s:k1/a:a1').x);
+    assert.ok(at.get('s:k2').y > at.get('s:k1').y);
+    for (const node of layout.nodes) {
+        assert.ok(node.x + 1 <= layout.width && node.y + 1 <= layout.height);
     }
 });
 
-test('ticketTotals: adds every session on a ticket once, live and past alike', () => {
-    const session = (id, branch, output) => ({ session_id: id, git_branch: branch, usage: { output_tokens: output },
-        usage_by_model: { 'claude-opus-4-8': { output_tokens: output } } });
-    const totals = logic.ticketTotals([
-        session('a', 'feature/PNE-1/x', 1000000),
-        session('b', 'feature/PNE-1/y', 1000000),
-        session('b', 'feature/PNE-1/y', 1000000),
-        session('c', 'main', 1000000),
-        Object.assign(session('d', 'feature/PNE-2/z', 500), { usage_by_model: { 'claude-unknown-9': { output_tokens: 500 } } }),
-    ], PRICES);
-
-    assert.deepEqual(totals.get('PNE-1'), { usd: 50, tokens: 2000000, sessions: 2, priced: true });
-    assert.equal(totals.get('PNE-2').priced, false);
-    assert.equal(totals.size, 2);
+test('graph markup: hostile names stay text, dots ride only on active edges', () => {
+    const hostile = '"><img src=x onerror=alert(1)>';
+    const session = { name: hostile, session_id: 'cccccccc-1111-2222-3333-444444444444', status: 'working',
+        agents: [{ id: 'a"1', type: hostile, description: hostile, running: true, age_seconds: 1, parent_id: '', workflow: '' }], messages: [] };
+    const layout = logic.graphLayout(logic.graphModel([{ key: 'k"<1', session: session }]));
+    const html = logic.graphMarkup(layout, { graph_messages: '{count}', graph_workflow: 'Workflow', graph_peer: 'peer' }, 'k"<1');
+    assert.ok(!html.includes('<img'));
+    assert.ok(!html.includes('onerror=alert(1)>'));
+    assert.ok(html.includes('data-key="k&quot;&lt;1"'));
+    assert.ok(html.includes(' selected'));
+    assert.equal((html.match(/<animateMotion/g) || []).length, 2);
+    assert.ok(!/https?:/.test(html));
 });
 
-test('ticketTip: names the cost and the scope, and stays empty without a ticket', () => {
-    const totals = new Map([['PNE-1', { usd: 50, tokens: 2000000, sessions: 2, priced: true }],
-        ['PNE-2', { usd: 0, tokens: 1500, sessions: 1, priced: false }]]);
-
-    assert.equal(logic.ticketTip('feature/PNE-1/x', totals, false, COST_LABELS), 'PNE-1: $50 · sessions: 2\nlive only');
-    assert.equal(logic.ticketTip('feature/PNE-1/x', totals, true, COST_LABELS), 'PNE-1: $50 · sessions: 2\nwith history');
-    assert.equal(logic.ticketTip('feature/PNE-2/x', totals, true, COST_LABELS), 'PNE-2: 1.5k · sessions: 1\nwith history');
-    assert.equal(logic.ticketTip('main', totals, true, COST_LABELS), '');
-    assert.equal(logic.ticketTip('feature/PNE-9/x', totals, true, COST_LABELS), '');
-    assert.equal(logic.ticketTip('feature/PNE-1/x', null, true, COST_LABELS), '');
+test('graph model: a message to or from a subagent no longer listed draws nothing', () => {
+    const session = { name: 'Lead', session_id: 'dddddddd-1111-2222-3333-444444444444', status: 'working', agents: [],
+        messages: logic.messagesOf({ messages: [
+            { direction: 'sent', peer: 'a8a4b323d80bdba84', age_seconds: 5 },
+            { direction: 'received', peer: 'a858d0a217c7fa5da', label: 'Explore', handback: true, age_seconds: 5 },
+        ] }) };
+    const model = logic.graphModel([{ key: 'k', session: session }]);
+    assert.deepEqual(model.nodes.map((node) => node.id), ['s:k']);
+    assert.deepEqual(model.edges, []);
 });

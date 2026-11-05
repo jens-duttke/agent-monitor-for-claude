@@ -228,7 +228,7 @@ class RawSnapshotTest(_RegistryFixture):
         self.assertEqual(session['effort'], 'xhigh')
         self.assertEqual((session['context_tokens'], session['context_window']), (200005, 1000000))
         self.assertEqual((session['budget_used'], session['budget_total']), (3.0, 20.0))
-        self.assertEqual(session['hook_errors'], [{'hook': 'Stop', 'exit_code': 2, 'count': 1}])
+        self.assertEqual(session['hook_errors'], [{'hook': 'Stop', 'exit_code': 2, 'count': 1, 'message': ''}])
         self.assertEqual(session['pr_links'], [{'repository': 'group/repo', 'number': 4, 'url': 'https://git.example/pr/4'}])
         self.assertEqual(session['artifact_count'], 2)
         self.assertEqual((session['files_edited'], session['compactions']), (1, 1))

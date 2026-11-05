@@ -15,30 +15,22 @@ function applyBootstrap(bootstrap) {
     state.pricing = (bootstrap.pricing && typeof bootstrap.pricing === 'object') ? bootstrap.pricing : {};
     state.pollInterval = bootstrap.poll_interval || 5;
 
-    const title = state.labels.app_title;
-    document.getElementById('app-title').textContent = title;
-    document.getElementById('app-subtitle').textContent = state.labels.subtitle;
-    document.title = title;
+    // The window title names the app; the toolbar does not repeat it.
+    document.title = state.labels.app_title;
 
     const searchInput = document.getElementById('search-input');
     if (searchInput) {
         searchInput.placeholder = state.labels.search_placeholder;
         searchInput.setAttribute('aria-label', state.labels.search_placeholder);
     }
-    refreshSearchOptButtons();
-    refreshWindowToggleButtons();
-
-    const effortBadge = document.getElementById('effort-badge');
-    state.defaultEffort = typeof bootstrap.default_effort === 'string' ? bootstrap.default_effort : '';
-    if (bootstrap.default_effort) {
-        effortBadge.textContent = fmt(state.labels.effort_badge, { level: bootstrap.default_effort });
-        effortBadge.hidden = false;
-    } else {
-        effortBadge.hidden = true;
+    const searchKey = document.getElementById('search-key');
+    if (searchKey) {
+        searchKey.textContent = (state.labels.key_ctrl || 'Ctrl') + ' K';
     }
-
-    updateFilterControls();
-    updateSortControls();
+    refreshSearchOptButtons();
+    refreshCompactButton();
+    refreshGroupSwitch();
+    state.defaultEffort = typeof bootstrap.default_effort === 'string' ? bootstrap.default_effort : '';
 }
 
 function tickAges() {
@@ -46,10 +38,7 @@ function tickAges() {
         return;
     }
 
-    const now = Date.now();
-    document.querySelectorAll('.age[data-age]').forEach((el) => {
-        el.textContent = logic.formatAgeSince(Number(el.dataset.age), Number(el.dataset.ageAt), now, state.labels);
-    });
+    fillTicks(document);
 }
 
 async function checkForChanges() {
@@ -71,6 +60,76 @@ async function checkForChanges() {
         // Bridge hiccup - the regular full poll covers it.
     }
     state.checking = false;
+}
+
+/* --- keyboard --- */
+
+// Whether a key press is meant for a text field rather than for the list.
+function typingTarget(target) {
+    return Boolean(target && target.closest && target.closest('input, textarea, [contenteditable="true"]'));
+}
+
+// A focused button or link answers Enter itself - a section header, the
+// grouping switch, a detail action - rather than raising the selected session.
+function controlTarget(target) {
+    return Boolean(target && target.closest && target.closest('button, a[href], select, [role="radio"], [role="button"]'));
+}
+
+function onKeyDown(event) {
+    // A dialog owns the keys while it is open.
+    if (document.getElementById('confirm-overlay')) {
+        return;
+    }
+    const ctrl = event.ctrlKey || event.metaKey;
+
+    if (ctrl && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        const input = document.getElementById('search-input');
+        if (input) {
+            input.focus();
+            input.select();
+        }
+        return;
+    }
+    if (ctrl && event.key === '.') {
+        event.preventDefault();
+        toggleCompact();
+        return;
+    }
+    if (typingTarget(event.target) || openMenuState) {
+        return;
+    }
+
+    const session = selectedSession();
+    const key = event.key;
+    if (key === 'ArrowDown' || (!ctrl && key === 'j')) {
+        event.preventDefault();
+        moveSelection(1);
+    } else if (key === 'ArrowUp' || (!ctrl && key === 'k')) {
+        event.preventDefault();
+        moveSelection(-1);
+    } else if (key === 'Enter' && session && !controlTarget(event.target)) {
+        event.preventDefault();
+        if (hasWindow(session)) {
+            focusSession(session);
+        } else {
+            selectSession(state.selectedKey, true);
+        }
+    } else if (ctrl && key.toLowerCase() === 'c' && session) {
+        // Copy the id only when nothing is selected - a marked text keeps its
+        // ordinary copy.
+        const selection = window.getSelection ? String(window.getSelection()) : '';
+        if (!selection) {
+            event.preventDefault();
+            runSessionAction('copy-id', session);
+        }
+    } else if (!ctrl && key === 't' && session) {
+        event.preventDefault();
+        runSessionAction('transcript', session);
+    } else if (key === 'Escape' && state.detailOpen) {
+        event.preventDefault();
+        closeDetail();
+    }
 }
 
 /* --- lifecycle --- */
@@ -123,51 +182,36 @@ async function boot() {
     // chip, which would trigger the History scan unrequested.
     state.filters = loadFilters();
     try {
-        state.sort = localStorage.getItem('amc-sort') || 'activity';
-        state.sortDir = localStorage.getItem('amc-sort-dir') === 'desc' ? 'desc' : 'asc';
         // An unknown or missing key resolves to the default window, so a stale
         // stored value can never leave the listing unbounded.
         state.historyRange = logic.historyRange(localStorage.getItem('amc-history-range')).key;
-        state.priorityOrder = localStorage.getItem('amc-priority-order') !== '0';
         state.collapsed = new Set(JSON.parse(localStorage.getItem('amc-collapsed') || '[]'));
         const searchOpts = JSON.parse(localStorage.getItem('amc-search-opts') || '{}');
         state.searchMatchCase = !!searchOpts.matchCase;
         state.searchWholeWord = !!searchOpts.wholeWord;
         state.searchRegex = !!searchOpts.regex;
     } catch (e) {
-        state.sort = 'activity';
-        state.sortDir = 'asc';
         state.historyRange = logic.DEFAULT_HISTORY_RANGE;
-        state.priorityOrder = true;
         state.collapsed = new Set();
         state.searchMatchCase = false;
         state.searchWholeWord = false;
         state.searchRegex = false;
     }
-    if (!SORT_VALUES[state.sort]) {
-        state.sort = 'activity';
-    }
-
     // Each init step is isolated so a failure in one (e.g. a control the
     // markup no longer matches) cannot abort boot and freeze the loading
     // skeleton - the data still renders.
     try {
-        initTheme();
+        reportWindowBackground();
     } catch (err) {
         reportUiError(err);
     }
     try {
-        initWindowToggles();
+        initCompactToggle();
     } catch (err) {
         reportUiError(err);
     }
     try {
-        initFilterControls();
-    } catch (err) {
-        reportUiError(err);
-    }
-    try {
-        initSortControls();
+        initListControls();
     } catch (err) {
         reportUiError(err);
     }
@@ -182,7 +226,12 @@ async function boot() {
         reportUiError(err);
     }
     try {
-        document.getElementById('content').addEventListener('click', onContentClick);
+        const content = document.getElementById('content');
+        content.addEventListener('click', onContentClick);
+        content.addEventListener('dblclick', onContentDoubleClick);
+        content.addEventListener('contextmenu', onContentContextMenu);
+        document.getElementById('detail').addEventListener('click', onDetailClick);
+        document.addEventListener('keydown', onKeyDown);
     } catch (err) {
         reportUiError(err);
     }
@@ -197,8 +246,7 @@ async function boot() {
     }
 
     await tick();
-    // If the history chip was left enabled in a previous session, load the past
-    // sessions now (the data source is ready by the time boot runs).
+    // If "Older" was left open in a previous session, load the past sessions now (the data source is ready by the time boot runs).
     if (state.filters.has('history')) {
         ensureHistoryLoaded();
     }

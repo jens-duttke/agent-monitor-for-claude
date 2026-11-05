@@ -1,6 +1,6 @@
 'use strict';
 
-/* --- row and panel actions: open, reveal, focus, row menu, click routing --- */
+/* --- actions: select, open, reveal, focus, the session menu, click routing --- */
 
 function openPath(cwd, origin) {
     if (!cwd) {
@@ -13,89 +13,149 @@ function openPath(cwd, origin) {
     }
 }
 
-// Show one file in the file manager, selected in its folder. The file is never opened -
-// the backend hands it to the shell's select-in-folder call, nothing else.
+// Show one file in the file manager, selected in its folder. The file is never
+// opened - the backend hands it to the shell's select-in-folder call, nothing else.
 function revealPath(path, origin) {
     if (!path) {
         return;
     }
     const bridge = apiBridge();
     if (bridge && typeof bridge.reveal_path === 'function') {
-        // Fire-and-forget: a Win32-side rejection must not wipe the content area.
         logic.settleCall(() => bridge.reveal_path(path, origin || 'local'));
     }
 }
 
-function focusSession(el) {
+// Bring a session's window forward (its editor or terminal).
+function focusSession(session) {
+    if (!session || !hasWindow(session)) {
+        return;
+    }
     const bridge = apiBridge();
     if (bridge && typeof bridge.focus_session === 'function') {
-        // Fire-and-forget: a Win32-side rejection must not wipe the content area.
         logic.settleCall(() => bridge.focus_session(
-            Number(el.dataset.pid),
-            el.dataset.project || '',
-            el.dataset.session || '',
-            el.dataset.deeplink === '1',
-            el.dataset.title || '',
-            el.dataset.origin || 'local'
+            Number(session.pid),
+            session.project_name || '',
+            session.session_id || '',
+            Boolean(session.vscode_deeplink),
+            session.title || '',
+            session.origin || 'local'
         ));
     }
 }
 
-// Build and open a row's action menu. The transcript and scratchpad entries are
-// added only when that session actually has those files - checked on demand here
-// (two quick bridge stats, run together), never on the per-second poll.
-async function openRowMenu(menuBtn) {
-    const sessionId = menuBtn.dataset.session || '';
-    const cwd = menuBtn.dataset.cwd || '';
-    const origin = menuBtn.dataset.origin || 'local';
-    const rowEl = menuBtn.closest('.row');
-    const menuRowKey = rowEl ? rowEl.dataset.key : '';
+// Select a list entry. In the narrow layout `drill` also swaps the list for
+// the detail; the wide one shows both anyway.
+function selectSession(key, drill) {
+    if (!key || !state.sessionsByKey.has(key)) {
+        return;
+    }
+    state.selectedKey = key;
+    if (drill) {
+        state.detailOpen = true;
+        document.body.classList.add('detail-open');
+    }
+    markSelectedItem();
+    renderDetail();
+}
 
+function closeDetail() {
+    state.detailOpen = false;
+    document.body.classList.remove('detail-open');
+    const el = findItem(state.selectedKey);
+    if (el) {
+        el.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+// Move the selection by `step` entries through the list as shown.
+function moveSelection(step) {
+    const keys = state.listKeys;
+    if (keys.length === 0) {
+        return;
+    }
+    const index = keys.indexOf(state.selectedKey);
+    const next = index < 0 ? 0 : Math.max(0, Math.min(keys.length - 1, index + step));
+    selectSession(keys[next], false);
+    const el = findItem(keys[next]);
+    if (el) {
+        el.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+// Run one of a session's actions - from the detail's buttons, the session menu
+// or a key.
+async function runSessionAction(action, session) {
+    if (!session) {
+        return;
+    }
+    const origin = session.origin || 'local';
+    if (action === 'open-window') {
+        focusSession(session);
+    } else if (action === 'copy-id') {
+        copyToClipboard(session.session_id || '');
+    } else if (action === 'copy-attach') {
+        if (session.job_id) {
+            copyToClipboard('claude attach ' + session.job_id);
+        }
+    } else if (action === 'transcript') {
+        revealPath(await transcriptPath(session.session_id || '', session.cwd || '', origin), origin);
+    } else if (action === 'scratchpad') {
+        openPath(await scratchpadPath(session.session_id || '', session.cwd || '', origin), origin);
+    } else if (action === 'delete') {
+        if (session.is_history) {
+            const age = session.age_seconds == null ? '' : logic.formatAge(session.age_seconds, state.labels);
+            confirmDeleteSession(session.session_id, session.cwd || '', session.name || '', age, origin);
+        }
+    } else if (action === 'details') {
+        if (state.compact) {
+            toggleCompact(false);
+        }
+        selectSession(rowKey(session), true);
+    }
+}
+
+// The session menu on a right-click. The transcript and scratchpad entries are
+// added only when the session has those files - checked on demand here, never
+// on the poll. Only the newest right-click opens its menu: an earlier one whose
+// lookups answer last must not open the menu of the entry clicked before.
+let sessionMenuRequest = 0;
+
+async function openSessionMenu(itemEl, point) {
+    const key = itemEl.dataset.key;
+    const session = state.sessionsByKey.get(key);
+    if (!session) {
+        return;
+    }
+    const request = ++sessionMenuRequest;
+    const origin = session.origin || 'local';
     const [transcript, scratchpad] = await Promise.all([
-        transcriptPath(sessionId, cwd, origin),
-        scratchpadPath(sessionId, cwd, origin),
+        transcriptPath(session.session_id || '', session.cwd || '', origin),
+        scratchpadPath(session.session_id || '', session.cwd || '', origin),
     ]);
-
-    // The row could have been reconciled away while the check was in flight.
-    if (!menuBtn.isConnected) {
+    if (!itemEl.isConnected || request !== sessionMenuRequest) {
         return;
     }
 
-    const items = [{ key: 'copy-id', label: state.labels.copy_session_id }];
-    const jobId = menuBtn.dataset.job || '';
-    if (jobId) {
-        items.push({ key: 'copy-attach', label: state.labels.copy_attach_command });
+    const labels = state.labels;
+    const items = [];
+    if (state.compact) {
+        items.push({ key: 'details', label: labels.action_show_details });
+    }
+    items.push({ key: 'copy-id', label: labels.copy_session_id });
+    if (session.job_id) {
+        items.push({ key: 'copy-attach', label: labels.copy_attach_command });
     }
     if (transcript) {
-        items.push({ key: 'transcript', label: state.labels.show_transcript });
+        items.push({ key: 'transcript', label: labels.show_transcript });
     }
     if (scratchpad) {
-        items.push({ key: 'scratchpad', label: state.labels.show_scratchpad });
+        items.push({ key: 'scratchpad', label: labels.show_scratchpad });
     }
-    if (menuBtn.dataset.history === '1') {
-        items.push({ key: 'delete', label: state.labels.delete_session, danger: true });
+    if (session.is_history) {
+        items.push({ key: 'delete', label: labels.delete_session, danger: true });
     }
 
-    openMenu(menuBtn, items, (key) => {
-        if (key === 'copy-id') {
-            copyToClipboard(sessionId);
-        } else if (key === 'copy-attach') {
-            copyToClipboard('claude attach ' + jobId);
-        } else if (key === 'transcript') {
-            revealPath(transcript, origin);
-        } else if (key === 'scratchpad') {
-            openPath(scratchpad, origin);
-        } else if (key === 'delete') {
-            confirmDeleteSession(sessionId, cwd, rowCellText(rowEl, '.name'), rowCellText(rowEl, '.age'), origin);
-        }
-    }, { type: 'row', rowKey: menuRowKey });
-}
-
-// The rendered text of one of a row's cells - read at click time, so a dialog
-// quotes exactly what the user saw (a live-ticking age included).
-function rowCellText(rowEl, selector) {
-    const cell = rowEl ? rowEl.querySelector(selector) : null;
-    return cell ? cell.textContent.trim() : '';
+    openMenu(itemEl, items, (action) => runSessionAction(action, session), { type: 'row', rowKey: key, point: point });
 }
 
 // Return the session's scratchpad path when one exists, else '' (no entry).
@@ -127,76 +187,126 @@ async function transcriptPath(sessionId, cwd, origin) {
     return (mock && mock[sessionId]) ? mock[sessionId] : '';
 }
 
-// One delegated handler for the whole content area, so reconciled rows never
-// need per-node listeners rebound on every render.
+/* --- click routing: one delegated handler per pane --- */
+
 function onContentClick(event) {
-    // The two controls of the widened search - the offer to look wider, and the
-    // way back out of it. Checked first: both sit in slots of their own, where
-    // no row or panel handler below could claim the click.
+    // The widened search's offer and its way back sit in slots of their own.
     const widen = event.target.closest('.empty-action');
     if (widen) {
         widenSearch(widen.dataset.widen);
         return;
     }
-
     if (event.target.closest('.notice-reset')) {
         resetWidenedSearch();
         return;
     }
 
-    const menuBtn = event.target.closest('.row-menu-btn');
-    if (menuBtn) {
-        event.stopPropagation();
-        openRowMenu(menuBtn);
+    const range = event.target.closest('.range-btn');
+    if (range) {
+        setHistoryRange(range.dataset.range);
         return;
     }
 
-    // Checked before the panel-head handler below: the path sits inside the
-    // head, so it must claim its own click (open the folder) before the head's
-    // collapse toggle can fire.
+    const section = event.target.closest('.section-head, .section-chip');
+    if (section) {
+        toggleSection(section.dataset.section);
+        return;
+    }
+
+    // The path opens the folder; checked before the group head it sits under.
     const pathOpen = event.target.closest('.path-open');
     if (pathOpen) {
-        event.stopPropagation();
-        const pathHead = pathOpen.closest('.panel-head');
-        openPath(pathHead ? pathHead.dataset.cwd : '', pathHead ? pathHead.dataset.origin : 'local');
+        openPath(pathOpen.dataset.cwd, pathOpen.dataset.origin);
         return;
     }
 
-    const head = event.target.closest('.panel-head');
-    if (head) {
-        toggleCollapse(head.dataset.key);
+    const groupHead = event.target.closest('.group-head');
+    if (groupHead) {
+        toggleCollapse(groupHead.dataset.groupKey);
         return;
     }
 
-    // The background-process badge opens the process panel; its own click must
-    // not fall through to focusing the session's window.
-    const procBadge = event.target.closest('.proc-badge');
-    if (procBadge) {
-        event.stopPropagation();
-        toggleProcPanel(procBadge);
+    // The compact view's switch to this session's details in the full view.
+    const openDetails = event.target.closest('.item-open');
+    if (openDetails) {
+        const item = openDetails.closest('.item');
+        runSessionAction('details', item ? state.sessionsByKey.get(item.dataset.key) : null);
         return;
     }
 
-    // The hover-only info pills (the model and CLI-version "+N" histories, the
-    // running-subagent, worktree, Remote Control and detail badges) are tooltip
-    // triggers with a help cursor, not navigation targets - a click on one must
-    // not fall through to focusing the session's window. The changelog and pull
-    // request links are targets of their own: they open in the browser, so they
-    // must not also raise the agent's window.
-    const infoPills = '.model-more, .cli-more, .cli-link, .agents-badge, .worktree-badge, .rc-badge, .model-effort,'
-        + ' .branch-badge, .pr-badge, .context-badge, .plan-badge, .queue-badge, .budget-badge, .hook-badge';
-    if (event.target.closest(infoPills)) {
-        return;
-    }
-
-    // The found passages are there to be read and copied, so a click that lands
-    // in them must not raise the session's window out from under a selection.
+    // The found passages are there to be read and copied.
     if (event.target.closest('.row-hits')) {
         return;
     }
 
-    const focusEl = event.target.closest('.row[data-pid], .hero-link[data-pid]');
-    if (focusEl) {
-        focusSession(focusEl);
+    // A session in the graph selects like an entry of the list.
+    const graphNode = event.target.closest('.gnode[data-key]');
+    if (graphNode) {
+        selectSession(graphNode.dataset.key, true);
+        return;
     }
+
+    const item = event.target.closest('.item');
+    if (!item) {
+        return;
+    }
+    const session = state.sessionsByKey.get(item.dataset.key);
+    // In the compact view a click jumps to the session's window; one without a window
+    // opens its details instead.
+    if (state.compact) {
+        if (session && hasWindow(session)) {
+            focusSession(session);
+        } else {
+            runSessionAction('details', session);
+        }
+        return;
+    }
+    selectSession(item.dataset.key, true);
+}
+
+function onContentDoubleClick(event) {
+    const graphNode = event.target.closest('.gnode[data-key]');
+    if (graphNode) {
+        focusSession(state.sessionsByKey.get(graphNode.dataset.key));
+        return;
+    }
+    const item = event.target.closest('.item');
+    if (!item || event.target.closest('.row-hits, .item-open')) {
+        return;
+    }
+    const session = state.sessionsByKey.get(item.dataset.key);
+    if (state.compact) {
+        runSessionAction('details', session);
+    } else {
+        focusSession(session);
+    }
+}
+
+function onContentContextMenu(event) {
+    const item = event.target.closest('.item');
+    if (!item) {
+        return;
+    }
+    event.preventDefault();
+    if (!state.compact) {
+        selectSession(item.dataset.key, false);
+    }
+    openSessionMenu(item, { x: event.clientX, y: event.clientY });
+}
+
+function onDetailClick(event) {
+    const pathOpen = event.target.closest('.path-open');
+    if (pathOpen) {
+        openPath(pathOpen.dataset.cwd, pathOpen.dataset.origin);
+        return;
+    }
+    const button = event.target.closest('[data-action]');
+    if (!button) {
+        return;
+    }
+    if (button.dataset.action === 'back') {
+        closeDetail();
+        return;
+    }
+    runSessionAction(button.dataset.action, selectedSession());
 }

@@ -360,7 +360,8 @@ def probe_wsl_sessions(root: SessionRoot, requests: Iterable[tuple[int, int | No
         One entry per requested pid. An unreachable *root.proc_dir* (the distro gone, the mount
         dropped) degrades every request to not alive, rather than raising.
     """
-    table = procfs.read_proc_table(root.proc_dir) if root.proc_dir is not None else {}
+    requests = list(requests)
+    table = _session_table(root, requests)
     index = procfs.children_index(table)
 
     result: dict[int, ProcessInfo] = {}
@@ -373,6 +374,23 @@ def probe_wsl_sessions(root: SessionRoot, requests: Iterable[tuple[int, int | No
         result[pid] = ProcessInfo(alive=True, tool_running=bool(descendants), host=None, via_cli=False, child_count=len(descendants))
 
     return result
+
+
+def _session_table(root: SessionRoot, sessions: list[tuple[int, int | None]]) -> dict[int, procfs.ProcEntry]:
+    """Read the process trees below the *sessions* (pid, start time) from *root*'s ``/proc``; the whole table only as a fallback.
+
+    The walk down from the session pids reads a few dozen files where the whole table reads every
+    process of the distro (see :func:`procfs.read_proc_subtree`); a kernel without children lists
+    gets the full scan.
+    """
+    if root.proc_dir is None:
+        return {}
+
+    table = procfs.read_proc_subtree(root.proc_dir, sessions)
+    if table is None:
+        table = procfs.read_proc_table(root.proc_dir)
+
+    return table
 
 
 def wsl_process_stats(root: SessionRoot, pid: int, proc_start_ticks: int | None) -> list[ChildProcessStat]:
@@ -411,7 +429,7 @@ def wsl_process_stats(root: SessionRoot, pid: int, proc_start_ticks: int | None)
     if root.proc_dir is None:
         return []
 
-    table = procfs.read_proc_table(root.proc_dir)
+    table = _session_table(root, [(pid, proc_start_ticks)])
     index = procfs.children_index(table)
 
     descendants = procfs.live_descendants(pid, proc_start_ticks, table, index)

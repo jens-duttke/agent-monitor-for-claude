@@ -26,6 +26,33 @@ from agent_monitor_for_claude.transcript import history_state_for, state_for
 # None of them may appear in parsed metadata or the rendered snapshot.
 _SECRETS = ('SECRET_TEXT', 'SECRET_THINKING', 'SECRET_INPUT', 'SECRET_RESULT')
 
+# The fields that show conversation and tool text on purpose - the call the
+# session runs or waits on, its newest reply, the plan's steps, a failing hook's
+# error line, and whom it messaged.  Every other field must stay free of it.
+_DISPLAY_TEXT_FIELDS = ('current_tool', 'last_reply', 'plan_items', 'messages')
+
+
+def _guarded(state: object) -> str:
+    """Serialize *state* without the fields that show text on purpose, for the leak checks."""
+    data = asdict(state)
+    for name in _DISPLAY_TEXT_FIELDS:
+        data.pop(name, None)
+    for error in data.get('hook_errors') or ():
+        error.pop('message', None)
+
+    return json.dumps(data)
+
+
+def _guarded_snapshot(snapshot: dict) -> str:
+    """Serialize a snapshot without each record's fields that show text on purpose, for the leak checks."""
+    for record in snapshot['sessions']:
+        for name in _DISPLAY_TEXT_FIELDS:
+            record.pop(name, None)
+        for error in record.get('hook_errors') or ():
+            error.pop('message', None)
+
+    return json.dumps(snapshot)
+
 _SESSION_ID = 'privacy-session-id'
 _CWD = 'c:\\Temp\\privacy-proj'
 
@@ -430,7 +457,7 @@ class ParseTest(TranscriptEnvTest):
         state = state_for(local_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.last_entry_kind, 'local_command')
-        self.assertNotIn('SECRET_STDOUT', json.dumps(asdict(state)))
+        self.assertNotIn('SECRET_STDOUT', _guarded(state))
 
     def test_plain_trailing_user_text_is_not_an_interrupt(self) -> None:
         # A normal trailing user message (a fresh prompt the model is now
@@ -712,7 +739,7 @@ class PrivacyTest(TranscriptEnvTest):
         self._write_transcript(_SESSION_ID, _CWD, _transcript_lines())
         state = state_for(local_root(), _SESSION_ID, _CWD)
 
-        serialized = json.dumps(asdict(state))
+        serialized = _guarded(state)
         for secret in _SECRETS:
             self.assertNotIn(secret, serialized)
 
@@ -735,7 +762,7 @@ class PrivacyTest(TranscriptEnvTest):
         self.assertTrue(state.scan_pending)
         self.assertEqual(state.permission_mode, 'default')
         self.assertEqual(state.title, 'Session title label')
-        serialized = json.dumps(asdict(state))
+        serialized = _guarded(state)
         for secret in _SECRETS:
             self.assertNotIn(secret, serialized)
 
@@ -756,7 +783,7 @@ class PrivacyTest(TranscriptEnvTest):
 
         self.assertEqual(state.auto_denials_consecutive, 1)
         self.assertEqual(state.auto_denials_total, 1)
-        serialized = json.dumps(asdict(state))
+        serialized = _guarded(state)
         for secret in _SECRETS:
             self.assertNotIn(secret, serialized)
 
@@ -784,7 +811,7 @@ class PrivacyTest(TranscriptEnvTest):
         self.assertEqual(state.last_entry_kind, 'api_error')
         self.assertEqual(state.api_error_kind, 'rate_limit')
         self.assertEqual(state.api_error_detail, "You've hit your session limit")
-        serialized = json.dumps(asdict(state))
+        serialized = _guarded(state)
         for secret in _SECRETS:
             self.assertNotIn(secret, serialized)
 
@@ -804,7 +831,7 @@ class PrivacyTest(TranscriptEnvTest):
 
         self.assertEqual(state.last_entry_kind, 'assistant')
         self.assertIsNone(state.api_error_detail)
-        self.assertNotIn('SECRET_TEXT', json.dumps(asdict(state)))
+        self.assertNotIn('SECRET_TEXT', _guarded(state))
 
     def test_the_turn_refinements_read_flags_never_text(self) -> None:
         # How a turn ended, when a loop wakes, what opened the turn: each is read
@@ -828,15 +855,16 @@ class PrivacyTest(TranscriptEnvTest):
         self.assertEqual(state.turn_origin, 'peer')
         self.assertEqual(state.turn_end_signal, 'blocked')
         self.assertIsNotNone(state.wakeup_at)
-        serialized = json.dumps(asdict(state))
+        serialized = _guarded(state)
         for secret in _SECRETS:
             self.assertNotIn(secret, serialized)
 
     def test_the_session_details_read_names_and_numbers_never_text(self) -> None:
         # Each detail is a control value beside text that must stay unread: the
         # plan's step texts, a failing hook's output and command, a queued
-        # prompt, an artifact's title and address, and what a file-writing tool
-        # wrote. The file a tool wrote to is counted, never reported.
+        # prompt, and what a file-writing tool wrote. The file a tool wrote to is
+        # counted, never reported. An artifact's title and address are the one
+        # display text here - read deliberately, so the details can link it.
         self._write_transcript(_SESSION_ID, _CWD, [
             json.dumps({'type': 'user', 'timestamp': '2026-07-11T13:19:00Z', 'message': {'content': 'Benign question'}}),
             json.dumps({'type': 'queue-operation', 'operation': 'enqueue', 'timestamp': '2026-07-11T13:19:01Z',
@@ -844,7 +872,7 @@ class PrivacyTest(TranscriptEnvTest):
             json.dumps({'type': 'attachment', 'timestamp': '2026-07-11T13:19:02Z', 'gitBranch': 'feature/x',
                         'attachment': {'type': 'hook_non_blocking_error', 'hookName': 'PostToolUse:Bash', 'exitCode': 7,
                                        'stderr': 'SECRET_RESULT', 'stdout': 'SECRET_RESULT', 'command': 'SECRET_INPUT'}}),
-            json.dumps({'type': 'frame-link', 'artifactCount': 2, 'title': 'SECRET_TEXT', 'frameUrl': 'https://SECRET_INPUT'}),
+            json.dumps({'type': 'frame-link', 'artifactCount': 2, 'title': 'Release notes', 'frameUrl': 'https://claude.ai/artifact/abc123'}),
             json.dumps({'type': 'assistant', 'timestamp': '2026-07-11T13:19:05Z', 'effort': 'high',
                         'message': {'id': 'm1', 'stop_reason': 'tool_use', 'model': 'claude-opus-5-5',
                                     'usage': {'input_tokens': 10, 'cache_read_input_tokens': 1000, 'output_tokens': 5,
@@ -865,10 +893,12 @@ class PrivacyTest(TranscriptEnvTest):
         self.assertEqual(state.hook_errors[0].hook, 'PostToolUse:Bash')
         self.assertEqual(state.queued, 1)
         self.assertEqual(state.artifact_count, 2)
+        self.assertEqual([(artifact.title, artifact.url) for artifact in state.artifacts],
+                         [('Release notes', 'https://claude.ai/artifact/abc123')])
         self.assertEqual(state.files_edited, 1)
         # The prompt cache's lifetime is a number from the usage, beside the text.
         self.assertEqual(state.cache_ttl_seconds, 3600)
-        serialized = json.dumps(asdict(state))
+        serialized = _guarded(state)
         for secret in _SECRETS:
             self.assertNotIn(secret, serialized)
 
@@ -886,7 +916,7 @@ class PrivacyTest(TranscriptEnvTest):
         state = state_for(local_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.api_retry.detail, 'Connection dropped (ECONNRESET)')
-        serialized = json.dumps(asdict(state))
+        serialized = _guarded(state)
         for secret in _SECRETS:
             self.assertNotIn(secret, serialized)
 
@@ -901,7 +931,7 @@ class PrivacyTest(TranscriptEnvTest):
         state = state_for(local_root(), _SESSION_ID, _CWD)
 
         self.assertEqual(state.title, 'Benign question')
-        self.assertNotIn('SECRET_LATER_MESSAGE', json.dumps(asdict(state)))
+        self.assertNotIn('SECRET_LATER_MESSAGE', _guarded(state))
 
     def test_history_state_reads_cwd_but_no_content(self) -> None:
         # The history scan reads a session's cwd (a path, not conversation
@@ -923,7 +953,7 @@ class PrivacyTest(TranscriptEnvTest):
         self.assertEqual(state.cwd, _CWD)
         self.assertEqual(state.model, 'claude-opus-4-8')
         for secret in _SECRETS:
-            self.assertNotIn(secret, json.dumps(asdict(state)))
+            self.assertNotIn(secret, _guarded(state))
 
     def test_the_cost_parts_read_a_skill_name_and_a_count_never_text(self) -> None:
         # The cost tooltip needs the skill a reply ran under and how many web
@@ -953,7 +983,7 @@ class PrivacyTest(TranscriptEnvTest):
         self.assertEqual(record['usage_parts']['web_searches'], 2)
         self.assertIn('review', record['usage_parts']['skills'])
         self.assertIn('Explore', record['usage_parts']['agents'])
-        serialized = json.dumps(snapshot)
+        serialized = _guarded_snapshot(snapshot)
         for secret in _SECRETS:
             self.assertNotIn(secret, serialized)
 
@@ -964,7 +994,7 @@ class PrivacyTest(TranscriptEnvTest):
         self._write_session(_SESSION_ID, _CWD, pid, 'privacy-name')
         self._write_transcript(_SESSION_ID, _CWD, _transcript_lines())
 
-        serialized = json.dumps(build_snapshot())
+        serialized = _guarded_snapshot(build_snapshot())
 
         self.assertIn('privacy-name', serialized)
         for secret in _SECRETS:

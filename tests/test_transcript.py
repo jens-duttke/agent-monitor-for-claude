@@ -1225,6 +1225,42 @@ class ScanDetailsTest(unittest.TestCase):
         copy.edited_files.add('b.py')
         self.assertEqual(state.edited_files, {'a.py'})
 
+    def test_artifacts_are_collected_from_the_entry_that_names_them(self) -> None:
+        # Claude Code names an artifact once; every later frame-link carries the
+        # count alone and must not wipe the title.
+        state = _ScanState()
+        self._absorb(state, {'type': 'frame-link', 'artifactCount': 1, 'title': 'Concepts', 'frameUrl': 'https://claude.ai/artifact/a1'})
+        self._absorb(state, {'type': 'frame-link', 'artifactCount': 1})
+        self._absorb(state, {'type': 'frame-link', 'artifactCount': 2, 'title': 'Spec', 'frameUrl': 'https://claude.ai/artifact/b2'})
+        self._absorb(state, {'type': 'frame-link', 'artifactCount': 2, 'frameUrl': 'https://claude.ai/artifact/a1'})
+        self._absorb(state, {'type': 'frame-link', 'artifactCount': 2, 'title': 'Spec v2', 'frameUrl': 'https://claude.ai/artifact/b2'})
+        self.assertEqual(state.artifacts, {'https://claude.ai/artifact/a1': 'Concepts', 'https://claude.ai/artifact/b2': 'Spec v2'})
+
+    def test_an_address_that_is_not_https_is_ignored(self) -> None:
+        state = _ScanState()
+        for url in ('http://claude.ai/artifact/x', 'javascript:alert(1)', 7, '', 'https://' + 'x' * 500):
+            self._absorb(state, {'type': 'frame-link', 'artifactCount': 1, 'title': 'T', 'frameUrl': url})
+        self.assertEqual(state.artifacts, {})
+
+    def test_only_the_newest_artifacts_are_kept(self) -> None:
+        state = _ScanState()
+        for index in range(tmod._MAX_ARTIFACTS + 3):
+            self._absorb(state, {'type': 'frame-link', 'title': f'A{index}', 'frameUrl': f'https://claude.ai/artifact/{index}'})
+        self.assertEqual(len(state.artifacts), tmod._MAX_ARTIFACTS)
+        self.assertEqual(next(iter(state.artifacts.values())), 'A3')
+
+    def test_a_scan_reports_the_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session.jsonl'
+            path.write_text(json.dumps({'type': 'frame-link', 'artifactCount': 1, 'title': 'Concepts',
+                                        'frameUrl': 'https://claude.ai/artifact/a1'}) + '\n', encoding='utf-8')
+            tmod._scan_cache.clear()
+            try:
+                result = tmod._scan_appended(path)
+            finally:
+                tmod._scan_cache.clear()
+        self.assertEqual(result.artifacts, (tmod.Artifact('Concepts', 'https://claude.ai/artifact/a1'),))
+
     def test_a_scan_reports_the_counts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'session.jsonl'
@@ -1238,6 +1274,163 @@ class ScanDetailsTest(unittest.TestCase):
             finally:
                 tmod._scan_cache.clear()
         self.assertEqual((result.files_edited, result.compactions), (1, 1))
+
+
+
+def _assistant(content: list, stop_reason: str = 'tool_use', timestamp: str = '2026-07-11T10:00:00Z') -> dict:
+    # Every real reply carries its usage, which is what the full scan's pre-filter keys on.
+    return {'type': 'assistant', 'timestamp': timestamp, 'message': {
+        'stop_reason': stop_reason, 'model': 'claude-opus-5-5', 'content': content, 'usage': {'input_tokens': 1, 'output_tokens': 1}}}
+
+
+def _tool_use(name: str, tool_id: str = 't1', **tool_input) -> dict:
+    return {'type': 'tool_use', 'id': tool_id, 'name': name, 'input': tool_input}
+
+
+def _prompt(text: str, timestamp: str) -> dict:
+    return {'type': 'user', 'timestamp': timestamp, 'message': {'role': 'user', 'content': text}}
+
+
+class CurrentToolTest(unittest.TestCase):
+    """The call a session runs or waits on, described by its own subject."""
+
+    def test_a_pending_command_names_itself(self) -> None:
+        state = _parse(_lines(_assistant([_tool_use('Bash', command='npm test', description='Run the tests')])))
+        self.assertEqual(state.current_tool, tmod.ToolCall('Bash', 'npm test', 'Run the tests'))
+        self.assertEqual(state.current_tool_at, _timestamp_epoch('2026-07-11T10:00:00Z'))
+
+    def test_an_answered_call_is_not_current(self) -> None:
+        state = _parse(_lines(
+            _assistant([_tool_use('Bash', command='npm test')]),
+            {'type': 'user', 'timestamp': '2026-07-11T10:00:05Z', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't1'}]}},
+        ))
+        self.assertIsNone(state.current_tool)
+        self.assertIsNone(state.current_tool_at)
+
+    def test_a_question_dialog_carries_its_questions_and_answers(self) -> None:
+        questions = [{'question': 'Which layout?', 'header': 'Layout', 'multiSelect': False,
+                      'options': [{'label': 'Grid', 'description': 'd'}, {'label': 'Board', 'description': 'd'}]}]
+        state = _parse(_lines(_assistant([_tool_use('AskUserQuestion', questions=questions)])))
+        self.assertEqual(state.current_tool.questions, (tmod.Question('Which layout?', ('Grid', 'Board')),))
+
+    def test_a_plan_to_review_carries_the_plan_cut_to_length(self) -> None:
+        state = _parse(_lines(_assistant([_tool_use('ExitPlanMode', plan='x' * 9000)])))
+        self.assertEqual(len(state.current_tool.text), tmod._PLAN_TEXT_MAX_CHARS)
+
+    def test_a_file_call_names_the_file_and_an_unknown_call_its_first_text(self) -> None:
+        state = _parse(_lines(_assistant([_tool_use('Edit', file_path='src/app.py', old_string='a', new_string='b')])))
+        self.assertEqual(state.current_tool.text, 'src/app.py')
+        state = _parse(_lines(_assistant([_tool_use('mcp__x__do', target='the thing', count=3)])))
+        self.assertEqual(state.current_tool.text, 'the thing')
+
+
+class LastReplyTest(unittest.TestCase):
+    def test_the_newest_reply_text_is_kept(self) -> None:
+        state = _parse(_lines(
+            _assistant([{'type': 'text', 'text': 'First answer'}], 'end_turn'),
+            _assistant([{'type': 'thinking', 'thinking': 'hidden'}, {'type': 'text', 'text': '  Done: all green.  '}], 'end_turn'),
+        ))
+        self.assertEqual(state.last_reply, 'Done: all green.')
+
+    def test_a_reply_without_text_keeps_the_previous_one(self) -> None:
+        state = _parse(_lines(
+            _assistant([{'type': 'text', 'text': 'Answer'}], 'end_turn'),
+            _assistant([_tool_use('Bash', command='ls')]),
+        ))
+        self.assertEqual(state.last_reply, 'Answer')
+
+
+class PlanItemsAndHookMessagesTest(unittest.TestCase):
+    def test_plan_steps_carry_their_text(self) -> None:
+        items = [{'content': 'Read the code', 'status': 'completed'}, {'content': 'Write the fix', 'status': 'in_progress'}]
+        state = _parse(_lines(_assistant([_tool_use(tmod._PLAN_TOOL, items=items)])))
+        self.assertEqual(state.plan_items, (tmod.PlanItem('Read the code', 'completed'), tmod.PlanItem('Write the fix', 'in_progress')))
+
+    def test_a_failing_hook_reports_its_first_error_line(self) -> None:
+        attachment = {'type': 'hook_non_blocking_error', 'hookName': 'PostToolUse:Bash', 'exitCode': 7,
+                      'stderr': '\n  lint failed: 3 errors\nsecond line', 'stdout': ''}
+        state = _parse(_lines({'type': 'attachment', 'attachment': attachment}))
+        self.assertEqual(state.hook_errors[0].message, 'lint failed: 3 errors')
+
+    def test_claude_codes_own_hook_wording_is_no_message(self) -> None:
+        def message(stderr: str, stdout: str = '') -> str:
+            attachment = {'type': 'hook_non_blocking_error', 'hookName': 'Stop', 'exitCode': 1, 'stderr': stderr, 'stdout': stdout}
+            return _parse(_lines({'type': 'attachment', 'attachment': attachment})).hook_errors[0].message
+
+        self.assertEqual(message('Failed with non-blocking status code: No stderr output'), '')
+        self.assertEqual(message('Failed with non-blocking status code: eslint found 2 errors'), 'eslint found 2 errors')
+        self.assertEqual(message('', 'stdout is never read'), '')
+
+
+class ScanMonitoringTest(unittest.TestCase):
+    """Lines changed, worked intervals and messages, from the full scan."""
+
+    @staticmethod
+    def _absorb(state, entry):
+        _absorb_line(json.dumps(entry).encode('utf-8'), state)
+
+    def test_edits_and_subagents_add_their_lines(self) -> None:
+        state = _ScanState()
+        patch = [{'lines': ['+a', '+b', '-c', ' d']}, {'lines': ['-e']}]
+        self._absorb(state, {'type': 'user', 'toolUseResult': {'type': 'update', 'structuredPatch': patch},
+                             'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't1'}]}})
+        self._absorb(state, {'type': 'user', 'toolUseResult': {'type': 'create', 'structuredPatch': [], 'content': 'x\ny\nz'},
+                             'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't2'}]}})
+        self._absorb(state, {'type': 'user', 'toolUseResult': {'toolStats': {'linesAdded': 10, 'linesRemoved': 4}},
+                             'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't3'}]}})
+        self.assertEqual((state.lines_added, state.lines_removed), (2 + 3 + 10, 2 + 4))
+
+    def test_a_turn_from_prompt_to_its_end_is_one_worked_interval(self) -> None:
+        state = _ScanState()
+        self._absorb(state, _prompt('Fix it', '2026-07-11T10:00:00Z'))
+        self._absorb(state, {'type': 'user', 'timestamp': '2026-07-11T10:00:30Z',
+                             'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't1'}]}})
+        self._absorb(state, _assistant([{'type': 'text', 'text': 'done'}], 'end_turn', '2026-07-11T10:02:00Z'))
+        self._absorb(state, _assistant([{'type': 'text', 'text': 'stray'}], 'end_turn', '2026-07-11T10:03:00Z'))
+        start, end = _timestamp_epoch('2026-07-11T10:00:00Z'), _timestamp_epoch('2026-07-11T10:02:00Z')
+        self.assertEqual(state.intervals, [(start, end)])
+        self.assertIsNone(state.turn_started_at)
+
+    def test_an_interrupt_or_an_api_error_ends_the_interval(self) -> None:
+        state = _ScanState()
+        self._absorb(state, _prompt('Fix it', '2026-07-11T10:00:00Z'))
+        self._absorb(state, {'type': 'user', 'timestamp': '2026-07-11T10:01:00Z',
+                             'message': {'content': [{'type': 'text', 'text': '[Request interrupted by user]'}]}})
+        self._absorb(state, _prompt('Again', '2026-07-11T11:00:00Z'))
+        error = _assistant([{'type': 'text', 'text': 'API Error'}], 'stop_sequence', '2026-07-11T11:00:20Z')
+        error['isApiErrorMessage'] = True
+        self._absorb(state, error)
+        epoch = _timestamp_epoch
+        self.assertEqual(state.intervals, [(epoch('2026-07-11T10:00:00Z'), epoch('2026-07-11T10:01:00Z')),
+                                           (epoch('2026-07-11T11:00:00Z'), epoch('2026-07-11T11:00:20Z'))])
+
+    def test_a_local_command_does_not_stay_a_worked_turn(self) -> None:
+        state = _ScanState()
+        self._absorb(state, _prompt('<command-name>/model</command-name>', '2026-07-11T10:00:00Z'))
+        self._absorb(state, {'type': 'user', 'timestamp': '2026-07-11T10:00:01Z',
+                             'message': {'content': '<local-command-stdout>Set model</local-command-stdout>'}})
+        self.assertIsNone(state.turn_started_at)
+        self._absorb(state, _prompt('Fix it', '2026-07-11T14:00:00Z'))
+        self._absorb(state, _assistant([{'type': 'text', 'text': 'done'}], 'end_turn', '2026-07-11T14:01:00Z'))
+        epoch = _timestamp_epoch
+        self.assertEqual(state.intervals, [(epoch('2026-07-11T10:00:00Z'), epoch('2026-07-11T10:00:01Z')),
+                                           (epoch('2026-07-11T14:00:00Z'), epoch('2026-07-11T14:01:00Z'))])
+
+    def test_an_unfinished_turn_stays_open(self) -> None:
+        state = _ScanState()
+        self._absorb(state, _prompt('Fix it', '2026-07-11T10:00:00Z'))
+        self.assertEqual(state.turn_started_at, _timestamp_epoch('2026-07-11T10:00:00Z'))
+        self.assertEqual(state.intervals, [])
+
+    def test_messages_sent_and_received_are_logged(self) -> None:
+        state = _ScanState()
+        self._absorb(state, _assistant([_tool_use('SendMessage', to='review-session', message='hi')], 'tool_use', '2026-07-11T10:00:00Z'))
+        self._absorb(state, {'type': 'user', 'timestamp': '2026-07-11T10:01:00Z', 'message': {'content': 'report'},
+                             'origin': {'kind': 'peer', 'from': 'a1b2', 'name': 'Explore', 'handback': True, 'body': 'long'}})
+        self.assertEqual(state.messages, [
+            tmod.MessageEvent('sent', 'review-session', _timestamp_epoch('2026-07-11T10:00:00Z')),
+            tmod.MessageEvent('received', 'a1b2', _timestamp_epoch('2026-07-11T10:01:00Z'), 'Explore', True),
+        ])
 
 
 if __name__ == '__main__':

@@ -37,7 +37,7 @@ __all__ = [
     'DIAGNOSTIC_PACKAGES', 'activate_window', 'ask_yes_no', 'apply_native_background', 'copy_text', 'diagnostic_display_rows',
     'diagnostic_post_init_rows', 'diagnostic_runtime_rows', 'diagnostic_system_rows', 'enum_windows',
     'no_window_kwargs', 'open_path', 'open_uri', 'paint_window', 'prepare_gui_environment', 'reveal_file',
-    'set_keep_on_top', 'set_min_window_size', 'setup_console', 'show_error_box', 'storage_dir', 'window_background_color',
+    'set_keep_on_top', 'set_min_window_size', 'set_taskbar_attention', 'setup_console', 'show_error_box', 'storage_dir', 'window_background_color',
 ]
 
 # Third-party packages worth reporting in the diagnostics output.  pythonnet and
@@ -48,8 +48,7 @@ DIAGNOSTIC_PACKAGES = ('pywebview', 'PyGObject', 'psutil')
 # index.css so the bare window matches the content instead of flashing a
 # mismatched colour.  The page itself picks the stored theme (or the system
 # preference) before first paint.
-_WINDOW_BACKGROUND_DARK = '#191918'
-_WINDOW_BACKGROUND_LIGHT = '#faf9f5'
+_WINDOW_BACKGROUND = '#262624'
 
 # Directory name for the browser profile, in the XDG data directory.
 _STORAGE_DIR_NAME = 'agent-monitor-for-claude'
@@ -80,13 +79,6 @@ _SNAP_MODULE_VARIABLES = (
 # VS Code points ``GIO_MODULE_DIR``.  The trailing slash keeps an unrelated
 # ``/snapshots/`` from matching.
 _SNAP_PATH_MARKER = '/snap/'
-
-# XDG desktop portal: the cross-desktop reading of the light/dark preference,
-# which works under both X11 and Wayland and on GNOME as well as KDE.
-_PORTAL_SERVICE = ('org.freedesktop.portal.Desktop', '/org/freedesktop/portal/desktop')
-_APPEARANCE_NAMESPACE = 'org.freedesktop.appearance'
-_COLOR_SCHEME_KEY = 'color-scheme'
-_COLOR_SCHEME_LIGHT = 2  # 0 = no preference, 1 = prefer dark, 2 = prefer light
 
 # The freedesktop interface every mainstream file manager implements for
 # "show this file, selected, in its folder".
@@ -348,15 +340,8 @@ def reveal_file(path: str) -> bool:
 
 
 def window_background_color() -> str:
-    """Return the content-area background colour matching the desktop's colour scheme.
-
-    Reads ``color-scheme`` from the XDG desktop portal, which answers under both
-    X11 and Wayland and on every mainstream desktop.  An unreachable portal, or
-    one reporting no preference, yields the dark colour - the page then reports
-    its real colour back over the bridge as soon as it has resolved its own
-    stored theme, so this only has to be a good guess for the first frame.
-    """
-    return _WINDOW_BACKGROUND_LIGHT if _read_color_scheme() == _COLOR_SCHEME_LIGHT else _WINDOW_BACKGROUND_DARK
+    """Return the content-area background colour the window starts with (the UI has one, dark theme)."""
+    return _WINDOW_BACKGROUND
 
 
 def paint_window(handle: int, hex_color: str) -> bool:
@@ -544,6 +529,64 @@ def set_keep_on_top(native: object, on_top: bool) -> bool:
     return applied
 
 
+def set_taskbar_attention(native: object, badge: str, flash: bool) -> bool:
+    """Ask the desktop for attention to the window; a badge has no Linux equivalent.
+
+    GTK windows carry no taskbar badge - the docks that show counts read them
+    over a desktop-specific D-Bus API this application does not speak - so
+    *badge* only decides when the request is withdrawn: with nothing left to
+    show, the urgency hint is cleared.  A *flash* sets it while the window is not
+    the active one, which the window manager shows as its own highlight.
+    Marshalled onto the GTK main loop like every other window call.
+
+    Parameters
+    ----------
+    native : object
+        pywebview's native window (the ``Gtk.ApplicationWindow``).
+    badge : str
+        The text Windows would show on the button; empty clears the hint.
+    flash : bool
+        Whether to request attention.
+
+    Returns
+    -------
+    bool
+        True if the hint was set or cleared.  Best-effort otherwise: any failure
+        (no GTK, no running main loop) is swallowed and reported as False.
+    """
+    gi = _import_gi()
+    if native is None or gi is None or not isinstance(badge, str):
+        return False
+
+    try:
+        from gi.repository import GLib
+    except ImportError:
+        return False
+
+    done = threading.Event()
+    applied = False
+
+    def _assign() -> bool:
+        nonlocal applied
+        try:
+            if flash and not native.is_active():
+                native.set_urgency_hint(True)
+            elif not badge:
+                native.set_urgency_hint(False)
+            applied = True
+        except Exception:  # noqa: BLE001  # a toolkit failure must not raise into the bridge
+            applied = False
+        finally:
+            done.set()
+
+        return False
+
+    GLib.idle_add(_assign)
+    done.wait(_MAIN_LOOP_TIMEOUT)
+
+    return applied
+
+
 def setup_console() -> None:
     """Ensure diagnostics have somewhere to print.
 
@@ -678,27 +721,6 @@ def _session_proxy(service: tuple[str, str], interface: str | None = None) -> An
     _proxies[cache_key] = proxy
 
     return proxy
-
-
-def _read_color_scheme() -> int | None:
-    """Return the portal's ``color-scheme`` value, or None when unavailable."""
-    proxy = _session_proxy(_PORTAL_SERVICE, 'org.freedesktop.portal.Settings')
-    if proxy is None:
-        return None
-
-    from gi.repository import Gio, GLib
-
-    try:
-        result = proxy.call_sync(
-            'Read', GLib.Variant('(ss)', (_APPEARANCE_NAMESPACE, _COLOR_SCHEME_KEY)),
-            Gio.DBusCallFlags.NONE, _DBUS_TIMEOUT_MS, None,
-        )
-    except GLib.Error:
-        return None
-
-    unpacked = result.unpack()
-
-    return unpacked[0] if unpacked else None
 
 
 def _try_gtk_dialog(message: str, title: str) -> bool:

@@ -47,13 +47,13 @@ from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 
-from .background_scans import drop_pending, queue_scan, wait_for_readers
+from .background_scans import drop_pending, prioritize, queue_scan, wait_for_readers
 from .paths import SessionRoot, transcript_path
 from .usage_parts import UsageScan
 
 __all__ = [
-    'ApiRetry', 'HookError', 'PullRequest', 'TranscriptState', 'HistoryState', 'WorktreeState', 'state_for',
-    'history_state_for', 'worktree_for', 'prune_scan_cache', 'usage_scan', 'usage_scan_once',
+    'ApiRetry', 'Artifact', 'HookError', 'MessageEvent', 'PlanItem', 'PullRequest', 'Question', 'ToolCall', 'TranscriptState',
+    'HistoryState', 'WorktreeState', 'state_for', 'history_state_for', 'worktree_for', 'edited_files', 'prioritize_session', 'prune_scan_cache', 'usage_scan', 'usage_scan_once',
 ]
 
 # Bytes read from the end of the transcript.  Large enough to contain the last
@@ -63,11 +63,12 @@ __all__ = [
 _TAIL_BYTES = 262144
 _TAIL_ESCALATION = (_TAIL_BYTES, _TAIL_BYTES * 8, _TAIL_BYTES * 64)
 
-# A transcript's first full scan reads the whole file, at roughly 400 MB/s -
-# seconds for the few-hundred-megabyte transcripts long sessions grow into.  Up
-# to this size it runs on the request that needs it; anything larger is handed
-# to a background thread (see _scan_or_defer), so a snapshot never waits on it.
-_SYNC_SCAN_BYTES = 8 * 1024 * 1024
+# A transcript's first full scan reads the whole file, at roughly 400 MB/s, and
+# a start-up finds dozens of them - a session and each of its subagents.  Only a
+# file this small is scanned on the request that needs it; everything larger is
+# handed to the background thread (see _scan_or_defer), so the first snapshot
+# shows every session at once and their figures fill in as the scans finish.
+_SYNC_SCAN_BYTES = 256 * 1024
 # Read size of a full scan, which bounds its memory to a chunk plus the longest
 # line instead of the whole file, and how far a background scan runs before it
 # checks whether to give way (a few milliseconds of work).
@@ -182,6 +183,41 @@ _MAX_PR_LINKS = 5
 _MAX_HOOK_ERRORS = 5
 _NAME_MAX_CHARS = 120
 _PR_URL_MAX_CHARS = 400
+
+# The artifacts a session published, newest last; past this many the oldest
+# drop out.  Claude Code writes an artifact's address and title only into the
+# first ``frame-link`` entry for it - the later ones carry just the count - so
+# they are collected by the full scan, behind this marker.
+_MAX_ARTIFACTS = 20
+_FRAME_URL_MARKER = b'"frameUrl"'
+
+# What a call the session runs or waits on shows: its command, path, question
+# or plan, cut to these lengths.  A plan is the longest, since it is read
+# before it is approved.
+_TOOL_TEXT_MAX_CHARS = 400
+_PLAN_TEXT_MAX_CHARS = 4000
+_MAX_QUESTIONS = 4
+_MAX_OPTIONS = 8
+# The newest reply's text, and a failing hook's error line.
+_REPLY_MAX_CHARS = 600
+_HOOK_MESSAGE_MAX_CHARS = 200
+# Claude Code's own wording around a hook's stderr: the prefix is dropped, and
+# the placeholder it writes for a hook that printed nothing means no message.
+_HOOK_MESSAGE_PREFIX = 'Failed with non-blocking status code:'
+_HOOK_NO_OUTPUT = 'No stderr output'
+# The plan's step texts.
+_PLAN_ITEM_MAX_CHARS = 160
+
+# Full-scan markers: an edit's patch, a subagent's tool statistics, a message
+# from a peer (another session or a subagent handing back), and the tools that
+# send one.
+_PATCH_MARKER = b'"structuredPatch"'
+_TOOL_STATS_MARKER = b'"toolStats"'
+_PEER_MARKER = b'"kind":"peer"'
+_SEND_MESSAGE_TOOL = 'SendMessage'
+# The worked intervals and messages kept per session, newest last.
+_MAX_INTERVALS = 400
+_MAX_MESSAGES = 60
 
 # What opened the newest turn, from the prompt entry's own ``origin.kind`` (or
 # the older ``turnOrigin`` spelling): typed by you, a background task that
@@ -322,6 +358,15 @@ class _ScanState:
     # the web searches made - both only for the cost tooltip.
     by_skill: dict[str, dict[str, dict[str, int]]] = field(default_factory=dict)
     web_searches: int = 0
+    # The artifacts published, address -> title, in order of first publication.
+    artifacts: dict[str, str] = field(default_factory=dict)
+    # Lines edits added and removed; the turn in progress (its start) and the
+    # turns completed (start, end); the messages sent and received.
+    lines_added: int = 0
+    lines_removed: int = 0
+    turn_started_at: float | None = None
+    intervals: list[tuple[float, float]] = field(default_factory=list)
+    messages: list[MessageEvent] = field(default_factory=list)
     # Memoized run-compressed timelines, one per value field, each kept with the
     # event count it was built from.  Deliberately the last field, so the
     # positional ``copy()`` below stays correct without carrying it over - a copy
@@ -368,6 +413,8 @@ class _ScanState:
             self.ai_title, self.custom_title, self.first_prompt, self.first_command_prompt, self.permission_mode,
             self.auto_denials_consecutive, self.auto_denials_total, self.worktree, dict(self.counted_output_by_message),
             set(self.edited_files), self.compactions, _copy_skill_usage(self.by_skill), self.web_searches,
+            dict(self.artifacts), self.lines_added, self.lines_removed, self.turn_started_at, list(self.intervals),
+            list(self.messages),
         )
 
     def usage(self) -> UsageScan:
@@ -396,6 +443,12 @@ class _ScanResult:
     compactions: int
     usage_by_skill: dict[str, dict[str, dict[str, int]]]
     web_searches: int
+    artifacts: tuple[Artifact, ...]
+    lines_added: int
+    lines_removed: int
+    work_intervals: tuple[tuple[float, float], ...]
+    turn_open_since: float | None
+    messages: tuple[MessageEvent, ...]
 
 
 @dataclass(frozen=True)
@@ -498,11 +551,67 @@ class ApiRetry:
 
 @dataclass(frozen=True)
 class HookError:
-    """A hook that failed without blocking, as Claude Code records it: the hook's name, its exit code, and how often."""
+    """A hook that failed without blocking: the hook's name, its exit code, how often, and its newest error line."""
 
     hook: str
     exit_code: int | None
     count: int
+    message: str = ''
+
+
+@dataclass(frozen=True)
+class Question:
+    """One question of an open question dialog, with the labels of its answers."""
+
+    text: str
+    options: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """The call a session runs or waits on: the tool, what it acts on, and what it says it does.
+
+    ``text`` is the call's own subject - a command, a path, an address, a plan;
+    ``detail`` the description the call gave itself; ``questions`` an open
+    question dialog's questions.
+    """
+
+    tool: str
+    text: str = ''
+    detail: str = ''
+    questions: tuple[Question, ...] = ()
+
+
+@dataclass(frozen=True)
+class PlanItem:
+    """One step of a Claude Desktop plan: its text and status."""
+
+    text: str
+    status: str
+
+
+@dataclass(frozen=True)
+class MessageEvent:
+    """A message the session sent or received: to or from whom, when, and whether it was a subagent's hand-back.
+
+    ``peer`` is the other side as the transcript names it - a session name for
+    a message sent, the sender's id for one received - and ``label`` what that
+    sender calls itself.
+    """
+
+    direction: str
+    peer: str
+    at: float
+    label: str = ''
+    handback: bool = False
+
+
+@dataclass(frozen=True)
+class Artifact:
+    """An artifact the session published: its title and address as Claude Code recorded them."""
+
+    title: str
+    url: str
 
 
 @dataclass(frozen=True)
@@ -583,8 +692,24 @@ class TranscriptState:
     hook_errors: tuple[HookError, ...] = ()
     artifact_count: int | None = None
     pr_links: tuple[PullRequest, ...] = ()
-    # From the full scan: distinct files edited and context compactions, both
-    # None while that scan is still pending.
+    # From the full scan: the artifacts published (empty while that scan is
+    # pending), distinct files edited and context compactions (both None then).
+    artifacts: tuple[Artifact, ...] = ()
+    # The call the session runs or waits on, and when it was made (POSIX
+    # seconds); the newest reply's text; the plan's steps.
+    current_tool: ToolCall | None = None
+    current_tool_at: float | None = None
+    last_reply: str | None = None
+    plan_items: tuple[PlanItem, ...] = ()
+    # From the full scan: lines the session's edits added and removed (its
+    # subagents' included), the intervals it worked (start, end), and the
+    # messages it sent and received.
+    lines_added: int | None = None
+    lines_removed: int | None = None
+    work_intervals: tuple[tuple[float, float], ...] = ()
+    # When the turn still running started (a prompt with no final reply yet).
+    turn_open_since: float | None = None
+    messages: tuple[MessageEvent, ...] = ()
     files_edited: int | None = None
     compactions: int | None = None
     age_seconds: float | None = None
@@ -624,6 +749,7 @@ class HistoryState:
     git_branch: str | None = None
     age_seconds: float | None = None
     usage: UsageScan = field(default_factory=UsageScan)
+    artifacts: tuple[Artifact, ...] = ()
 
 
 def state_for(root: SessionRoot, session_id: str, cwd: str) -> TranscriptState:
@@ -658,7 +784,9 @@ def state_for(root: SessionRoot, session_id: str, cwd: str) -> TranscriptState:
                    title=scan.title, permission_mode=scan.permission_mode,
                    auto_denials_consecutive=scan.auto_denials_consecutive,
                    auto_denials_total=scan.auto_denials_total,
-                   files_edited=scan.files_edited, compactions=scan.compactions)
+                   files_edited=scan.files_edited, compactions=scan.compactions, artifacts=scan.artifacts,
+                   lines_added=scan.lines_added, lines_removed=scan.lines_removed,
+                   work_intervals=scan.work_intervals, turn_open_since=scan.turn_open_since, messages=scan.messages)
 
 
 def worktree_for(path: Path) -> WorktreeState | None:
@@ -712,6 +840,7 @@ def history_state_for(path: Path) -> HistoryState:
     return HistoryState(
         session_id=session_id, cwd=cwd, title=scan.title(), model=tail.model, cli_version=tail.cli_version,
         git_branch=tail.git_branch, age_seconds=age_seconds, usage=scan.usage(),
+        artifacts=_artifact_list(scan.artifacts),
     )
 
 
@@ -925,6 +1054,9 @@ def _parse(lines: list[str]) -> TranscriptState:
     turn_end_signal: str | None = None
     turn_origin: str | None = None
     any_parsed: bool = False
+    last_tool_block: dict | None = None
+    last_tool_at: float | None = None
+    last_reply: str | None = None
     details = _TailDetails()
 
     for line in lines:
@@ -1016,11 +1148,16 @@ def _parse(lines: list[str]) -> TranscriptState:
                 if isinstance(entry_model, str) and entry_model and entry_model != _SYNTHETIC_MODEL:
                     model = entry_model
                 details.absorb_reply(entry, message)
+                reply = _reply_text(content)
+                if reply:
+                    last_reply = reply
                 if isinstance(content, list):
                     for block in content:
                         if isinstance(block, dict) and block.get('type') == 'tool_use':
                             last_tool_id = block.get('id')
                             last_tool_name = block.get('name')
+                            last_tool_block = block
+                            last_tool_at = _timestamp_epoch(timestamp)
                             # Only the wrap-up call says how the turn ended, so any
                             # other call after it means the turn went on.
                             turn_end_signal = _wrap_up_signal(block)
@@ -1085,6 +1222,7 @@ def _parse(lines: list[str]) -> TranscriptState:
             api_retry = _api_retry(entry)
 
     pending_tool = last_tool_id is not None and last_tool_id not in resolved_tool_ids
+    current_tool = _tool_call(last_tool_block) if pending_tool and last_tool_block is not None else None
 
     return TranscriptState(
         has_transcript=True,
@@ -1105,6 +1243,9 @@ def _parse(lines: list[str]) -> TranscriptState:
         turn_origin=turn_origin,
         model=model,
         cli_version=cli_version,
+        current_tool=current_tool,
+        current_tool_at=last_tool_at if current_tool is not None else None,
+        last_reply=last_reply,
         **details.state_fields(),
     )
 
@@ -1130,8 +1271,10 @@ class _TailDetails:
     budget_total: float | None = None
     queued: int = 0
     plan_statuses: list[str] = field(default_factory=list)
+    plan_texts: list[str] = field(default_factory=list)
     plan_current: int | None = None
     hook_error_counts: dict[tuple[str, int | None], int] = field(default_factory=dict)
+    hook_error_messages: dict[tuple[str, int | None], str] = field(default_factory=dict)
     artifact_count: int | None = None
     pull_requests: dict[tuple[str, int], str | None] = field(default_factory=dict)
 
@@ -1201,7 +1344,9 @@ class _TailDetails:
 
         items = tool_input.get('items')
         if isinstance(items, list):
-            self.plan_statuses = [_plan_status(item) for item in items if isinstance(item, dict)]
+            steps = [item for item in items if isinstance(item, dict)]
+            self.plan_statuses = [_plan_status(item) for item in steps]
+            self.plan_texts = [_clip(item.get('content'), _PLAN_ITEM_MAX_CHARS) if isinstance(item.get('content'), str) else '' for item in steps]
             self.plan_current = _index_of(self.plan_statuses, _PLAN_IN_PROGRESS)
             return
 
@@ -1247,7 +1392,10 @@ class _TailDetails:
             'queued': self.queued,
             'plan_step': self.plan_current + 1 if unfinished else None,
             'plan_total': len(self.plan_statuses) if unfinished else 0,
-            'hook_errors': tuple(HookError(hook, code, count) for (hook, code), count in hook_errors),
+            'hook_errors': tuple(
+                HookError(hook, code, count, self.hook_error_messages.get((hook, code), '')) for (hook, code), count in hook_errors
+            ),
+            'plan_items': tuple(PlanItem(text, status) for text, status in zip(self.plan_texts, self.plan_statuses)),
             'artifact_count': self.artifact_count,
             'pr_links': tuple(PullRequest(repository, number, url) for (repository, number), url in reversed(pull_requests)),
         }
@@ -1265,13 +1413,16 @@ class _TailDetails:
                 self.budget_used = float(used)
                 self.budget_total = float(total)
         elif kind == 'hook_non_blocking_error':
-            # The hook's own output and command stay unread: only which hook
-            # failed and with which exit code.
+            # Which hook failed, with which exit code, and the first line it
+            # wrote to stderr - the reason a fix starts from.
             hook = attachment.get('hookName')
             code = attachment.get('exitCode')
             if isinstance(hook, str) and hook:
                 key = (_clip(hook, _NAME_MAX_CHARS), code if _is_count(code) else None)
                 self.hook_error_counts[key] = self.hook_error_counts.get(key, 0) + 1
+                message = _hook_message(attachment.get('stderr'))
+                if message:
+                    self.hook_error_messages[key] = _clip(message, _HOOK_MESSAGE_MAX_CHARS)
 
     def _absorb_pull_request(self, entry: dict) -> None:
         """Fold a ``pr-link`` entry; one pull request linked again moves to the newest position."""
@@ -1631,10 +1782,45 @@ def _scan_or_defer(path: Path, fresh: Callable[[], _ScanState] = _ScanState) -> 
         except OSError:
             size = 0
         if size > _SYNC_SCAN_BYTES:
-            queue_scan(cache_key, path, size, partial(_first_scan, fresh=fresh))
+            queue_scan(cache_key, path, size, partial(_first_scan, fresh=fresh), _modified(path))
             return None
 
     return _scan_appended(path, fresh)
+
+
+def prioritize_session(root: SessionRoot, session_id: str, cwd: str) -> int:
+    """Move the queued first scans of one session - its transcript and its subagents' - to the front.
+
+    Called when the session is selected, so its cost and details are the next
+    thing the background thread completes.  Returns how many scans were moved.
+    """
+    if not session_id or not cwd:
+        return 0
+
+    path = transcript_path(root, session_id, cwd)
+    transcript_key = os.path.normcase(str(path))
+    folder_prefix = os.path.normcase(str(path.with_suffix(''))) + os.sep
+
+    return prioritize(lambda key: key == transcript_key or key.startswith(folder_prefix))
+
+
+def edited_files(root: SessionRoot, session_id: str, cwd: str) -> tuple[str, ...]:
+    """The paths the session's file-writing tool calls named, as its full scan collected them; empty before that scan."""
+    if not session_id or not cwd:
+        return ()
+
+    cache_key = os.path.normcase(str(transcript_path(root, session_id, cwd)))
+    with _scan_lock:
+        state = _scan_cache.get(cache_key)
+        return tuple(sorted(state.edited_files)) if state is not None else ()
+
+
+def _modified(path: Path) -> float:
+    """Return *path*'s modification time, or 0 when it cannot be read."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def _first_scan(cache_key: str, path: Path, fresh: Callable[[], _ScanState] = _ScanState) -> bool:
@@ -1738,6 +1924,12 @@ def _scan_result(state: _ScanState) -> _ScanResult:
         compactions=state.compactions,
         usage_by_skill=_copy_skill_usage(state.by_skill),
         web_searches=state.web_searches,
+        artifacts=_artifact_list(state.artifacts),
+        lines_added=state.lines_added,
+        lines_removed=state.lines_removed,
+        work_intervals=tuple(state.intervals),
+        turn_open_since=state.turn_started_at,
+        messages=tuple(state.messages),
     )
 
 
@@ -1846,8 +2038,15 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
         or _WORKTREE_STATE_MARKER in raw_line
         or _COMPACT_BOUNDARY_MARKER in raw_line
         or _SEARCH_COUNT_MARKER in raw_line
+        or _FRAME_URL_MARKER in raw_line
+        or _PATCH_MARKER in raw_line
+        or _TOOL_STATS_MARKER in raw_line
+        or _PEER_MARKER in raw_line
     )
-    if not interesting and (state.first_prompt is not None or _USER_MARKER not in raw_line):
+    # A prompt opens a worked interval, so every prompt is parsed - a tool
+    # result, the bulk of a transcript's user lines, is not one.
+    prompt_line = _USER_MARKER in raw_line and _TOOL_RESULT_MARKER not in raw_line
+    if not interesting and not prompt_line:
         return
 
     entry = _load(raw_line.decode('utf-8', errors='ignore'))
@@ -1880,10 +2079,17 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
 
     if entry_type == 'user':
         state.web_searches += _search_count(entry)
+        if entry.get('isSidechain') is not True:
+            _note_user_entry(entry, state)
+
+    if entry_type == 'frame-link':
+        _note_artifact(entry, state.artifacts)
 
     if entry_type == 'assistant':
         message = entry.get('message')
         _note_edited_files(message.get('content') if isinstance(message, dict) else None, state.edited_files)
+        if entry.get('isSidechain') is not True and isinstance(message, dict):
+            _note_assistant_entry(entry, message, state)
         usage = message.get('usage') if isinstance(message, dict) else None
         if isinstance(usage, dict):
             usage = _unclaimed_usage(message, usage, state)
@@ -1979,6 +2185,189 @@ def _search_count(entry: dict) -> int:
     result = entry.get('toolUseResult')
     count = result.get('searchCount') if isinstance(result, dict) else None
     return count if _is_count(count) else 0
+
+
+def _note_user_entry(entry: dict, state: _ScanState) -> None:
+    """Fold a main-conversation user entry: a prompt opens a worked interval, an edit's result adds its lines, a peer's message is logged."""
+    at = _timestamp_epoch(entry.get('timestamp'))
+    message = entry.get('message')
+    content = message.get('content') if isinstance(message, dict) else None
+
+    result = entry.get('toolUseResult')
+    if isinstance(result, dict):
+        added, removed = _patch_lines(result)
+        stats = result.get('toolStats')
+        if isinstance(stats, dict):
+            added += stats.get('linesAdded') if _is_count(stats.get('linesAdded')) else 0
+            removed += stats.get('linesRemoved') if _is_count(stats.get('linesRemoved')) else 0
+        state.lines_added += added
+        state.lines_removed += removed
+
+    origin = entry.get('origin')
+    if isinstance(origin, dict) and origin.get('kind') == 'peer' and at is not None:
+        sender = origin.get('from')
+        if isinstance(sender, str) and sender:
+            name = origin.get('name')
+            _append_capped(state.messages, MessageEvent(
+                'received', _clip(sender, _NAME_MAX_CHARS), at, _clip(name, _NAME_MAX_CHARS) if isinstance(name, str) else '',
+                origin.get('handback') is True,
+            ), _MAX_MESSAGES)
+
+    if at is None or entry.get('isMeta') is True or _carries_tool_result(content):
+        return
+    # A local command's output ends the turn like an interrupt: it ran outside
+    # the model, so no reply is owed - its invocation must not stay a worked turn.
+    if _is_interrupt_marker(content) or _is_local_command_output(content):
+        _close_turn(state, at)
+        return
+    # A prompt while a turn runs (a queued one, a peer's message) continues it.
+    if state.turn_started_at is None:
+        state.turn_started_at = at
+
+
+def _note_assistant_entry(entry: dict, message: dict, state: _ScanState) -> None:
+    """Fold a main-conversation reply: a finished turn closes its worked interval, a sent message is logged."""
+    at = _timestamp_epoch(entry.get('timestamp'))
+    content = message.get('content')
+    for block in content if isinstance(content, list) else ():
+        if not isinstance(block, dict) or block.get('type') != 'tool_use' or block.get('name') != _SEND_MESSAGE_TOOL or at is None:
+            continue
+        tool_input = block.get('input')
+        target = None
+        if isinstance(tool_input, dict):
+            target = next((tool_input.get(key) for key in ('to', 'recipient') if isinstance(tool_input.get(key), str) and tool_input.get(key)), None)
+        if target:
+            _append_capped(state.messages, MessageEvent('sent', _clip(target, _NAME_MAX_CHARS), at), _MAX_MESSAGES)
+
+    # A turn ends on its final reply, or stopped by an API error.
+    if at is not None and (message.get('stop_reason') == 'end_turn' or entry.get('isApiErrorMessage') is True):
+        _close_turn(state, at)
+
+
+def _close_turn(state: _ScanState, at: float) -> None:
+    """End the open worked interval at *at*, if one is open."""
+    if state.turn_started_at is None:
+        return
+    if at >= state.turn_started_at:
+        _append_capped(state.intervals, (state.turn_started_at, at), _MAX_INTERVALS)
+    state.turn_started_at = None
+
+
+def _patch_lines(result: dict) -> tuple[int, int]:
+    """Count the lines an Edit/Write result's patch adds and removes; a new file counts every line as added."""
+    patch = result.get('structuredPatch')
+    if not isinstance(patch, list):
+        return 0, 0
+
+    added = removed = 0
+    for hunk in patch:
+        lines = hunk.get('lines') if isinstance(hunk, dict) else None
+        for line in lines if isinstance(lines, list) else ():
+            if isinstance(line, str) and line.startswith('+'):
+                added += 1
+            elif isinstance(line, str) and line.startswith('-'):
+                removed += 1
+    if not patch and result.get('type') == 'create' and isinstance(result.get('content'), str):
+        added = result['content'].count('\n') + (0 if result['content'].endswith('\n') or not result['content'] else 1)
+
+    return added, removed
+
+
+def _append_capped(items: list, item: object, limit: int) -> None:
+    """Append *item*, dropping the oldest entries beyond *limit*."""
+    items.append(item)
+    if len(items) > limit:
+        del items[:len(items) - limit]
+
+
+def _tool_call(block: dict) -> ToolCall | None:
+    """Describe a tool call by what it acts on: a command, a path, a question, a plan - cut to a display length."""
+    name = block.get('name')
+    if not isinstance(name, str) or not name:
+        return None
+    tool_input = block.get('input') if isinstance(block.get('input'), dict) else {}
+
+    def text_of(*keys: str, limit: int = _TOOL_TEXT_MAX_CHARS) -> str:
+        for key in keys:
+            value = tool_input.get(key)
+            if isinstance(value, str) and value.strip():
+                return _clip(value.strip(), limit)
+        return ''
+
+    description = text_of('description', limit=_NAME_MAX_CHARS)
+    if name == 'AskUserQuestion':
+        return ToolCall(name, questions=_questions(tool_input.get('questions')))
+    if name == 'ExitPlanMode':
+        return ToolCall(name, text=text_of('plan', limit=_PLAN_TEXT_MAX_CHARS))
+    if name in ('Agent', 'Task'):
+        return ToolCall(name, text=text_of('subagent_type', limit=_NAME_MAX_CHARS), detail=description)
+    subject = text_of('command', 'file_path', 'notebook_path', 'url', 'query', 'pattern', 'path', 'prompt')
+    if not subject:
+        subject = next((_clip(value.strip(), _TOOL_TEXT_MAX_CHARS) for value in tool_input.values() if isinstance(value, str) and value.strip()), '')
+
+    return ToolCall(name, text=subject, detail=description)
+
+
+def _questions(questions: object) -> tuple[Question, ...]:
+    """The questions of an open question dialog with their answer labels, cut to display lengths."""
+    result: list[Question] = []
+    for question in questions[:_MAX_QUESTIONS] if isinstance(questions, list) else ():
+        if not isinstance(question, dict) or not isinstance(question.get('question'), str):
+            continue
+        options = question.get('options')
+        labels: list[str] = []
+        for option in (options if isinstance(options, list) else ())[:_MAX_OPTIONS]:
+            if isinstance(option, dict) and isinstance(option.get('label'), str):
+                labels.append(_clip(option['label'], _NAME_MAX_CHARS))
+        result.append(Question(_clip(question['question'], _TOOL_TEXT_MAX_CHARS), tuple(labels)))
+
+    return tuple(result)
+
+
+def _reply_text(content: object) -> str | None:
+    """The text of a reply's text blocks, joined and cut to a display length; None when it has none."""
+    if not isinstance(content, list):
+        return None
+    parts = [block.get('text') for block in content if isinstance(block, dict) and block.get('type') == 'text' and isinstance(block.get('text'), str)]
+    text = '\n'.join(part.strip() for part in parts if part.strip())
+
+    return _clip(text, _REPLY_MAX_CHARS) if text else None
+
+
+def _hook_message(stderr: object) -> str:
+    """The first line a failing hook wrote to stderr, without Claude Code's own prefix; '' when it wrote nothing."""
+    line = _first_line(stderr)
+    if line.startswith(_HOOK_MESSAGE_PREFIX):
+        line = line[len(_HOOK_MESSAGE_PREFIX):].strip()
+    if line == _HOOK_NO_OUTPUT:
+        return ''
+
+    return line
+
+
+def _first_line(text: object) -> str:
+    """The first non-empty line of *text*, or ''."""
+    if not isinstance(text, str):
+        return ''
+
+    return next((line.strip() for line in text.splitlines() if line.strip()), '')
+
+
+def _note_artifact(entry: dict, artifacts: dict[str, str]) -> None:
+    """Record the artifact a ``frame-link`` entry names: its address and, when given, its title."""
+    url = entry.get('frameUrl')
+    if not isinstance(url, str) or not url.startswith('https://') or len(url) > _PR_URL_MAX_CHARS:
+        return
+    title = entry.get('title')
+    known = artifacts.get(url, '')
+    artifacts[url] = _clip(title, _NAME_MAX_CHARS) if isinstance(title, str) and title.strip() else known
+    while len(artifacts) > _MAX_ARTIFACTS:
+        del artifacts[next(iter(artifacts))]
+
+
+def _artifact_list(artifacts: dict[str, str]) -> tuple[Artifact, ...]:
+    """The collected artifacts as plain values, in order of first publication."""
+    return tuple(Artifact(title, url) for url, title in artifacts.items())
 
 
 def _note_edited_files(content: object, edited_files: set[str]) -> None:

@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- The window is now a list of agents beside the details of the one you select. The list is sorted by what each agent needs from you - *Needs you*, *Stopped*, *Running*, *Recent* and *Older* - and can be grouped by project instead.
+- Every entry says its status in words and names up to two facts worth knowing, such as running processes, subagents or a nearly full context.
+- The details show the status with its reason, host, model, effort, mode and version, the cost and its breakdown, context, plan, budget and prompt cache, the live processes with their task output, the subagents and the session ID - nothing of it only on hover any more.
+- The details link to the artifacts an agent published, by their titles.
+- Buttons in the details switch to the agent's window, copy its session ID or show its transcript; a right-click opens the same actions in a menu.
+- The search also finds sessions by title, project, branch or the start of a session ID while you type, and says why an entry matched.
+- Keyboard: *J*/*K* or the arrow keys move through the list, *Enter* switches to the agent's window, *Ctrl+C* copies its session ID, *T* shows its transcript, *Ctrl+K* jumps into the search and *Ctrl+.* toggles the compact view.
+- On Windows the taskbar button shows how many agents are waiting for you and flashes once when another one starts to wait; on Linux the window asks for attention.
+- Each entry says in one line what the agent waits on (the command, the question, the plan), what it runs with a running clock, or the first line of its last answer. The details show the full command, the question with its answers, the plan text or the whole answer.
+- The details list the plan's steps with their texts, and a failing hook's first error line.
+- The details show the lines an agent changed, and how long it worked and waited over the last day on a timeline.
+- The details list the selected agent's uncommitted files with their lines, the branch's distance to its upstream, and how many of the agent's own edits are not committed yet. This runs `git` in the agent's directory.
+- A background task that ran tests shows how many passed and failed, without expanding it.
+- The *Graph* grouping shows the running agents, the subagents they started and the messages between them, with moving dots on active connections.
+
+### Changed
+- The window opens with every agent listed at once; costs and details fill in as the transcripts are read, the selected agent first and then the most recently active ones. On Windows with WSL sessions, each refresh no longer reads every process of the distribution, which made the window noticeably slower.
+- The compact view stays on top of all other windows and shows one line per agent under the same sections; the full view is never kept on top. A click on an agent in the compact view switches to its window; the symbol at the right end of its line, or a double-click, opens its details in the full view.
+- A click on an agent selects it; a double-click or *Enter* switches to its window.
+- The default window size is 1180 × 760, so the list and the details fit side by side.
+
+### Removed
+- The light theme. The interface has one, dark appearance.
+- The sort menu, the filter menu, the banner of agents waiting for you and the version column. The list sections take their place.
+- The separate keep-on-top button, now part of the compact view.
+- The cost per ticket, which relied on a Jira-style key in the branch name.
+
 ## [0.12.0] - 2026-11-04
 
 ### Added

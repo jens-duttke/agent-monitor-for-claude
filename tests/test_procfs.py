@@ -25,6 +25,14 @@ def _write_stat(proc_dir: Path, pid: int, comm: str, ppid: int, starttime: int,
     (entry / 'stat').write_text(f'{pid} ({comm}) ' + ' '.join(fields), encoding='utf-8')
 
 
+def _write_children(proc_dir: Path, pid: int, children: list[int], tasks: tuple[int, ...] | None = None) -> None:
+    """Write ``/proc/<pid>/task/<tid>/children``; the children all go to the first task."""
+    for index, tid in enumerate(tasks or (pid,)):
+        task = proc_dir / str(pid) / 'task' / str(tid)
+        task.mkdir(parents=True, exist_ok=True)
+        (task / 'children').write_text(' '.join(str(child) for child in children) + ' ' if index == 0 else '', encoding='ascii')
+
+
 class ParseStatTests(unittest.TestCase):
     def test_comm_with_spaces_and_parens(self) -> None:
         # comm is process-settable and may contain both, so it cannot be
@@ -197,6 +205,51 @@ class SystemConstantsTests(unittest.TestCase):
         # a nonsensical value would skew every CPU and memory figure.
         self.assertGreater(procfs.clk_tck(), 0)
         self.assertGreater(procfs.page_size(), 0)
+
+
+
+class ReadProcSubtreeTests(unittest.TestCase):
+    def _tree(self, proc_dir: Path) -> None:
+        # Session 100 runs node 101, which runs a build 102; 200 is unrelated.
+        _write_stat(proc_dir, 100, 'claude', 1, 5000)
+        # Both start well after the session's helper window.
+        _write_stat(proc_dir, 101, 'node', 100, 105000)
+        _write_stat(proc_dir, 102, 'make', 101, 106000)
+        _write_stat(proc_dir, 200, 'postgres', 1, 100)
+        _write_children(proc_dir, 100, [101], tasks=(100, 105))
+        _write_children(proc_dir, 101, [102])
+        _write_children(proc_dir, 102, [])
+        _write_children(proc_dir, 200, [])
+
+    def test_only_the_session_trees_are_read(self) -> None:
+        with tempfile.TemporaryDirectory() as base:
+            proc_dir = Path(base)
+            self._tree(proc_dir)
+            table = procfs.read_proc_subtree(proc_dir, [(100, 5000), (999, None)])
+
+        self.assertEqual(sorted(table), [100, 101, 102])
+        index = procfs.children_index(table)
+        self.assertEqual(sorted(procfs.live_descendants(100, 5000, table, index)), [(101, 'node'), (102, 'make')])
+
+    def test_a_recycled_pid_is_kept_but_its_tree_is_not_walked(self) -> None:
+        with tempfile.TemporaryDirectory() as base:
+            proc_dir = Path(base)
+            self._tree(proc_dir)
+            table = procfs.read_proc_subtree(proc_dir, [(100, 1234)])
+
+        self.assertEqual(sorted(table), [100])
+        self.assertIsNone(procfs.live_descendants(100, 1234, table, procfs.children_index(table)))
+
+    def test_a_kernel_without_children_lists_falls_back(self) -> None:
+        with tempfile.TemporaryDirectory() as base:
+            proc_dir = Path(base)
+            _write_stat(proc_dir, 100, 'claude', 1, 5000)
+            self.assertIsNone(procfs.read_proc_subtree(proc_dir, [(100, 5000)]))
+            (proc_dir / '100' / 'task' / '100').mkdir(parents=True)
+            self.assertIsNone(procfs.read_proc_subtree(proc_dir, [(100, 5000)]))
+
+    def test_an_unreachable_tree_reads_as_empty(self) -> None:
+        self.assertEqual(procfs.read_proc_subtree(Path('/does/not/exist'), [(100, None)]), {})
 
 
 if __name__ == '__main__':

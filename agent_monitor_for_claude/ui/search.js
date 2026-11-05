@@ -5,7 +5,7 @@
 // Content search. The query is matched against the transcript CONTENT, which
 // only the Python bridge can read; it streams back matching session ids (and
 // progress) via window.__amcSearchPush, and the UI shows them as they arrive.
-// The box combines with the status chips (both must match). A query shorter than
+// It searches the open sections only. A query shorter than
 // this is treated as no filter, so a single stray character never scans.
 const SEARCH_MIN_CHARS = 2;
 
@@ -128,10 +128,20 @@ function updateSearchBox() {
 // question, so every edit to the text - typing, clearing, the input's own clear
 // button - is a new question and puts the search back to the sessions in view.
 // The empty state then offers to widen again if the new query comes up empty.
+//
+// The session's own fields filter at once (logic.sessionMetaMatch, in render);
+// the content scan follows after the typing pause. The previous text's content
+// results no longer apply, and the bumped seq makes a scan still reporting for
+// that text drop its late pushes.
 function setSearchQuery(value) {
     state.search = value;
     state.searchIncludeHidden = false;
+    state.searchMatches = null;
+    state.searchSeq += 1;
     scheduleSearch();
+    if (state.last) {
+        render(state.last);
+    }
 }
 
 function scheduleSearch() {

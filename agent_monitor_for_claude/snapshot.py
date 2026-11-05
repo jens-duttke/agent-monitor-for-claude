@@ -36,12 +36,15 @@ from .roots import session_roots
 from .sessions import list_sessions
 from .settings import ENDED_MAX_AGE, INCLUDE_COMPLETED
 from .subagents import count_subagents
-from .transcript import TranscriptState, prune_scan_cache, state_for
+from .transcript import MessageEvent, ToolCall, TranscriptState, prune_scan_cache, state_for
 from .usage_parts import UsageScan, session_usage
 from .worktrees import prune_worktree_cache, resolve_worktree
 from .wsl import probe_wsl_sessions
 
 __all__ = ['build_snapshot', 'live_or_recent_ids', 'registry_fingerprint']
+
+# How far back the worked intervals and the messages reach on the snapshot.
+_RECENT_WINDOW_SECONDS = 24 * 3600
 
 
 def build_snapshot() -> dict[str, Any]:
@@ -180,14 +183,31 @@ def _build_session_record(
         'plan_step': transcript_state.plan_step,
         'plan_total': transcript_state.plan_total,
         'hook_errors': [
-            {'hook': error.hook, 'exit_code': error.exit_code, 'count': error.count}
+            {'hook': error.hook, 'exit_code': error.exit_code, 'count': error.count, 'message': error.message}
             for error in transcript_state.hook_errors
+        ],
+        'current_tool': _tool_call_record(transcript_state.current_tool),
+        'current_tool_age_seconds': _seconds_since(transcript_state.current_tool_at),
+        'last_reply': transcript_state.last_reply,
+        'plan_items': [{'text': item.text, 'status': item.status} for item in transcript_state.plan_items],
+        'lines_added': transcript_state.lines_added,
+        'lines_removed': transcript_state.lines_removed,
+        'work_intervals': _recent_intervals(transcript_state.work_intervals),
+        'turn_open_seconds': _seconds_since(transcript_state.turn_open_since),
+        'messages': _recent_messages(transcript_state.messages),
+        'agents': [
+            {
+                'id': agent.agent_id, 'type': agent.agent_type, 'description': agent.description, 'running': agent.running,
+                'age_seconds': agent.age, 'parent_id': agent.parent_id, 'workflow': agent.workflow,
+            }
+            for agent in subagents.agents
         ],
         'artifact_count': transcript_state.artifact_count,
         'pr_links': [
             {'repository': link.repository, 'number': link.number, 'url': link.url}
             for link in transcript_state.pr_links
         ],
+        'artifacts': [{'title': artifact.title, 'url': artifact.url} for artifact in transcript_state.artifacts],
         'files_edited': transcript_state.files_edited,
         'compactions': transcript_state.compactions,
         'usage': usage['usage'],
@@ -209,6 +229,43 @@ def _build_session_record(
         'process_age_seconds': process_age,
         'age_seconds': _display_age(transcript_state.age_seconds, subagent_age, process_age),
     }
+
+
+def _tool_call_record(call: ToolCall | None) -> dict[str, Any] | None:
+    """The call a session runs or waits on, as plain values."""
+    if call is None:
+        return None
+
+    return {
+        'tool': call.tool, 'text': call.text, 'detail': call.detail,
+        'questions': [{'text': question.text, 'options': list(question.options)} for question in call.questions],
+    }
+
+
+def _seconds_since(moment: float | None) -> float | None:
+    """Seconds since *moment* (POSIX), never negative; None when unknown."""
+    if moment is None:
+        return None
+
+    return max(0.0, time.time() - moment)
+
+
+def _recent_intervals(intervals: tuple[tuple[float, float], ...]) -> list[list[float]]:
+    """The worked intervals of the last day, each as ``[seconds ago it started, seconds ago it ended]``."""
+    now = time.time()
+    return [[max(0.0, now - start), max(0.0, now - end)] for start, end in intervals if now - end <= _RECENT_WINDOW_SECONDS]
+
+
+def _recent_messages(messages: tuple[MessageEvent, ...]) -> list[dict[str, Any]]:
+    """The messages of the last day, each with how long ago it was."""
+    now = time.time()
+    return [
+        {
+            'direction': event.direction, 'peer': event.peer, 'label': event.label, 'handback': event.handback,
+            'age_seconds': max(0.0, now - event.at),
+        }
+        for event in messages if now - event.at <= _RECENT_WINDOW_SECONDS
+    ]
 
 
 def live_or_recent_ids() -> set[str]:

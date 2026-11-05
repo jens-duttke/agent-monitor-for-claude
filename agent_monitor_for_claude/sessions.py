@@ -30,6 +30,7 @@ import json
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -62,6 +63,9 @@ _registry_cache: dict[str, dict[str, _CachedRecord]] = {}
 # registry, on different pywebview worker threads.
 _lock = threading.Lock()
 
+# Registry files read at once on a first listing (see list_sessions).
+_READ_WORKERS = 16
+
 
 def list_sessions(root: SessionRoot) -> list[dict[str, Any]]:
     """Return normalized session records from *root*'s on-disk registry.
@@ -87,10 +91,15 @@ def list_sessions(root: SessionRoot) -> list[dict[str, Any]]:
     with _lock:
         previous = _registry_cache.get(str(directory), {})
 
+    # Read in parallel: on a WSL root every file is a round trip over the share,
+    # and a distro's registry keeps hundreds of ended sessions' records, so the
+    # first listing took seconds one file at a time. Later ones hit the cache.
+    with ThreadPoolExecutor(max_workers=_READ_WORKERS) as pool:
+        loaded = list(pool.map(lambda entry: _cached_or_read(entry, previous.get(entry.name)), files))
+
     current: dict[str, _CachedRecord] = {}
     records: list[dict[str, Any]] = []
-    for entry in files:
-        cached = _cached_or_read(entry, previous.get(entry.name))
+    for entry, cached in zip(files, loaded):
         if cached is None:
             continue
 

@@ -625,78 +625,312 @@ function defaultFilterKeys(filterDefs) {
     return keys;
 }
 
-// The text the collapsed filter dropdown shows: the active filters' names in
-// definition order, comma-separated. All on-by-default filters active at once
-// read as one word (`filter_all`), since eight names spelled out say less than
-// "all"; an opt-in filter (History) is still named beside it, with its time
-// window, because what it adds depends on how far back it reaches. Nothing
-// active reads `filter_none`.
-function filterSummary(filterDefs, activeKeys, labels, historyRangeLabel) {
-    const strings = labels || {};
+/* --- list sections ---
+
+   The main list groups sessions by what they ask of you rather than by project.
+   Each section owns the filter buckets whose sessions it shows, so collapsing a
+   section is switching those buckets off: the persisted selection, the search
+   scope and the widening offer keep working off the same keys they always did. */
+
+// Most urgent first. `order` names how a section sorts its sessions (see
+// sortSectionSessions): the queue of sessions blocked on you by how long each
+// has waited, the running ones by when their process started - their ages
+// change every few seconds, and a list that reorders under the pointer cannot be
+// clicked - and the rest newest first.
+const LIST_SECTIONS = [
+    { key: 'needs', label: 'section_needs', buckets: ['needs'], order: 'waiting' },
+    { key: 'stopped', label: 'section_stopped', buckets: ['errored', 'interrupted'], order: 'newest' },
+    { key: 'running', label: 'section_running', buckets: ['working', 'background'], order: 'started' },
+    { key: 'recent', label: 'section_recent', buckets: ['idle', 'new', 'quiet'], order: 'newest' },
+    { key: 'older', label: 'section_older', buckets: ['history'], order: 'newest' },
+];
+
+function listSection(key) {
+    return LIST_SECTIONS.find((section) => section.key === key) || null;
+}
+
+// The section a session belongs to, or null for a status no bucket knows.
+function sectionOf(session) {
+    const bucket = sessionBucket(session);
+    const section = LIST_SECTIONS.find((candidate) => candidate.buckets.includes(bucket));
+    return section ? section.key : null;
+}
+
+// A section is open while any of its buckets is active. A selection persisted
+// before the sections existed can hold only some of them; such a section reads
+// open and shows the sessions of the buckets still on.
+function sectionActive(sectionKey, activeKeys) {
+    const section = listSection(sectionKey);
     const active = asKeySet(activeKeys);
-    const defs = (filterDefs || []).filter((def) => def && def.key);
-    const defaults = defs.filter((def) => !def.offByDefault);
-    const allDefaults = defaults.length > 0 && defaults.every((def) => active.has(def.key));
+    return Boolean(section) && section.buckets.some((bucket) => active.has(bucket));
+}
 
-    const parts = allDefaults ? [strings.filter_all || ''] : [];
-    for (const def of defs) {
-        if (!active.has(def.key) || (allDefaults && !def.offByDefault)) {
-            continue;
-        }
-        const name = strings[def.label] || def.key;
-        parts.push(def.key === 'history' && historyRangeLabel ? name + ' (' + historyRangeLabel + ')' : name);
+// The active filter keys after a click on a section: an open one closes with
+// all its buckets, a closed one opens with all of them.
+function toggledSectionKeys(sectionKey, activeKeys) {
+    const section = listSection(sectionKey);
+    const next = new Set(asKeySet(activeKeys));
+    if (!section) {
+        return next;
     }
-    return parts.length > 0 ? parts.join(', ') : (strings.filter_none || '');
+    const open = sectionActive(sectionKey, next);
+    for (const bucket of section.buckets) {
+        if (open) {
+            next.delete(bucket);
+        } else {
+            next.add(bucket);
+        }
+    }
+    return next;
 }
 
-// What ascending and descending mean for each sort field, in the field's own
-// terms - "newest first" says what a list will look like, an arrow does not.
-// Each pair is [asc, desc]: an ascending activity sort orders by age, so the
-// newest comes first; an ascending model sort follows MODEL_RANK, smallest
-// model first; an ascending status sort follows STATUS_ORDER, most urgent
-// first.
-const SORT_DIRECTION_LABELS = new Map([
-    ['activity', ['sort_dir_newest', 'sort_dir_oldest']],
-    ['usage', ['sort_dir_lowest', 'sort_dir_highest']],
-    ['model', ['sort_dir_smallest', 'sort_dir_largest']],
-    ['host', ['sort_dir_a_z', 'sort_dir_z_a']],
-    ['status', ['sort_dir_urgent', 'sort_dir_calm']],
-]);
+// A finite number, or null. `Number(null)` is 0, so null is checked first.
+function finiteOrNull(value) {
+    if (value == null || typeof value === 'boolean') {
+        return null;
+    }
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+}
 
-// The two directions for a sort field as [{dir, label}], asc first. An unknown
-// field gets the activity wording, matching the activity sort it falls back to.
-function sortDirectionOptions(sortKey, labels) {
+// Name, then session id, then pid: the tie-break that keeps every order total,
+// so two sessions with equal keys never swap places between polls.
+function compareSessionIdentity(a, b) {
+    const nameA = String(a.name || '').toLowerCase();
+    const nameB = String(b.name || '').toLowerCase();
+    if (nameA !== nameB) {
+        return nameA < nameB ? -1 : 1;
+    }
+    const idA = String(a.session_id || '');
+    const idB = String(b.session_id || '');
+    if (idA !== idB) {
+        return idA < idB ? -1 : 1;
+    }
+    return (Number(a.pid) || 0) - (Number(b.pid) || 0);
+}
+
+// Ascending on a nullable number, a missing value last.
+function compareNullable(a, b) {
+    if (a === b) {
+        return 0;
+    }
+    if (a === null) {
+        return 1;
+    }
+    if (b === null) {
+        return -1;
+    }
+    return a - b;
+}
+
+// Sort one section's sessions. `waiting` puts the longest wait first: a session
+// blocked on you writes nothing while it waits, so its age is the wait. `started`
+// orders by process start, most recent first. `newest` orders by last activity.
+// Every order grows all keys at the same rate, so it only changes when a session
+// genuinely does something.
+function sortSectionSessions(sessions, order) {
+    const keyOf = (session) => {
+        if (order === 'started') {
+            return finiteOrNull(session.process_age_seconds);
+        }
+        const age = finiteOrNull(session.age_seconds);
+        return order === 'waiting' && age !== null ? -age : age;
+    };
+    return [...(sessions || [])].sort((a, b) => compareNullable(keyOf(a), keyOf(b)) || compareSessionIdentity(a, b));
+}
+
+// The sessions of one project group: most urgent status first, then
+// newest activity.
+function sortGroupSessions(sessions) {
+    return [...(sessions || [])].sort((a, b) => {
+        const rankA = STATUS_ORDER[a.status] ?? 99;
+        const rankB = STATUS_ORDER[b.status] ?? 99;
+        if (rankA !== rankB) {
+            return rankA - rankB;
+        }
+        return compareNullable(finiteOrNull(a.age_seconds), finiteOrNull(b.age_seconds)) || compareSessionIdentity(a, b);
+    });
+}
+
+// Split sessions into the list sections, in section order, each sorted. A
+// section with no session is still returned (empty), so a closed section keeps
+// its header and a count of zero reads as "nothing here" rather than vanishing.
+function buildSections(sessions, activeKeys) {
+    const bySection = new Map(LIST_SECTIONS.map((section) => [section.key, []]));
+    for (const session of sessions || []) {
+        const key = sectionOf(session);
+        if (key) {
+            bySection.get(key).push(session);
+        }
+    }
+    return LIST_SECTIONS.map((section) => ({
+        key: section.key,
+        label: section.label,
+        active: sectionActive(section.key, activeKeys),
+        sessions: sortSectionSessions(bySection.get(section.key), section.order),
+    }));
+}
+
+// Every session of every project as one list, each carrying the project it was
+// grouped under - the sections cut across projects, and a
+// list entry still names its project.
+function flattenProjects(projects) {
+    const result = [];
+    for (const project of projects || []) {
+        for (const session of project.sessions || []) {
+            result.push(Object.assign({}, session, {
+                project_key: project.key,
+                project_name: project.name,
+                project_cwd: project.cwd,
+                project_origin: project.origin,
+                project_origin_display: project.origin_display || '',
+            }));
+        }
+    }
+    return result;
+}
+
+/* --- signals ---
+
+   The few facts a list entry spells out beside its status, so the list answers
+   "what is going on there" without opening the session. Ranked by how much each
+   changes what you do next; the list shows the first two, the detail all. */
+
+const LIST_SIGNAL_LIMIT = 2;
+
+function sessionSignals(session, labels) {
     const strings = labels || {};
-    const [ascKey, descKey] = SORT_DIRECTION_LABELS.get(sortKey) || SORT_DIRECTION_LABELS.get('activity');
-    return [
-        { dir: 'asc', label: strings[ascKey] || ascKey },
-        { dir: 'desc', label: strings[descKey] || descKey },
-    ];
+    const signals = [];
+    const push = (kind, tone, text) => {
+        if (text) {
+            signals.push({ kind, tone, text });
+        }
+    };
+
+    if (session.processes > 0) {
+        push('processes', 'work', fmt(strings.signal_processes, { count: session.processes }));
+    }
+    if (session.workflow_active) {
+        push('workflow', 'background', fmt(strings.signal_workflow, { done: session.workflow_done, total: session.workflow_total }));
+    } else if (session.subagents_running > 0) {
+        push('agents', 'background', fmt(strings.signal_agents, { count: session.subagents_running }));
+    }
+    if (session.context_warn) {
+        push('context', 'warn', fmt(strings.signal_context, { percent: Math.round(session.context.ratio * 100) }));
+    }
+    if (session.budget && session.budget.ratio >= NEAR_LIMIT_RATIO) {
+        push('budget', 'warn', fmt(strings.signal_budget, { percent: Math.round(session.budget.ratio * 100) }));
+    }
+    if (session.cache_warn) {
+        push('cache', 'warn', fmt(strings.signal_cache, { cost: formatCost(session.cache.rewrite_usd) }));
+    }
+    if (session.auto_paused) {
+        push('auto-paused', 'warn', strings.signal_auto_paused);
+    }
+    if (session.cli_update) {
+        push('update', 'plain', fmt(strings.signal_update, { version: session.cli_update.available }));
+    }
+    const hookErrors = (session.hook_errors || []).reduce((sum, error) => sum + error.count, 0);
+    if (hookErrors > 0) {
+        push('hooks', 'warn', fmt(strings.signal_hook_errors, { count: hookErrors }));
+    }
+    if (session.queued > 0) {
+        push('queued', 'plain', fmt(strings.signal_queued, { count: session.queued }));
+    }
+    return signals;
 }
 
-// The text the collapsed sort dropdown shows, comma-separated like the filter
-// dropdown's: priority ordering when it is on (it is the primary key), then the
-// field, then the direction in that field's own words.
-function sortSummary(sortKey, fieldLabel, sortDir, priorityOrder, labels) {
-    const strings = labels || {};
-    const direction = sortDirectionOptions(sortKey, strings).find((option) => option.dir === sortDir)
-        || sortDirectionOptions(sortKey, strings)[0];
-    const parts = priorityOrder ? [strings.priority_order || ''] : [];
-    parts.push(fieldLabel, direction.label);
-    return parts.filter(Boolean).join(', ');
+/* --- search over what the list already shows ---
+
+   Matching a session's own title, project, branch and id needs no file access,
+   so it filters while the query is typed; the content search runs beside it and
+   adds what only the transcripts hold. */
+
+// The query as a RegExp under the editor options, or null when it cannot be
+// one (an invalid pattern in regex mode). The pattern is the user's own input,
+// used for matching only.
+function searchRegExp(query, options) {
+    const opts = options || {};
+    const text = String(query == null ? '' : query).trim();
+    if (!text) {
+        return null;
+    }
+    let source = opts.use_regex ? text : text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (opts.whole_word) {
+        source = '\\b(?:' + source + ')\\b';
+    }
+    try {
+        return new RegExp(source, opts.match_case ? '' : 'i');
+    } catch (error) {
+        return null;
+    }
 }
 
-// Whether a session passes the content-search filter. A null match set means no
-// search has produced results yet - a fresh query still inside its typing
-// debounce, or a cleared/invalid one - so nothing is filtered and every session
-// shows. An empty Map means a search actually ran and matched nothing, so it
-// correctly hides everything. Without the null case a just-typed query would
-// briefly hide every row and flash a false "nothing matches".
+// Which of the session's own fields the query matches - 'title', 'project',
+// 'branch' or 'id' - or null. An id matches from its start only, so a pasted
+// id or its first characters find the session, while a stray hex digit does not.
+function sessionMetaMatch(session, query, options) {
+    const text = String(query == null ? '' : query).trim();
+    if (!session || !text) {
+        return null;
+    }
+    const pattern = searchRegExp(text, options);
+    if (pattern) {
+        const fields = [
+            ['title', session.name],
+            ['project', session.project_name],
+            ['branch', session.branch],
+            ['branch', session.worktree ? session.worktree.branch : ''],
+        ];
+        for (const [field, value] of fields) {
+            if (typeof value === 'string' && value && pattern.test(value)) {
+                return field;
+            }
+        }
+    }
+    const id = typeof session.session_id === 'string' ? session.session_id.toLowerCase() : '';
+    if (id && text.length >= 4 && id.startsWith(text.toLowerCase())) {
+        return 'id';
+    }
+    return null;
+}
+
+// Whether a content search counts a session as found. Only a result that
+// arrived counts: a null match set (a query still inside its typing debounce,
+// or a cleared or invalid one) finds nothing, an empty Map means it ran and
+// found nothing. The session's own fields are matched separately
+// (sessionMetaMatch), which is what keeps the list from going blank while the
+// scan is still to come.
 function sessionMatchesSearch(sessionId, searchActive, searchMatches) {
-    if (!searchActive || searchMatches == null) {
+    if (!searchActive) {
         return true;
     }
-    return searchMatches.has(sessionId);
+    return searchMatches != null && searchMatches.has(sessionId);
+}
+
+/* --- taskbar attention --- */
+
+// The sessions blocked on you that the taskbar counts, and whether one of them
+// is new since the previous report - only a newcomer makes the button flash,
+// never a session that was already waiting. `previousKeys` null means there was
+// no previous report: the first one sets the count without flashing.
+function attentionUpdate(previousKeys, sessions) {
+    const keys = new Set();
+    for (const session of sessions || []) {
+        if (session && !session.is_history && session.status === 'awaiting_permission') {
+            keys.add((session.session_id || '') + '#' + session.pid);
+        }
+    }
+    let newlyWaiting = false;
+    if (previousKeys instanceof Set) {
+        for (const key of keys) {
+            if (!previousKeys.has(key)) {
+                newlyWaiting = true;
+                break;
+            }
+        }
+    }
+    return { count: keys.size, keys, newlyWaiting };
 }
 
 /* --- search hits --- */
@@ -724,14 +958,18 @@ const SEARCH_HIT_LABEL_KEYS = new Map([
 // noun and the number comes last, like every other counted label here. A count
 // the backend had to stop short of is suffixed "+", which needs no wording of
 // its own in any language.
-function searchHitsMarkup(hit, labels) {
+//
+// `maxSnippets` shows only the first few excerpts - a list entry has room for
+// one, the detail for all of them - and the rest counts as "not shown".
+function searchHitsMarkup(hit, labels, maxSnippets) {
     const count = hit ? Number(hit.count) : 0;
     if (!Number.isFinite(count) || count <= 0) {
         return '';
     }
 
     const strings = labels || {};
-    const snippets = Array.isArray(hit.snippets) ? hit.snippets : [];
+    const allSnippets = Array.isArray(hit.snippets) ? hit.snippets : [];
+    const snippets = Number.isInteger(maxSnippets) && maxSnippets >= 0 ? allSnippets.slice(0, maxSnippets) : allSnippets;
     const partial = hit.partial ? '+' : '';
 
     let html = '<div class="row-hits">'
@@ -1718,6 +1956,27 @@ function mergedModelUsage(usageByModelList) {
     return merged;
 }
 
+// What the main conversation and the subagents each cost, for the stacked bar
+// in the detail: null when the session ran no subagent (nothing to split) or a
+// part cannot be priced.
+function costShares(raw, prices) {
+    const parts = raw ? raw.usage_parts : null;
+    if (!isRecord(parts)) {
+        return null;
+    }
+    const agents = isRecord(parts.agents) ? parts.agents : {};
+    const agentUsage = mergedModelUsage(Object.keys(agents).map((name) => agents[name]));
+    if (modelUsageTokens(agentUsage) === 0) {
+        return null;
+    }
+    const main = sessionCostUsd(parts.main, prices);
+    const subagents = sessionCostUsd(agentUsage, prices);
+    if (main === null || subagents === null) {
+        return null;
+    }
+    return { main: main, agents: subagents };
+}
+
 // The cost tooltip's lines: how the session's spend divides into the main
 // conversation and its subagents (only when it ran any), into the skills its
 // turns ran under, and what its web searches cost. Empty when there is nothing
@@ -1748,67 +2007,6 @@ function costTipLines(raw, prices, labels) {
         lines.push(fmt(labels.cost_web_search, { count: searches, cost: formatCost(searches * price) }));
     }
     return lines;
-}
-
-/* --- cost per ticket ---
-
-   A branch that names a ticket key (`feature/PNE-10617/...`) ties a session to
-   that ticket; the sessions of one ticket - live, and past ones once the
-   history has been loaded - are added up for the branch's tooltip. */
-
-// A tracker key as Jira writes it: an upper-case project key, a hyphen and a
-// number, standing on its own within the branch name.
-const TICKET_KEY = /(?:^|[^A-Za-z0-9])([A-Z][A-Z0-9]{1,9}-[1-9][0-9]{0,6})(?![A-Za-z0-9])/;
-
-function ticketKey(branch) {
-    if (typeof branch !== 'string') {
-        return null;
-    }
-    const match = branch.match(TICKET_KEY);
-    return match ? match[1] : null;
-}
-
-// Per ticket key: the summed cost (`priced` false once a session in it has no
-// rate, when only the tokens are meaningful), the tokens and the session count.
-// A session id seen twice counts once.
-function ticketTotals(rawSessions, prices) {
-    const totals = new Map();
-    const seen = new Set();
-    for (const raw of rawSessions || []) {
-        if (!raw || seen.has(raw.session_id)) {
-            continue;
-        }
-        seen.add(raw.session_id);
-        const key = ticketKey(raw.git_branch);
-        if (!key) {
-            continue;
-        }
-        const total = totals.get(key) || { usd: 0, tokens: 0, sessions: 0, priced: true };
-        const usd = sessionTotalCostUsd(raw, prices);
-        if (usd === null) {
-            total.priced = false;
-        } else {
-            total.usd += usd;
-        }
-        total.tokens += usageTotalTokens(raw.usage);
-        total.sessions += 1;
-        totals.set(key, total);
-    }
-    return totals;
-}
-
-// The branch tooltip's ticket lines, or '' when the branch names no ticket:
-// what its sessions cost, and which sessions that covers - the live ones only
-// until the history has been loaded.
-function ticketTip(branch, totals, includesHistory, labels) {
-    const key = ticketKey(branch);
-    const total = key && totals instanceof Map ? totals.get(key) : null;
-    if (!total) {
-        return '';
-    }
-    const amount = total.priced ? formatCost(total.usd) : formatTokens(total.tokens);
-    return fmt(labels.ticket_cost, { ticket: key, cost: amount, count: total.sessions })
-        + '\n' + (includesHistory ? labels.ticket_scope_history : labels.ticket_scope_live);
 }
 
 /* --- host / entrypoint (ported from snapshot.py) --- */
@@ -1942,26 +2140,14 @@ function scratchWorkspaceRoot(cwd) {
     return match ? match[1] : null;
 }
 
-// Capability order for the model sort; unknown families sort last.
-const MODEL_RANK = ['haiku', 'sonnet', 'opus', 'fable', 'mythos'];
-
-function modelRank(label) {
-    if (!label) {
-        return MODEL_RANK.length;
-    }
-    const lowered = label.toLowerCase();
-    const rank = MODEL_RANK.findIndex((family) => lowered.includes(family));
-    return rank === -1 ? MODEL_RANK.length : rank;
-}
-
 /* --- view assembly --- */
 
 // The main conversation's model-switch timeline, oldest first: one entry per
 // contiguous run of a model, each carrying the moment that run began. Already
 // ordered and run-compressed by the backend, so a model left and returned to
 // appears more than once and the last entry is the current model. Feeds the
-// model column's "(+)" history when more than one run occurred. Timestamps stay
-// raw ISO - the UI formats them.
+// detail's model history when more than one run occurred. Timestamps stay raw
+// ISO - the UI formats them.
 function modelHistory(timeline) {
     const entries = Array.isArray(timeline) ? timeline : [];
     return entries.map((entry) => ({ time: entry.time, label: formatModel(entry.model) }));
@@ -2007,33 +2193,6 @@ function changelogUrl(version) {
     }
 
     return CHANGELOG_URL + '#' + version.split('.').join('');
-}
-
-// Whether the CLI-version column carries information for the sessions currently
-// in view - the condition for showing it at all. True once the versions differ
-// across sessions, or one session itself spans more than one run (an update, or
-// a handover to a process elsewhere): with every session on the same single
-// version the column would repeat one value per row, which is why it is left out
-// entirely instead.
-function cliColumnRelevant(sessions) {
-    const list = Array.isArray(sessions) ? sessions : [];
-    const seen = new Set();
-    for (const session of list) {
-        if (!session) {
-            continue;
-        }
-        if (session.cli_switched) {
-            return true;
-        }
-        if (session.cli_version) {
-            seen.add(session.cli_version);
-            if (seen.size > 1) {
-                return true;
-            }
-        }
-    }
-
-    return false;
 }
 
 // A Claude Code version as its list of numbers, or null for anything that is not
@@ -2200,6 +2359,10 @@ function buildSession(raw, labels, prices) {
     const cache = alive && needsAttention(status) ? cacheOutlook(raw, prices) : null;
     const costLines = (raw.scan_pending ? [] : costTipLines(raw, prices, labels)).concat(cacheLine(cache, labels));
 
+    // The call in flight belongs to the process that made it: a stopped turn
+    // or a reopened session has none, whatever the transcript's tail says.
+    const call = alive && !stopped ? currentToolOf(raw) : null;
+
     const session = {
         session_id: raw.session_id,
         pid: raw.pid,
@@ -2230,6 +2393,13 @@ function buildSession(raw, labels, prices) {
         // The breakdown is unknown while a scan is pending, like the figure it
         // explains; the cache line comes from the tail and is known at once.
         cost_tip: costLines.filter(Boolean).join('\n'),
+        // The estimate as a number, for group sums; null while the first scan
+        // runs or when a model has no rate.
+        cost_usd: raw.scan_pending ? null : sessionTotalCostUsd(raw, prices),
+        cost_shares: raw.scan_pending ? null : costShares(raw, prices),
+        // The first full scan still runs in the background; selecting the
+        // session moves it to the front of that queue.
+        scan_pending: Boolean(raw.scan_pending),
         subagents_running: subagentsRunning,
         subagents_done: raw.subagents_done || 0,
         subagents_labels: subagentsLabels,
@@ -2255,6 +2425,8 @@ function buildSession(raw, labels, prices) {
         auto_denials_total: Number(raw.auto_denials_total) || 0,
         vscode_deeplink: isVscodeDeeplink(raw),
         worktree: worktreeOf(raw),
+        // Where git runs for the session: the worktree it switched into, if any.
+        worktree_cwd: typeof raw.worktree_cwd === 'string' ? raw.worktree_cwd : '',
         branch: branchOf(raw),
         // Whether the row names the branch itself; groupProjects sets it when the
         // panel's sessions are on different branches.
@@ -2269,14 +2441,25 @@ function buildSession(raw, labels, prices) {
         queued: QUEUE_STATUSES.has(status) ? (positiveInteger(raw.queued) || 0) : 0,
         budget: budgetOf(raw),
         hook_errors: alive ? hookErrorsOf(raw) : [],
+        current_tool: call,
+        activity: activityOf(raw, status, call, labels),
+        last_reply: typeof raw.last_reply === 'string' ? raw.last_reply : '',
+        plan_items: alive ? planItemsOf(raw) : [],
+        lines: linesOf(raw),
+        work: workSummary(raw, status),
+        agents: agentsOf(raw),
+        messages: messagesOf(raw),
         pull_requests: pullRequestsOf(raw),
         files_edited: positiveInteger(raw.files_edited) || 0,
         compactions: positiveInteger(raw.compactions) || 0,
         artifacts: positiveInteger(raw.artifact_count) || 0,
+        artifact_links: artifactsOf(raw),
         age_seconds: raw.age_seconds == null ? null : Math.floor(raw.age_seconds),
+        // How long the process holding the session has run - the stable order of
+        // the running sessions, whose activity ages change every few seconds.
+        process_age_seconds: finiteOrNull(raw.process_age_seconds),
+        alive: alive,
     };
-    session.info_tip = sessionInfoTip(session, labels);
-
     return session;
 }
 
@@ -2303,7 +2486,7 @@ function worktreeOf(raw) {
    nothing instead of a wrong figure. */
 
 // The share of the context window from which the row warns that a compaction is
-// near. Below it the figure stays in the title's tooltip.
+// near. Below it the figure shows in the detail only.
 const NEAR_LIMIT_RATIO = 0.8;
 
 // Statuses during which a turn is running, the only time a prompt can sit in
@@ -2423,7 +2606,8 @@ function hookErrorsOf(raw) {
             continue;
         }
         const code = Number.isInteger(error.exit_code) && error.exit_code >= 0 ? error.exit_code : null;
-        result.push({ hook: error.hook, exit_code: code, count: count });
+        const message = typeof error.message === 'string' ? error.message : '';
+        result.push({ hook: error.hook, exit_code: code, count: count, message: message });
     }
     return result;
 }
@@ -2452,41 +2636,548 @@ function pullRequestsOf(raw) {
     return result;
 }
 
-function contextLine(context, labels) {
-    if (!context) {
-        return '';
+// The artifacts the session published, in order of publication. An address
+// reaches an href only through pullRequestUrl's check - otherwise the artifact
+// is listed without a link - and a missing title falls back to the address.
+function artifactsOf(raw) {
+    const result = [];
+    for (const artifact of Array.isArray(raw.artifacts) ? raw.artifacts : []) {
+        if (!artifact || typeof artifact.url !== 'string' || !artifact.url) {
+            continue;
+        }
+        const title = typeof artifact.title === 'string' && artifact.title.trim() ? artifact.title : artifact.url;
+        result.push({ title: title, url: pullRequestUrl(artifact.url) });
     }
-    if (context.ratio === null) {
-        return fmt(labels.context_used, { used: formatTokens(context.used) });
-    }
-    return fmt(labels.context_tip, {
-        used: formatTokens(context.used),
-        size: formatTokens(context.size),
-        percent: Math.round(context.ratio * 100),
-    });
+    return result;
 }
 
-// The title's tooltip: the full title, which the row may have cut short, then
-// the details that have no column of their own.
-function sessionInfoTip(session, labels) {
-    const lines = [session.name || ''];
-    if (session.branch) {
-        lines.push(fmt(labels.branch_tip, { branch: session.branch }));
+/* --- what a session runs, waits on and last said ---
+
+   The transcript names the call a session runs or waits on (a command, a
+   question with its answers, a plan to review) and the last reply it gave.
+   These pick the one line the list shows and the blocks the detail shows. */
+
+const SUBAGENT_TOOLS = new Set(['Agent', 'Task']);
+// A status during which the call is being executed rather than waited on.
+const ACTIVITY_RUNNING = new Set(['working', 'processing']);
+// The statuses whose list line is the last reply: the turn is over.
+const ACTIVITY_REPLY = new Set(['awaiting_input', 'completed', 'interrupted', 'unknown']);
+const PLAN_ITEM_STATUSES = new Set(['pending', 'in_progress', 'completed']);
+
+function firstLine(text) {
+    if (typeof text !== 'string') {
+        return '';
     }
-    const context = contextLine(session.context, labels);
-    if (context) {
-        lines.push(context);
+    for (const line of text.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed) {
+            return trimmed;
+        }
     }
-    if (session.compactions > 0) {
-        lines.push(fmt(labels.compactions, { count: session.compactions }));
+    return '';
+}
+
+// "mcp__server__tool" -> "tool"; a built-in tool keeps its name.
+function toolDisplayName(tool) {
+    if (typeof tool !== 'string' || !tool) {
+        return '';
     }
-    if (session.files_edited > 0) {
-        lines.push(fmt(labels.files_edited, { count: session.files_edited }));
+    const mcp = tool.match(/^mcp__(.+?)__(.+)$/);
+    return mcp ? mcp[2] : tool;
+}
+
+// The call the session runs or waits on, from the raw record; null without one.
+function currentToolOf(raw) {
+    const call = raw ? raw.current_tool : null;
+    if (!call || typeof call !== 'object' || typeof call.tool !== 'string' || !call.tool) {
+        return null;
     }
-    if (session.artifacts > 0) {
-        lines.push(fmt(labels.artifacts, { count: session.artifacts }));
+    const questions = [];
+    for (const question of Array.isArray(call.questions) ? call.questions : []) {
+        if (!question || typeof question.text !== 'string' || !question.text) {
+            continue;
+        }
+        const options = (Array.isArray(question.options) ? question.options : []).filter((option) => typeof option === 'string' && option);
+        questions.push({ text: question.text, options: options });
     }
-    return lines.filter(Boolean).join('\n');
+    return {
+        tool: call.tool,
+        name: toolDisplayName(call.tool),
+        text: typeof call.text === 'string' ? call.text : '',
+        detail: typeof call.detail === 'string' ? call.detail : '',
+        questions: questions,
+        age_seconds: finiteOrNull(raw.current_tool_age_seconds),
+        plan: PLAN_TOOLS.has(call.tool),
+    };
+}
+
+// One line naming a call by what it acts on: "Bash · npm test".
+function toolCallLine(call) {
+    if (!call) {
+        return '';
+    }
+    let subject = call.text;
+    if (SUBAGENT_TOOLS.has(call.tool) && call.detail) {
+        subject = subject ? subject + ': ' + call.detail : call.detail;
+    }
+    subject = firstLine(subject) || firstLine(call.detail);
+    return subject ? call.name + ' · ' + subject : call.name;
+}
+
+// The one line the list shows under a session's title: what it waits on, what
+// it runs (with since when), or what it last said. Null when there is nothing
+// to say. `call` is the session's current call (see buildSession).
+function activityOf(raw, status, call, labels) {
+    const strings = labels || {};
+    if (status === 'awaiting_permission' && call) {
+        if (call.questions.length > 0) {
+            const more = call.questions.length > 1 ? ' (+' + (call.questions.length - 1) + ')' : '';
+            return { kind: 'ask', text: call.questions[0].text + more, since: null };
+        }
+        if (call.plan) {
+            return { kind: 'plan', text: firstLine(call.text) || strings.activity_plan || '', since: null };
+        }
+        return { kind: 'tool', text: toolCallLine(call), since: null };
+    }
+    if (ACTIVITY_RUNNING.has(status) && call) {
+        return { kind: 'tool', text: toolCallLine(call), since: call.age_seconds };
+    }
+    const reply = firstLine(raw.last_reply);
+    if (reply && ACTIVITY_REPLY.has(status)) {
+        return { kind: 'reply', text: reply, since: null };
+    }
+    return null;
+}
+
+// The plan's steps with their texts, as Claude Desktop's plan tool set them.
+function planItemsOf(raw) {
+    const result = [];
+    for (const item of Array.isArray(raw.plan_items) ? raw.plan_items : []) {
+        if (!item || typeof item.text !== 'string' || !item.text) {
+            continue;
+        }
+        result.push({ text: item.text, status: PLAN_ITEM_STATUSES.has(item.status) ? item.status : 'pending' });
+    }
+    return result;
+}
+
+// The lines the session's edits added and removed; null before the first scan
+// or when it changed nothing.
+function linesOf(raw) {
+    if (raw.scan_pending) {
+        return null;
+    }
+    const added = positiveInteger(raw.lines_added) || 0;
+    const removed = positiveInteger(raw.lines_removed) || 0;
+    return added > 0 || removed > 0 ? { added: added, removed: removed } : null;
+}
+
+/* --- worked and waiting time ---
+
+   A worked interval runs from a prompt to the turn's final reply. Within the
+   last day the time between them is the time the session waited - for you, or
+   for nothing once it was done. */
+
+const WORK_WINDOW_SECONDS = 86400;
+
+function workSummary(raw, status) {
+    const spans = [];
+    for (const pair of Array.isArray(raw.work_intervals) ? raw.work_intervals : []) {
+        if (!Array.isArray(pair) || pair.length !== 2) {
+            continue;
+        }
+        const start = finiteOrNull(pair[0]);
+        const end = finiteOrNull(pair[1]);
+        if (start === null || end === null || end < 0 || start < end || end >= WORK_WINDOW_SECONDS) {
+            continue;
+        }
+        spans.push([Math.min(start, WORK_WINDOW_SECONDS), end]);
+    }
+    const alive = raw.alive === true;
+    // The turn still running counts up to now while the model works, and up to
+    // its newest entry while it waits on a dialog. It cannot have started
+    // before its process did: a turn an earlier process left open and a prompt
+    // after the reopen continued is counted from the reopen.
+    const opened = alive && !turnStopped(raw) ? finiteOrNull(raw.turn_open_seconds) : null;
+    const processAge = finiteOrNull(raw.process_age_seconds);
+    const open = opened !== null && processAge !== null ? Math.min(opened, processAge) : opened;
+    if (open !== null && open < WORK_WINDOW_SECONDS * 2) {
+        const idle = finiteOrNull(raw.age_seconds);
+        if (ACTIVITY_RUNNING.has(status)) {
+            spans.push([Math.min(open, WORK_WINDOW_SECONDS), 0]);
+        } else if (status === 'awaiting_permission' && idle !== null && open > idle && idle < WORK_WINDOW_SECONDS) {
+            spans.push([Math.min(open, WORK_WINDOW_SECONDS), idle]);
+        }
+    }
+    if (spans.length === 0) {
+        return null;
+    }
+
+    spans.sort((a, b) => b[0] - a[0]);
+    const merged = [];
+    for (const [start, end] of spans) {
+        const last = merged[merged.length - 1];
+        if (last && start >= last[1]) {
+            last[1] = Math.min(last[1], end);
+        } else {
+            merged.push([start, end]);
+        }
+    }
+    const spanStart = merged[0][0];
+    const spanEnd = alive ? 0 : Math.min(...merged.map((span) => span[1]));
+    const total = spanStart - spanEnd;
+    if (!(total > 0)) {
+        return null;
+    }
+    const work = merged.reduce((sum, [start, end]) => sum + (start - end), 0);
+    return {
+        work_seconds: work,
+        wait_seconds: Math.max(0, total - work),
+        span_seconds: total,
+        span_start_seconds: spanStart,
+        turns: spans.length,
+        ends_now: alive,
+        segments: merged.map(([start, end]) => ({ left: (spanStart - start) / total, width: (start - end) / total })),
+    };
+}
+
+/* --- test results of a background task --- */
+
+// "✓ 42 passed" or "✗ 3 failed · 39 passed", from the counts the backend parsed
+// out of a task's output; null for a task that printed no summary.
+function testsLabel(tests, labels) {
+    if (!tests || typeof tests !== 'object') {
+        return null;
+    }
+    const strings = labels || {};
+    const passed = Number.isInteger(tests.passed) && tests.passed >= 0 ? tests.passed : 0;
+    const failed = Number.isInteger(tests.failed) && tests.failed >= 0 ? tests.failed : 0;
+    const skipped = Number.isInteger(tests.skipped) && tests.skipped >= 0 ? tests.skipped : 0;
+    const parts = [];
+    if (failed > 0) {
+        parts.push(fmt(strings.tests_failed, { count: failed }));
+    }
+    parts.push(fmt(strings.tests_passed, { count: passed }));
+    if (skipped > 0) {
+        parts.push(fmt(strings.tests_skipped, { count: skipped }));
+    }
+    return { ok: failed === 0, text: (failed === 0 ? '✓ ' : '✗ ') + parts.join(' · ') };
+}
+
+/* --- the connection graph ---
+
+   The live sessions, the subagents they started (grouped under their workflow
+   run) and the messages between them. An edge with traffic in the last minute
+   - a running subagent, a message just sent - carries moving dots. */
+
+const GRAPH_ACTIVE_SECONDS = 60;
+const GRAPH_NODE_W = 200;
+const GRAPH_NODE_H = 38;
+const GRAPH_COL_W = 244;
+const GRAPH_ROW_H = 48;
+const GRAPH_PAD = 16;
+// Room left of the first column for the bend of a message between two sessions.
+const GRAPH_LEFT = 52;
+// The markup carries at most this many characters of a label; the renderer
+// then shortens it to the room the box has (GRAPH_TEXT_WIDTH, in pixels).
+const GRAPH_LABEL_MAX = 80;
+const GRAPH_TEXT_X = 24;
+const GRAPH_TEXT_WIDTH = GRAPH_NODE_W - GRAPH_TEXT_X - 14;
+// A subagent's id as Claude Code names its files: a message to or from one
+// that is no longer in the recent window has nothing left to point at.
+const AGENT_ID = /^a[0-9a-f]{12,24}$/;
+
+// The subagents of the recent window, from the raw record.
+function agentsOf(raw) {
+    const result = [];
+    for (const agent of Array.isArray(raw.agents) ? raw.agents : []) {
+        if (!agent || typeof agent.id !== 'string' || !agent.id) {
+            continue;
+        }
+        result.push({
+            id: agent.id,
+            type: typeof agent.type === 'string' ? agent.type : '',
+            description: typeof agent.description === 'string' ? agent.description : '',
+            running: agent.running === true,
+            age_seconds: finiteOrNull(agent.age_seconds),
+            parent_id: typeof agent.parent_id === 'string' ? agent.parent_id : '',
+            workflow: typeof agent.workflow === 'string' ? agent.workflow : '',
+        });
+    }
+    return result;
+}
+
+// The messages of the last day, from the raw record.
+function messagesOf(raw) {
+    const result = [];
+    for (const message of Array.isArray(raw.messages) ? raw.messages : []) {
+        if (!message || (message.direction !== 'sent' && message.direction !== 'received')) {
+            continue;
+        }
+        if (typeof message.peer !== 'string' || !message.peer) {
+            continue;
+        }
+        result.push({
+            direction: message.direction,
+            peer: message.peer,
+            label: typeof message.label === 'string' ? message.label : '',
+            handback: message.handback === true,
+            age_seconds: finiteOrNull(message.age_seconds),
+        });
+    }
+    return result;
+}
+
+// Nodes and edges from `entries` ([{key, session}], the built sessions to show).
+function graphModel(entries) {
+    const nodes = [];
+    const byId = new Map();
+    const edges = new Map();
+    const addNode = (node) => {
+        if (!byId.has(node.id)) {
+            byId.set(node.id, node);
+            nodes.push(node);
+        }
+        return byId.get(node.id);
+    };
+    const addEdge = (from, to, kind, ageSeconds, active) => {
+        const id = from + '>' + to + '>' + kind;
+        const edge = edges.get(id) || { from: from, to: to, kind: kind, count: 0, active: false, age_seconds: null };
+        edge.count += 1;
+        edge.active = edge.active || Boolean(active);
+        if (ageSeconds !== null && (edge.age_seconds === null || ageSeconds < edge.age_seconds)) {
+            edge.age_seconds = ageSeconds;
+        }
+        edges.set(id, edge);
+    };
+
+    // A message names its peer by session id, by name or by agent id.
+    const sessionByName = new Map();
+    const sessionIds = [];
+    for (const { key, session } of entries) {
+        const id = 's:' + key;
+        addNode({ id: id, kind: 'session', key: key, label: session.name || '', status: session.status, parent: null, root: id });
+        if (typeof session.session_id === 'string' && session.session_id) {
+            sessionIds.push([session.session_id.toLowerCase(), id]);
+        }
+        for (const name of [session.name, session.short_name, session.title]) {
+            if (typeof name === 'string' && name && !sessionByName.has(name.toLowerCase())) {
+                sessionByName.set(name.toLowerCase(), id);
+            }
+        }
+    }
+    const findSession = (peer) => {
+        const lower = peer.toLowerCase();
+        if (sessionByName.has(lower)) {
+            return sessionByName.get(lower);
+        }
+        const match = lower.length >= 8 ? sessionIds.find(([sessionId]) => sessionId.startsWith(lower)) : null;
+        return match ? match[1] : null;
+    };
+
+    for (const { key, session } of entries) {
+        const sessionNode = 's:' + key;
+        const agents = session.agents || [];
+        const agentNodes = new Map(agents.map((agent) => [agent.id, sessionNode + '/a:' + agent.id]));
+        for (const agent of agents) {
+            let parent = sessionNode;
+            if (agent.workflow) {
+                const workflowNode = sessionNode + '/w:' + agent.workflow;
+                if (!byId.has(workflowNode)) {
+                    addNode({ id: workflowNode, kind: 'workflow', label: '', parent: sessionNode, root: sessionNode, running: false });
+                    addEdge(sessionNode, workflowNode, 'spawn', null, false);
+                }
+                parent = workflowNode;
+                if (agent.running) {
+                    byId.get(workflowNode).running = true;
+                }
+            }
+            if (agent.parent_id && agentNodes.has(agent.parent_id) && agent.parent_id !== agent.id) {
+                parent = agentNodes.get(agent.parent_id);
+            }
+            addNode({
+                id: agentNodes.get(agent.id), kind: 'agent', label: agent.type, detail: agent.description,
+                running: agent.running, parent: parent, root: sessionNode,
+            });
+            addEdge(parent, agentNodes.get(agent.id), 'spawn', agent.age_seconds, agent.running);
+        }
+
+        for (const message of session.messages || []) {
+            let other = agentNodes.get(message.peer) || findSession(message.peer);
+            if (!other && (message.handback || AGENT_ID.test(message.peer))) {
+                continue;
+            }
+            if (!other) {
+                other = 'p:' + message.peer.toLowerCase();
+                addNode({ id: other, kind: 'peer', label: message.label || message.peer, parent: null, root: null });
+            }
+            if (other === sessionNode) {
+                continue;
+            }
+            const sent = message.direction === 'sent';
+            const age = message.age_seconds;
+            addEdge(sent ? sessionNode : other, sent ? other : sessionNode, 'message', age, age !== null && age < GRAPH_ACTIVE_SECONDS);
+        }
+    }
+    for (const edge of edges.values()) {
+        if (edge.kind === 'spawn' && byId.get(edge.to) && byId.get(edge.to).kind === 'workflow') {
+            edge.active = byId.get(edge.to).running;
+        }
+    }
+    return { nodes: nodes, edges: Array.from(edges.values()) };
+}
+
+// Positions for the model: each session's tree runs left to right, one row per
+// leaf, sessions stacked; peers outside every tree sit in a column of their own.
+function graphLayout(model) {
+    const children = new Map();
+    for (const node of model.nodes) {
+        if (node.parent) {
+            if (!children.has(node.parent)) {
+                children.set(node.parent, []);
+            }
+            children.get(node.parent).push(node);
+        }
+    }
+    const positions = new Map();
+    let row = 0;
+    let maxDepth = 0;
+    const place = (node, depth, seen) => {
+        if (seen.has(node.id)) {
+            return row;
+        }
+        seen.add(node.id);
+        maxDepth = Math.max(maxDepth, depth);
+        const kids = children.get(node.id) || [];
+        let y;
+        if (kids.length === 0) {
+            y = row;
+            row += 1;
+        } else {
+            const rows = kids.map((kid) => place(kid, depth + 1, seen));
+            y = (rows[0] + rows[rows.length - 1]) / 2;
+        }
+        positions.set(node.id, { depth: depth, row: y });
+        return y;
+    };
+    const seen = new Set();
+    for (const node of model.nodes) {
+        if (node.kind === 'session') {
+            place(node, 0, seen);
+            row += 0.35;
+        }
+    }
+
+    // Peers line up beside the first node they talk to, never overlapping.
+    const peers = model.nodes.filter((node) => node.kind === 'peer');
+    let nextPeerRow = 0;
+    for (const peer of peers) {
+        const edge = model.edges.find((item) => (item.from === peer.id && positions.has(item.to)) || (item.to === peer.id && positions.has(item.from)));
+        const partner = edge ? positions.get(edge.from === peer.id ? edge.to : edge.from) : null;
+        const wanted = partner ? partner.row : nextPeerRow;
+        const at = Math.max(wanted, nextPeerRow);
+        positions.set(peer.id, { depth: maxDepth + 1, row: at });
+        nextPeerRow = at + 1;
+    }
+
+    const placed = [];
+    let width = 0;
+    let height = 0;
+    for (const node of model.nodes) {
+        const position = positions.get(node.id);
+        if (!position) {
+            continue;
+        }
+        const x = GRAPH_LEFT + position.depth * GRAPH_COL_W;
+        const y = GRAPH_PAD + position.row * GRAPH_ROW_H;
+        placed.push(Object.assign({}, node, { x: x, y: y }));
+        width = Math.max(width, x + GRAPH_NODE_W + GRAPH_PAD);
+        height = Math.max(height, y + GRAPH_NODE_H + GRAPH_PAD);
+    }
+    const at = new Map(placed.map((node) => [node.id, node]));
+    const lines = [];
+    for (const edge of model.edges) {
+        const from = at.get(edge.from);
+        const to = at.get(edge.to);
+        if (!from || !to) {
+            continue;
+        }
+        lines.push(Object.assign({}, edge, { path: graphEdgePath(from, to) }));
+    }
+    return { nodes: placed, edges: lines, width: width, height: height };
+}
+
+// A curve from the right of `from` to the left of `to`; between two nodes of
+// one column (two sessions) it bends out to the left.
+function graphEdgePath(from, to) {
+    const midFrom = from.y + GRAPH_NODE_H / 2;
+    const midTo = to.y + GRAPH_NODE_H / 2;
+    const round = (value) => Math.round(value * 10) / 10;
+    if (to.x > from.x) {
+        const x1 = from.x + GRAPH_NODE_W;
+        const x2 = to.x;
+        const bend = (x2 - x1) / 2;
+        return 'M' + round(x1) + ' ' + round(midFrom) + ' C' + round(x1 + bend) + ' ' + round(midFrom) + ' '
+            + round(x2 - bend) + ' ' + round(midTo) + ' ' + round(x2) + ' ' + round(midTo);
+    }
+    if (to.x < from.x) {
+        return graphEdgePath(to, from);
+    }
+    const x = from.x;
+    const out = GRAPH_LEFT - 8;
+    return 'M' + round(x) + ' ' + round(midFrom) + ' C' + round(x - out) + ' ' + round(midFrom) + ' '
+        + round(x - out) + ' ' + round(midTo) + ' ' + round(x) + ' ' + round(midTo);
+}
+
+function clipLabel(text, max) {
+    const value = typeof text === 'string' ? text : '';
+    return value.length > max ? value.slice(0, max - 1) + '…' : value;
+}
+
+// The graph as SVG markup. Every text and attribute value passes through
+// esc/attr; the animated dots follow their edge by reference to its path id.
+function graphMarkup(layout, labels, selectedKey) {
+    const strings = labels || {};
+    const width = Math.max(layout.width, 1);
+    const height = Math.max(layout.height, 1);
+    let edgesHtml = '';
+    let dotsHtml = '';
+    layout.edges.forEach((edge, index) => {
+        const id = 'graph-edge-' + index;
+        const tip = edge.kind === 'message'
+            ? fmt(strings.graph_messages, { count: edge.count })
+            : '';
+        edgesHtml += '<path' + attr('id', id) + attr('class', 'edge edge-' + edge.kind + (edge.active ? ' active' : ''))
+            + attr('d', edge.path) + (tip ? attr('data-tip', tip) : '') + '></path>';
+        if (edge.active) {
+            for (const delay of [0, 0.9]) {
+                dotsHtml += '<circle' + attr('class', 'dot dot-' + edge.kind) + ' r="3">'
+                    + '<animateMotion' + attr('dur', '1.8s') + attr('begin', '-' + delay + 's') + ' repeatCount="indefinite">'
+                    + '<mpath' + attr('href', '#' + id) + '></mpath></animateMotion></circle>';
+            }
+        }
+    });
+
+    let nodesHtml = '';
+    for (const node of layout.nodes) {
+        const label = node.kind === 'workflow' ? (strings.graph_workflow || '') : node.label;
+        const sub = node.kind === 'agent' ? node.detail : (node.kind === 'peer' ? (strings.graph_peer || '') : '');
+        const tip = [label, node.kind === 'agent' ? node.detail : ''].filter(Boolean).join('\n');
+        const classes = 'gnode gnode-' + node.kind
+            + (node.kind === 'session' ? ' status-' + node.status : '')
+            + (node.running ? ' running' : '')
+            + (node.key && node.key === selectedKey ? ' selected' : '');
+        nodesHtml += '<g' + attr('class', classes) + attr('transform', 'translate(' + node.x + ' ' + node.y + ')')
+            + (node.key ? attr('data-key', node.key) : '') + (tip ? attr('data-tip', tip) : '') + '>'
+            + '<rect' + attr('width', GRAPH_NODE_W) + attr('height', GRAPH_NODE_H) + ' rx="7"></rect>'
+            + '<circle class="gnode-dot" cx="13"' + attr('cy', GRAPH_NODE_H / 2) + ' r="4"></circle>'
+            + '<text class="gnode-label"' + attr('x', GRAPH_TEXT_X) + attr('y', sub ? 16 : GRAPH_NODE_H / 2 + 4) + '>' + esc(clipLabel(label, GRAPH_LABEL_MAX)) + '</text>'
+            + (sub ? '<text class="gnode-sub"' + attr('x', GRAPH_TEXT_X) + ' y="29">' + esc(clipLabel(sub, GRAPH_LABEL_MAX)) + '</text>' : '')
+            + '</g>';
+    }
+    return '<svg class="graph"' + attr('viewBox', '0 0 ' + width + ' ' + height) + attr('width', width) + attr('height', height)
+        + '>'
+        + '<g class="edges">' + edgesHtml + '</g><g class="dots">' + dotsHtml + '</g><g class="nodes">' + nodesHtml + '</g></svg>';
 }
 
 // The branch most of a panel's sessions are on (the first one seen wins a tie),
@@ -2692,9 +3383,19 @@ const AMC_LOGIC = {
     sessionMatchesSearch,
     searchHitsMarkup,
     defaultFilterKeys,
-    filterSummary,
-    sortDirectionOptions,
-    sortSummary,
+    LIST_SECTIONS,
+    LIST_SIGNAL_LIMIT,
+    sectionOf,
+    sectionActive,
+    toggledSectionKeys,
+    sortSectionSessions,
+    sortGroupSessions,
+    buildSections,
+    flattenProjects,
+    sessionSignals,
+    searchRegExp,
+    sessionMetaMatch,
+    attentionUpdate,
     settleCall,
     pendingIsBlocking,
     pendingBlockReason,
@@ -2729,15 +3430,12 @@ const AMC_LOGIC = {
     sessionTotalCostUsd,
     webSearchPrice,
     costTipLines,
-    ticketKey,
-    ticketTotals,
-    ticketTip,
+    costShares,
     formatCost,
     usageTotalTokens,
     modelHistory,
     cliHistory,
     changelogUrl,
-    cliColumnRelevant,
     parseVersion,
     compareVersions,
     newestCliVersions,
@@ -2753,7 +3451,6 @@ const AMC_LOGIC = {
     displayCwd,
     projectName,
     scratchWorkspaceRoot,
-    modelRank,
     NEAR_LIMIT_RATIO,
     branchOf,
     effortOf,
@@ -2764,8 +3461,26 @@ const AMC_LOGIC = {
     hookErrorsOf,
     pullRequestUrl,
     pullRequestsOf,
-    contextLine,
-    sessionInfoTip,
+    artifactsOf,
+    firstLine,
+    SUBAGENT_TOOLS,
+    toolDisplayName,
+    currentToolOf,
+    toolCallLine,
+    activityOf,
+    planItemsOf,
+    linesOf,
+    WORK_WINDOW_SECONDS,
+    workSummary,
+    testsLabel,
+    agentsOf,
+    messagesOf,
+    GRAPH_ACTIVE_SECONDS,
+    GRAPH_TEXT_WIDTH,
+    graphModel,
+    graphLayout,
+    graphEdgePath,
+    graphMarkup,
     panelBranch,
     buildSession,
     groupProjects,
@@ -2775,7 +3490,6 @@ const AMC_LOGIC = {
     STATUS_ORDER,
     STATUS_BAND,
     STATUS_FILTER,
-    MODEL_RANK,
 };
 
 if (typeof module !== 'undefined' && module.exports) {

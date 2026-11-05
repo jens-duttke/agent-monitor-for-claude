@@ -23,11 +23,13 @@ Run `git diff --staged` and critically review EVERY changed file:
 - No ambiguous names like `other`, `data2`, `flag`.
 
 ### Security & Privacy (especially changes touching `transcript.py`, `sessions.py`, `process_probe.py`, `platforms/`)
-- **Privacy boundary:** does any code path read, return, store, log, or render conversation content - message `text`, `thinking` blocks, tool `input`, or tool-result `content`? Only control metadata (entry type, `stop_reason`, tool IDs, tool name, timestamps) may be extracted.
-- **No network:** no sockets, no `requests`, no URL literals, no external destinations of any kind.
+Features come first: a new read, write, external program, launch surface or dependency is fine when the change needs it. What this section checks is that every such step is **intended and documented**, and that untrusted data is handled safely - not whether the tool may do it at all.
+- **New surfaces are deliberate and described:** a newly read field or file, a new write, a new program run, a new launch or address - does the change need it for its stated goal, and is it described in `PRIVACY.md` and CLAUDE.md's Security & Transparency section? An undocumented surface is a finding; a documented one is not.
+- **Nothing leaves the machine unasked:** a new network destination, socket or upload is only fine when it is the feature itself and documented; anything that sends local data somewhere as a side effect is a finding.
 - **No credentials:** nothing reads authentication tokens or other secrets.
-- **Read-only bar the sanctioned write surfaces:** no file or registry writes except (1) the browser UI-preference profile, (2) `session_delete.delete_session` removing a past session's own files under `projects/` (guarded by a UUID check, a live-process refusal, and `projects/` path confinement, only on an explicit user action), and (3) on Linux only, the single-instance lock file in `$XDG_RUNTIME_DIR` (`platforms/instance_linux.py`). Any other write - or any weakening of those guards - is a finding.
-- No `eval()`, `exec()`, `compile()`, dynamic imports, obfuscation, or base64-encoded strings.
+- **Destructive actions stay guarded:** a delete or overwrite of user data validates its target, confines its paths, refuses anything still live, and runs only on an explicit user action - like `session_delete.delete_session`. Weakening those guards is a finding.
+- **Untrusted data stays inert:** on-disk values reaching markup go through `esc`/`attr`, addresses are validated before they reach an `href`, a new program gets fixed arguments and a validated working directory.
+- No `eval()`, `exec()`, `compile()` of data, dynamic imports, obfuscation, or base64-encoded strings.
 - **Defensive parsing:** unversioned Claude Code internals (registry, transcript schema, slug scheme) must degrade to `unknown`/skip on a missing or mistyped field, never crash.
 
 ### Concurrency & Resource Management
@@ -77,7 +79,7 @@ Apply necessary changes directly.
 
 - Does every new function or changed behavior have corresponding tests in `tests/`?
 - Are edge cases covered (missing/renamed fields, empty transcripts, dead PIDs, UTC-vs-local age)?
-- **Is the privacy boundary still enforced?** If transcript parsing changed, does `test_transcript_privacy.py` still prove no content leaks - and was it extended for the new fields?
+- **Does `test_transcript_privacy.py` match what the code reads?** If transcript parsing changed, update it deliberately for the new fields, so it keeps catching an *accidental* broad read.
 - Do the `status.classify` table tests still cover every branch?
 - Does a change to one platform backend have a counterpart in the other, or a documented reason it cannot?
 - Run `python -m unittest discover -s tests` to verify all tests pass. Tests for the other operating system's backend skip themselves; a green run covers only the system you are on.

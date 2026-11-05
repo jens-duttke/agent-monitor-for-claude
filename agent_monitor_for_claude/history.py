@@ -345,8 +345,8 @@ def _build_history_record(path: Path) -> dict[str, Any] | None:
         'auto_denials_total': 0,
         'model_id': state.model,
         'cli_version': state.cli_version,
-        # The branch names the ticket a past session's cost is added to.
         'git_branch': state.git_branch,
+        'artifacts': [{'title': artifact.title, 'url': artifact.url} for artifact in state.artifacts],
         'usage': usage['usage'],
         'usage_by_model': usage['usage_by_model'],
         'usage_parts': usage['usage_parts'],

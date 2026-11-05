@@ -1,19 +1,9 @@
 'use strict';
 
-/* --- theme --- */
+/* --- window background --- */
 
-function currentTheme() {
-    return document.documentElement.getAttribute('data-theme') || 'dark';
-}
-
-function setThemeIcon(theme) {
-    document.getElementById('theme-toggle').innerHTML = theme === 'dark' ? '&#9788;' : '&#9790;';
-}
-
-// Report the resolved content colour to Python so the native window matches it.
-// Python only knows the system theme, not the page's stored preference, so
-// without this a dark UI on a light system shows a light window edge while
-// WebView2 lags a resize (and vice versa).
+// Report the content colour to Python so the native window matches it: the
+// window edge shows through while the web view lags a resize.
 function reportWindowBackground() {
     const bridge = apiBridge();
     if (!bridge || typeof bridge.set_window_background !== 'function') {
@@ -25,82 +15,69 @@ function reportWindowBackground() {
     }
 }
 
-function initTheme() {
-    setThemeIcon(currentTheme());
-    reportWindowBackground();
-    document.getElementById('theme-toggle').addEventListener('click', () => {
-        const next = currentTheme() === 'dark' ? 'light' : 'dark';
-        document.documentElement.setAttribute('data-theme', next);
-        try {
-            localStorage.setItem('amc-theme', next);
-        } catch (e) { /* storage unavailable */ }
-        setThemeIcon(next);
-        reportWindowBackground();
-    });
-}
+/* --- window: the compact view ---
+   The compact view is the narrow window that stays above all others; the full
+   view never does. The page owns the preference (Python cannot read
+   localStorage), so it is reported to the bridge on load and on every switch -
+   as the compact size and the keep-on-top flag, which the bridge ignores when
+   already in force. The compact layout itself is pure CSS (body.compact). */
 
-/* --- window: compact view and keep-on-top ---
-   Header toggles that change the window rather than the data. The page owns
-   both preferences (Python cannot read localStorage), so each is reported to
-   the bridge on load and on every click; the bridge ignores a report of the
-   state already in force. The compact view is also a body class: the layout
-   change is pure CSS, the bridge only resizes the window to match. */
-
-const WINDOW_TOGGLES = [
-    { id: 'compact-toggle', key: 'compact', tipKey: 'compact_view', storageKey: 'amc-compact',
-        bridgeMethod: 'set_compact', bodyClass: 'compact' },
-    { id: 'on-top-toggle', key: 'onTop', tipKey: 'keep_on_top', storageKey: 'amc-on-top',
-        bridgeMethod: 'set_on_top', bodyClass: null },
-];
-
-function initWindowToggles() {
-    WINDOW_TOGGLES.forEach((toggle) => {
-        try {
-            state[toggle.key] = localStorage.getItem(toggle.storageKey) === '1';
-        } catch (e) {
-            state[toggle.key] = false;
-        }
-        applyWindowToggle(toggle);
-
-        document.getElementById(toggle.id).addEventListener('click', () => {
-            state[toggle.key] = !state[toggle.key];
-            try {
-                localStorage.setItem(toggle.storageKey, state[toggle.key] ? '1' : '0');
-            } catch (e) { /* storage unavailable */ }
-            applyWindowToggle(toggle);
-        });
-    });
-}
-
-function applyWindowToggle(toggle) {
-    const on = state[toggle.key];
-    if (toggle.bodyClass) {
-        document.body.classList.toggle(toggle.bodyClass, on);
-        // Hidden cells measure 0, so the shared columns are re-measured for the
-        // layout just switched to rather than at the next render.
-        alignColumns();
+function initCompactToggle() {
+    try {
+        state.compact = localStorage.getItem('amc-compact') === '1';
+    } catch (e) {
+        state.compact = false;
     }
-    refreshWindowToggleButtons();
+    applyCompact();
+    document.getElementById('compact-toggle').addEventListener('click', () => toggleCompact());
+}
+
+function toggleCompact(force) {
+    state.compact = typeof force === 'boolean' ? force : !state.compact;
+    try {
+        localStorage.setItem('amc-compact', state.compact ? '1' : '0');
+    } catch (e) { /* storage unavailable */ }
+    applyCompact();
+    if (state.last) {
+        render(state.last);
+    }
+}
+
+function applyCompact() {
+    const on = state.compact;
+    document.body.classList.toggle('compact', on);
+    if (on) {
+        state.detailOpen = false;
+        document.body.classList.remove('detail-open');
+    }
+    refreshCompactButton();
 
     const bridge = apiBridge();
-    if (bridge && typeof bridge[toggle.bridgeMethod] === 'function') {
-        Promise.resolve(bridge[toggle.bridgeMethod](on)).catch(() => { /* window closing */ });
+    if (!bridge) {
+        return;
+    }
+    if (typeof bridge.set_compact === 'function') {
+        Promise.resolve(bridge.set_compact(on)).catch(() => { /* window closing */ });
+    }
+    if (typeof bridge.set_on_top === 'function') {
+        Promise.resolve(bridge.set_on_top(on)).catch(() => { /* window closing */ });
     }
 }
 
-function refreshWindowToggleButtons() {
-    WINDOW_TOGGLES.forEach((toggle) => {
-        const button = document.getElementById(toggle.id);
-        if (!button) {
-            return;
-        }
-        const on = !!state[toggle.key];
-        button.classList.toggle('active', on);
-        button.setAttribute('aria-pressed', on ? 'true' : 'false');
-        const tip = state.labels[toggle.tipKey];
-        if (tip) {
-            button.dataset.tip = tip;
-            button.setAttribute('aria-label', tip);
-        }
-    });
+// The button names what it switches to; called on init, on every switch, and
+// once labels arrive.
+function refreshCompactButton() {
+    const labels = state.labels;
+    const button = document.getElementById('compact-toggle');
+    if (!button) {
+        return;
+    }
+    const on = !!state.compact;
+    button.setAttribute('aria-pressed', on ? 'true' : 'false');
+    button.querySelector('.tool-label').textContent = (on ? labels.compact_exit : labels.compact) || '';
+    const tip = on ? labels.compact_exit_tip : labels.compact_tip;
+    if (tip) {
+        button.dataset.tip = tip;
+        button.setAttribute('aria-label', tip);
+    }
 }

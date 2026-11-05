@@ -15,7 +15,10 @@ on the content boundary): the output text is read only on an explicit,
 user-initiated expand.  Each task is also labelled with the description (or
 command) the agent gave the ``run_in_background`` call, read from the session
 transcript - again process content, not conversation, and shown so a task row
-says what it is instead of an opaque id.
+says what it is instead of an opaque id.  The listing also reads the last
+few kilobytes of each task's output to find a test runner's summary, so a row
+can say "42 passed" without being expanded; only the parsed counts leave this
+module there.
 
 When a task's own capture file is empty because the command redirected its
 output elsewhere (``... > run.log 2>&1``), the redirect target parsed from that
@@ -34,6 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .paths import SessionRoot, host_path, scratchpad_dir, task_output_dir, task_output_path, transcript_path
+from .test_results import TestSummary, test_summary
 
 __all__ = ['TaskInfo', 'list_tasks', 'read_task_output']
 
@@ -77,6 +81,7 @@ class TaskInfo:
     size_bytes: int
     age_seconds: float
     label: str
+    tests: TestSummary | None = None
 
 
 def list_tasks(
@@ -149,7 +154,8 @@ def list_tasks(
             continue
 
         label = meta.get(task_id, {}).get('label', '')
-        infos.append(TaskInfo(task_id=task_id, size_bytes=int(stat_result.st_size), age_seconds=age, label=label))
+        tests = _tests_in(path, stat_result.st_mtime_ns, int(stat_result.st_size))
+        infos.append(TaskInfo(task_id=task_id, size_bytes=int(stat_result.st_size), age_seconds=age, label=label, tests=tests))
 
     infos.sort(key=lambda task: task.age_seconds)
     total = len(infos)
@@ -190,6 +196,28 @@ def read_task_output(root: SessionRoot, session_id: str, cwd: str, task_id: str,
     if path is None:
         return None
     return _read_tail(path, max_bytes)
+
+
+# {output path: (mtime_ns, size, summary)} - the tail is parsed again only once the file changed.
+_TESTS_CACHE: dict[str, tuple[int, int, TestSummary | None]] = {}
+_TESTS_CACHE_MAX = 64
+# A runner's summary sits at the very end of its output.
+_TESTS_TAIL_BYTES = 16384
+
+
+def _tests_in(path: Path, mtime_ns: int, size: int) -> TestSummary | None:
+    """The test summary at the end of the output file *path*, cached by its modification time and size."""
+    key = str(path)
+    cached = _TESTS_CACHE.get(key)
+    if cached is not None and cached[0] == mtime_ns and cached[1] == size:
+        return cached[2]
+
+    summary = test_summary(_read_tail(path, _TESTS_TAIL_BYTES) or '')
+    if len(_TESTS_CACHE) >= _TESTS_CACHE_MAX:
+        _TESTS_CACHE.clear()
+    _TESTS_CACHE[key] = (mtime_ns, size, summary)
+
+    return summary
 
 
 def _read_tail(path: Path, max_bytes: int) -> str | None:

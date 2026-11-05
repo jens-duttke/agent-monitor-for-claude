@@ -16,6 +16,9 @@ let tooltipTimer = null;
 // trigger node under a motionless pointer, and this is what lets syncTooltip ask
 // "is an equivalent trigger still under the cursor" instead of just giving up.
 let tooltipPoint = { x: 0, y: 0 };
+// The trigger a click just dismissed the tooltip of: it stays quiet until the
+// pointer leaves it, so whatever the click opened is not covered again.
+let tooltipSilenced = null;
 
 function ensureTooltip() {
     if (!tooltipEl || !tooltipEl.isConnected) {
@@ -67,7 +70,7 @@ function initTooltips() {
         tooltipPoint = { x: event.clientX, y: event.clientY };
 
         const target = event.target.closest ? event.target.closest('[data-tip]') : null;
-        if (!target || target === tooltipTarget) {
+        if (!target || target === tooltipTarget || target === tooltipSilenced) {
             return;
         }
         clearTimeout(tooltipTimer);
@@ -84,6 +87,9 @@ function initTooltips() {
     });
     document.addEventListener('pointerout', (event) => {
         const target = event.target.closest ? event.target.closest('[data-tip]') : null;
+        if (target && target === tooltipSilenced && !(event.relatedTarget && target.contains(event.relatedTarget))) {
+            tooltipSilenced = null;
+        }
         if (!target || target !== tooltipTarget) {
             return;
         }
@@ -95,6 +101,13 @@ function initTooltips() {
         }
         hideTooltip();
     });
+    // A press acts on the element under the tooltip's target - it expands a
+    // section, opens a menu, selects a row - and the tooltip would cover what
+    // just appeared. Drop it, and keep its target quiet until the pointer leaves.
+    document.addEventListener('pointerdown', () => {
+        tooltipSilenced = tooltipTarget;
+        hideTooltip();
+    }, true);
     // A moved/scrolled target leaves a stale tooltip behind - drop it.
     document.addEventListener('scroll', hideTooltip, true);
     window.addEventListener('resize', hideTooltip);
@@ -107,8 +120,8 @@ function initTooltips() {
 // equivalent node (a slot re-rendered from markup, after which the later
 // pointerout arrives on the NEW node, fails the `!== tooltipTarget` check, and
 // never fires at all - so such a tooltip would stick indefinitely).
-// Reconciling the popup against a render is what syncOpenMenu and syncProcPanel
-// already do for the menu and the process panel; this is the same for the tooltip.
+// Reconciling the popup against a render is what syncOpenMenu already does for
+// the menu; this is the same for the tooltip.
 function syncTooltip() {
     if (!tooltipTarget || tooltipTarget.isConnected) {
         return;

@@ -15,7 +15,7 @@ Argument handling:
 
 Mindset: **adversarial**. Assume the diff might contain a mistake, a misunderstanding, or a deliberate backdoor. Your job is to disprove that assumption before merging. Do not skip steps. Do not accept claims at face value. Verify everything against primary sources.
 
-This app reads local Claude Code data - a user's session registry and transcripts across every project. Users trust the binary to stay fully local and to never touch conversation content. A single malicious or careless merge breaks that trust permanently.
+This app reads local Claude Code data - a user's session registry and transcripts across every project. It is a functional tool: a change may add a read, a write, an external program, a launch surface or a dependency when its stated goal needs it. What users must be able to trust is that the tool does **only what it says** - every such capability is intended, described in `PRIVACY.md`, and nothing is hidden. A malicious or careless merge that adds an undeclared capability breaks that trust permanently.
 
 ---
 
@@ -45,7 +45,7 @@ Read **every** changed line. For each non-trivial change, walk through the code 
 - Are there side effects beyond what the PR describes?
 
 Critical questions for every change - answer each one:
-- Is this change actually necessary for the stated goal? Could the goal be achieved with less surface area?
+- Is this change actually necessary for the stated goal? Is every capability it adds needed for that goal?
 - What edge cases could break this? (boundary values, malformed input, race conditions, missing/renamed/null on-disk fields)
 - What if the function is invoked in an unexpected order or state?
 - Does anything in the diff feel "extra" - touching files or code with no obvious connection to the stated goal? **Treat unexplained scope creep as a red flag.**
@@ -64,46 +64,46 @@ The dependency gate below pins the set of leaves to a closed universe. Always ru
 
 ### Dependencies and build surface (run this FIRST as a gate)
 
-New dependencies expand the set of available primitives (network, code execution, filesystem) in ways the audit cannot fully predict, so they must be ruled out or scrutinized **before** anything else.
+New dependencies expand the set of available primitives (network, code execution, filesystem) in ways the audit cannot fully predict, so they are scrutinized **before** anything else.
 
-- **Default stance: no new dependencies.** The sanctioned runtime set is `pywebview` and `psutil` (`pyinstaller` is build-only; on Linux the distribution's PyGObject and WebKitGTK come from apt, not pip). Any addition to `requirements.txt`, any new third-party top-level `import`, or any new entry in the spec's `hiddenimports`/`datas` is a finding by default. Demand a justification tied directly to the stated PR goal. CLAUDE.md mandates minimal, well-known dependencies.
-- For each new dependency that survives that bar: `WebFetch` its PyPI page (maintainer identity, release history, download counts, last update), inspect the source repository, recurse into transitive dependencies, and look for typosquats/lookalikes.
+- **A new dependency needs a reason, not a ban.** The current runtime set is `pywebview` and `psutil` (`pyinstaller` is build-only; on Linux the distribution's PyGObject and WebKitGTK come from apt, not pip). An addition to `requirements.txt`, a new third-party top-level `import`, or a new entry in the spec's `hiddenimports`/`datas` is fine when the stated goal needs it and it is trustworthy; one with no connection to the goal is a finding.
+- For each new dependency: `WebFetch` its PyPI page (maintainer identity, release history, download counts, last update), inspect the source repository, recurse into transitive dependencies, and look for typosquats/lookalikes.
 - Changes to `agent_monitor_for_claude.spec`, `version_info.py`, `.github/workflows/*`, or any build script are **high-risk surfaces in their own right** - a malicious PR can hide a payload in build configuration that never appears in the source diff. Verify every line is justified.
 - The diff must not contain vendored third-party code. Any such inclusion is a finding.
 
-### Privacy boundary (the defining invariant)
+### Data the change reads and shows
 
-**Capability check:** can any code path read, return, store, log, or render conversation content?
+**Capability check:** what does the change newly read, store, log, or render - and is that what the feature needs?
 
-- Only control metadata may leave `transcript.py`: entry `type`, `stop_reason`, `tool_use`/`tool_result` IDs, the tool **name**, and timestamps.
-- Trace every field accessed on a parsed transcript entry. Message `text`, `thinking` blocks, tool `input`, and tool-result `content` must never be read - not into a variable, not into a log, not into the snapshot, not into an error message.
-- Check the snapshot builder and the JS bridge: does anything content-bearing reach `build_snapshot()`'s output or `_MonitorApi`?
+- Trace every field accessed on a parsed transcript entry and every new file read. Reading conversation content, tool inputs or other user data is fine when the feature needs it and it is documented in `PRIVACY.md`; reading it **without** a use in the feature, or into a log or an error message, is a finding.
+- Check the snapshot builder and the JS bridge: does what reaches `build_snapshot()`'s output or `_MonitorApi` match what the feature shows?
+- Anything shown in the UI goes through the HTML-safety rules (`esc`/`attr`); an address reaching an `href` is validated.
 
 ### Network destinations
 
 **Capability check:** does any leaf in the call graph send bytes to a network destination?
 
-- The app must open **no** sockets at all. Any leaf that performs socket I/O, opens a connection, navigates the webview to a remote URL, or executes an external tool capable of fetching/sending (`curl`, `wget`, `Invoke-WebRequest`, `gh`, `git fetch/push`, `pip`, `npm`) is a finding.
-- Find URL-like literals structurally: `grep -nE "://|@[A-Za-z0-9.-]+|\b[0-9]{1,3}(\.[0-9]{1,3}){3}\b"` over the diff. Any hit is a finding to justify or remove.
-- pywebview may only load the bundled local UI files - never a remote URL.
+- Network access is the one capability where a hidden use is the classic exfiltration path. A leaf that performs socket I/O, opens a connection, navigates the webview to a remote URL, or runs a tool that fetches or sends (`curl`, `wget`, `Invoke-WebRequest`, `gh`, `git fetch/push`, `pip`, `npm`) is fine only when it **is** the feature, stated in the PR and documented in `PRIVACY.md`; anything that sends local data as a side effect is a finding.
+- Find URL-like literals structurally: `grep -nE "://|@[A-Za-z0-9.-]+|\b[0-9]{1,3}(\.[0-9]{1,3}){3}\b"` over the diff. Every hit needs a reason in the stated goal.
+- pywebview loads the bundled local UI files; a remote page is a feature decision, never an accident.
 
 ### Credentials
 
 **Capability check:** does any leaf read a credential or auth token?
 
-- Nothing may read authentication tokens or other secrets. The app needs none and must never touch them.
+- Nothing reads authentication tokens or other secrets unless a stated feature needs exactly that, and then only that secret, never logged or shown.
 
 ### Code execution
 
 **Capability check:** does any leaf compile, evaluate, deserialize, dynamically import, or hand control to externally-supplied bytes? Does any leaf spawn an OS process or shell?
 
-Non-exhaustive hints: `eval`, `exec`, `compile`, `__import__`, `importlib.*`, `runpy.*`, `pickle.loads`, `marshal.loads`, `yaml.load` without `SafeLoader`, `subprocess.*`, `os.system`, `os.popen`, `shell=True`, `ctypes` into Win32 process-creation APIs. Note: reading the session registry directly from disk means the app does **not** need to spawn `claude`; a new subprocess to any executable is a finding to justify.
+Non-exhaustive hints: `eval`, `exec`, `compile`, `__import__`, `importlib.*`, `runpy.*`, `pickle.loads`, `marshal.loads`, `yaml.load` without `SafeLoader`, `subprocess.*`, `os.system`, `os.popen`, `shell=True`, `ctypes` into Win32 process-creation APIs. A new subprocess is fine when the feature needs it (git for a repository's state, say): check that it runs a fixed executable with fixed arguments, gets a validated working directory, never passes untrusted text to a shell, and is documented in `PRIVACY.md`. Executing data - `eval`, `pickle.loads` of untrusted bytes, a shell string built from input - is a finding.
 
 ### Filesystem
 
 **Capability check:** does any leaf cause a side effect on the filesystem or registry?
 
-The app is **read-only except for the sanctioned write surfaces**: (1) the browser UI-preference profile (`webview.start(storage_path=...)`) under `%LOCALAPPDATA%\AgentMonitorForClaude` or `~/.local/share/agent-monitor-for-claude`, (2) `session_delete.delete_session` deleting a **past** session's own transcript and subagent folder under `projects/`, and (3) on Linux only, the single-instance lock file in `$XDG_RUNTIME_DIR` (`platforms/instance_linux.py`). Non-exhaustive hints for write capability: `open(..., 'w'/'a'/'x'/'r+'/...)`, `os.open`/`os.write`/`os.ftruncate`, `os.remove`/`unlink`/`rename`/`replace`/`mkdir`/`chmod`, `shutil.*` (copy/move/rmtree), `pathlib.Path` write/touch/mkdir/unlink, `tempfile.mkstemp`/`NamedTemporaryFile(delete=False)`, `winreg.SetValue*`/`DeleteValue`/`CreateKey*`, `ctypes` into Win32 file/registry write APIs. **Any write outside those surfaces is a finding by default.** In `session_delete` specifically, any weakening of its three guards - the UUID validation, the live-process refusal (re-probed immediately before deleting), and the `projects/` path confinement - is a finding, as is any deletion path that is not gated on an explicit user action.
+The current write surfaces are: (1) the browser UI-preference profile (`webview.start(storage_path=...)`) under `%LOCALAPPDATA%\AgentMonitorForClaude` or `~/.local/share/agent-monitor-for-claude`, (2) `session_delete.delete_session` deleting a **past** session's own transcript and subagent folder under `projects/`, and (3) on Linux only, the single-instance lock file in `$XDG_RUNTIME_DIR` (`platforms/instance_linux.py`). Non-exhaustive hints for write capability: `open(..., 'w'/'a'/'x'/'r+'/...)`, `os.open`/`os.write`/`os.ftruncate`, `os.remove`/`unlink`/`rename`/`replace`/`mkdir`/`chmod`, `shutil.*` (copy/move/rmtree), `pathlib.Path` write/touch/mkdir/unlink, `tempfile.mkstemp`/`NamedTemporaryFile(delete=False)`, `winreg.SetValue*`/`DeleteValue`/`CreateKey*`, `ctypes` into Win32 file/registry write APIs. A new write is fine when the feature needs it and it is documented; one that is undeclared or unrelated to the stated goal is a finding. A write or delete of **user data** keeps the guards `session_delete` has: in `session_delete` specifically, any weakening of its three guards - the UUID validation, the live-process refusal (re-probed immediately before deleting), and the `projects/` path confinement - is a finding, as is any deletion path that is not gated on an explicit user action.
 
 ### Obfuscation
 - Any base64, hex, or otherwise encoded strings? Decode and inspect.
@@ -113,7 +113,7 @@ The app is **read-only except for the sanctioned write surfaces**: (1) the brows
 
 ### Test integrity
 - Are tests added that actually exercise the new behavior, or do they trivially pass?
-- Have existing tests been weakened, removed, skipped, or had assertions softened? **The privacy test and the `status.classify` table tests are load-bearing** - any weakening is a finding.
+- Have existing tests been weakened, removed, skipped, or had assertions softened without the behavior changing? The `status.classify` table tests are load-bearing. `test_transcript_privacy.py` must match what the code reads: a deliberate update for a new field is fine, a silent loosening is a finding.
 - Run `python -m unittest discover -s tests` (after activating the virtual environment) and confirm all tests pass.
 
 ## Step 3: External verification (web research)
@@ -165,7 +165,7 @@ Once these are addressed, please push an update and I will re-review.
 ````
 
 Rules for the comment:
-- Tone is respectful but firm. Contributors are welcome, but privacy- and security-relevant findings are not negotiable.
+- Tone is respectful but firm. Contributors are welcome; an undeclared capability or unsafe handling of untrusted data is not negotiable, a declared and documented one is.
 - Every bullet must reference a concrete file and line, plus a clear "what should change".
 - Do not paraphrase or hide a privacy/security issue under a softer category - call it out under **Security & Privacy**.
 - Omit empty sections. After printing the block, **stop**. Do not proceed to Step 5.
@@ -214,10 +214,10 @@ If satisfied, stage `CHANGELOG.md` and run `/commit-message`.
 Answer **yes** to every line. If any answer is "no" or "not sure", do not merge.
 
 - [ ] The diff does exactly what the PR description claims, and nothing more.
-- [ ] No conversation content can be read, stored, logged, or rendered.
-- [ ] The app opens no sockets and reads no credentials.
-- [ ] No new code execution, filesystem write, or obfuscation surface.
+- [ ] Every new read, write, program, network use or launch surface is needed for the stated goal and documented in `PRIVACY.md`.
+- [ ] Nothing sends local data anywhere as a side effect, and nothing is obfuscated.
+- [ ] Untrusted data stays inert (escaped markup, validated addresses, fixed program arguments), and destructive actions keep their guards.
 - [ ] All new dependencies are verified as trustworthy via primary sources.
 - [ ] Parsing of Claude Code internals degrades safely on missing/renamed fields.
-- [ ] All tests pass and actually exercise the new behavior; the privacy and status tests are intact.
+- [ ] All tests pass and actually exercise the new behavior; the status tests are intact and the privacy test matches what the code reads.
 - [ ] CHANGELOG entry (if needed) is correct, in the right group, with proper credit.

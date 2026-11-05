@@ -72,6 +72,18 @@ _SUBAGENT_SETTLE_SECONDS = 30
 _WORKFLOW_GRACE_SECONDS = 30
 
 
+# The agents listed per session for the connection view, newest first.
+_MAX_AGENT_NODES = 40
+# How far back the connection view lists agents - a day, like the messages.
+_GRAPH_WINDOW_SECONDS = 86400
+# Each listed agent's type, description and parent, by path: ``meta.json`` is
+# written once when the agent starts.
+_node_meta_cache: dict[str, tuple[str, str, str]] = {}
+_NODE_META_CACHE_MAX = 2048
+# The length of a listed agent's type and description.
+_NODE_TEXT_MAX_CHARS = 160
+
+
 @dataclass(frozen=True)
 class WorkflowActivity:
     """Journal-derived activity for one background workflow run."""
@@ -80,6 +92,24 @@ class WorkflowActivity:
     total: int
     done: int
     active: bool
+
+
+@dataclass(frozen=True)
+class AgentNode:
+    """One subagent the session ran within the recent window, for the connection view.
+
+    ``agent_id`` is the id in its file name, which a hand-back message names as
+    its sender; ``parent_id`` the agent that started it, when not the session
+    itself; ``workflow`` the workflow run it belongs to, or ``''``.
+    """
+
+    agent_id: str
+    agent_type: str
+    description: str
+    running: bool
+    age: float
+    parent_id: str = ''
+    workflow: str = ''
 
 
 @dataclass(frozen=True)
@@ -102,6 +132,8 @@ class SubagentInfo:
     # running in the background - the sums then leave that agent out.
     usage_by_type: dict[str, UsageScan] = field(default_factory=dict)
     usage_pending: bool = False
+    # Every agent of the recent window, running or finished, newest first.
+    agents: tuple[AgentNode, ...] = ()
 
 
 def count_subagents(root: SessionRoot, session_id: str, cwd: str) -> SubagentInfo:
@@ -114,6 +146,7 @@ def count_subagents(root: SessionRoot, session_id: str, cwd: str) -> SubagentInf
     running_paths: list[Path] = []
     running_age: float | None = None
     recent_done = 0
+    candidates: list[tuple[float, Path, bool]] = []
 
     agent_paths = _agent_paths(directory)
     if agent_paths is None:
@@ -127,15 +160,20 @@ def count_subagents(root: SessionRoot, session_id: str, cwd: str) -> SubagentInf
         except OSError:
             continue
 
-        # Older than the recent window: definitely long finished, skip.
+        # Older than the recent window: definitely long finished - only the
+        # connection view still lists it, for a day.
         if age > SUBAGENT_RECENT_SECONDS:
+            if age <= _GRAPH_WINDOW_SECONDS:
+                candidates.append((age, path, False))
             continue
 
         # A subagent is running while it is executing a tool or actively
         # producing; it is finished once its turn is complete and quiet.
         if _is_finished(path, age):
             recent_done += 1
+            candidates.append((max(0.0, age), path, False))
             continue
+        candidates.append((max(0.0, age), path, True))
 
         running_paths.append(path)
         # A clock skew that puts the file ahead of ``now`` would otherwise report
@@ -146,11 +184,34 @@ def count_subagents(root: SessionRoot, session_id: str, cwd: str) -> SubagentInf
 
     labels = tuple(label for label in (_label(path) for path in running_paths) if label)
     workflows = _workflow_activity(directory, now)
+    newest = sorted(candidates, key=lambda item: item[0])[:_MAX_AGENT_NODES]
 
     return SubagentInfo(
         running=len(running_paths), recent_done=recent_done, labels=labels, workflows=workflows, running_age=running_age,
         usage_by_type=usage_by_type, usage_pending=usage_pending,
+        agents=tuple(_agent_node(path, running, age) for age, path, running in newest),
     )
+
+
+def _agent_node(path: Path, running: bool, age: float) -> AgentNode:
+    """Describe one agent file for the connection view from its file name, its folder and its ``meta.json``."""
+    key = str(path)
+    cached = _node_meta_cache.get(key)
+    if cached is None:
+        meta = _meta(path)
+        agent_type = meta.get('agentType') if isinstance(meta.get('agentType'), str) else ''
+        description = meta.get('description') if isinstance(meta.get('description'), str) else ''
+        parent = meta.get('parentAgentId') if isinstance(meta.get('parentAgentId'), str) else ''
+        cached = (agent_type[:_NODE_TEXT_MAX_CHARS], description[:_NODE_TEXT_MAX_CHARS], parent)
+        # Only a file that had its meta keeps the answer; one written a moment later is asked again.
+        if meta:
+            while len(_node_meta_cache) >= _NODE_META_CACHE_MAX:
+                _node_meta_cache.pop(next(iter(_node_meta_cache)))
+            _node_meta_cache[key] = cached
+    agent_id = path.stem[len('agent-'):] if path.stem.startswith('agent-') else path.stem
+    workflow = path.parent.name if path.parent.parent.name == 'workflows' else ''
+
+    return AgentNode(agent_id, cached[0], cached[1], running, age, cached[2], workflow)
 
 
 def past_subagent_usage(transcript: Path) -> dict[str, UsageScan]:

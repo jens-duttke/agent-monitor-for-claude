@@ -2,15 +2,17 @@
 Window Layout
 =============
 
-Resizes the application's own window for the compact view: entering it narrows
-the window to ``COMPACT_WIDTH`` (keeping its height) and lowers the minimum size
-the user can drag it to; leaving it restores the size the window had before and
-the normal minimum, which the full layout needs to fit its controls.
+Resizes the application's own window for the compact view: entering it narrows the
+window to ``COMPACT_WIDTH`` (keeping its height) and lowers the minimum size the
+user can drag it to; leaving it restores the size the window had before and the
+normal minimum, which the full layout needs to fit its controls.
 
-It also keeps the window above all others on request (:func:`keep_on_top`).
+It also keeps the window above all others on request (:func:`keep_on_top`), and
+shows on the window's taskbar button how many sessions need you
+(:func:`show_attention`).
 
-Side effects are limited to sizing and stacking the application's own window - no file,
-registry, or network writes.  Sizes are logical pixels throughout, which is
+Side effects are limited to sizing, stacking and badging the application's own
+window - no file, registry, or network writes.  Sizes are logical pixels throughout, which is
 what pywebview's ``width``/``height``/``resize`` speak; the platform layer's
 ``set_min_window_size`` converts where the toolkit needs physical ones.
 """
@@ -18,18 +20,22 @@ from __future__ import annotations
 
 from typing import Any
 
-from .platforms import set_keep_on_top, set_min_window_size
+from .platforms import set_keep_on_top, set_min_window_size, set_taskbar_attention
 
-__all__ = ['COMPACT_WIDTH', 'NORMAL_MIN_SIZE', 'enter_compact', 'keep_on_top', 'leave_compact']
+__all__ = ['COMPACT_WIDTH', 'NORMAL_MIN_SIZE', 'attention_badge', 'enter_compact', 'keep_on_top', 'leave_compact', 'show_attention']
 
 # Smallest window the full layout fits into: below this the header and the two
 # toolbar dropdowns overflow.  Passed to create_window as min_size too.
 NORMAL_MIN_SIZE = (480, 360)
 
-# The compact layout shows a dot, a title and an age per row, so it fits a much
-# narrower window - wide enough for a readable title beside the header buttons.
+# The compact view shows a status bar, a title, a status and an age per row, so it fits
+# a much narrower window - wide enough for a readable title beside the status.
 COMPACT_WIDTH = 380
 _COMPACT_MIN_SIZE = (300, 240)
+
+# The largest count the badge spells out; beyond it, it reads "9+" - a taskbar
+# overlay has room for two characters.
+_BADGE_MAX = 9
 
 
 def enter_compact(window: Any) -> tuple[int, int] | None:
@@ -110,3 +116,24 @@ def keep_on_top(window: Any, on_top: bool) -> bool:
         True if the flag was applied.
     """
     return set_keep_on_top(getattr(window, 'native', None), on_top)
+
+
+def attention_badge(count: int) -> str:
+    """The badge text for *count* sessions needing you: ``''`` for none, ``'9+'`` past nine."""
+    if count <= 0:
+        return ''
+    if count > _BADGE_MAX:
+        return f'{_BADGE_MAX}+'
+
+    return str(count)
+
+
+def show_attention(window: Any, count: int, flash: bool) -> bool:
+    """Badge *window*'s taskbar button with *count*, flashing it when *flash* is set.
+
+    Returns
+    -------
+    bool
+        True if the badge was applied.
+    """
+    return set_taskbar_attention(getattr(window, 'native', None), attention_badge(count), flash)

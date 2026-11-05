@@ -52,6 +52,7 @@ class DeferredScanEnvTest(unittest.TestCase):
         _finish_background_scans()
         with background_scans._deferred.lock:
             background_scans._deferred.pending.clear()
+            background_scans._deferred.urgent.clear()
         transcript._scan_cache.clear()
         if self._previous is None:
             os.environ.pop('CLAUDE_CONFIG_DIR', None)
@@ -255,8 +256,8 @@ class PauseTest(DeferredScanEnvTest):
 
         completed = background_scans.completed_background_scans()
         with background_scans._deferred.lock:
-            # Queued directly, smallest first: the missing file is tried first.
-            background_scans._deferred.pending['missing'] = (0, missing, transcript._first_scan)
+            # Queued directly as the newest file, so it is tried first.
+            background_scans._deferred.pending['missing'] = (0, 9e12, missing, transcript._first_scan)
         with self._defer_everything():
             transcript.state_for(local_root(), _SESSION_ID, _CWD)
             _finish_background_scans()
@@ -282,13 +283,45 @@ class PauseTest(DeferredScanEnvTest):
     def test_prune_drops_queued_scans_of_sessions_that_left_the_registry(self) -> None:
         path = self._write_transcript([_assistant(100)])
         with background_scans._deferred.lock:
-            background_scans._deferred.pending['gone'] = (1, path, transcript._first_scan)
-            background_scans._deferred.pending[os.path.normcase(str(path))] = (1, path, transcript._first_scan)
+            background_scans._deferred.pending['gone'] = (1, 0.0, path, transcript._first_scan)
+            background_scans._deferred.pending[os.path.normcase(str(path))] = (1, 0.0, path, transcript._first_scan)
 
         transcript.prune_scan_cache([(local_root(), _SESSION_ID, _CWD)])
 
         with background_scans._deferred.lock:
             self.assertEqual(list(background_scans._deferred.pending), [os.path.normcase(str(path))])
+
+
+class ScanOrderTest(DeferredScanEnvTest):
+    @staticmethod
+    def _order(pending: dict[str, tuple[int, float]]) -> list[str]:
+        items = [(key, (size, modified, Path(key), transcript._first_scan)) for key, (size, modified) in pending.items()]
+        return [key for key, _ in sorted(items, key=background_scans._next_order)]
+
+    def test_the_most_recently_written_file_comes_first_then_the_smaller(self) -> None:
+        order = self._order({'old-small': (10, 100.0), 'new-big': (900, 300.0), 'new-small': (20, 300.0), 'mid': (5, 200.0)})
+        self.assertEqual(order, ['new-small', 'new-big', 'mid', 'old-small'])
+
+    def test_a_prioritized_scan_jumps_the_queue(self) -> None:
+        with background_scans._deferred.lock:
+            background_scans._deferred.urgent.add('old-small')
+        order = self._order({'old-small': (10, 100.0), 'new-big': (900, 300.0)})
+        self.assertEqual(order[0], 'old-small')
+
+    def test_a_selected_session_prioritizes_its_transcript_and_its_subagents_only(self) -> None:
+        path = transcript_path(local_root(), _SESSION_ID, _CWD)
+        own = os.path.normcase(str(path))
+        agent = os.path.normcase(str(path.with_suffix('') / 'subagents' / 'agent-a1.jsonl'))
+        other = os.path.normcase(str(path.with_name('other-session.jsonl')))
+        lookalike = os.path.normcase(str(path.with_suffix('')) + '-copy.jsonl')
+        with background_scans._deferred.lock:
+            for key in (own, agent, other, lookalike):
+                background_scans._deferred.pending[key] = (1, 0.0, Path(key), transcript._first_scan)
+
+        self.assertEqual(transcript.prioritize_session(local_root(), _SESSION_ID, _CWD), 2)
+        with background_scans._deferred.lock:
+            self.assertEqual(background_scans._deferred.urgent, {own, agent})
+        self.assertEqual(transcript.prioritize_session(local_root(), '', _CWD), 0)
 
 
 if __name__ == '__main__':

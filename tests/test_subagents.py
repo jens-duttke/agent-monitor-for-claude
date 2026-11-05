@@ -113,6 +113,21 @@ class SubagentsTest(unittest.TestCase):
         self.assertEqual(info.running, 1)
         self.assertEqual(info.labels, ('Thinking',))
 
+    def test_the_connection_view_lists_the_agents_of_the_last_day_newest_first(self) -> None:
+        self._add_agent('fresh', 5, 'Fresh', body=_assistant_tool_use())
+        self._add_agent('hour', 3600, 'An hour ago', body=_assistant_end_turn())
+        self._add_agent('wf', 7200, 'In a workflow', body=_assistant_end_turn(), nested=True)
+        self._add_agent('old', 2 * 86400, 'Two days ago', body=_assistant_end_turn())
+
+        info = count_subagents(local_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual([agent.agent_id for agent in info.agents], ['fresh', 'hour', 'wf'])
+        self.assertEqual([agent.running for agent in info.agents], [True, False, False])
+        self.assertEqual(info.agents[2].workflow, 'wf_1')
+        self.assertEqual(info.agents[1].description, 'An hour ago')
+        # Outside the recent window an agent no longer counts as recently finished.
+        self.assertEqual((info.running, info.recent_done), (1, 0))
+
     def test_finds_nested_workflow_agents(self) -> None:
         self._add_agent('w', 3, 'Workflow agent', body=_assistant_tool_use(), nested=True)
 

@@ -4,9 +4,10 @@ Procfs Reader
 
 Reads a Linux ``/proc`` tree and answers the questions the process probe asks
 of it: which pids exist, how they are related, when each started, and what CPU
-and memory each is using.  Only ``/proc/[pid]/stat`` is ever opened - process
-names, parent links, start times, and resource counters - never a command line
-and never any other per-process file.
+and memory each is using.  Per process, ``/proc/[pid]/stat`` is opened - process
+names, parent links, start times, and resource counters - and, for a walk down
+from known pids (:func:`read_proc_subtree`), the ``task/[tid]/children`` lists;
+never a command line.
 
 Two callers share it, and they differ only in which ``/proc`` they hand in:
 
@@ -24,15 +25,17 @@ from __future__ import annotations
 
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
 
 from .procinfo import SESSION_HELPER_WINDOW_SECONDS
 
 __all__ = [
     'DEFAULT_CLK_TCK', 'DEFAULT_PAGE_SIZE', 'ProcEntry', 'ancestors', 'children_index', 'clk_tck',
-    'live_descendants', 'page_size', 'parse_stat', 'prune_sample_cache', 'read_btime', 'read_proc_table',
-    'sample_cpu',
+    'live_descendants', 'page_size', 'parse_stat', 'prune_sample_cache', 'read_btime', 'read_proc_subtree',
+    'read_proc_table', 'sample_cpu',
 ]
 
 # Linux clock ticks per second, used to interpret /proc/[pid]/stat's tick-based fields (starttime,
@@ -50,6 +53,9 @@ DEFAULT_CLK_TCK = 100
 DEFAULT_PAGE_SIZE = 4096
 
 _MAX_ANCESTOR_DEPTH = 15
+
+# Files read at once while walking down a process tree (see read_proc_subtree).
+_SUBTREE_WORKERS = 16
 
 
 @dataclass(frozen=True)
@@ -121,30 +127,128 @@ def read_proc_table(proc_dir: Path) -> dict[int, ProcEntry]:
         if not entry.name.isdigit():
             continue
 
-        try:
-            text = (entry / 'stat').read_text(encoding='utf-8', errors='ignore')
-        except OSError:
-            continue
-
-        parsed = parse_stat(text)
-        if parsed is None:
-            continue
-        comm, fields = parsed
-
-        try:
-            ppid = int(fields[1])
-            starttime = int(fields[19])
-        except (IndexError, ValueError):
-            continue
-
-        rss_pages = _optional_int(fields, 21)
-        utime = _optional_int(fields, 11)
-        stime = _optional_int(fields, 12)
-        cpu_ticks = None if utime is None or stime is None else utime + stime
-
-        table[int(entry.name)] = ProcEntry(comm, ppid, starttime, rss_pages, cpu_ticks)
+        parsed_entry = _read_entry(entry)
+        if parsed_entry is not None:
+            table[int(entry.name)] = parsed_entry
 
     return table
+
+
+def read_proc_subtree(proc_dir: Path, roots: Iterable[tuple[int, int | None]]) -> dict[int, ProcEntry] | None:
+    """Return the entries of the *roots* and all their descendants, or None when the kernel lists no children.
+
+    Walks down from each pid through ``task/[tid]/children`` instead of reading every process's
+    ``stat``: a WSL distro running containers holds a thousand processes or more, and over the
+    ``\\\\wsl.localhost`` share each read costs milliseconds, so the full table took seconds on
+    every poll while the sessions' own trees are a few dozen entries.  The result has the shape
+    :func:`read_proc_table` returns, restricted to those trees, so :func:`children_index` and
+    :func:`live_descendants` answer exactly as they would on the full table.
+
+    Each root is ``(pid, starttime)``, the start time ``None`` when unknown.  The directory listing
+    (one cheap read) decides which pids exist, so the registry's many ended sessions cost nothing; a
+    pid that exists with another start time was recycled - its entry is kept, so liveness reads it as
+    stale, but its unrelated tree is not walked.  A pid whose ``stat`` is gone is simply absent, like
+    a vanished process during a full scan.  An unreachable tree yields an empty table.  ``None`` means
+    a ``children`` list was missing for a process that exists - a kernel built without
+    ``CONFIG_PROC_CHILDREN`` - and the caller falls back to :func:`read_proc_table`.
+    """
+    table: dict[int, ProcEntry] = {}
+    try:
+        existing = {name for name in os.listdir(proc_dir) if name.isdigit()}
+    except OSError:
+        return table
+
+    candidates = [(pid, starttime) for pid, starttime in roots if str(pid) in existing]
+    # One generation of the trees at a time, each read in parallel: over the
+    # share every file is a round trip, and a node process alone lists a dozen
+    # threads whose children have to be read.
+    with ThreadPoolExecutor(max_workers=_SUBTREE_WORKERS) as pool:
+        level: list[int] = []
+        for (pid, starttime), entry in zip(candidates, pool.map(lambda root: _read_entry(proc_dir / str(root[0])), candidates)):
+            if entry is None or pid in table:
+                continue
+            table[pid] = entry
+            if starttime is None or entry.starttime == starttime:
+                level.append(pid)
+
+        seen: set[int] = set(level)
+        while level:
+            # Two flat rounds rather than one nested one: a job waiting on jobs
+            # of its own pool would block it once every worker did so.
+            task_lists = list(pool.map(lambda pid: _list_tasks(proc_dir / str(pid)), level))
+            if any(tasks is None for tasks in task_lists):
+                return None
+            tasks = [task for task_list in task_lists for task in task_list]
+            children_by_task = dict(zip(tasks, pool.map(_read_task_children, tasks)))
+
+            next_level: list[int] = []
+            for pid, task_list in zip(level, task_lists):
+                lists = [children_by_task[task] for task in task_list]
+                if task_list and all(children is None for children in lists):
+                    if (proc_dir / str(pid)).exists():
+                        return None
+                    continue
+                next_level.extend(child for children in lists if children for child in children if child not in seen)
+            seen.update(next_level)
+            entries = list(pool.map(lambda pid: _read_entry(proc_dir / str(pid)), next_level))
+            level = []
+            for pid, entry in zip(next_level, entries):
+                if entry is not None:
+                    table[pid] = entry
+                    level.append(pid)
+
+    return table
+
+
+def _read_entry(pid_dir: Path) -> ProcEntry | None:
+    """Parse one process's ``stat`` file, or None when it is gone or does not parse."""
+    try:
+        text = (pid_dir / 'stat').read_text(encoding='utf-8', errors='ignore')
+    except OSError:
+        return None
+
+    parsed = parse_stat(text)
+    if parsed is None:
+        return None
+    comm, fields = parsed
+
+    try:
+        ppid = int(fields[1])
+        starttime = int(fields[19])
+    except (IndexError, ValueError):
+        return None
+
+    rss_pages = _optional_int(fields, 21)
+    utime = _optional_int(fields, 11)
+    stime = _optional_int(fields, 12)
+    cpu_ticks = None if utime is None or stime is None else utime + stime
+
+    return ProcEntry(comm, ppid, starttime, rss_pages, cpu_ticks)
+
+
+def _list_tasks(pid_dir: Path) -> list[Path] | None:
+    """Return the process's thread directories, ``[]`` when the process is gone, or None when it has no ``task`` directory.
+
+    A child belongs to the thread that forked it, so every thread's ``children`` list is read.  A
+    process that exists without a ``task`` directory - or, checked by the caller, without a single
+    ``children`` file in it - means the kernel does not provide the lists.
+    """
+    try:
+        return [task for task in (pid_dir / 'task').iterdir() if task.name.isdigit()]
+    except OSError:
+        return None if pid_dir.exists() else []
+
+
+def _read_task_children(task: Path) -> list[int] | None:
+    """Return one thread's child pids, ``[]`` when unreadable, or None when the ``children`` file does not exist."""
+    try:
+        text = (task / 'children').read_text(encoding='ascii', errors='ignore')
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return []
+
+    return [int(value) for value in text.split() if value.isdigit()]
 
 
 def parse_stat(text: str) -> tuple[str, list[str]] | None:

@@ -52,29 +52,8 @@ class ColorRefTest(unittest.TestCase):
 
 @_WINDOWS_ONLY
 class WindowBackgroundColorTest(unittest.TestCase):
-    def _patch_registry(self, value: object | None, raises: bool = False):
-        query = mock.Mock()
-        if raises:
-            query.side_effect = OSError('no such value')
-        else:
-            query.return_value = (value, 4)
-
-        open_key = mock.MagicMock()
-        open_key.return_value.__enter__.return_value = object()
-
-        return mock.patch.multiple(win32.winreg, OpenKey=open_key, QueryValueEx=query)
-
-    def test_light_theme(self) -> None:
-        with self._patch_registry(1):
-            self.assertEqual(win32.window_background_color(), '#faf9f5')
-
-    def test_dark_theme(self) -> None:
-        with self._patch_registry(0):
-            self.assertEqual(win32.window_background_color(), '#191918')
-
-    def test_missing_preference_falls_back_to_dark(self) -> None:
-        with self._patch_registry(None, raises=True):
-            self.assertEqual(win32.window_background_color(), '#191918')
+    def test_the_window_starts_in_the_content_colour(self) -> None:
+        self.assertEqual(win32.window_background_color(), '#262624')
 
 
 @_WINDOWS_ONLY
@@ -83,7 +62,7 @@ class ApplyNativeBackgroundTest(unittest.TestCase):
     call; the interop itself only runs inside a live WebView2 host."""
 
     def test_none_native_is_a_no_op(self) -> None:
-        self.assertFalse(win32.apply_native_background(None, '#191918'))
+        self.assertFalse(win32.apply_native_background(None, '#262624'))
 
     def test_malformed_colour_is_a_no_op(self) -> None:
         self.assertFalse(win32.apply_native_background(object(), 'not-a-colour'))
@@ -113,6 +92,26 @@ class SetKeepOnTopTest(unittest.TestCase):
 
     def test_off_a_live_host_it_reports_false(self) -> None:
         self.assertFalse(win32.set_keep_on_top(object(), True))
+
+
+@_WINDOWS_ONLY
+class SetTaskbarAttentionTest(unittest.TestCase):
+    """The guard returns before any shell call; the interop only runs inside a live WebView2 host."""
+
+    def test_none_native_is_a_no_op(self) -> None:
+        self.assertFalse(win32.set_taskbar_attention(None, '3', True))
+
+    def test_non_text_badge_is_a_no_op(self) -> None:
+        self.assertFalse(win32.set_taskbar_attention(object(), 3, True))  # type: ignore[arg-type]  # guards a wrong type
+
+    def test_off_a_live_host_it_reports_false(self) -> None:
+        self.assertFalse(win32.set_taskbar_attention(object(), '3', False))
+
+    def test_guid_layout_matches_the_text_form(self) -> None:
+        guid = win32._guid('56FDF344-FD6D-11D0-958A-006097C9A090')
+
+        self.assertEqual((guid.data1, guid.data2, guid.data3), (0x56FDF344, 0xFD6D, 0x11D0))
+        self.assertEqual(bytes(guid.data4), bytes.fromhex('958A006097C9A090'))
 
 
 @_WINDOWS_ONLY
