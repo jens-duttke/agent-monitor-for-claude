@@ -685,12 +685,17 @@ function toggledSectionKeys(sectionKey, activeKeys) {
 }
 
 // A finite number, or null. `Number(null)` is 0, so null is checked first.
+// A number from on-disk data, or null: only a finite number or a string that
+// holds one counts - Number() reads '', [] and a blank string as 0, which would
+// pass "unknown" off as a real zero.
 function finiteOrNull(value) {
-    if (value == null || typeof value === 'boolean') {
-        return null;
+    let number = null;
+    if (typeof value === 'number') {
+        number = value;
+    } else if (typeof value === 'string' && value.trim() !== '') {
+        number = Number(value);
     }
-    const number = Number(value);
-    return Number.isFinite(number) ? number : null;
+    return number !== null && Number.isFinite(number) ? number : null;
 }
 
 // Name, then session id, then pid: the tie-break that keeps every order total,
@@ -4048,6 +4053,7 @@ const AMC_LOGIC = {
     workSummary,
     testsLabel,
     agentsOf,
+    finiteOrNull,
     processesOf,
     toolsOf,
     toolNodeKey,

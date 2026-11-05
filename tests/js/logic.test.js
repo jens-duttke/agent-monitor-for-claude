@@ -3165,6 +3165,12 @@ test('graph window: messages outside it draw no edge, and an unknown range key f
     assert.deepEqual(kinds(logic.graphRange('all').seconds), ['Lead', 'Reviewer', 'Archivist']);
 });
 
+test('finiteOrNull: a number or a numeric string, never a blank read as zero', () => {
+    assert.deepEqual([5, 0, -2.5, '7', ' 8 ', '0'].map(logic.finiteOrNull), [5, 0, -2.5, 7, 8, 0]);
+    assert.deepEqual(['', '  ', [], [3], {}, true, null, undefined, NaN, Infinity, 'x'].map(logic.finiteOrNull),
+        [null, null, null, null, null, null, null, null, null, null, null]);
+});
+
 test('agent steps: calls and replies in order, each call named by what it acts on', () => {
     const steps = logic.agentStepsOf([
         { kind: 'text', text: 'Looking.', at: 100 },
