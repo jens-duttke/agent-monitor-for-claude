@@ -74,7 +74,11 @@ async function procBlockLoop(panel) {
     if (procBlock !== panel) {
         return;
     }
-    await refreshProcBlock(panel);
+    // A pane nobody sees asks for nothing: the compact view and the narrow
+    // layout hide the details, and the next tick resumes once they show again.
+    if (panel.el.offsetParent !== null) {
+        await refreshProcBlock(panel);
+    }
     if (procBlock !== panel) {
         return;
     }
