@@ -43,18 +43,21 @@ function focusSession(session) {
     }
 }
 
-// Select a list entry. In the narrow layout `drill` also swaps the list for
-// the detail; the wide one shows both anyway.
-function selectSession(key, drill) {
+// Select a session - and, within it, one of its subagents, processes or tools -
+// setting the whole selection at once and drawing it once. `drill` swaps the
+// list for the detail in the narrow layout; the wide one shows both anyway. A
+// tool narrows its caller's activity to that tool's calls and scrolls there.
+function applySelection(key, options) {
     if (!key || !state.sessionsByKey.has(key)) {
         return;
     }
+    const opts = options || {};
     state.selectedKey = key;
-    state.selectedAgent = null;
-    state.selectedProcess = null;
-    state.selectedTool = null;
-    state.scrollToActivity = false;
-    if (drill) {
+    state.selectedAgent = opts.agent || null;
+    state.selectedProcess = opts.process || null;
+    state.selectedTool = opts.tool || null;
+    state.scrollToActivity = Boolean(opts.tool);
+    if (opts.drill) {
         state.detailOpen = true;
         document.body.classList.add('detail-open');
     }
@@ -71,45 +74,27 @@ function refreshGraphFocus() {
     }
 }
 
-// Select one of a session's subagents: the detail describes the agent, and the
-// session stays the selection the list and the keyboard work from.
+function selectSession(key, drill) {
+    applySelection(key, { drill: drill });
+}
+
+// A subagent: the detail describes the agent, and the session stays the
+// selection the list and the keyboard work from.
 function selectAgent(key, agentId) {
-    if (!key || !agentId || !state.sessionsByKey.has(key)) {
-        return;
-    }
-    selectSession(key, true);
-    state.selectedAgent = agentId;
-    state.selectedTool = null;
-    markSelectedItem();
-    renderDetail();
-    refreshGraphFocus();
-}
-
-// Select one of a session's background processes, like a subagent.
-function selectProcess(key, pid) {
-    if (!key || !Number.isInteger(pid) || pid <= 0 || !state.sessionsByKey.has(key)) {
-        return;
-    }
-    selectSession(key, true);
-    state.selectedProcess = pid;
-    markSelectedItem();
-    renderDetail();
-    refreshGraphFocus();
-}
-
-// Select a tool under its caller - a session or one of its subagents: the
-// caller's details show, their activity narrowed to the calls of that tool.
-function selectTool(key, agentId, toolKey) {
     if (agentId) {
-        selectAgent(key, agentId);
-    } else {
-        selectSession(key, true);
+        applySelection(key, { agent: agentId, drill: true });
     }
-    state.selectedTool = toolKey || null;
-    state.scrollToActivity = Boolean(toolKey);
-    markSelectedItem();
-    renderDetail();
-    refreshGraphFocus();
+}
+
+function selectProcess(key, pid) {
+    if (Number.isInteger(pid) && pid > 0) {
+        applySelection(key, { process: pid, drill: true });
+    }
+}
+
+// A tool under its caller - the session itself (no `agentId`) or one of its subagents.
+function selectTool(key, agentId, toolKey) {
+    applySelection(key, { agent: agentId || null, tool: toolKey || null, drill: true });
 }
 
 function closeDetail() {
