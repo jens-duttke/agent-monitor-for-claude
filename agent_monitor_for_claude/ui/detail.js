@@ -15,7 +15,7 @@
 // poll. `key` is the session they were checked for.
 const detailPaths = { key: null, isNew: false, transcript: '', scratchpad: '' };
 
-const DETAIL_BLOCKS = ['now', 'hits', 'proc', 'plan', 'git', 'agents', 'cost', 'session'];
+const DETAIL_BLOCKS = ['now', 'hits', 'proc', 'plan', 'git', 'agents', 'activity', 'cost', 'session'];
 // A block that spans the pane's width instead of sharing a row: the live ones,
 // and a subagent's task and result, which read top to bottom.
 const WIDE_BLOCKS = new Set(['now', 'hits', 'proc', 'task', 'result', 'activity']);
@@ -29,6 +29,12 @@ const gitState = { key: null, result: null, at: 0, pending: false };
 // them to a display length, so the details ask for the whole text whenever the
 // cut one changes. `sig` is the cut text the answer belongs to.
 const sessionTexts = { key: null, sig: null, result: null, pending: false };
+
+// The selected session's own newest steps, asked for on selection and again
+// once it wrote more - at most every SESSION_STEPS_REFRESH_MS, since a busy
+// session writes constantly and each answer can be large.
+const SESSION_STEPS_REFRESH_MS = 15000;
+const sessionSteps = { key: null, sig: null, steps: [], partial: false, pending: false, at: 0 };
 
 // The task and the result of the selected subagent, whole; `sig` says which
 // state of a running agent's file they were read from.
@@ -84,7 +90,47 @@ function renderDetail() {
     updateBlock(pane.querySelector('.block-agents'), state.labels.block_agents, '', agentsBodyMarkup(session));
     updateBlock(pane.querySelector('.block-cost'), state.labels.block_cost, session.usage_compact || '', costBodyMarkup(session));
     updateBlock(pane.querySelector('.block-session'), state.labels.block_session, '', sessionBodyMarkup(session));
+    requestSessionSteps(session);
+    const steps = sessionSteps.key === rowKey(session) ? sessionSteps : { steps: [], partial: false };
+    updateActivityBlock(pane, steps.steps, session.status === 'working' || session.status === 'processing', steps.partial);
     applyShares(pane);
+}
+
+// Ask for the session's own steps when it is selected, and again once its
+// transcript was written to - no sooner than SESSION_STEPS_REFRESH_MS after the
+// last answer.
+function requestSessionSteps(session) {
+    const key = rowKey(session);
+    const lastWrite = session.age_seconds !== null && state.receivedAt !== null ? Math.round(state.receivedAt / 1000 - session.age_seconds) : 0;
+    if (sessionSteps.pending || (sessionSteps.key === key && sessionSteps.sig === lastWrite)) {
+        return;
+    }
+    if (sessionSteps.key === key && Date.now() - sessionSteps.at < SESSION_STEPS_REFRESH_MS) {
+        return;
+    }
+    const bridge = apiBridge();
+    if (!bridge || typeof bridge.get_session_activity !== 'function' || session.is_history || !session.session_id || !session.cwd) {
+        return;
+    }
+    if (sessionSteps.key !== key) {
+        sessionSteps.steps = [];
+        sessionSteps.partial = false;
+    }
+    sessionSteps.key = key;
+    sessionSteps.sig = lastWrite;
+    sessionSteps.pending = true;
+    const call = () => bridge.get_session_activity(session.session_id, session.cwd, session.origin || 'local');
+    Promise.resolve(logic.settleCall(call)).then((result) => {
+        sessionSteps.pending = false;
+        sessionSteps.at = Date.now();
+        if (sessionSteps.key !== key) {
+            renderDetail();
+            return;
+        }
+        sessionSteps.steps = logic.agentStepsOf(result ? result.steps : null);
+        sessionSteps.partial = Boolean(result && result.partial);
+        renderDetail();
+    });
 }
 
 // The fixed frame the parts are written into, built once.
@@ -780,26 +826,41 @@ function renderAgentDetail(pane, session, agent) {
     const resultTitle = agent.running ? state.labels.block_reply : state.labels.block_result;
     updateBlock(pane.querySelector('.block-result'), resultTitle, '', texts.result ? textMarkup(texts.result, true) : '', markdownToggleMarkup());
     updateBlock(pane.querySelector('.block-task'), state.labels.block_task, '', texts.task ? textMarkup(texts.task, true) : '', markdownToggleMarkup());
-    // A tool selected under the agent in the graph narrows the steps to its calls.
+    updateActivityBlock(pane, texts.steps, agent.running, false);
+    applyShares(pane);
+}
+
+// The activity block of a session or a subagent: its steps, narrowed to one
+// tool's calls while a tool picked in the graph is selected, with how many
+// calls and failures they hold, and - for a long session - that older ones
+// were left out.
+function updateActivityBlock(pane, allSteps, running, partial) {
+    const labels = state.labels;
     const toolKey = state.selectedTool;
-    const steps = toolKey ? texts.steps.filter((step) => step.kind === 'call' && logic.toolNodeKey(step.tool) === toolKey) : texts.steps;
+    const steps = toolKey ? allSteps.filter((step) => step.kind === 'call' && logic.toolNodeKey(step.tool) === toolKey) : allSteps;
     const calls = steps.filter((step) => step.kind === 'call').length;
     const failed = steps.filter((step) => step.outcome === 'failed').length;
-    const note = calls > 0
-        ? fmt(state.labels.activity_note, { count: calls }) + (failed > 0 ? ' · ' + fmt(state.labels.graph_tool_failed, { count: failed }) : '')
-        : '';
+    const parts = [];
+    if (calls > 0) {
+        parts.push(fmt(labels.activity_note, { count: calls }));
+    }
+    if (failed > 0) {
+        parts.push(fmt(labels.graph_tool_failed, { count: failed }));
+    }
+    if (partial) {
+        parts.push(labels.activity_partial || '');
+    }
     const filter = toolKey
         ? '<button type="button" class="step-filter" data-action="step-filter-clear">'
             + esc(logic.toolNodeLabel(toolKey)) + ' <span aria-hidden="true">×</span></button>'
         : '';
     const activity = pane.querySelector('.block-activity');
-    updateBlock(activity, state.labels.block_activity, note, activityMarkup(steps, agent), filter);
+    updateBlock(activity, labels.block_activity, parts.filter(Boolean).join(' · '), activityMarkup(steps, running), filter);
     // A tool picked in the graph brings its calls on screen, once they are in.
     if (state.scrollToActivity && activity && !activity.hidden) {
         state.scrollToActivity = false;
         activity.scrollIntoView({ block: 'start' });
     }
-    applyShares(pane);
 }
 
 function agentTextsKey(session, agent) {
@@ -975,7 +1036,7 @@ function updateProcessKpis(stats) {
 // One collapsed row per step - when it happened (from the first step), what it
 // did and how long it took - opening to the whole request and result. A reply
 // between calls is a step too. Which rows are open survives a refresh.
-function activityMarkup(steps, agent) {
+function activityMarkup(steps, running) {
     if (steps.length === 0) {
         return '';
     }
@@ -1005,7 +1066,7 @@ function activityMarkup(steps, agent) {
         } else if (step.outcome === 'rejected' || step.outcome === 'interrupted') {
             flag = '<span class="step-flag declined">' + esc(step.outcome === 'rejected' ? labels.step_rejected : labels.step_interrupted) + '</span>';
         } else if (running) {
-            flag = '<span class="step-flag">' + esc(agent.running ? labels.agent_running : '') + '</span>';
+            flag = '<span class="step-flag">' + esc(running ? labels.agent_running : '') + '</span>';
         }
         const tone = step.outcome === 'failed' ? ' failed' : (step.outcome ? ' declined' : '');
         html += '<details' + attr('class', 'step' + tone) + attr('data-step', id) + open + '><summary>'

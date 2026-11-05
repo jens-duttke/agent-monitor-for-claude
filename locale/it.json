@@ -252,6 +252,7 @@
     "splitter_tip": "Trascina per ridimensionare l’elenco. Doppio clic per ripristinare.",
     "block_activity": "Attività",
     "activity_note": "Chiamate a strumenti: {count}",
+    "activity_partial": "solo i più recenti",
     "step_request": "Richiesta",
     "step_error": "Errore",
     "step_reply": "Risposta",

@@ -189,6 +189,25 @@ class SessionTextsTest(unittest.TestCase):
         self.assertEqual(texts['current_tool']['text'], command)
         self.assertEqual(texts['last_reply'], reply)
 
+    def test_the_session_activity_lists_its_own_steps(self) -> None:
+        lines = [
+            {'type': 'assistant', 'timestamp': '2026-07-11T10:00:00Z', 'message': {'stop_reason': 'tool_use', 'content': [
+                {'type': 'tool_use', 'id': 't1', 'name': 'Grep', 'input': {'pattern': 'todo'}}]}},
+            {'type': 'user', 'timestamp': '2026-07-11T10:00:01Z', 'message': {'content': [
+                {'type': 'tool_result', 'tool_use_id': 't1', 'is_error': True, 'content': 'Exit code 2'}]}},
+        ]
+        self._transcript.write_text('\n'.join(json.dumps(line) for line in lines) + '\n', encoding='utf-8')
+        api = _MonitorApi()
+
+        activity = api.get_session_activity(self._SESSION, self._CWD)
+
+        self.assertFalse(activity['partial'])
+        self.assertEqual([(step['tool'], step['outcome'], step['exit_code']) for step in activity['steps']], [('Grep', 'failed', 2)])
+        self.assertIsNone(api.get_session_activity('../' + self._SESSION, self._CWD))
+        self.assertIsNone(api.get_session_activity(self._SESSION, ''))
+        self.assertIsNone(api.get_session_activity(self._SESSION, self._CWD, origin='gone:X'))
+        self.assertIsNone(api.get_session_activity('6e22e66f-6298-442a-9762-2a5b65052380', self._CWD))
+
     def test_session_texts_refuse_a_bad_request(self) -> None:
         api = _MonitorApi()
         self.assertIsNone(api.get_session_texts(self._SESSION, self._CWD))

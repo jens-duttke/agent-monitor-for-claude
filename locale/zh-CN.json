@@ -252,6 +252,7 @@
     "splitter_tip": "拖动以调整列表宽度。双击恢复默认。",
     "block_activity": "活动",
     "activity_note": "工具调用：{count}",
+    "activity_partial": "仅最新",
     "step_request": "请求",
     "step_error": "错误",
     "step_reply": "回复",

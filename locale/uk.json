@@ -252,6 +252,7 @@
     "splitter_tip": "Перетягніть, щоб змінити ширину списку. Подвійне клацання скидає її.",
     "block_activity": "Перебіг",
     "activity_note": "Виклики інструментів: {count}",
+    "activity_partial": "лише найновіші",
     "step_request": "Запит",
     "step_error": "Помилка",
     "step_reply": "Відповідь",

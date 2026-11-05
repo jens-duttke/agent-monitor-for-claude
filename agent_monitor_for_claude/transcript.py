@@ -46,6 +46,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
+from typing import Any, BinaryIO
 
 from .background_scans import drop_pending, prioritize, queue_scan, wait_for_readers
 from .paths import SessionRoot, transcript_path
@@ -53,8 +54,8 @@ from .usage_parts import UsageScan
 
 __all__ = [
     'AgentLaunch', 'ApiRetry', 'Artifact', 'HookError', 'MessageEvent', 'PlanItem', 'PullRequest', 'Question', 'ToolCall', 'TranscriptState',
-    'HistoryState', 'WorktreeState', 'agent_steps', 'final_reply', 'full_texts', 'state_for', 'history_state_for', 'worktree_for', 'edited_files',
-    'prioritize_session', 'prune_scan_cache', 'usage_scan', 'usage_scan_once',
+    'HistoryState', 'WorktreeState', 'agent_steps', 'final_reply', 'full_texts', 'session_steps', 'state_for', 'history_state_for', 'worktree_for',
+    'edited_files', 'prioritize_session', 'prune_scan_cache', 'usage_scan', 'usage_scan_once',
 ]
 
 # Bytes read from the end of the transcript.  Large enough to contain the last
@@ -253,6 +254,9 @@ _MAX_TOOL_IDS = 500
 # A command's own exit status, as Claude Code opens a failed command's result.
 _EXIT_CODE = re.compile(r'^\s*Exit code (\d{1,4})\b')
 _MAX_PENDING_LAUNCHES = 50
+# How much of a session's own transcript its activity reads: the newest steps
+# of a conversation that can run to hundreds of megabytes.
+_SESSION_STEPS_TAIL_BYTES = 2 * 1024 * 1024
 # The worked intervals and messages kept per session, newest last.
 _MAX_INTERVALS = 400
 _MAX_MESSAGES = 500
@@ -944,29 +948,53 @@ def agent_steps(path: Path) -> list[dict[str, Any]]:
     a reply ``{kind: 'text', text, at}``; ``at`` is POSIX seconds or None.
     Thinking blocks stay unread.  An unreadable file has no steps.
     """
+    try:
+        with path.open('rb') as handle:
+            return _read_steps(handle, main_only=False)
+    except OSError:
+        return []
+
+
+def session_steps(path: Path, tail_bytes: int = _SESSION_STEPS_TAIL_BYTES) -> tuple[list[dict[str, Any]], bool]:
+    """Return what a session's own conversation did lately, as :func:`agent_steps` describes it, and whether older steps were left out.
+
+    A session's transcript can run to hundreds of megabytes, so only its last
+    *tail_bytes* are read - on request, for the session the details show.  A
+    call whose result lies beyond the window shows without one, a result
+    whose call does not is dropped; sidechain entries (an older version's
+    subagent turns) are not the session's own and are skipped.
+    """
+    try:
+        with path.open('rb') as handle:
+            size = handle.seek(0, os.SEEK_END)
+            partial = size > tail_bytes
+            handle.seek(size - tail_bytes if partial else 0)
+            if partial:
+                handle.readline()
+            return _read_steps(handle, main_only=True), partial
+    except OSError:
+        return [], False
+
+
+def _read_steps(handle: BinaryIO, main_only: bool) -> list[dict[str, Any]]:
+    """Read the steps from *handle*'s position on; *main_only* skips sidechain entries."""
     steps: list[dict[str, Any]] = []
     calls: dict[str, dict[str, Any]] = {}
-    try:
-        handle = path.open('rb')
-    except OSError:
-        return steps
-
-    with handle:
-        for raw_line in handle:
-            if b'"assistant"' not in raw_line and _TOOL_RESULT_MARKER not in raw_line:
-                continue
-            entry = _load(raw_line.decode('utf-8', errors='replace'))
-            if entry is None:
-                continue
-            message = entry.get('message')
-            content = message.get('content') if isinstance(message, dict) else None
-            if not isinstance(content, list):
-                continue
-            at = _timestamp_epoch(entry.get('timestamp'))
-            if entry.get('type') == 'assistant':
-                _note_steps(content, at, steps, calls)
-            elif entry.get('type') == 'user':
-                _note_results(entry, content, at, calls)
+    for raw_line in handle:
+        if b'"assistant"' not in raw_line and _TOOL_RESULT_MARKER not in raw_line:
+            continue
+        entry = _load(raw_line.decode('utf-8', errors='replace'))
+        if entry is None or (main_only and entry.get('isSidechain') is True):
+            continue
+        message = entry.get('message')
+        content = message.get('content') if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            continue
+        at = _timestamp_epoch(entry.get('timestamp'))
+        if entry.get('type') == 'assistant':
+            _note_steps(content, at, steps, calls)
+        elif entry.get('type') == 'user':
+            _note_results(entry, content, at, calls)
 
     return steps
 

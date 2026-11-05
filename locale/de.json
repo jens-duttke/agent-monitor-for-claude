@@ -252,6 +252,7 @@
     "splitter_tip": "Ziehen ändert die Breite der Liste. Doppelklick setzt sie zurück.",
     "block_activity": "Verlauf",
     "activity_note": "Tool-Aufrufe: {count}",
+    "activity_partial": "nur die neuesten",
     "step_request": "Anfrage",
     "step_error": "Fehler",
     "step_reply": "Antwort",

@@ -252,6 +252,7 @@
     "splitter_tip": "드래그하여 목록 너비를 바꿉니다. 더블클릭하면 초기화됩니다.",
     "block_activity": "활동",
     "activity_note": "도구 호출: {count}",
+    "activity_partial": "최신 항목만",
     "step_request": "요청",
     "step_error": "오류",
     "step_reply": "답변",

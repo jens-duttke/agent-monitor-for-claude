@@ -36,12 +36,12 @@ from .roots import session_roots
 from .sessions import list_sessions
 from .settings import ENDED_MAX_AGE, INCLUDE_COMPLETED
 from .subagents import SubagentInfo, count_subagents
-from .transcript import AgentLaunch, MessageEvent, ToolCall, TranscriptState, full_texts, prune_scan_cache, state_for
+from .transcript import AgentLaunch, MessageEvent, ToolCall, TranscriptState, full_texts, prune_scan_cache, session_steps, state_for
 from .usage_parts import UsageScan, session_usage
 from .worktrees import prune_worktree_cache, resolve_worktree
 from .wsl import probe_wsl_sessions
 
-__all__ = ['build_snapshot', 'live_or_recent_ids', 'registry_fingerprint', 'session_texts']
+__all__ = ['build_snapshot', 'live_or_recent_ids', 'registry_fingerprint', 'session_activity', 'session_texts']
 
 # How far back the worked intervals reach on the snapshot.  The messages go out
 # whole (the scan keeps the newest ones); the graph narrows them to its window.
@@ -250,6 +250,19 @@ def session_texts(root: SessionRoot, session_id: str, cwd: str) -> dict[str, Any
         return None
 
     return {'current_tool': _tool_call_record(state.current_tool), 'last_reply': state.last_reply}
+
+
+def session_activity(root: SessionRoot, session_id: str, cwd: str) -> dict[str, Any] | None:
+    """Return the session's newest steps - its tool calls with their inputs and results, its replies - or None without a transcript.
+
+    ``partial`` says that older steps were left out of a long conversation.
+    """
+    path = transcript_path(root, session_id, cwd)
+    if not path.is_file():
+        return None
+
+    steps, partial = session_steps(path)
+    return {'steps': steps, 'partial': partial}
 
 
 def _tool_call_record(call: ToolCall | None) -> dict[str, Any] | None:

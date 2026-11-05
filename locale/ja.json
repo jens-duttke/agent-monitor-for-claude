@@ -252,6 +252,7 @@
     "splitter_tip": "ドラッグで一覧の幅を変更。ダブルクリックで元に戻します。",
     "block_activity": "経過",
     "activity_note": "ツール呼び出し: {count}",
+    "activity_partial": "最新のみ",
     "step_request": "リクエスト",
     "step_error": "エラー",
     "step_reply": "返答",

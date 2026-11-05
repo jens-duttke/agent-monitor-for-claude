@@ -97,14 +97,14 @@ function selectProcess(key, pid) {
     refreshGraphFocus();
 }
 
-// Select a tool under its caller: a subagent's tool narrows its activity to the
-// calls of that tool; a session's selects the session, which lists no steps.
+// Select a tool under its caller - a session or one of its subagents: the
+// caller's details show, their activity narrowed to the calls of that tool.
 function selectTool(key, agentId, toolKey) {
-    if (!agentId) {
+    if (agentId) {
+        selectAgent(key, agentId);
+    } else {
         selectSession(key, true);
-        return;
     }
-    selectAgent(key, agentId);
     state.selectedTool = toolKey || null;
     state.scrollToActivity = Boolean(toolKey);
     markSelectedItem();

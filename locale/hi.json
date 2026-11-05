@@ -252,6 +252,7 @@
     "splitter_tip": "सूची की चौड़ाई बदलने के लिए खींचें। रीसेट करने के लिए डबल-क्लिक करें।",
     "block_activity": "गतिविधि",
     "activity_note": "टूल कॉल: {count}",
+    "activity_partial": "केवल नवीनतम",
     "step_request": "अनुरोध",
     "step_error": "त्रुटि",
     "step_reply": "उत्तर",

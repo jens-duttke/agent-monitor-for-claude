@@ -252,6 +252,7 @@
     "splitter_tip": "Seret untuk mengubah lebar daftar. Klik dua kali untuk mengatur ulang.",
     "block_activity": "Aktivitas",
     "activity_note": "Panggilan alat: {count}",
+    "activity_partial": "hanya yang terbaru",
     "step_request": "Permintaan",
     "step_error": "Galat",
     "step_reply": "Balasan",

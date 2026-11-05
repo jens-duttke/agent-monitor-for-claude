@@ -1362,6 +1362,46 @@ class PlanItemsAndHookMessagesTest(unittest.TestCase):
         self.assertEqual(message('', 'stdout is never read'), '')
 
 
+class SessionStepsTest(unittest.TestCase):
+    """A session's own newest steps, read from the end of its transcript."""
+
+    def setUp(self) -> None:
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.path = Path(temp.name) / 'session.jsonl'
+
+    def _write(self, entries: list[dict]) -> None:
+        self.path.write_text('\n'.join(json.dumps(entry) for entry in entries) + '\n', encoding='utf-8')
+
+    def test_the_whole_file_when_it_fits_without_the_sidechain(self) -> None:
+        self._write([
+            _assistant([{'type': 'tool_use', 'id': 'u1', 'name': 'Bash', 'input': {'command': 'ls'}}], 'tool_use', '2026-07-11T10:00:00Z'),
+            {'type': 'user', 'timestamp': '2026-07-11T10:00:01Z', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'u1', 'content': 'a.txt'}]}},
+            {**_assistant([{'type': 'tool_use', 'id': 's1', 'name': 'Read', 'input': {}}], 'tool_use', '2026-07-11T10:00:02Z'), 'isSidechain': True},
+        ])
+
+        steps, partial = tmod.session_steps(self.path)
+
+        self.assertFalse(partial)
+        self.assertEqual([(step['tool'], step['result']) for step in steps], [('Bash', 'a.txt')])
+
+    def test_a_long_transcript_yields_its_newest_steps_only(self) -> None:
+        entries = []
+        for index in range(200):
+            entries.append(_assistant([{'type': 'tool_use', 'id': f'u{index}', 'name': 'Bash', 'input': {'command': 'x' * 200}}],
+                                      'tool_use', '2026-07-11T10:00:00Z'))
+        self._write(entries)
+
+        steps, partial = tmod.session_steps(self.path, tail_bytes=4096)
+
+        self.assertTrue(partial)
+        self.assertTrue(0 < len(steps) < 200)
+        self.assertEqual(steps[-1]['id'], 'u199')
+
+    def test_a_missing_file_has_no_steps(self) -> None:
+        self.assertEqual(tmod.session_steps(self.path), ([], False))
+
+
 class ScanMonitoringTest(unittest.TestCase):
     """Lines changed, worked intervals and messages, from the full scan."""
 

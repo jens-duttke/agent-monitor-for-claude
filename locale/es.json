@@ -252,6 +252,7 @@
     "splitter_tip": "Arrastra para cambiar el ancho de la lista. Doble clic para restablecerlo.",
     "block_activity": "Actividad",
     "activity_note": "Llamadas a herramientas: {count}",
+    "activity_partial": "solo los más recientes",
     "step_request": "Solicitud",
     "step_error": "Error",
     "step_reply": "Respuesta",

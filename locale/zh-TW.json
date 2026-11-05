@@ -252,6 +252,7 @@
     "splitter_tip": "拖曳以調整清單寬度。按兩下恢復預設。",
     "block_activity": "活動",
     "activity_note": "工具呼叫：{count}",
+    "activity_partial": "僅最新",
     "step_request": "請求",
     "step_error": "錯誤",
     "step_reply": "回覆",

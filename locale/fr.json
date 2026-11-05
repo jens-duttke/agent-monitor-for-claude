@@ -252,6 +252,7 @@
     "splitter_tip": "Faites glisser pour redimensionner la liste. Double-cliquez pour rétablir.",
     "block_activity": "Activité",
     "activity_note": "Appels d’outils : {count}",
+    "activity_partial": "les plus récents seulement",
     "step_request": "Requête",
     "step_error": "Erreur",
     "step_reply": "Réponse",

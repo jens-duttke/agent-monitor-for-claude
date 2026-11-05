@@ -252,6 +252,7 @@
     "splitter_tip": "Drag to resize the list. Double-click to reset.",
     "block_activity": "Activity",
     "activity_note": "Tool calls: {count}",
+    "activity_partial": "newest only",
     "step_request": "Request",
     "step_error": "Error",
     "step_reply": "Reply",
