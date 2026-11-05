@@ -431,6 +431,18 @@ function onContentClick(event) {
         return;
     }
 
+    // A session's fold toggle, and folding every session at once.
+    const fold = event.target.closest('[data-toggle]');
+    if (fold) {
+        toggleGraphSession(fold.dataset.toggle);
+        return;
+    }
+    const foldAll = event.target.closest('[data-graph-collapse]');
+    if (foldAll) {
+        setGraphCollapsed(foldAll.dataset.graphCollapse === 'all');
+        return;
+    }
+
     const graphRange = event.target.closest('[data-graph-range]');
     if (graphRange) {
         setGraphRange(graphRange.dataset.graphRange);
@@ -535,6 +547,10 @@ function selectEntry(key) {
 function onContentDoubleClick(event) {
     clearTimeout(pendingDrill);
     pendingDrill = null;
+    // A double-click on a fold toggle only folds - twice.
+    if (event.target.closest('[data-toggle]')) {
+        return;
+    }
     const graphNode = event.target.closest('.gnode[data-key]');
     if (graphNode) {
         focusSession(state.sessionsByKey.get(graphNode.dataset.key));

@@ -3195,7 +3195,8 @@ const GRAPH_LEFT = 52;
 // then shortens it to the room the box has (GRAPH_TEXT_WIDTH, in pixels).
 const GRAPH_LABEL_MAX = 80;
 const GRAPH_TEXT_X = 24;
-const GRAPH_TEXT_WIDTH = GRAPH_NODE_W - GRAPH_TEXT_X - 14;
+// The right edge keeps room for a session's collapse toggle.
+const GRAPH_TEXT_WIDTH = GRAPH_NODE_W - GRAPH_TEXT_X - 24;
 // A subagent's id as Claude Code names its files: a message to or from one
 // that is no longer in the recent window has nothing left to point at.
 const AGENT_ID = /^a[0-9a-f]{12,24}$/;
@@ -3477,8 +3478,10 @@ function toolsInFocus(focus, key, agentId) {
 
 // Nodes and edges from `entries` ([{key, session}], the built sessions to show),
 // limited to the agents and messages of the last `maxAgeSeconds` (null: all);
-// `focus` ({key, agent, process, tool}) decides whose tools are drawn.
-function graphModel(entries, maxAgeSeconds = null, focus = null) {
+// `focus` ({key, agent, process, tool}) decides whose tools are drawn, and a
+// session whose id is in `collapsed` (a Set) keeps its subagents, processes and
+// tools folded away - its node says how many - while its messages stay.
+function graphModel(entries, maxAgeSeconds = null, focus = null, collapsed = null) {
     const inWindow = (ageSeconds) => maxAgeSeconds === null || (ageSeconds !== null && ageSeconds <= maxAgeSeconds);
     const nodes = [];
     const byId = new Map();
@@ -3552,7 +3555,12 @@ function graphModel(entries, maxAgeSeconds = null, focus = null) {
         const sessionNode = 's:' + key;
         // Numbered over every listed agent, so a number stays the same whatever
         // the window shows; drawn top to bottom in the order they started.
-        const agents = agentsInWindow(agentsByStart(session.agents || []), maxAgeSeconds);
+        const listedAgents = agentsInWindow(agentsByStart(session.agents || []), maxAgeSeconds);
+        const processes = session.process_list || [];
+        const below = listedAgents.length + (processes.length || session.processes || 0);
+        const folded = Boolean(collapsed && session.session_id && collapsed.has(session.session_id));
+        Object.assign(byId.get(sessionNode), { sessionId: session.session_id || '', below: below, collapsed: folded });
+        const agents = folded ? [] : listedAgents;
         const agentNodes = new Map(agents.map((agent) => [agent.id, sessionNode + '/a:' + agent.id]));
         for (const agent of agents) {
             let parent = sessionNode;
@@ -3581,9 +3589,8 @@ function graphModel(entries, maxAgeSeconds = null, focus = null) {
 
         // The background processes the session's tools started, each under the
         // process that started it; only a count when the list is unknown.
-        const processes = session.process_list || [];
         const listed = new Set(processes.map((process) => process.pid));
-        for (const process of processes) {
+        for (const process of folded ? [] : processes) {
             const processNode = sessionNode + '/p:' + process.pid;
             const parent = process.parent && listed.has(process.parent) && process.parent !== process.pid ? sessionNode + '/p:' + process.parent : sessionNode;
             addNode({
@@ -3592,8 +3599,10 @@ function graphModel(entries, maxAgeSeconds = null, focus = null) {
             });
             addEdge(parent, processNode, 'spawn', 0, true);
         }
-        addToolNodes(sessionNode, session.tools, key, null, sessionNode);
-        if (processes.length === 0 && session.processes > 0) {
+        if (!folded) {
+            addToolNodes(sessionNode, session.tools, key, null, sessionNode);
+        }
+        if (!folded && processes.length === 0 && session.processes > 0) {
             const processNode = sessionNode + '/p';
             addNode({ id: processNode, kind: 'process', count: session.processes, parent: sessionNode, root: sessionNode, running: true });
             addEdge(sessionNode, processNode, 'spawn', 0, true);
@@ -3729,6 +3738,14 @@ function graphEdgePath(from, to) {
         + round(x - out) + ' ' + round(midTo) + ' ' + round(x) + ' ' + round(midTo);
 }
 
+// A session's fold toggle at the right edge of its box: the whole height is the
+// hit area, the glyph says which way a click goes.
+function graphToggleMarkup(node) {
+    return '<g class="gnode-toggle"' + attr('data-toggle', node.sessionId) + attr('transform', 'translate(' + (GRAPH_NODE_W - 22) + ' 0)') + '>'
+        + '<rect' + attr('width', 22) + attr('height', GRAPH_NODE_H) + '></rect>'
+        + '<text' + attr('x', 11) + attr('y', GRAPH_NODE_H / 2 + 4) + ' text-anchor="middle">' + (node.collapsed ? '▸' : '▾') + '</text></g>';
+}
+
 function clipLabel(text, max) {
     const value = typeof text === 'string' ? text : '';
     return value.length > max ? value.slice(0, max - 1) + '…' : value;
@@ -3780,6 +3797,8 @@ function graphMarkup(layout, labels, selection) {
             sub = agentFacts(node, strings).join(' · ');
         } else if (node.kind === 'process' && node.process) {
             sub = (strings.fact_pid || 'PID') + ' ' + node.process;
+        } else if (node.kind === 'session' && node.collapsed && node.below > 0) {
+            sub = fmt(strings.graph_hidden, { count: node.below });
         } else if (node.kind === 'peer') {
             sub = strings.graph_peer || '';
         } else if (node.kind === 'tool') {
@@ -3806,6 +3825,7 @@ function graphMarkup(layout, labels, selection) {
             + '<circle class="gnode-dot" cx="13"' + attr('cy', GRAPH_NODE_H / 2) + ' r="4"></circle>'
             + '<text class="gnode-label"' + attr('x', GRAPH_TEXT_X) + attr('y', sub ? 16 : GRAPH_NODE_H / 2 + 4) + '>' + esc(clipLabel(label, GRAPH_LABEL_MAX)) + '</text>'
             + (sub ? '<text class="gnode-sub"' + attr('x', GRAPH_TEXT_X) + ' y="29">' + esc(clipLabel(sub, GRAPH_LABEL_MAX)) + '</text>' : '')
+            + (node.kind === 'session' && node.below > 0 && node.sessionId ? graphToggleMarkup(node) : '')
             + '</g>';
     }
     return '<svg class="graph"' + attr('viewBox', '0 0 ' + width + ' ' + height) + attr('width', width) + attr('height', height)

@@ -3143,6 +3143,33 @@ test('markdown: html safety - conversation text never becomes markup, a link nev
     assert.ok(html.includes('&lt;/code&gt;&lt;/pre&gt;&lt;script&gt;'));
 });
 
+test('graph fold: a collapsed session keeps its subtree folded away and says how much', () => {
+    const lead = { name: 'Lead', session_id: 'aaaaaaaa-1111-2222-3333-444444444444', status: 'working', processes: 1, tools: [],
+        process_list: [{ pid: 7, parent: 0, name: 'make' }],
+        agents: logic.agentsOf({ agents: [{ id: 'a1b2c3d4e5f6a7b8c', running: true, age_seconds: 5 }, { id: 'a2', running: false, age_seconds: 50 }] }, {}),
+        messages: logic.messagesOf({ messages: [{ direction: 'sent', peer: 'Reviewer', age_seconds: 10 }, { direction: 'sent', peer: 'a1b2c3d4e5f6a7b8c', age_seconds: 10 }] }) };
+    const reviewer = { name: 'Reviewer', session_id: 'bbbbbbbb-1111-2222-3333-444444444444', status: 'awaiting_input', agents: [], messages: [], processes: 0 };
+    const entries = [{ key: 'k1', session: lead }, { key: 'k2', session: reviewer }];
+
+    const open = logic.graphModel(entries, null, null, new Set());
+    const folded = logic.graphModel(entries, null, null, new Set([lead.session_id]));
+
+    assert.equal(open.nodes.length, 5);
+    assert.deepEqual(folded.nodes.map((node) => node.id), ['s:k1', 's:k2']);
+    const session = folded.nodes[0];
+    assert.deepEqual([session.collapsed, session.below, session.sessionId], [true, 3, lead.session_id]);
+    // A message between sessions stays; one to a folded-away subagent goes with it.
+    assert.deepEqual(folded.edges.map((edge) => edge.from + '>' + edge.to), ['s:k1>s:k2']);
+
+    const labels = { graph_hidden: '{count} folded away' };
+    const html = logic.graphMarkup(logic.graphLayout(folded), labels, null);
+    assert.ok(html.includes('>3 folded away<'));
+    assert.ok(html.includes('data-toggle="' + lead.session_id + '"') && html.includes('▸'));
+    assert.ok(logic.graphMarkup(logic.graphLayout(open), labels, null).includes('▾'));
+    // A session with nothing below it has no toggle.
+    assert.ok(!html.includes('data-toggle="' + reviewer.session_id + '"'));
+});
+
 test('graph window: old agents drop out, running ones and the parents of kept ones stay', () => {
     const agents = [
         { id: 'a-old', running: false, age_seconds: 90000, parent_id: '' },

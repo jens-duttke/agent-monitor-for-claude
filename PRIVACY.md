@@ -513,8 +513,9 @@ second window from starting - and no bundle to unpack, since the application run
 1. **Its interface-preference profile**, in `%LOCALAPPDATA%\AgentMonitorForClaude` on Windows and
    `~/.local/share/agent-monitor-for-claude` on Linux (or below `$XDG_DATA_HOME` when you have set
    it). This is the browser profile of the engine the window renders in - WebView2 or WebKitGTK - and
-   the application uses it for one purpose: so the window can remember your choices in `localStorage`. The current version stores nine values there - which list
-   sections are open, how far back *Older* and the graph reach, how the list is grouped, how wide the list is,
+   the application uses it for one purpose: so the window can remember your choices in `localStorage`. The current version stores ten values there - which list
+   sections are open, how far back *Older* and the graph reach, which sessions the graph keeps folded (by
+   session id), how the list is grouped, how wide the list is,
    your three search toggles, whether texts are shown formatted, whether the compact view is on, and which
    project groups you collapsed. The
    collapsed-group entry stores project directory paths, since that is what identifies

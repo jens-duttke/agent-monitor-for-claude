@@ -1884,6 +1884,11 @@ body.splitter-dragging {
 
 /* --- The connection graph (in place of the list) --- */
 
+/* Pushes the graph's fold buttons to the end of its button row. */
+.chips-gap {
+    flex: 1 1 auto;
+}
+
 .graph-slot {
     padding: 8px 6px 16px;
     overflow-x: auto;
@@ -2020,6 +2025,25 @@ body.splitter-dragging {
         &.selected rect {
             fill: var(--selected);
             stroke: var(--accent);
+        }
+
+        /* A session's fold toggle: an invisible full-height hit area and its glyph. */
+        .gnode-toggle {
+            cursor: pointer;
+
+            rect {
+                fill: transparent;
+                stroke: none;
+            }
+
+            text {
+                fill: var(--fg-dim);
+                font-size: 13px;
+            }
+
+            &:hover text {
+                fill: var(--fg-heading);
+            }
         }
     }
 }

@@ -38,9 +38,12 @@ function initListControls() {
         const stored = localStorage.getItem('amc-group');
         state.group = GROUPS.includes(stored) ? stored : 'urgency';
         state.graphRange = logic.graphRange(localStorage.getItem('amc-graph-range')).key;
+        const folded = JSON.parse(localStorage.getItem('amc-graph-collapsed') || '[]');
+        state.graphCollapsed = new Set(Array.isArray(folded) ? folded.filter((id) => typeof id === 'string') : []);
     } catch (e) {
         state.group = 'urgency';
         state.graphRange = logic.DEFAULT_GRAPH_RANGE;
+        state.graphCollapsed = new Set();
     }
     document.querySelectorAll('#group-switch [data-group]').forEach((button) => {
         button.addEventListener('click', () => setGroup(button.dataset.group));
@@ -70,6 +73,42 @@ function setGraphRange(key) {
     state.graphRange = logic.graphRange(key).key;
     try {
         localStorage.setItem('amc-graph-range', state.graphRange);
+    } catch (e) { /* storage unavailable */ }
+    if (state.last) {
+        render(state.last);
+    }
+}
+
+// Fold or unfold one session's subtree in the graph, or all of them at once.
+// Remembered by session id, so a session reopened in a new process stays as it was.
+const GRAPH_COLLAPSED_MAX = 500;
+
+function toggleGraphSession(sessionId) {
+    if (state.graphCollapsed.has(sessionId)) {
+        state.graphCollapsed.delete(sessionId);
+    } else {
+        state.graphCollapsed.add(sessionId);
+    }
+    persistGraphCollapsed();
+}
+
+function setGraphCollapsed(all) {
+    state.graphCollapsed = new Set();
+    if (all) {
+        for (const session of state.sessionsByKey.values()) {
+            if (!session.is_history && session.session_id) {
+                state.graphCollapsed.add(session.session_id);
+            }
+        }
+    }
+    persistGraphCollapsed();
+}
+
+function persistGraphCollapsed() {
+    const ids = Array.from(state.graphCollapsed).slice(-GRAPH_COLLAPSED_MAX);
+    state.graphCollapsed = new Set(ids);
+    try {
+        localStorage.setItem('amc-graph-collapsed', JSON.stringify(ids));
     } catch (e) { /* storage unavailable */ }
     if (state.last) {
         render(state.last);

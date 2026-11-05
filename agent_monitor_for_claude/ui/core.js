@@ -146,6 +146,8 @@ const state = {
     historyLoadedSeconds: undefined,
     // How far back the graph reaches (a logic.GRAPH_RANGES key).
     graphRange: logic.DEFAULT_GRAPH_RANGE,
+    // The session ids whose subtree the graph keeps folded (amc-graph-collapsed).
+    graphCollapsed: new Set(),
     // The compact view: the narrow, always-on-top window (see header.js).
     compact: false,
 };
@@ -382,6 +384,9 @@ const DEFAULT_LABELS = {
     graph_messages: 'Messages: {count}',
     graph_workflow: 'Workflow',
     graph_peer: 'Outside this list',
+    graph_hidden: '{count} folded away',
+    graph_collapse_all: 'Collapse all',
+    graph_expand_all: 'Expand all',
     agent_running: 'Running',
     agent_finished: 'Finished',
     fact_agent_type: 'Type',

@@ -406,7 +406,12 @@ function graphRangeMarkup() {
         + attr('class', 'range-btn' + (range.key === state.graphRange ? ' active' : ''))
         + attr('data-graph-range', range.key)
         + attr('aria-pressed', range.key === state.graphRange ? 'true' : 'false')
-        + '>' + esc(state.labels[range.label] || range.key) + '</button>').join('');
+        + '>' + esc(state.labels[range.label] || range.key) + '</button>').join('')
+        + '<span class="chips-gap"></span>'
+        + '<button' + attr('type', 'button') + attr('class', 'range-btn') + attr('data-graph-collapse', 'all') + '>'
+        + esc(state.labels.graph_collapse_all || '') + '</button>'
+        + '<button' + attr('type', 'button') + attr('class', 'range-btn') + attr('data-graph-collapse', 'none') + '>'
+        + esc(state.labels.graph_expand_all || '') + '</button>';
 }
 
 /* --- groups (project grouping) --- */
@@ -656,7 +661,7 @@ function render(snapshot) {
         shown.push(...graphSessions);
         const entries = graphSessions.map((session) => ({ key: rowKey(session), session: session }));
         const selection = { key: state.selectedKey, agent: state.selectedAgent, process: state.selectedProcess, tool: state.selectedTool };
-        const model = logic.graphModel(entries, logic.graphRange(state.graphRange).seconds, selection);
+        const model = logic.graphModel(entries, logic.graphRange(state.graphRange).seconds, selection, state.graphCollapsed);
         setMarkup(graphSlot, graphSessions.length > 0 ? logic.graphMarkup(logic.graphLayout(model), labels, selection) : '');
         fitGraphText(graphSlot);
     } else if (grouping === 'urgency') {
