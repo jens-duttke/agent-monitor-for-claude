@@ -205,7 +205,7 @@ function updateItem(el, session) {
     setTip(title, session.name);
 
     const line = el.querySelector('.item-line');
-    setMarkup(line, activityMarkup(session.activity, session.is_history ? state.historyReceivedAt : state.receivedAt));
+    setMarkup(line, itemActivityMarkup(session.activity, session.is_history ? state.historyReceivedAt : state.receivedAt));
     fillTicks(line);
     setMarkup(el.querySelector('.item-meta'), itemMetaMarkup(session));
 
@@ -294,7 +294,7 @@ function graphTextMeasurer(text) {
 
 // The activity line: the call or question the session waits on, the call it
 // runs with a ticking duration, or the first line of its last reply.
-function activityMarkup(activity, capturedAt) {
+function itemActivityMarkup(activity, capturedAt) {
     if (!activity || !activity.text) {
         return '';
     }

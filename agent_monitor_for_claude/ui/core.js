@@ -525,10 +525,7 @@ async function callSnapshot() {
 var esc = logic.esc;
 var attr = logic.attr;
 var ansiToHtml = logic.ansiToHtml;
-
-function fmt(template, values) {
-    return String(template || '').replace(/\{(\w+)\}/g, (_, key) => (values[key] != null ? values[key] : ''));
-}
+var fmt = logic.fmt;
 
 // Local calendar date as YYYY-MM-DD, used to pick the active price schedule.
 function todayIso() {

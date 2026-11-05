@@ -7,7 +7,7 @@ If you run many Claude Code agents across several projects, you cannot tell from
 > [!IMPORTANT]
 > This project is still in an early stage. Detailed issue reports - with steps to reproduce, what you expected, and what actually happened - are very welcome and help a lot.
 
-![The Agent Monitor window listing running Claude Code agents grouped by project, each showing its live status, estimated cost, model, host, and time since last activity](screenshot.png)
+![The Agent Monitor window: running Claude Code agents sorted into Needs you, Stopped and Running, each with its status, what it is doing and its cost; beside the list, the details of the selected agent with its cost, context, processes, subagents, plan, worked time and background tasks](docs/images/overview.png)
 
 ## Features
 
@@ -22,9 +22,15 @@ If you run many Claude Code agents across several projects, you cannot tell from
 - **What it is doing, in one line** - under its title, every entry says what the agent waits on (the command a permission prompt is about, the question it asks, the plan to review), what it runs right now with a running clock, or the first line of its last answer. The details show the full command, the question with its answers, the plan text, or the whole last answer.
 - **The two facts that matter, on every entry** - next to the cost, an entry names up to two of: running processes, subagents or a workflow's progress, a context from 80% full, a budget from 80% spent, a lapsed prompt cache your next prompt pays for (from $1), Auto mode put on hold after three blocked calls, a newer Claude Code a restart would bring, failing hooks, and queued prompts.
 - **Search** - one field finds sessions by title, project, branch or the start of a session ID as you type, and by what their transcripts contain a moment later: message text, reasoning, tool calls and their results. An entry says why it matched, and shows the first hit with the text around it; the details show up to five, labelled with where each came from. Match case, whole word and regular expression work as in your editor. *Ctrl+K* jumps into the field, *Esc* clears it. The content search reads only the open sections. If nothing matches, the empty result offers to look wider, one step per click - first the closed sections, then a longer time window. What it reads and how much of it can ever be shown is bounded - see [PRIVACY.md](PRIVACY.md).
+
+  ![A content search for "fence": the list narrowed to the matching agents, each with its first hit, and the details of the selected agent listing up to five hits with the text around them](docs/images/search.png)
+
 - **Background processes and task output** - for an agent running OS processes (a watched build, a scan), the details show a live table with CPU, memory and running time of each, and its background tasks; expand one to follow its output in a console that keeps the task's colors and lets you copy its text. If the task redirected its output to a file in its own scratchpad or project folder, the console follows that redirect. Output is read only while a task is expanded. A task that ran tests shows how many passed and failed (pytest, unittest, Jest, Vitest, Node's test runner, cargo and go test). For a Windows agent whose tools run through WSL, the table adds the shared WSL2 virtual machine's CPU and memory - a machine-wide figure, since that VM is where the Linux work runs.
 - **Uncommitted changes** - for the selected agent, the details list the files in its working directory (or its worktree) that are not committed yet, with the lines each adds and removes, how far the branch is ahead of or behind its upstream, and how many of the files the agent itself edited are still uncommitted. This needs `git` on your `PATH`.
 - **Connection graph** - the *Graph* grouping draws the running agents with every subagent they started, grouped under their workflow, each background process under the process that started it, the tools and MCP servers each of them called (for what you select), and the messages between agents and sessions - over a time window you choose, from an hour to everything. Click an agent, a subagent, a process or a tool to see it in the details: a subagent's whole task, its result and every tool call with its request and result, a process's live CPU, memory and uptime; a subagent's tool shows that tool's calls. Dots move along a connection while a subagent runs or a message was just sent; drag the graph to pan it, and fold a session's subtree away with its arrow. Replies, plans and tasks can be shown formatted (Markdown) or as written.
+
+  ![The connection graph: a selected agent with its subagents, workflow, background processes and the tools each of them called, failed tools framed in red, beside the agent's details](docs/images/graph.png)
+
 - **Cost** - each agent shows an estimated dollar cost that covers its subagents and web searches, priced per model. Its details split it into the main conversation, each kind of subagent, each skill and the web searches, and give the full token breakdown. Prices live in an editable `pricing.json` (see [docs/configuration.md](docs/configuration.md)); a future price change entered under its start date applies on its own.
 - **WSL sessions too** - on Windows, Claude Code agents running inside WSL distributions appear alongside your native agents, read over `\\wsl.localhost` with nothing ever executed inside the distro.
 - **Jump right to it** - double-click an agent or press *Enter* and its window comes to the foreground; for VS Code extension sessions the exact session tab is focused via the extension's official deep link. Right-click an agent for its menu. *J*/*K* or the arrow keys move through the list, *Ctrl+C* copies the selected session's ID, *T* shows its transcript.
@@ -32,6 +38,9 @@ If you run many Claude Code agents across several projects, you cannot tell from
 
 ### Reach and preferences
 - **Compact view** - the *Compact* button turns the window into a narrow strip that stays above all other windows: one line per agent, with its status and time, under the same sections as the full view. A click switches to that agent's window; the symbol at the right end of a line, or a double-click, opens its details in the full view. The full view is never kept on top.
+
+  <img src="docs/images/compact.png" width="320" alt="The compact view: a narrow strip with one line per agent under the sections Needs you, Stopped, Running and Recent, each with its status and time">
+
 - **On the taskbar** - on Windows the app's taskbar button shows how many agents are waiting for you, and flashes once when another one starts to wait while the window is in the background. On Linux the window asks for attention instead.
 - **13 languages** - auto-detected from your system locale (English, German, Spanish, French, Hindi, Indonesian, Italian, Japanese, Korean, Brazilian Portuguese, Ukrainian, Simplified and Traditional Chinese).
 - **Customizable** - an optional settings file tunes the poll interval and window size.
@@ -145,6 +154,10 @@ Iterate the UI in a browser, no Python or live session needed: open
 `agent_monitor_for_claude/ui/index.html?mock` (or the file directly via `file://`).
 It renders the showcase data from `ui/dev-mock.js` - a dev-only file that never
 ships in the built executable.
+
+To refresh the screenshots in `docs/images/` from that preview, run
+`node tools/screenshots.mjs` (or name the scenes: `overview`, `graph`, `search`,
+`compact`). It needs Edge or Chrome; set `SCREENSHOT_BROWSER` if it finds neither.
 
 Run the tests with `python -m unittest discover -s tests` and
 `node --test tests/js/logic.test.js tests/js/global-scope.test.js`. Both suites
