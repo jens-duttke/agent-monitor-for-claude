@@ -83,6 +83,10 @@ _node_meta_lock = threading.Lock()
 _NODE_META_CACHE_MAX = 20000
 # The length of a listed agent's type and description.
 _NODE_TEXT_MAX_CHARS = 160
+# The agent transcripts found for an agent's details, by (origin, session, agent).
+_agent_file_cache: dict[tuple[str, str, str], Path] = {}
+_agent_file_lock = threading.Lock()
+_AGENT_FILE_CACHE_MAX = 64
 # An agent id as it appears in its file name - letters, digits, ``_`` and
 # ``-`` only, so one can never name a path outside the agent's folder - and the
 # longest first line read for its task.
@@ -280,11 +284,34 @@ def agent_texts(root: SessionRoot, session_id: str, agent_id: str) -> dict[str, 
 
 
 def _agent_file(root: SessionRoot, session_id: str, agent_id: str) -> Path | None:
-    """The transcript of one of the session's subagents under any project folder, confined to ``projects/``, or None."""
+    """The transcript of one of the session's subagents under any project folder, confined to ``projects/``, or None.
+
+    A running agent's details ask again on every write, so a path found is kept
+    while its file exists; finding it means listing every project folder.
+    """
     if not session_id or not isinstance(agent_id, str) or not _AGENT_ID_PATTERN.fullmatch(agent_id):
         return None
 
-    projects = projects_dir(root)
+    key = (root.origin, session_id, agent_id)
+    with _agent_file_lock:
+        known = _agent_file_cache.get(key)
+    if known is not None and known.is_file():
+        return known
+
+    found = _find_agent_file(projects_dir(root), session_id, agent_id)
+    with _agent_file_lock:
+        if found is None:
+            _agent_file_cache.pop(key, None)
+        else:
+            _agent_file_cache[key] = found
+            while len(_agent_file_cache) > _AGENT_FILE_CACHE_MAX:
+                _agent_file_cache.pop(next(iter(_agent_file_cache)))
+
+    return found
+
+
+def _find_agent_file(projects: Path, session_id: str, agent_id: str) -> Path | None:
+    """Search every project folder's ``<session>/subagents`` for the agent's transcript."""
     try:
         folders = [Path(entry.path) for entry in os.scandir(projects) if entry.is_dir()]
     except OSError:

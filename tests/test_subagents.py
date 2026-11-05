@@ -8,7 +8,9 @@ import time
 import unittest
 from dataclasses import asdict
 from pathlib import Path
+from unittest import mock
 
+from agent_monitor_for_claude import subagents as smod
 from agent_monitor_for_claude.paths import cwd_to_slug, projects_dir, local_root
 from agent_monitor_for_claude.subagents import agent_texts, count_subagents
 
@@ -152,6 +154,14 @@ class SubagentsTest(unittest.TestCase):
         self.assertEqual([(step['outcome'], step['exit_code'], step['error']) for step in steps],
                          [('failed', 127, True), ('rejected', None, False), ('interrupted', None, False), ('', None, False),
                           ('rejected', None, False), ('interrupted', None, False)])
+
+    def test_a_found_agent_transcript_is_not_searched_for_again(self) -> None:
+        self._add_agent('a1', 5, 'Map', body=_assistant_end_turn())
+        with mock.patch.object(smod, '_find_agent_file', wraps=smod._find_agent_file) as find:
+            agent_texts(local_root(), _SESSION_ID, 'a1')
+            agent_texts(local_root(), _SESSION_ID, 'a1')
+
+        self.assertEqual(find.call_count, 1)
 
     def test_an_agent_id_that_could_name_a_path_is_refused(self) -> None:
         self._add_agent('a1', 5, 'Map', body=_assistant_end_turn())
