@@ -4,9 +4,6 @@ A local desktop window that shows every running Claude Code agent at a glance - 
 
 If you run many Claude Code agents across several projects, you cannot tell from the IDE which one is actually doing something and which is quietly waiting for you. Agent Monitor answers that in one glance.
 
-> [!IMPORTANT]
-> This project is still in an early stage. Detailed issue reports - with steps to reproduce, what you expected, and what actually happened - are very welcome and help a lot.
-
 ![The Agent Monitor window: running Claude Code agents sorted into Needs you, Stopped and Running, each with its status, what it is doing and its cost; beside the list, the details of the selected agent with its cost, context, processes, subagents, plan, worked time and background tasks](docs/images/overview.png)
 
 ## Features
