@@ -947,12 +947,53 @@ def agent_steps(path: Path) -> list[dict[str, Any]]:
     result ``None`` while it runs, ``error`` the result's own ``is_error``),
     a reply ``{kind: 'text', text, at}``; ``at`` is POSIX seconds or None.
     Thinking blocks stay unread.  An unreadable file has no steps.
+
+    A running agent's details ask again whenever it writes, so the steps read
+    so far are kept per file and only what was appended since is read; a line
+    still being written waits for the next call, and a file that shrank is read
+    afresh.  The newest few files are kept (``_STEPS_CACHE_MAX``).
     """
+    key = os.path.normcase(str(path))
     try:
-        with path.open('rb') as handle:
-            return _read_steps(handle, main_only=False)
+        size = path.stat().st_size
     except OSError:
         return []
+
+    with _steps_lock:
+        cache = _steps_cache.pop(key, None)
+        if cache is None or size < cache.consumed:
+            cache = _StepsCache()
+        if size > cache.consumed:
+            try:
+                with path.open('rb') as handle:
+                    handle.seek(cache.consumed)
+                    data = handle.read(size - cache.consumed)
+            except OSError:
+                return []
+            complete = data.rfind(b'\n') + 1
+            _absorb_steps(data[:complete].split(b'\n'), False, cache.steps, cache.calls)
+            cache.consumed += complete
+        _steps_cache[key] = cache
+        while len(_steps_cache) > _STEPS_CACHE_MAX:
+            _steps_cache.pop(next(iter(_steps_cache)))
+
+        # Copies, so a later result filled into a cached step never reaches an answer already given.
+        return [dict(step) for step in cache.steps]
+
+
+@dataclass
+class _StepsCache:
+    """The steps read from one agent file so far, the calls among them by id (for their results), and the bytes consumed."""
+
+    consumed: int = 0
+    steps: list[dict[str, Any]] = field(default_factory=list)
+    calls: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+_steps_cache: dict[str, _StepsCache] = {}
+# pywebview answers each bridge call on its own thread.
+_steps_lock = threading.Lock()
+_STEPS_CACHE_MAX = 8
 
 
 def session_steps(path: Path, tail_bytes: int = _SESSION_STEPS_TAIL_BYTES) -> tuple[list[dict[str, Any]], bool]:
@@ -979,8 +1020,13 @@ def session_steps(path: Path, tail_bytes: int = _SESSION_STEPS_TAIL_BYTES) -> tu
 def _read_steps(handle: BinaryIO, main_only: bool) -> list[dict[str, Any]]:
     """Read the steps from *handle*'s position on; *main_only* skips sidechain entries."""
     steps: list[dict[str, Any]] = []
-    calls: dict[str, dict[str, Any]] = {}
-    for raw_line in handle:
+    _absorb_steps(handle, main_only, steps, {})
+    return steps
+
+
+def _absorb_steps(lines: Iterable[bytes], main_only: bool, steps: list[dict[str, Any]], calls: dict[str, dict[str, Any]]) -> None:
+    """Add the steps in *lines* to *steps*, matching each result to its call in *calls*; *main_only* skips sidechain entries."""
+    for raw_line in lines:
         if b'"assistant"' not in raw_line and _TOOL_RESULT_MARKER not in raw_line:
             continue
         entry = _load(raw_line.decode('utf-8', errors='replace'))
@@ -995,8 +1041,6 @@ def _read_steps(handle: BinaryIO, main_only: bool) -> list[dict[str, Any]]:
             _note_steps(content, at, steps, calls)
         elif entry.get('type') == 'user':
             _note_results(entry, content, at, calls)
-
-    return steps
 
 
 def _note_steps(content: list, at: float | None, steps: list[dict[str, Any]], calls: dict[str, dict[str, Any]]) -> None:

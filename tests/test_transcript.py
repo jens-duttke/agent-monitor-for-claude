@@ -1402,6 +1402,54 @@ class SessionStepsTest(unittest.TestCase):
         self.assertEqual(tmod.session_steps(self.path), ([], False))
 
 
+class AgentStepsIncrementalTest(unittest.TestCase):
+    """A running agent's steps: only what was appended is read on the next call."""
+
+    def setUp(self) -> None:
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.path = Path(temp.name) / 'agent-a1.jsonl'
+        tmod._steps_cache.clear()
+        self.addCleanup(tmod._steps_cache.clear)
+
+    def _append(self, text: str) -> None:
+        with self.path.open('a', encoding='utf-8') as handle:
+            handle.write(text)
+
+    @staticmethod
+    def _call(tool_use_id: str) -> str:
+        return json.dumps(_assistant([{'type': 'tool_use', 'id': tool_use_id, 'name': 'Bash', 'input': {}}], 'tool_use', '2026-07-11T10:00:00Z'))
+
+    @staticmethod
+    def _result(tool_use_id: str, text: str) -> str:
+        return json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': tool_use_id, 'content': text}]}})
+
+    def test_appended_lines_add_steps_and_fill_in_earlier_results(self) -> None:
+        self._append(self._call('u1') + '\n')
+        first = tmod.agent_steps(self.path)
+        self._append(self._result('u1', 'done') + '\n' + self._call('u2') + '\n')
+
+        second = tmod.agent_steps(self.path)
+
+        self.assertEqual([(step['id'], step['result']) for step in first], [('u1', None)])
+        self.assertEqual([(step['id'], step['result']) for step in second], [('u1', 'done'), ('u2', None)])
+
+    def test_a_line_still_being_written_waits_for_the_next_call(self) -> None:
+        line = self._call('u1')
+        self._append(line[:20])
+        self.assertEqual(tmod.agent_steps(self.path), [])
+        self._append(line[20:] + '\n')
+
+        self.assertEqual([step['id'] for step in tmod.agent_steps(self.path)], ['u1'])
+
+    def test_a_file_that_shrank_is_read_afresh(self) -> None:
+        self._append(self._call('u1') + '\n' + self._call('u2') + '\n')
+        tmod.agent_steps(self.path)
+        self.path.write_text(self._call('u3') + '\n', encoding='utf-8')
+
+        self.assertEqual([step['id'] for step in tmod.agent_steps(self.path)], ['u3'])
+
+
 class ScanMonitoringTest(unittest.TestCase):
     """Lines changed, worked intervals and messages, from the full scan."""
 
