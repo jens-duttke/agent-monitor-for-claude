@@ -140,6 +140,8 @@ window.__MOCK_SNAPSHOT__ = {
             title: 'Port the ReSTIR denoiser to compute shaders', permission_mode: 'acceptEdits',
             last_entry_kind: 'tool_result', last_stop_reason: 'tool_use',
             child_count: 2,
+            // The build feeds the viewer it started: a tree of two in the graph.
+            child_processes: [{ pid: 21804, parent: 0, name: 'cmake.exe' }, { pid: 22190, parent: 21804, name: 'helios-viewer.exe' }],
             // A context close to full warns on the row; the rest sits in the title's tooltip.
             context_tokens: 871000, files_edited: 14, compactions: 2,
             // The second session on ticket HEL-214: the branch's tooltip adds both up.
@@ -176,13 +178,33 @@ window.__MOCK_SNAPSHOT__ = {
             current_tool: { tool: 'Agent', text: 'Explore', detail: 'Bisect the frame where the GPU fence deadlocks', questions: [] },
             current_tool_age_seconds: 312, turn_open_seconds: 1500,
             work_intervals: [[14400, 12000], [9000, 7600], [5200, 4400]],
+            child_processes: [{ pid: 18664, parent: 0, name: 'helios-tests.exe' }],
+            // Its own tools, and each subagent's: drawn under their caller when the
+            // session or the agent is selected in the graph.
+            tools: [
+                { name: 'Bash', calls: 42, age_seconds: 20, failed: 3 }, { name: 'Read', calls: 31, age_seconds: 60, failed: 0 },
+                { name: 'Edit', calls: 12, age_seconds: 140, failed: 1 }, { name: 'mcp__github__get_issue', calls: 3, age_seconds: 900, failed: 0 },
+            ],
             agents: [
-                { id: 'e1', type: 'Explore', description: 'Bisect the frame where the GPU fence deadlocks', running: true, age_seconds: 3 },
-                { id: 'e2', type: 'Explore', description: 'Reproduce descriptor-set corruption under vsync', running: true, age_seconds: 9 },
-                { id: 'e3', type: 'general-purpose', description: 'Diff SPIR-V output across a hot reload', running: true, age_seconds: 1, parent_id: 'e1' },
-                { id: 'w1', type: 'auditor', description: 'Audit the pipeline-cache invalidation path', running: true, age_seconds: 4, workflow: 'wf-cache' },
-                { id: 'w2', type: 'auditor', description: 'Audit descriptor pool reuse', running: false, age_seconds: 220, workflow: 'wf-cache' },
-                { id: 'p1', type: 'Plan', description: 'Outline the fix', running: false, age_seconds: 900 },
+                { id: 'e1', type: 'Explore', description: 'Bisect the frame where the GPU fence deadlocks', running: true, age_seconds: 3,
+                    started_seconds: 420, tool_calls: 18, launch: 'background', effort: 'high',
+                    usage_by_model: { 'claude-sonnet-5': { input_tokens: 9000, output_tokens: 4100, cache_read_input_tokens: 2100000 } },
+                    tools: [{ name: 'Bash', calls: 11, age_seconds: 3, failed: 1 }, { name: 'Grep', calls: 7, age_seconds: 40, failed: 0 }] },
+                { id: 'e2', type: 'Explore', description: 'Reproduce descriptor-set corruption under vsync', running: true, age_seconds: 9,
+                    started_seconds: 400, tool_calls: 6, launch: 'background',
+                    usage_by_model: { 'claude-sonnet-5': { input_tokens: 4000, output_tokens: 1900, cache_read_input_tokens: 800000 } },
+                    tools: [{ name: 'Bash', calls: 6, age_seconds: 9, failed: 0 }] },
+                { id: 'e3', type: 'general-purpose', description: 'Diff SPIR-V output across a hot reload', running: true, age_seconds: 1, parent_id: 'e1',
+                    started_seconds: 120, tool_calls: 4, launch: 'foreground',
+                    tools: [{ name: 'Read', calls: 4, age_seconds: 1, failed: 0 }] },
+                { id: 'w1', type: 'auditor', description: 'Audit the pipeline-cache invalidation path', running: true, age_seconds: 4, workflow: 'wf-cache',
+                    started_seconds: 300, tool_calls: 9 },
+                { id: 'w2', type: 'auditor', description: 'Audit descriptor pool reuse', running: false, age_seconds: 220, workflow: 'wf-cache',
+                    started_seconds: 600, tool_calls: 14 },
+                { id: 'p1', type: 'Plan', description: 'Outline the fix', running: false, age_seconds: 900, started_seconds: 1100, tool_calls: 5,
+                    launch: 'foreground', skill: '',
+                    usage_by_model: { 'claude-opus-4-8[1m]': { input_tokens: 2000, output_tokens: 3400, cache_read_input_tokens: 500000 } },
+                    tools: [{ name: 'Read', calls: 5, age_seconds: 950, failed: 0 }] },
             ],
             messages: [
                 { direction: 'received', peer: 'p1', label: 'Plan', handback: true, age_seconds: 880 },
@@ -256,8 +278,11 @@ window.__MOCK_SNAPSHOT__ = {
             session_id: 'h4d', short_name: 'helios-renderer-2f', pid: 21030, entrypoint: 'claude-vscode', host: 'VS Code',
             title: 'Retune the importance sampler across models', permission_mode: 'default',
             last_entry_kind: 'assistant', last_stop_reason: 'end_turn', age_seconds: 210,
-            last_reply: 'Retuned the importance sampler for all three models. The variance dropped by 18% on the Cornell box '
-                + 'and 11% on the Sponza scene; the glossy case still needs a second pass.\n\nShall I start on that next?',
+            last_reply: '## Importance sampler retuned\n\nThe variance dropped on every scene but the glossy one:\n\n'
+                + '| Scene | Before | After |\n|---|--:|--:|\n| Cornell box | 0.041 | 0.034 |\n| Sponza | 0.052 | 0.046 |\n'
+                + '| Glossy spheres | 0.090 | 0.088 |\n\n- The **MIS weights** now use the power heuristic\n'
+                + '- `--spp 64` stays the default\n\n```glsl\nfloat w = pdfA * pdfA / (pdfA * pdfA + pdfB * pdfB);\n```\n\n'
+                + 'Shall I start on the glossy pass next?',
             work_intervals: [[4000, 3100], [2600, 210]],
             lines_added: 64, lines_removed: 52, files_edited: 3,
             model_id: 'claude-opus-4-8[1m]', effort: 'max', speed: 'fast',
@@ -586,5 +611,58 @@ window.__MOCK_GIT__ = {
     h4d: {
         branch: 'main', upstream: 'origin/main', ahead: 0, behind: 3,
         changed: 0, untracked: 0, added: 0, removed: 0, edited_total: 3, edited_uncommitted: 0, files: [],
+    },
+};
+
+// What a subagent's details read on a click - its task, its result and its
+// steps - and a session's own newest steps, by agent id and session id. The
+// times are relative to now, as the real ones would be.
+function __mockStep(id, tool, input, result, offsetSeconds, durationSeconds, extra) {
+    const at = Date.now() / 1000 - offsetSeconds;
+    return Object.assign({
+        kind: 'call', id: id, tool: tool, input: input, result: result, error: false, outcome: '', exit_code: null,
+        at: at, result_at: result === null ? null : at + durationSeconds,
+    }, extra || {});
+}
+
+window.__MOCK_AGENT_TEXTS__ = {
+    e1: {
+        task: '## Bisect the GPU fence deadlock\n\nReproduce the hot-reload race with a forced reload every frame, then '
+            + 'bisect between frame **1200** and **1600** until the first frame whose fence never signals.\n\n'
+            + '- Use `helios-tests --filter reload`\n- Report the frame number and the last command buffer submitted',
+        result: '',
+        steps: [
+            { kind: 'text', text: 'Starting with a forced reload every frame.', at: Date.now() / 1000 - 420 },
+            __mockStep('s1', 'Bash', { command: 'helios-tests --filter reload --frames 1200..1600', description: 'Run the reload suite' },
+                'Exit code 1\nFAILED reload_fence (frame 1417): fence 0x2f never signalled', 410, 38.2,
+                { error: true, outcome: 'failed', exit_code: 1 }),
+            __mockStep('s2', 'Grep', { pattern: 'vkWaitForFences', path: 'src/vk' }, 'src/vk/queue.cpp:212\nsrc/vk/reload.cpp:88', 360, 0.3),
+            __mockStep('s3', 'Bash', { command: 'git bisect run helios-tests --filter reload', description: 'Bisect the regression' },
+                null, 3, 0),
+        ],
+    },
+    p1: {
+        task: 'Outline a fix for the pipeline-cache invalidation race, in at most five steps.',
+        result: '1. Take the cache lock before the reload swaps the pipeline layout\n2. Bump the generation counter after the swap\n'
+            + '3. Reject cached pipelines from an older generation\n4. Add a regression test that reloads mid-frame\n5. Document the ordering',
+        steps: [
+            __mockStep('q1', 'Read', { file_path: 'src/vk/pipeline_cache.cpp' }, '// pipeline cache ...', 1100, 0.1),
+            __mockStep('q2', 'Read', { file_path: 'src/vk/reload.cpp' }, '// hot reload ...', 1090, 0.1),
+            { kind: 'text', text: 'The swap happens outside the lock - that is the race.', at: Date.now() / 1000 - 1000 },
+        ],
+    },
+};
+
+window.__MOCK_SESSION_ACTIVITY__ = {
+    h3c: {
+        partial: true,
+        steps: [
+            __mockStep('m1', 'Read', { file_path: 'src/vk/reload.cpp' }, '// hot reload ...', 600, 0.1),
+            __mockStep('m2', 'Edit', { file_path: 'src/vk/reload.cpp', old_string: 'swap();', new_string: 'lock(); swap();' },
+                'String to replace not found in file.', 140, 0.1, { error: true, outcome: 'failed' }),
+            __mockStep('m3', 'Bash', { command: 'cmake --build build --target helios-tests', description: 'Rebuild the tests' },
+                '[100%] Built target helios-tests', 60, 41.5),
+            __mockStep('m4', 'mcp__github__get_issue', { issue: 214 }, '{"title": "Hot reload deadlocks the GPU fence"}', 900, 0.8),
+        ],
     },
 };

@@ -109,6 +109,15 @@ function requestSessionSteps(session) {
         return;
     }
     const bridge = apiBridge();
+    if (!bridge && window.__MOCK_SESSION_ACTIVITY__) {
+        // The browser preview's fabricated steps (dev-mock.js).
+        const mock = window.__MOCK_SESSION_ACTIVITY__[session.session_id];
+        sessionSteps.key = key;
+        sessionSteps.sig = lastWrite;
+        sessionSteps.steps = logic.agentStepsOf(mock ? mock.steps : null);
+        sessionSteps.partial = Boolean(mock && mock.partial);
+        return;
+    }
     if (!bridge || typeof bridge.get_session_activity !== 'function' || session.is_history || !session.session_id || !session.cwd) {
         return;
     }
@@ -886,6 +895,14 @@ function requestAgentTexts(session, agent) {
     agentTexts.key = key;
     agentTexts.sig = sig;
     const bridge = apiBridge();
+    if (!bridge && window.__MOCK_AGENT_TEXTS__) {
+        // The browser preview's fabricated texts (dev-mock.js).
+        const mock = window.__MOCK_AGENT_TEXTS__[agent.id];
+        agentTexts.task = mock ? mock.task : '';
+        agentTexts.result = mock ? mock.result : '';
+        agentTexts.steps = logic.agentStepsOf(mock ? mock.steps : null);
+        return;
+    }
     if (!bridge || typeof bridge.get_agent_texts !== 'function' || !session.session_id) {
         return;
     }
