@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-05
+
 ### Added
 - The window is now a list of agents beside the details of the one you select. The list is sorted by what each agent needs from you - *Needs you*, *Stopped*, *Running*, *Recent* and *Older* - and can be grouped by project instead.
 - Drag the line between the list and the details to make either wider; a double-click resets it. The list and the graph each keep their own width.
@@ -277,7 +279,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 13 languages, auto-detected from the system locale.
 - Optional settings file to tune the poll interval and window size.
 
-[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.9.0...v0.10.0
