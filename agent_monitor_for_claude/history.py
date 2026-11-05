@@ -294,8 +294,9 @@ def _build_history_record(path: Path) -> dict[str, Any] | None:
     """
     try:
         state = history_state_for(path)
-        # The cost covers the session's subagents too, exactly as for a live one.
-        usage = session_usage(state.usage, past_subagent_usage(path))
+        # The cost covers the session's subagents too, exactly as for a live one -
+        # also those it started in a worktree, filed under that worktree's folder.
+        usage = session_usage(state.usage, past_subagent_usage(path, state.worktree_paths))
     except Exception:
         # Last-resort per-file isolation, mirroring build_snapshot: one bad
         # transcript must skip that entry, never blank the whole history list.

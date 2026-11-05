@@ -330,19 +330,25 @@ def _first_prompt(path: Path) -> str | None:
     return text or None
 
 
-def past_subagent_usage(transcript: Path) -> dict[str, UsageScan]:
+def past_subagent_usage(transcript: Path, worktree_cwds: Iterable[str] = ()) -> dict[str, UsageScan]:
     """Return the usage of a past session's subagents, summed per ``agentType``, each file read once.
 
     *transcript* is the session's own transcript; its agents lie in the folder
-    of the same name.  A session without one has no subagents.
+    of the same name, and those it started after switching into a worktree in
+    the same-named folder under each of *worktree_cwds*' project folders - the
+    layout :func:`count_subagents` reads for a live session.  A session
+    without either has no subagents.
     """
-    directory = transcript.parent / transcript.stem / 'subagents'
-    if not directory.is_dir():
-        return {}
+    projects = transcript.parent.parent
+    directories: list[Path] = []
+    for directory in (transcript.parent / transcript.stem / 'subagents',
+                      *(projects / cwd_to_slug(cwd) / transcript.stem / 'subagents' for cwd in worktree_cwds if cwd)):
+        if directory not in directories and directory.is_dir():
+            directories.append(directory)
 
-    agent_paths = _agent_paths(directory)
-    if agent_paths is None:
-        return {}
+    agent_paths: list[Path] = []
+    for directory in directories:
+        agent_paths.extend(_agent_paths(directory) or ())
 
     usage_by_type, _, _ = _usage_by_type(agent_paths, usage_scan_once)
     return usage_by_type

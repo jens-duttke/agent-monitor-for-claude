@@ -834,6 +834,9 @@ class HistoryState:
     age_seconds: float | None = None
     usage: UsageScan = field(default_factory=UsageScan)
     artifacts: tuple[Artifact, ...] = ()
+    # Every worktree the session switched into: the agents it started there lie
+    # under that worktree's project folder.
+    worktree_paths: tuple[str, ...] = ()
 
 
 def state_for(root: SessionRoot, session_id: str, cwd: str) -> TranscriptState:
@@ -1088,7 +1091,7 @@ def history_state_for(path: Path) -> HistoryState:
     return HistoryState(
         session_id=session_id, cwd=cwd, title=scan.title(), model=tail.model, cli_version=tail.cli_version,
         git_branch=tail.git_branch, age_seconds=age_seconds, usage=scan.usage(),
-        artifacts=_artifact_list(scan.artifacts),
+        artifacts=_artifact_list(scan.artifacts), worktree_paths=tuple(scan.worktree_paths),
     )
 
 

@@ -304,6 +304,20 @@ class SubagentUsageTest(_ConfigDirTest):
         self.assertEqual(usage['Explore'].by_model['claude-opus-5-5']['output_tokens'], 4)
         self.assertNotIn(os.path.normcase(str(agent)), transcript._scan_cache)
 
+    def test_a_past_session_reads_its_agents_in_a_worktree_folder_too(self) -> None:
+        path = self._write_transcript([_reply('m1', 1)])
+        self._add_agent('a', 'Explore', [_reply('a1', 4)])
+        worktree = 'd:\\proj-worktrees\\fix'
+        moved = projects_dir(local_root()) / cwd_to_slug(worktree) / _SESSION_ID / 'subagents'
+        moved.mkdir(parents=True)
+        (moved / 'agent-w.jsonl').write_text(_reply('w1', 6) + '\n', encoding='utf-8')
+
+        before = past_subagent_usage(path)
+        after = past_subagent_usage(path, (worktree, worktree, 'd:\\gone'))
+
+        self.assertEqual(before['Explore'].by_model['claude-opus-5-5']['output_tokens'], 4)
+        self.assertEqual(sum(scan.by_model['claude-opus-5-5']['output_tokens'] for scan in after.values()), 10)
+
     def test_an_unreadable_agent_counts_as_empty(self) -> None:
         self.assertEqual(usage_scan_once(Path(self._temp.name) / 'missing.jsonl'), UsageScan())
 
