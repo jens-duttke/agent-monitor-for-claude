@@ -192,6 +192,7 @@
     "fact_mode": "模式",
     "fact_cli": "Claude Code",
     "fact_speed": "速度",
+    "speed_fast": "快速",
     "fact_worktree": "工作树",
     "fact_branch": "分支",
     "remote_control_on": "Remote Control",

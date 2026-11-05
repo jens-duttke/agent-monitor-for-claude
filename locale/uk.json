@@ -192,6 +192,7 @@
     "fact_mode": "Режим",
     "fact_cli": "Claude Code",
     "fact_speed": "Швидкість",
+    "speed_fast": "Швидкий",
     "fact_worktree": "Worktree",
     "fact_branch": "Гілка",
     "remote_control_on": "Remote Control",

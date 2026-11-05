@@ -192,6 +192,7 @@
     "fact_mode": "Modo",
     "fact_cli": "Claude Code",
     "fact_speed": "Velocidad",
+    "speed_fast": "Rápido",
     "fact_worktree": "Worktree",
     "fact_branch": "Rama",
     "remote_control_on": "Remote Control",

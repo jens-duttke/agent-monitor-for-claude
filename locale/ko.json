@@ -192,6 +192,7 @@
     "fact_mode": "모드",
     "fact_cli": "Claude Code",
     "fact_speed": "속도",
+    "speed_fast": "빠름",
     "fact_worktree": "워크트리",
     "fact_branch": "브랜치",
     "remote_control_on": "Remote Control",

@@ -339,6 +339,7 @@ const DEFAULT_LABELS = {
     fact_mode: 'Mode',
     fact_cli: 'Claude Code',
     fact_speed: 'Speed',
+    speed_fast: 'Fast',
     fact_worktree: 'Worktree',
     fact_branch: 'Branch',
     remote_control_on: 'Remote Control',

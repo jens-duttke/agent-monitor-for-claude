@@ -302,7 +302,7 @@ function factsMarkup(session) {
         session.wsl ? fmt(labels.host_wsl_tip, { distro: session.origin_label || 'WSL' }) : ''));
     parts.push(fact(labels.fact_model, session.model ? esc(session.model) : ''));
     parts.push(fact(labels.fact_effort, session.effort ? esc(session.effort) : ''));
-    parts.push(fact(labels.fact_speed, session.fast_mode ? 'fast' : ''));
+    parts.push(fact(labels.fact_speed, session.fast_mode ? esc(labels.speed_fast || '') : ''));
 
     let mode = session.mode ? esc(session.mode) : '';
     if (session.auto_paused) {
