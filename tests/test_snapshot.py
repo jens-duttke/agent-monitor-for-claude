@@ -802,14 +802,17 @@ class MessagePeerTest(unittest.TestCase):
             MessageEvent('sent', 'photo EDITOR', now),
             MessageEvent('sent', 'Old editor', now),
             MessageEvent('received', 'a1b2c3d4e5f6a7b8c', now, 'Explore', True),
+            MessageEvent('received', 'a0f3e3d3b43428336', now, '', True, 'stopped'),
         )
 
         records = snapshot_mod._recent_messages(messages, 'local', peers)
 
         self.assertEqual([(item['peer'], item['label']) for item in records], [
             ('editor', 'Photo editor'), ('editor', 'Photo editor'), ('editor', 'Photo editor'), ('editor', 'Photo editor'),
-            ('a1b2c3d4e5f6a7b8c', 'Explore'),
+            ('a1b2c3d4e5f6a7b8c', 'Explore'), ('a0f3e3d3b43428336', ''),
         ])
+        # How a background agent ended travels with its hand-back.
+        self.assertEqual([item['outcome'] for item in records[-2:]], ['', 'stopped'])
         # Another origin's sessions are not this one's peers.
         self.assertEqual(snapshot_mod._recent_messages(messages[2:3], 'wsl:Ubuntu', peers)[0]['peer'], 'photo EDITOR')
 

@@ -2126,6 +2126,58 @@ body.group-graph .content {
     }
 }
 
+/* The legend below the graph, at the pane's foot while the graph scrolls:
+   one row each for the lines, the marks and the boxes. */
+.legend-slot:empty {
+    display: none;
+}
+
+.graph-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding: 8px 12px 10px;
+    border-top: 1px solid var(--border);
+    color: var(--fg-dim);
+    font-size: 11.5px;
+
+    /* The rows share one column grid, so their entries line up. */
+    .legend-group {
+        display: grid;
+        grid-template-columns: 48px 1fr;
+        align-items: start;
+        gap: 12px;
+    }
+
+    .legend-items {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 5px 16px;
+    }
+
+    .legend-head {
+        padding-top: 1px;
+        color: var(--fg-faint);
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+    }
+
+    /* A sample in a column of its own, so the texts start in one line too. */
+    .legend-item {
+        display: grid;
+        grid-template-columns: 44px 1fr;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+    }
+
+    .graph.legend-sample {
+        overflow: visible;
+    }
+}
+
 .graph-slot {
     padding: 8px 6px 16px;
     overflow: auto;
@@ -2151,26 +2203,25 @@ body.group-graph .content {
 .graph {
     display: block;
 
+    /* What a line is says its kind - solid: started, dashed: messages, dotted:
+       tool calls; moving dots and colour say it is active now. */
     .edge {
         fill: none;
         stroke: var(--border-strong);
         stroke-width: 1.5;
+
+        /* An edge at the selected node. */
+        &.linked {
+            stroke: var(--fg-faint);
+            stroke-width: 2.25;
+        }
 
         &.edge-message {
             stroke: var(--c-part-agents);
             stroke-dasharray: 4 4;
         }
 
-        &.active {
-            stroke: var(--c-working);
-        }
-
-        &.edge-message.active {
-            stroke: var(--accent);
-        }
-
         &.edge-tool {
-            stroke: var(--border-strong);
             stroke-dasharray: 2 3;
         }
 
@@ -2179,17 +2230,61 @@ body.group-graph .content {
             opacity: 0.5;
         }
 
-        &.edge-tool.active {
-            stroke: var(--c-working);
+        &.active {
+            stroke: var(--c-processing);
+        }
+
+        &.edge-message.active {
+            stroke: var(--c-part-agents);
+        }
+
+        /* Quiet for over an hour; less so when it leads to the selection. */
+        &.stale {
+            opacity: 0.35;
+
+            &.linked {
+                opacity: 0.6;
+            }
         }
     }
 
+    /* The marks at an edge's ends: a message's arrowhead at its receiver, and a
+       subagent's report - an arrowhead back to its caller, or a cross. */
+    .edge-mark {
+        fill: var(--c-part-agents);
+
+        &.mark-abort {
+            fill: none;
+            stroke: var(--c-errored);
+            stroke-width: 1.6;
+            stroke-linecap: round;
+        }
+
+        &.stale {
+            opacity: 0.45;
+        }
+    }
+
+    /* An edge's invisible twin, wide enough to hover for its tooltip. */
+    .edge-hit {
+        fill: none;
+        stroke: transparent;
+        stroke-width: 10;
+    }
+
     .dot {
-        fill: var(--c-working);
+        fill: var(--c-processing);
 
         &.dot-message {
-            fill: var(--accent);
+            fill: var(--c-part-agents);
         }
+    }
+
+    /* The legend's stand-in for the box a line leads to. */
+    .legend-box {
+        fill: var(--surface);
+        stroke: var(--border-strong);
+        stroke-width: 1;
     }
 
     .gnode {

@@ -427,6 +427,11 @@ function onContentClick(event) {
         return;
     }
 
+    if (event.target.closest('[data-graph-legend]')) {
+        toggleGraphLegend();
+        return;
+    }
+
     const graphRange = event.target.closest('[data-graph-range]');
     if (graphRange) {
         setGraphRange(graphRange.dataset.graphRange);

@@ -40,10 +40,12 @@ function initListControls() {
         state.graphRange = logic.graphRange(localStorage.getItem('amc-graph-range')).key;
         const folded = JSON.parse(localStorage.getItem('amc-graph-collapsed') || '[]');
         state.graphCollapsed = new Set(Array.isArray(folded) ? folded.filter((id) => typeof id === 'string') : []);
+        state.graphLegend = localStorage.getItem('amc-graph-legend') !== '0';
     } catch (e) {
         state.group = 'urgency';
         state.graphRange = logic.DEFAULT_GRAPH_RANGE;
         state.graphCollapsed = new Set();
+        state.graphLegend = true;
     }
     document.querySelectorAll('#group-switch [data-group]').forEach((button) => {
         button.addEventListener('click', () => setGroup(button.dataset.group));
@@ -73,6 +75,17 @@ function setGraphRange(key) {
     state.graphRange = logic.graphRange(key).key;
     try {
         localStorage.setItem('amc-graph-range', state.graphRange);
+    } catch (e) { /* storage unavailable */ }
+    if (state.last) {
+        render(state.last);
+    }
+}
+
+// Show or hide the graph's legend.
+function toggleGraphLegend() {
+    state.graphLegend = !state.graphLegend;
+    try {
+        localStorage.setItem('amc-graph-legend', state.graphLegend ? '1' : '0');
     } catch (e) { /* storage unavailable */ }
     if (state.last) {
         render(state.last);

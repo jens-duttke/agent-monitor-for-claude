@@ -1594,6 +1594,33 @@ class ScanMonitoringTest(unittest.TestCase):
             tmod.MessageEvent('received', origin['from'], _timestamp_epoch('2026-07-11T10:00:00Z'), 'Photo editor'),
         ])
 
+    def test_a_background_agents_task_notification_is_its_hand_back(self) -> None:
+        state = _ScanState()
+        compact = (lambda entry: _absorb_line(json.dumps(entry, separators=(',', ':')).encode('utf-8'), state))
+        origin = {'kind': 'task-notification', 'producer': 'session-task'}
+
+        def notification(task_id, status):
+            return (f'<task-notification>\n<task-id>{task_id}</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n'
+                    f'<status>{status}</status>\n<summary>Agent done <task-id>a999999999999999</task-id></summary>\n<result>words</result>')
+
+        compact({'type': 'user', 'timestamp': '2026-07-11T10:00:00Z', 'origin': origin,
+                 'message': {'content': notification('aa256c3745ca9080f', 'completed')}})
+        compact({'type': 'user', 'timestamp': '2026-07-11T10:01:00Z', 'origin': origin,
+                 'message': {'content': [{'type': 'text', 'text': notification('ab0123456789abcd', 'killed')}]}})
+        compact({'type': 'attachment', 'timestamp': '2026-07-11T10:02:00Z',
+                 'attachment': {'type': 'queued_command', 'prompt': notification('ac0123456789abcd', 'weird'), 'origin': origin}})
+        # A shell task's notification names no agent, and a prompt of another origin is no report.
+        compact({'type': 'user', 'timestamp': '2026-07-11T10:03:00Z', 'origin': origin,
+                 'message': {'content': notification('b9k2t2axg', 'completed')}})
+        compact({'type': 'user', 'timestamp': '2026-07-11T10:04:00Z', 'origin': {'kind': 'human'},
+                 'message': {'content': notification('ad0123456789abcd', 'completed')}})
+
+        self.assertEqual(state.messages, [
+            tmod.MessageEvent('received', 'aa256c3745ca9080f', _timestamp_epoch('2026-07-11T10:00:00Z'), '', True, 'completed'),
+            tmod.MessageEvent('received', 'ab0123456789abcd', _timestamp_epoch('2026-07-11T10:01:00Z'), '', True, 'killed'),
+            tmod.MessageEvent('received', 'ac0123456789abcd', _timestamp_epoch('2026-07-11T10:02:00Z'), '', True, ''),
+        ])
+
     def test_how_each_subagent_was_started_is_recorded_by_its_id(self) -> None:
         state = _ScanState()
         compact = (lambda entry: _absorb_line(json.dumps(entry, separators=(',', ':')).encode('utf-8'), state))

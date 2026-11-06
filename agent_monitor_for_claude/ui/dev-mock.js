@@ -205,9 +205,23 @@ window.__MOCK_SNAPSHOT__ = {
                     launch: 'foreground', skill: '',
                     usage_by_model: { 'claude-opus-4-8[1m]': { input_tokens: 2000, output_tokens: 3400, cache_read_input_tokens: 500000 } },
                     tools: [{ name: 'Read', calls: 5, age_seconds: 950, failed: 0 }] },
+                // Background agents that ended: one reported its result, one was
+                // stopped before it had one, one never reported back.
+                { id: 'b1', type: 'general-purpose', description: 'Profile the shader compile queue', running: false, age_seconds: 1500,
+                    started_seconds: 2400, tool_calls: 22, launch: 'background' },
+                { id: 'b2', type: 'general-purpose', description: 'Try a lock-free pipeline cache', running: false, age_seconds: 2600,
+                    started_seconds: 3100, tool_calls: 9, launch: 'background' },
+                { id: 'b3', type: 'Explore', description: 'Survey the driver release notes', running: false, age_seconds: 5400,
+                    started_seconds: 6000, tool_calls: 4, launch: 'background' },
             ],
+            // Hand-backs and messages: drawn as marks on each agent's edge, and as
+            // one edge per pair of sessions with an arrowhead at each receiver.
             messages: [
                 { direction: 'received', peer: 'p1', label: 'Plan', handback: true, age_seconds: 880 },
+                { direction: 'received', peer: 'b1', handback: true, outcome: 'completed', age_seconds: 1490 },
+                { direction: 'received', peer: 'b2', handback: true, outcome: 'killed', age_seconds: 2590 },
+                { direction: 'sent', peer: 'e2', age_seconds: 30 },
+                { direction: 'received', peer: 'helios-shader-audit', age_seconds: 600 },
                 { direction: 'sent', peer: 'helios-shader-audit', age_seconds: 20 },
             ],
             age_seconds: 12,

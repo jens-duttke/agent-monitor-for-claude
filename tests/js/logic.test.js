@@ -3043,7 +3043,9 @@ test('graph model: subagents hang off their session, messages link sessions and 
     assert.equal(edge('s:k1/a:a1', 's:k1/a:a2', 'spawn').active, false);
     assert.equal(edge('s:k1', 's:k1/w:run-1', 'spawn').active, true);
     assert.equal(edge('s:k1', 's:k2', 'message').active, true);
-    assert.equal(edge('s:k1/a:a1', 's:k1', 'message').active, false);
+    // A subagent's hand-back belongs to the edge it already has to its caller.
+    assert.equal(edge('s:k1/a:a1', 's:k1', 'message'), undefined);
+    assert.equal(edge('s:k1', 's:k1/a:a1', 'spawn').report, 'completed');
     assert.equal(edge('s:k1', 'p:outside-team', 'message').active, false);
 
     const layout = logic.graphLayout(model);
@@ -3055,6 +3057,123 @@ test('graph model: subagents hang off their session, messages link sessions and 
     for (const node of layout.nodes) {
         assert.ok(node.x + 1 <= layout.width && node.y + 1 <= layout.height);
     }
+});
+
+test('graph edges: what came back from a subagent is marked on its one edge', () => {
+    const agent = (id, fields) => Object.assign({ id: id, running: false, age_seconds: 60, started_seconds: 600 }, fields);
+    const lead = { name: 'Lead', session_id: 'aaaaaaaa-1111-2222-3333-444444444444', status: 'working',
+        agents: logic.agentsOf({ agents: [
+            agent('a1', { launch: 'foreground' }),
+            agent('a2', { launch: 'background' }),
+            agent('a3', { launch: 'background' }),
+            agent('a4', { launch: 'background' }),
+            agent('a5', { launch: 'background', running: true }),
+            agent('a6', { launch: 'skill' }),
+            agent('a7', { launch: 'background' }),
+            agent('a8', { launch: 'background' }),
+        ] }, {}),
+        messages: logic.messagesOf({ messages: [
+            { direction: 'received', peer: 'a2', handback: true, age_seconds: 30 },
+            // The newest report decides: stopped, then resumed and done.
+            { direction: 'received', peer: 'a3', handback: true, outcome: 'stopped', age_seconds: 50 },
+            { direction: 'received', peer: 'a3', handback: true, outcome: 'completed', age_seconds: 20 },
+            { direction: 'received', peer: 'a4', handback: true, outcome: 'completed', age_seconds: 50 },
+            { direction: 'received', peer: 'a4', handback: true, outcome: 'killed', age_seconds: 20 },
+            { direction: 'received', peer: 'a5', handback: true, age_seconds: 40 },
+            { direction: 'sent', peer: 'a5', age_seconds: 5 },
+            { direction: 'received', peer: 'a7', handback: true, outcome: 'constructor', age_seconds: 10 },
+        ] }) };
+    const model = logic.graphModel([{ key: 'k', session: lead }]);
+    const spawn = (id) => model.edges.find((edge) => edge.to === 's:k/a:' + id);
+    const marks = (id) => spawn(id).heads.map((head) => head.mark + ':' + head.slot);
+    assert.deepEqual(model.edges.filter((edge) => edge.kind === 'message'), []);
+    assert.deepEqual(marks('a1'), ['return:back']);
+    assert.deepEqual(marks('a2'), ['return:back']);
+    assert.deepEqual(marks('a3'), ['return:back']);
+    assert.deepEqual(marks('a4'), ['abort:back']);
+    // A running agent has reported nothing yet; a message sent to it points into its box.
+    assert.deepEqual(marks('a5'), ['message:tip']);
+    assert.deepEqual(marks('a6'), ['return:back']);
+    // An outcome the UI does not know reads as a plain report.
+    assert.deepEqual(marks('a7'), ['return:back']);
+    // A background agent that never reported back has no mark.
+    assert.deepEqual(marks('a8'), []);
+    // The edge is as recent as its newest message.
+    assert.equal(spawn('a5').age_seconds, 5);
+
+    const labels = {
+        graph_launch_background: 'Started in the background', graph_edge_returned: 'Reported back', graph_edge_aborted: 'Ended without a result',
+        graph_edge_running: 'Running', graph_edge_no_return: 'No report back', graph_edge_messages_to: 'Messages to it: {count}',
+        graph_edge_age: 'Last: {age}', age_seconds: '{s}s', age_minutes: '{m}m',
+    };
+    const names = new Map();
+    assert.equal(logic.graphEdgeTip(spawn('a2'), labels, names), 'Started in the background\nReported back\nLast: 30s');
+    assert.equal(logic.graphEdgeTip(spawn('a4'), labels, names), 'Started in the background\nEnded without a result\nLast: 20s');
+    assert.equal(logic.graphEdgeTip(spawn('a5'), labels, names), 'Started in the background\nRunning\nMessages to it: 1');
+    assert.equal(logic.graphEdgeTip(spawn('a8'), labels, names), 'Started in the background\nNo report back\nLast: 1m');
+
+    // Placed: the report one head out from the agent's box, pointing back to the caller.
+    const layout = logic.graphLayout(model);
+    const box = layout.nodes.find((node) => node.id === 's:k/a:a2');
+    const placed = layout.edges.find((edge) => edge.to === 's:k/a:a2');
+    const y = box.y + 19;
+    assert.equal(placed.marks[0].d, 'M' + (box.x - 16) + ' ' + y + ' L' + (box.x - 9) + ' ' + (y - 4) + ' L' + (box.x - 9) + ' ' + (y + 4) + ' Z');
+    assert.ok(placed.path.endsWith(' H' + box.x));
+    const html = logic.graphMarkup(layout, labels, null);
+    assert.ok(html.includes('class="edge-mark mark-abort"'));
+    assert.ok(html.includes('class="edge-hit"'));
+});
+
+test('graph edges: messages between two nodes share one edge, with an arrowhead at each receiver', () => {
+    const one = { name: 'One', session_id: 'aaaaaaaa-1111-2222-3333-444444444444', status: 'working', agents: [],
+        messages: logic.messagesOf({ messages: [
+            { direction: 'sent', peer: 'Two', age_seconds: 4000 },
+            { direction: 'received', peer: 'Two', age_seconds: 30 },
+            { direction: 'sent', peer: 'Outside', age_seconds: 7200 },
+        ] }) };
+    const two = { name: 'Two', session_id: 'bbbbbbbb-1111-2222-3333-444444444444', status: 'working', agents: [],
+        messages: logic.messagesOf({ messages: [{ direction: 'received', peer: 'One', age_seconds: 4000 }] }) };
+    const model = logic.graphModel([{ key: '1', session: one }, { key: '2', session: two }]);
+    const messages = model.edges.filter((edge) => edge.kind === 'message');
+    assert.equal(messages.length, 2);
+    const between = messages.find((edge) => edge.received.has('s:2'));
+    assert.deepEqual(Array.from(between.received), [['s:2', 2], ['s:1', 1]]);
+    assert.deepEqual(between.heads.map((head) => head.node).sort(), ['s:1', 's:2']);
+    // The newest message ran to One, the top box, where the path starts: the dots run against it.
+    assert.equal(between.flow, 's:1');
+    assert.equal(between.active, true);
+    const outside = messages.find((edge) => edge.to === 'p:outside');
+    assert.deepEqual(outside.heads.map((head) => head.node), ['p:outside']);
+
+    const layout = logic.graphLayout(model);
+    const placed = layout.edges.find((edge) => edge.received && edge.received.has('s:2'));
+    assert.equal(placed.reverse, true);
+    assert.equal(placed.marks.length, 2);
+    const labels = { graph_message_route: '{from} → {to}: {count}', graph_edge_age: 'Last: {age}', age_seconds: '{s}s', age_hours: '{h}h' };
+    assert.equal(logic.graphEdgeTip(placed, labels, new Map([['s:1', 'One'], ['s:2', 'Two']])), 'One → Two: 2\nTwo → One: 1\nLast: 30s');
+    const html = logic.graphMarkup(layout, labels, null);
+    assert.ok(html.includes('keyPoints="1;0"'));
+    // Quiet for more than an hour, the message to the outside fades.
+    assert.ok(html.includes('class="edge edge-message stale"'));
+    assert.ok(html.includes('class="edge-mark mark-message stale"'));
+});
+
+test('graph legend: every line, mark and box in the graph\'s own classes, labels kept as text', () => {
+    const hostile = '<img src=x onerror=alert(1)>';
+    const keys = ['graph_legend_lines', 'graph_legend_boxes', 'graph_legend_spawn', 'graph_edge_running', 'graph_edge_returned', 'graph_edge_aborted',
+        'graph_legend_message', 'graph_legend_tool', 'graph_legend_stale', 'graph_legend_session', 'graph_legend_box_running',
+        'graph_legend_box_done', 'graph_legend_box_failed', 'graph_legend_box_ended', 'graph_legend_marks'];
+    const html = logic.graphLegendMarkup(Object.fromEntries(keys.map((key) => [key, hostile])));
+    assert.ok(!html.includes('<img'));
+    assert.equal((html.match(/&lt;img src=x onerror=alert\(1\)&gt;/g) || []).length, keys.length);
+    for (const part of ['edge edge-spawn active', 'edge edge-message', 'edge edge-tool', 'edge edge-spawn stale',
+        'edge-mark mark-return', 'edge-mark mark-abort', 'edge-mark mark-message', 'gnode gnode-tool failed', 'gnode gnode-process ended']) {
+        assert.ok(html.includes('class="' + part + '"'), part);
+    }
+    // One row each for the lines, the marks and the boxes.
+    assert.equal((html.match(/class="legend-group"/g) || []).length, 3);
+    assert.ok(!/style=|href|<script/.test(html));
+    assert.ok(logic.graphLegendMarkup(null).startsWith('<div class="graph-legend">'));
 });
 
 test('graph markup: hostile names stay text, dots ride only on active edges', () => {
@@ -3352,7 +3471,8 @@ test('graph processes: an ended process stays under its parent, dimmed and selec
     const html = logic.graphMarkup(logic.graphLayout(model), { fact_pid: 'PID', process_ended: 'Ended' }, { key: 'k', agent: null, process: 400 });
     assert.ok(html.includes('>Ended · PID 400<'));
     assert.ok(/class="gnode gnode-process ended selected"[^>]*data-key="k" data-process="400"/.test(html));
-    assert.ok(html.includes('edge edge-ended"'));
+    // The edge to the selected process is drawn stronger.
+    assert.ok(html.includes('edge edge-ended linked"'));
     // While it is selected neither the node nor its edge fades, however long no render comes.
     assert.ok(!html.includes('attributeName="stroke-opacity"'));
     assert.ok(!html.includes('attributeName="opacity"'));

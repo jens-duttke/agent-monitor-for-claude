@@ -787,6 +787,22 @@ class PrivacyTest(TranscriptEnvTest):
         for secret in _SECRETS:
             self.assertNotIn(secret, serialized)
 
+    def test_a_task_notification_names_the_agent_never_its_report(self) -> None:
+        # A background agent's report reaches the session as a task notification.
+        # Its task id and status are read; the summary and the result after them
+        # are the agent's words and stay unread, even where they quote a tag.
+        text = ('<task-notification>\n<task-id>aa256c3745ca9080f</task-id>\n<status>completed</status>\n'
+                '<summary>SECRET_TEXT <status>failed</status></summary>\n<result>SECRET_RESULT</result>\n</task-notification>')
+        self._write_transcript(_SESSION_ID, _CWD, [json.dumps({
+            'type': 'user', 'timestamp': '2026-07-11T13:19:14Z', 'origin': {'kind': 'task-notification'}, 'message': {'content': text},
+        })])
+        state = state_for(local_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual([(event.peer, event.handback, event.outcome) for event in state.messages], [('aa256c3745ca9080f', True, 'completed')])
+        serialized = json.dumps(asdict(state))
+        for secret in _SECRETS:
+            self.assertNotIn(secret, serialized)
+
     def test_only_the_error_message_first_line_is_read(self) -> None:
         # The sanctioned, bounded exception: an API-error turn's own message line
         # is read for the status tooltip, because it names what the structural

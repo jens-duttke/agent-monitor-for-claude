@@ -3333,10 +3333,14 @@ function mdEmphasis(escaped) {
 /* --- the connection graph ---
 
    The live sessions, the subagents they started (grouped under their workflow
-   run), their background processes and the messages between them. An edge with traffic in the last minute
-   - a running subagent, a message just sent - carries moving dots. */
+   run), their background processes and the messages between them. One edge per
+   relation: what a line is says its kind (solid: started, dashed: messages,
+   dotted: tool calls), the marks at its ends say what came back, and moving
+   dots say it is active now - a running subagent, a message of the last minute.
+   An edge quiet for longer than GRAPH_RECENT_SECONDS fades. */
 
 const GRAPH_ACTIVE_SECONDS = 60;
+const GRAPH_RECENT_SECONDS = 3600;
 const GRAPH_NODE_W = 230;
 const GRAPH_NODE_H = 38;
 const GRAPH_COL_W = 274;
@@ -3344,6 +3348,11 @@ const GRAPH_ROW_H = 48;
 const GRAPH_PAD = 16;
 // Room left of the first column for the bend of a message between two sessions.
 const GRAPH_LEFT = 52;
+// Every edge leaves and enters a box on a straight stretch this long, so the
+// marks at its ends sit on the line however steep the curve between them is;
+// an arrowhead is GRAPH_HEAD long, and a subagent's report sits one head out.
+const GRAPH_EDGE_LEAD = 16;
+const GRAPH_HEAD = 7;
 // The markup carries at most this many characters of a label; the renderer
 // then shortens it to the room the box has (GRAPH_TEXT_WIDTH, in pixels).
 const GRAPH_LABEL_MAX = 80;
@@ -3690,11 +3699,15 @@ function messagesOf(raw) {
             peer: message.peer,
             label: typeof message.label === 'string' ? message.label : '',
             handback: message.handback === true,
+            outcome: AGENT_OUTCOMES.has(message.outcome) ? message.outcome : '',
             age_seconds: finiteOrNull(message.age_seconds),
         });
     }
     return result;
 }
+
+// How a background subagent's task notification says it ended.
+const AGENT_OUTCOMES = new Set(['completed', 'stopped', 'killed', 'failed']);
 
 // How far back the graph reaches, "all" included. The backend lists every agent
 // and message; the graph narrows them itself, so a switch costs no read.
@@ -3744,6 +3757,14 @@ function toolsInFocus(focus, key, agentId) {
 // `focus` ({key, agent, process, tool}) decides whose tools are drawn, and a
 // session whose id is in `collapsed` (a Set) keeps its subagents, processes and
 // tools folded away - its node says how many - while its messages stay.
+//
+// An edge is {from, to, kind, count, active, age_seconds, flow, heads}: `flow`
+// is the node its moving dots run to, `heads` the marks at its ends ({node,
+// mark, slot}, see graphMarkPath). A subagent's edge is its one relation to its
+// caller, so it also carries how the agent was started (`launch`), whether it
+// runs, how it reported back (`report`) and the messages each way (`sent`,
+// `replies`); the messages between two other nodes share one edge, with how
+// many each end received (`received`, a Map).
 function graphModel(entries, maxAgeSeconds = null, focus = null, collapsed = null) {
     const inWindow = (ageSeconds) => maxAgeSeconds === null || (ageSeconds !== null && ageSeconds <= maxAgeSeconds);
     const nodes = [];
@@ -3758,7 +3779,7 @@ function graphModel(entries, maxAgeSeconds = null, focus = null, collapsed = nul
     };
     const addEdge = (from, to, kind, ageSeconds, active, count = 1) => {
         const id = from + '>' + to + '>' + kind;
-        const edge = edges.get(id) || { from: from, to: to, kind: kind, count: 0, active: false, age_seconds: null };
+        const edge = edges.get(id) || { from: from, to: to, kind: kind, count: 0, active: false, age_seconds: null, flow: to, heads: [] };
         edge.count += count;
         edge.active = edge.active || Boolean(active);
         if (ageSeconds !== null && (edge.age_seconds === null || ageSeconds < edge.age_seconds)) {
@@ -3766,6 +3787,23 @@ function graphModel(entries, maxAgeSeconds = null, focus = null, collapsed = nul
         }
         edges.set(id, edge);
         return edge;
+    };
+    // A message between two nodes: one edge per pair, whichever way it went,
+    // its dots running toward the newest message's receiver.
+    const addMessage = (sender, receiver, ageSeconds) => {
+        const id = (sender < receiver ? sender + '>' + receiver : receiver + '>' + sender) + '>message';
+        let edge = edges.get(id);
+        if (!edge) {
+            edge = { from: sender, to: receiver, kind: 'message', count: 0, active: false, age_seconds: null, flow: receiver, heads: [], received: new Map() };
+            edges.set(id, edge);
+        }
+        edge.count += 1;
+        edge.received.set(receiver, (edge.received.get(receiver) || 0) + 1);
+        if (ageSeconds !== null && (edge.age_seconds === null || ageSeconds < edge.age_seconds)) {
+            edge.age_seconds = ageSeconds;
+            edge.flow = receiver;
+        }
+        edge.active = edge.active || (ageSeconds !== null && ageSeconds < GRAPH_ACTIVE_SECONDS);
     };
     // The tools a session or a subagent called within the window, each a node of
     // its own under that caller (one per MCP server), carrying the calls - drawn
@@ -3828,14 +3866,16 @@ function graphModel(entries, maxAgeSeconds = null, focus = null, collapsed = nul
         Object.assign(byId.get(sessionNode), { sessionId: session.session_id || '', below: below, collapsed: folded });
         const agents = folded ? [] : listedAgents;
         const agentNodes = new Map(agents.map((agent) => [agent.id, sessionNode + '/a:' + agent.id]));
+        const agentEdges = new Map();
         for (const agent of agents) {
             let parent = sessionNode;
             if (agent.workflow) {
                 const workflowNode = sessionNode + '/w:' + agent.workflow;
                 if (!byId.has(workflowNode)) {
                     addNode({ id: workflowNode, kind: 'workflow', label: '', parent: sessionNode, root: sessionNode, running: false });
-                    addEdge(sessionNode, workflowNode, 'spawn', null, false);
                 }
+                // The run is as recent as its most recent agent.
+                addEdge(sessionNode, workflowNode, 'spawn', agent.age_seconds, false);
                 parent = workflowNode;
                 if (agent.running) {
                     byId.get(workflowNode).running = true;
@@ -3849,7 +3889,9 @@ function graphModel(entries, maxAgeSeconds = null, focus = null, collapsed = nul
                 model: agent.model, cost_usd: agent.cost_usd, age_seconds: agent.age_seconds,
                 running: agent.running, parent: parent, root: sessionNode,
             });
-            addEdge(parent, agentNodes.get(agent.id), 'spawn', agent.age_seconds, agent.running);
+            const edge = addEdge(parent, agentNodes.get(agent.id), 'spawn', agent.age_seconds, agent.running);
+            Object.assign(edge, { agent: true, launch: agent.launch, running: agent.running, report: '', report_age: null, sent: 0, replies: 0 });
+            agentEdges.set(agent.id, edge);
             addToolNodes(agentNodes.get(agent.id), agent.tools, key, agent.id, sessionNode);
         }
 
@@ -3880,7 +3922,13 @@ function graphModel(entries, maxAgeSeconds = null, focus = null, collapsed = nul
             if (!inWindow(message.age_seconds)) {
                 continue;
             }
-            let other = agentNodes.get(message.peer) || findSession(message.peer);
+            // A message to or from one of the session's subagents belongs to the
+            // edge it already has to its caller.
+            if (agentEdges.has(message.peer)) {
+                noteAgentMessage(agentEdges.get(message.peer), message);
+                continue;
+            }
+            let other = findSession(message.peer);
             if (!other && (message.handback || AGENT_ID.test(message.peer))) {
                 continue;
             }
@@ -3892,20 +3940,105 @@ function graphModel(entries, maxAgeSeconds = null, focus = null, collapsed = nul
                 continue;
             }
             const sent = message.direction === 'sent';
-            const age = message.age_seconds;
-            addEdge(sent ? sessionNode : other, sent ? other : sessionNode, 'message', age, age !== null && age < GRAPH_ACTIVE_SECONDS);
+            addMessage(sent ? sessionNode : other, sent ? other : sessionNode, message.age_seconds);
         }
     }
     for (const edge of edges.values()) {
         if (edge.kind === 'spawn' && byId.get(edge.to) && byId.get(edge.to).kind === 'workflow') {
             edge.active = byId.get(edge.to).running;
         }
+        edge.heads = graphEdgeHeads(edge);
     }
     return { nodes: nodes, edges: Array.from(edges.values()) };
 }
 
+// Fold one message to or from a subagent into its edge: the newest report
+// decides how it ended, and the edge is as recent as its newest message.
+function noteAgentMessage(edge, message) {
+    const age = message.age_seconds;
+    if (message.direction === 'sent') {
+        edge.sent += 1;
+    } else if (message.handback) {
+        if (edge.report_age === null || (age !== null && age <= edge.report_age)) {
+            edge.report = message.outcome || 'completed';
+            edge.report_age = age;
+        }
+    } else {
+        edge.replies += 1;
+    }
+    if (age !== null && (edge.age_seconds === null || age < edge.age_seconds)) {
+        edge.age_seconds = age;
+    }
+}
+
+// What came back from a subagent: `running` while it runs; `aborted` when its
+// newest report says it was stopped, killed or failed; `returned` when it
+// reported back - a background agent by its report or a message, one started
+// in the foreground (or a forked skill) by its call's result, which exists
+// only once it is done; else `none`.
+const AGENT_ABORTED_OUTCOMES = new Set(['stopped', 'killed', 'failed']);
+
+function agentReport(edge) {
+    if (edge.running) {
+        return 'running';
+    }
+    if (AGENT_ABORTED_OUTCOMES.has(edge.report)) {
+        return 'aborted';
+    }
+    if (edge.report || edge.replies > 0 || edge.launch === 'foreground' || edge.launch === 'skill') {
+        return 'returned';
+    }
+    return 'none';
+}
+
+// The marks at an edge's ends: an arrowhead into each node a message reached,
+// and on a subagent's edge, just outside the agent's box, an arrowhead back
+// toward its caller once it reported back or a cross when it ended without a
+// result - kept off the caller's end, where all its edges meet in one point.
+function graphEdgeHeads(edge) {
+    if (edge.kind === 'message') {
+        return Array.from(edge.received.keys()).map((node) => ({ node: node, mark: 'message', slot: 'tip' }));
+    }
+    if (!edge.agent) {
+        return [];
+    }
+    const heads = [];
+    const report = agentReport(edge);
+    if (report === 'returned' || report === 'aborted') {
+        heads.push({ node: edge.to, mark: report === 'returned' ? 'return' : 'abort', slot: 'back' });
+    }
+    if (edge.sent > 0) {
+        heads.push({ node: edge.to, mark: 'message', slot: 'tip' });
+    }
+    return heads;
+}
+
+// The path of one mark at the edge of a box, `x` the box's side the line
+// enters and `into` +1 when the line enters from the left, -1 from the right.
+// A `tip` is an arrowhead into the box; the `back` slot, one head length out on
+// the line's straight lead, holds an arrowhead pointing away from the box
+// (`return`) or a cross (`abort`).
+function graphMarkPath(mark, slot, x, y, into) {
+    const round = (value) => Math.round(value * 10) / 10;
+    const arrow = (tip, base) => 'M' + round(tip) + ' ' + round(y) + ' L' + round(base) + ' ' + round(y - 4)
+        + ' L' + round(base) + ' ' + round(y + 4) + ' Z';
+    if (slot === 'tip') {
+        return arrow(x, x - into * GRAPH_HEAD);
+    }
+    const near = x - into * (GRAPH_HEAD + 2);
+    const far = near - into * GRAPH_HEAD;
+    if (mark === 'abort') {
+        const center = (near + far) / 2;
+        return 'M' + round(center - 3) + ' ' + round(y - 3) + ' L' + round(center + 3) + ' ' + round(y + 3)
+            + ' M' + round(center - 3) + ' ' + round(y + 3) + ' L' + round(center + 3) + ' ' + round(y - 3);
+    }
+    return arrow(far, near);
+}
+
 // Positions for the model: each session's tree runs left to right, one row per
 // leaf, sessions stacked; peers outside every tree sit in a column of their own.
+// Each edge gets its path, its marks as paths, and whether its dots run against
+// the path (`reverse`).
 function graphLayout(model) {
     const children = new Map();
     for (const node of model.nodes) {
@@ -3979,13 +4112,29 @@ function graphLayout(model) {
         if (!from || !to) {
             continue;
         }
-        lines.push(Object.assign({}, edge, { path: graphEdgePath(from, to) }));
+        // The path runs left to right, or from `from` between two boxes of one
+        // column; it enters a box on its left side, except the left box of two
+        // columns, which it leaves on its right.
+        const start = to.x < from.x ? to : from;
+        const end = start === from ? to : from;
+        const marks = [];
+        for (const head of edge.heads || []) {
+            const box = head.node === start.id ? start : (head.node === end.id ? end : null);
+            if (!box) {
+                continue;
+            }
+            const onRight = box === start && start.x !== end.x;
+            const side = onRight ? box.x + GRAPH_NODE_W : box.x;
+            marks.push({ mark: head.mark, d: graphMarkPath(head.mark, head.slot, side, box.y + GRAPH_NODE_H / 2, onRight ? -1 : 1) });
+        }
+        lines.push(Object.assign({}, edge, { path: graphEdgePath(start, end), marks: marks, reverse: edge.flow === start.id }));
     }
     return { nodes: placed, edges: lines, width: width, height: height };
 }
 
 // A curve from the right of `from` to the left of `to`; between two nodes of
-// one column (two sessions) it bends out to the left.
+// one column (two sessions) it bends out to the left. Both ends run straight
+// for GRAPH_EDGE_LEAD, so the marks there sit on the line.
 function graphEdgePath(from, to) {
     const midFrom = from.y + GRAPH_NODE_H / 2;
     const midTo = to.y + GRAPH_NODE_H / 2;
@@ -3993,17 +4142,20 @@ function graphEdgePath(from, to) {
     if (to.x > from.x) {
         const x1 = from.x + GRAPH_NODE_W;
         const x2 = to.x;
-        const bend = (x2 - x1) / 2;
-        return 'M' + round(x1) + ' ' + round(midFrom) + ' C' + round(x1 + bend) + ' ' + round(midFrom) + ' '
-            + round(x2 - bend) + ' ' + round(midTo) + ' ' + round(x2) + ' ' + round(midTo);
+        const a = x1 + GRAPH_EDGE_LEAD;
+        const b = x2 - GRAPH_EDGE_LEAD;
+        const bend = (b - a) / 2;
+        return 'M' + round(x1) + ' ' + round(midFrom) + ' H' + round(a) + ' C' + round(a + bend) + ' ' + round(midFrom) + ' '
+            + round(b - bend) + ' ' + round(midTo) + ' ' + round(b) + ' ' + round(midTo) + ' H' + round(x2);
     }
     if (to.x < from.x) {
         return graphEdgePath(to, from);
     }
     const x = from.x;
-    const out = GRAPH_LEFT - 8;
-    return 'M' + round(x) + ' ' + round(midFrom) + ' C' + round(x - out) + ' ' + round(midFrom) + ' '
-        + round(x - out) + ' ' + round(midTo) + ' ' + round(x) + ' ' + round(midTo);
+    const a = x - GRAPH_EDGE_LEAD;
+    const out = x - (GRAPH_LEFT - 8);
+    return 'M' + round(x) + ' ' + round(midFrom) + ' H' + round(a) + ' C' + round(out) + ' ' + round(midFrom) + ' '
+        + round(out) + ' ' + round(midTo) + ' ' + round(a) + ' ' + round(midTo) + ' H' + round(x);
 }
 
 // A session's fold toggle at the right edge of its box: the whole height is the
@@ -4031,11 +4183,60 @@ function clipLabel(text, max) {
     return value.length > max ? value.slice(0, max - 1) + '…' : value;
 }
 
+// The label keys of how a subagent was started and what came back from it.
+const GRAPH_LAUNCH_KEYS = new Map([
+    ['foreground', 'graph_launch_foreground'], ['background', 'graph_launch_background'], ['skill', 'graph_launch_skill'],
+]);
+const GRAPH_REPORT_KEYS = new Map([
+    ['running', 'graph_edge_running'], ['returned', 'graph_edge_returned'], ['aborted', 'graph_edge_aborted'], ['none', 'graph_edge_no_return'],
+]);
+
+// What an edge's tooltip says, one fact per line: the messages each way between
+// two nodes (`names` maps a node id to its name), a tool's calls, or for a
+// subagent how it was started, what came back and the messages each way - and
+// when the edge was last active. Nothing for an edge that says no more than its
+// line does.
+function graphEdgeTip(edge, labels, names) {
+    const strings = labels || {};
+    const lines = [];
+    if (edge.kind === 'message') {
+        for (const [node, count] of edge.received || []) {
+            const sender = node === edge.to ? edge.from : edge.to;
+            lines.push(fmt(strings.graph_message_route, { from: names.get(sender) || '', to: names.get(node) || '', count: count }));
+        }
+    } else if (edge.kind === 'tool') {
+        lines.push(fmt(strings.graph_tool_calls, { count: edge.count }));
+    } else if (edge.agent) {
+        lines.push(strings[GRAPH_LAUNCH_KEYS.get(edge.launch)] || '');
+        lines.push(strings[GRAPH_REPORT_KEYS.get(agentReport(edge))] || '');
+        if (edge.sent > 0) {
+            lines.push(fmt(strings.graph_edge_messages_to, { count: edge.sent }));
+        }
+        if (edge.replies > 0) {
+            lines.push(fmt(strings.graph_edge_messages_from, { count: edge.replies }));
+        }
+    } else {
+        return '';
+    }
+    if (!edge.running && edge.age_seconds !== null && edge.age_seconds !== undefined) {
+        lines.push(fmt(strings.graph_edge_age, { age: formatAge(edge.age_seconds, strings) }));
+    }
+    return lines.filter(Boolean).join('\n');
+}
+
+// Whether an edge has been quiet for longer than GRAPH_RECENT_SECONDS; an
+// active one never is.
+function graphEdgeStale(edge) {
+    return !edge.active && edge.age_seconds !== null && edge.age_seconds !== undefined && edge.age_seconds > GRAPH_RECENT_SECONDS;
+}
+
 // The graph as SVG markup. Every text and attribute value passes through
 // esc/attr; the animated dots follow their edge by reference to its path id.
 // `selection` is the selected session's key, or {key, agent, process} when one
 // of its subagents or processes is selected; such a node carries its session's
-// key beside its own id, so a click can select it.
+// key beside its own id, so a click can select it. The edges at a selected node
+// are drawn stronger, and each edge with something to say has a wider,
+// invisible twin that carries its tooltip.
 function graphMarkup(layout, labels, selection) {
     const strings = labels || {};
     const selected = selection && typeof selection === 'object' ? selection : { key: selection, agent: null };
@@ -4046,24 +4247,33 @@ function graphMarkup(layout, labels, selection) {
     const isSelected = (node) => Boolean(node.key) && node.key === selected.key && (node.agent || null) === (selected.agent || null)
         && (node.process || null) === (selected.process || null) && (node.tool || null) === (selected.tool || null);
     const selectedIds = new Set(layout.nodes.filter(isSelected).map((node) => node.id));
+    const names = new Map(layout.nodes.map((node) => [node.id, node.label || '']));
     let edgesHtml = '';
+    let marksHtml = '';
     let dotsHtml = '';
+    let hitsHtml = '';
     layout.edges.forEach((edge, index) => {
         const id = 'graph-edge-' + index;
-        let tip = '';
-        if (edge.kind === 'message') {
-            tip = fmt(strings.graph_messages, { count: edge.count });
-        } else if (edge.kind === 'tool') {
-            tip = fmt(strings.graph_tool_calls, { count: edge.count });
-        }
-        edgesHtml += '<path' + attr('id', id) + attr('class', 'edge edge-' + edge.kind + (edge.active ? ' active' : ''))
-            + attr('d', edge.path) + (tip ? attr('data-tip', tip) : '') + '>'
+        const stale = graphEdgeStale(edge);
+        const linked = selectedIds.has(edge.from) || selectedIds.has(edge.to);
+        edgesHtml += '<path' + attr('id', id)
+            + attr('class', 'edge edge-' + edge.kind + (edge.active ? ' active' : '') + (stale ? ' stale' : '') + (linked ? ' linked' : ''))
+            + attr('d', edge.path) + '>'
             // The edge to a selected process stays with its node.
             + (selectedIds.has(edge.to) ? '' : graphFadeMarkup('stroke-opacity', edge.fade_in)) + '</path>';
+        for (const mark of edge.marks || []) {
+            marksHtml += '<path' + attr('class', 'edge-mark mark-' + mark.mark + (stale ? ' stale' : '')) + attr('d', mark.d) + '></path>';
+        }
+        const tip = graphEdgeTip(edge, strings, names);
+        if (tip) {
+            hitsHtml += '<path' + attr('class', 'edge-hit') + attr('d', edge.path) + attr('data-tip', tip) + '></path>';
+        }
         if (edge.active) {
+            // Against the path when what moves runs to its start.
+            const direction = edge.reverse ? attr('keyPoints', '1;0') + attr('keyTimes', '0;1') + attr('calcMode', 'linear') : '';
             for (const delay of [0, 0.9]) {
                 dotsHtml += '<circle' + attr('class', 'dot dot-' + edge.kind) + ' r="3">'
-                    + '<animateMotion' + attr('dur', '1.8s') + attr('begin', '-' + delay + 's') + ' repeatCount="indefinite">'
+                    + '<animateMotion' + attr('dur', '1.8s') + attr('begin', '-' + delay + 's') + direction + ' repeatCount="indefinite">'
                     + '<mpath' + attr('href', '#' + id) + '></mpath></animateMotion></circle>';
             }
         }
@@ -4120,7 +4330,52 @@ function graphMarkup(layout, labels, selection) {
     }
     return '<svg class="graph"' + attr('viewBox', '0 0 ' + width + ' ' + height) + attr('width', width) + attr('height', height)
         + '>'
-        + '<g class="edges">' + edgesHtml + '</g><g class="dots">' + dotsHtml + '</g><g class="nodes">' + nodesHtml + '</g></svg>';
+        + '<g class="edges">' + edgesHtml + '</g><g class="marks">' + marksHtml + '</g><g class="dots">' + dotsHtml + '</g>'
+        + '<g class="edge-hits">' + hitsHtml + '</g><g class="nodes">' + nodesHtml + '</g></svg>';
+}
+
+// The graph's legend, one row each for the lines, the marks at their ends and
+// the boxes, drawn with the graph's own classes and mark geometry, so it shows
+// exactly what the graph draws.
+function graphLegendMarkup(labels) {
+    const strings = labels || {};
+    const width = 44;
+    const height = 14;
+    const middle = height / 2;
+    const boxLeft = width - 7;
+    const sample = (inner, sampleWidth = width) => '<svg' + attr('class', 'graph legend-sample') + attr('viewBox', '0 0 ' + sampleWidth + ' ' + height)
+        + attr('width', sampleWidth) + attr('height', height) + attr('aria-hidden', 'true') + '>' + inner + '</svg>';
+    const line = (classes, end = width - 1) => '<path' + attr('class', 'edge ' + classes) + attr('d', 'M1 ' + middle + ' H' + end) + '></path>';
+    const box = '<rect' + attr('class', 'legend-box') + attr('x', boxLeft) + attr('y', 1) + attr('width', 6) + attr('height', height - 2) + attr('rx', 1.5) + '></rect>';
+    const mark = (name, slot) => '<path' + attr('class', 'edge-mark mark-' + name) + attr('d', graphMarkPath(name, slot, boxLeft, middle, 1)) + '></path>';
+    const dot = '<circle' + attr('class', 'dot') + attr('cx', 20) + attr('cy', middle) + attr('r', 3) + '></circle>';
+    const node = (classes) => sample('<g' + attr('class', 'gnode ' + classes) + '>'
+        + '<rect' + attr('x', 0.5) + attr('y', 0.5) + attr('width', 27) + attr('height', height - 1) + attr('rx', 3) + '></rect>'
+        + '<circle' + attr('class', 'gnode-dot') + attr('cx', 7) + attr('cy', middle) + attr('r', 3) + '></circle></g>', 28);
+    const item = (svg, text) => '<span class="legend-item">' + svg + '<span>' + esc(text || '') + '</span></span>';
+    const group = (head, items) => '<div class="legend-group"><span class="legend-head">' + esc(head || '') + '</span>'
+        + '<span class="legend-items">' + items.join('') + '</span></div>';
+    return '<div class="graph-legend">'
+        + group(strings.graph_legend_lines, [
+            item(sample(line('edge-spawn')), strings.graph_legend_spawn),
+            item(sample(line('edge-spawn active') + dot), strings.graph_edge_running),
+            item(sample(line('edge-tool')), strings.graph_legend_tool),
+            item(sample(line('edge-spawn stale')), strings.graph_legend_stale),
+        ])
+        + group(strings.graph_legend_marks, [
+            item(sample(line('edge-spawn', boxLeft) + box + mark('return', 'back')), strings.graph_edge_returned),
+            item(sample(line('edge-spawn', boxLeft) + box + mark('abort', 'back')), strings.graph_edge_aborted),
+            item(sample(line('edge-message', boxLeft) + box + mark('message', 'tip')), strings.graph_legend_message),
+        ])
+        // A dashed frame says the same for both: nothing running in this list.
+        + group(strings.graph_legend_boxes, [
+            item(node('gnode-session status-working'), strings.graph_legend_session),
+            item(node('gnode-agent running'), strings.graph_legend_box_running),
+            item(node('gnode-agent'), strings.graph_legend_box_done),
+            item(node('gnode-tool failed'), strings.graph_legend_box_failed),
+            item(node('gnode-process ended'), strings.graph_legend_box_ended),
+        ])
+        + '</div>';
 }
 
 // The branch most of a panel's sessions are on (the first one seen wins a tie),
@@ -4447,6 +4702,7 @@ const AMC_LOGIC = {
     mainModel,
     messagesOf,
     GRAPH_ACTIVE_SECONDS,
+    GRAPH_RECENT_SECONDS,
     GRAPH_RANGES,
     DEFAULT_GRAPH_RANGE,
     graphRange,
@@ -4455,7 +4711,10 @@ const AMC_LOGIC = {
     graphModel,
     graphLayout,
     graphEdgePath,
+    graphMarkPath,
+    graphEdgeTip,
     graphMarkup,
+    graphLegendMarkup,
     panelBranch,
     buildSession,
     groupProjects,

@@ -211,6 +211,17 @@ _SEND_MESSAGE_TOOL = 'SendMessage'
 # A message that arrives while a turn runs is recorded as this attachment, its
 # sender in the attachment's own ``origin`` - not as a prompt entry.
 _QUEUED_COMMAND_ATTACHMENT = 'queued_command'
+# A background subagent that ends reports back with a task notification, a
+# prompt (or a queued attachment) whose ``origin.kind`` says so and whose text
+# opens with tags naming the task and how it ended.  Only the part before the
+# summary is read, and only these two tags of it: the summary and the result
+# that follow are the agent's words.
+_TASK_NOTIFICATION_ORIGIN = 'task-notification'
+_TASK_NOTIFICATION_END = '<summary>'
+_TASK_NOTIFICATION_HEAD_CHARS = 2000
+_TASK_AGENT_ID = re.compile(r'<task-id>(a[0-9a-f]{12,24})</task-id>')
+_TASK_STATUS = re.compile(r'<status>([a-z_]{1,20})</status>')
+_TASK_OUTCOMES = frozenset({'completed', 'stopped', 'killed', 'failed'})
 # The tools a subagent ends its work with, handing its result to the session:
 # a background agent's report, and a workflow agent's structured answer.
 _HANDBACK_TOOL = 'SubagentHandback'
@@ -417,10 +428,11 @@ class _ToolResult(_Node):
 
 
 class _Attachment(_Node):
-    """An entry's ``attachment``: its type and, for a queued message, its sender."""
+    """An entry's ``attachment``: its type and, for a queued message, its sender; a queued prompt's text only when read."""
 
     type: Any = msgspec.UNSET
     origin: Any = msgspec.UNSET
+    prompt: msgspec.Raw | msgspec.UnsetType = msgspec.UNSET
 
 
 class _Entry(_Node):
@@ -767,7 +779,9 @@ class MessageEvent:
 
     ``peer`` is the other side as the transcript names it - a session name for
     a message sent, the sender's id for one received - and ``label`` what that
-    sender calls itself.
+    sender calls itself.  A hand-back from a task notification carries how the
+    agent ended in ``outcome`` (``completed``, ``stopped``, ``killed``,
+    ``failed``); every other message leaves it empty.
     """
 
     direction: str
@@ -775,6 +789,7 @@ class MessageEvent:
     at: float
     label: str = ''
     handback: bool = False
+    outcome: str = ''
 
 
 @dataclass(frozen=True)
@@ -2895,7 +2910,10 @@ def _note_user_entry(entry: dict, state: _ScanState) -> None:
     state.lines_removed += removed
     _note_agent_launch(entry, content, state)
 
-    _note_peer_message(entry.get('origin'), at, state)
+    origin = entry.get('origin')
+    _note_peer_message(origin, at, state)
+    if _is_task_notification(origin):
+        _note_task_notification(_prompt_text(content), at, state)
 
     if at is None or entry.get('isMeta') is True or _carries_tool_result(content):
         return
@@ -3030,7 +3048,39 @@ def _note_queued_message(entry: dict, state: _ScanState) -> None:
     if not isinstance(attachment, _JSON_OBJECT) or attachment.get('type') != _QUEUED_COMMAND_ATTACHMENT:
         return
 
-    _note_peer_message(attachment.get('origin'), _timestamp_epoch(entry.get('timestamp')), state)
+    at = _timestamp_epoch(entry.get('timestamp'))
+    origin = attachment.get('origin')
+    _note_peer_message(origin, at, state)
+    if _is_task_notification(origin):
+        _note_task_notification(_prompt_text(attachment.get('prompt')), at, state)
+
+
+def _prompt_text(content: object) -> str:
+    """A prompt's text: the string itself, or its first text block's."""
+    if isinstance(content, list):
+        content = next((block.get('text') for block in content if isinstance(block, _JSON_OBJECT) and block.get('type') == 'text'), None)
+
+    return content if isinstance(content, str) else ''
+
+
+def _is_task_notification(origin: object) -> bool:
+    """Whether a prompt's ``origin`` marks it as a background subagent's task notification; only then is its text decoded."""
+    return isinstance(origin, _JSON_OBJECT) and origin.get('kind') == _TASK_NOTIFICATION_ORIGIN
+
+
+def _note_task_notification(text: str, at: float | None, state: _ScanState) -> None:
+    """Log a background subagent's report as a hand-back from it: the agent's id and how it ended, never the summary or result."""
+    if at is None or not text:
+        return
+
+    head = text[:_TASK_NOTIFICATION_HEAD_CHARS].split(_TASK_NOTIFICATION_END, 1)[0]
+    agent = _TASK_AGENT_ID.search(head)
+    if agent is None:
+        return
+
+    status = _TASK_STATUS.search(head)
+    outcome = status.group(1) if status is not None and status.group(1) in _TASK_OUTCOMES else ''
+    _append_capped(state.messages, MessageEvent('received', agent.group(1), at, '', True, outcome), _MAX_MESSAGES)
 
 
 def _note_peer_message(origin: object, at: float | None, state: _ScanState) -> None:

@@ -391,7 +391,7 @@ def _recent_messages(messages: tuple[MessageEvent, ...], origin: str, peers: dic
         if not peer:
             continue
         records.append({
-            'direction': event.direction, 'peer': peer, 'label': label, 'handback': event.handback,
+            'direction': event.direction, 'peer': peer, 'label': label, 'handback': event.handback, 'outcome': event.outcome,
             'age_seconds': max(0.0, now - event.at),
         })
 

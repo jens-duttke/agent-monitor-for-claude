@@ -283,7 +283,10 @@ And a few more describe the session beside its status:
 - when each turn started and ended, so the details can show when the session worked and when it waited;
 - the messages a session exchanged with other sessions or its subagents: the recipient a message was
   sent to, a received message's sender id and name (also when it arrived while a turn ran and was queued),
-  and whether it was a subagent handing its result back - the message text stays unread;
+  and whether it was a subagent handing its result back - the message text stays unread. A background
+  subagent's task notification counts as its hand-back: of that prompt only the task id and the status
+  (`completed`, `stopped`, `killed`, `failed`) are read, from the tags before its summary - the summary
+  and the result after them stay unread;
 - the folder of every git worktree the session switched into, because the subagents it started there
   are filed under that worktree's project folder;
 - the artifacts the session published - each one's title and `claude.ai` address, so its details can link
@@ -838,7 +841,8 @@ so a green run means everything applicable to your system passed.
   error's message is read no further than its first line - a second line, a further block, and every
   ordinary turn stay unread. The same goes for a retried request's summary, for the calls and
   prompts the status label reads flags from, and for the session details: a failing hook's command, a
-  queued prompt, and the path and text of a file a tool wrote never appear either. The display fields
+  queued prompt, the summary and result of a subagent's task notification, and the path and text of a
+  file a tool wrote never appear either. The display fields
   listed above - the current call, the last answer, the plan's steps and the messages - are exempt by
   name, so a marker can reach the interface only through them.
 - [tests/test_git_status.py](tests/test_git_status.py) asserts that git is never looked up through a

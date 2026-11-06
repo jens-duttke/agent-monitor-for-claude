@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The details of a selected background process show how it was started: its command line, program, working directory, start time and thread count. For a process inside WSL, the program and working directory are not available.
 - Click a file in the uncommitted changes to see its diff below the list; click it again to close it.
 - A background process that ended stays in the graph for a minute, dimmed, then fades out over five seconds, so a short-lived command can still be seen and selected. Its details say it ended and show the last CPU, memory and running time measured, if any.
+- The graph has a legend, shown and hidden with its button, and every connection explains itself on hover: how a subagent was started, what came back, the messages each way and when it was last active.
+- The graph marks beside each subagent whether it reported its result back, ended without one (stopped, killed or failed), or never reported - background subagents included, whose task notifications are now read for that.
 
 ### Changed
 - Project and section headers in the list stand out as bands of their own and stay at the top while their sessions scroll past.
@@ -25,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A selected process's details start with the session's process table, titled "All processes of this session" and without its background tasks; the selected process follows below it, so picking another one changes only what is under the list.
 - Costs and session details of long transcripts fill in about three times faster after the start, and the *Older* section loads its sessions about three times faster.
 - Running from source needs the `msgspec` package; run `pip install -r requirements.txt` again after updating.
+- In the graph, a subagent's report no longer draws a second line over the one that started it, and messages between two sessions share one line with an arrowhead at each receiver, so a one-way exchange is told apart from a conversation. Running work is drawn in the purple of its box, and a connection quiet for over an hour fades.
 
 ### Fixed
 - With a WSL distribution that has kept many ended sessions, the window no longer keeps a CPU core busy and reacts to changes within a second again.

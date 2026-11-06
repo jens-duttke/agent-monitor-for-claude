@@ -495,7 +495,8 @@ function historyRangeMarkup() {
         + '>' + esc(state.labels[range.label] || range.key) + '</button>').join('');
 }
 
-// How far back the graph reaches, as a row of buttons above it.
+// How far back the graph reaches, as a row of buttons above it, with the
+// buttons that fold every session and the legend's switch.
 function graphRangeMarkup() {
     return logic.GRAPH_RANGES.map((range) => '<button'
         + attr('type', 'button')
@@ -507,7 +508,9 @@ function graphRangeMarkup() {
         + '<button' + attr('type', 'button') + attr('class', 'range-btn') + attr('data-graph-collapse', 'all') + '>'
         + esc(state.labels.graph_collapse_all || '') + '</button>'
         + '<button' + attr('type', 'button') + attr('class', 'range-btn') + attr('data-graph-collapse', 'none') + '>'
-        + esc(state.labels.graph_expand_all || '') + '</button>';
+        + esc(state.labels.graph_expand_all || '') + '</button>'
+        + '<button' + attr('type', 'button') + attr('class', 'range-btn' + (state.graphLegend ? ' active' : '')) + attr('data-graph-legend', '')
+        + attr('aria-pressed', state.graphLegend ? 'true' : 'false') + '>' + esc(state.labels.graph_legend || '') + '</button>';
 }
 
 /* --- groups (project grouping) --- */
@@ -643,6 +646,7 @@ let noticeSlot = null;
 let listSlot = null;
 let stateSlot = null;
 let graphSlot = null;
+let legendSlot = null;
 
 function ensureShell() {
     if (listSlot && listSlot.isConnected) {
@@ -650,12 +654,13 @@ function ensureShell() {
     }
     const content = document.getElementById('content');
     content.innerHTML = '<div class="section-chips"></div><div class="notice-slot"></div>'
-        + '<div class="list-slot"></div><div class="graph-slot"></div><div class="state-slot"></div>';
+        + '<div class="list-slot"></div><div class="graph-slot"></div><div class="legend-slot"></div><div class="state-slot"></div>';
     chipsSlot = content.querySelector('.section-chips');
     noticeSlot = content.querySelector('.notice-slot');
     listSlot = content.querySelector('.list-slot');
     stateSlot = content.querySelector('.state-slot');
     graphSlot = content.querySelector('.graph-slot');
+    legendSlot = content.querySelector('.legend-slot');
 }
 
 // The sessions as the list shows them, in display order, with the query's
@@ -750,6 +755,7 @@ function render(snapshot) {
     const shown = [];
     if (grouping !== 'graph') {
         setMarkup(graphSlot, '');
+        setMarkup(legendSlot, '');
     }
     if (grouping === 'graph') {
         // The live sessions the query leaves, with their subagents and the
@@ -770,6 +776,7 @@ function render(snapshot) {
         const selection = { key: state.selectedKey, agent: state.selectedAgent, process: state.selectedProcess, tool: state.selectedTool };
         const model = logic.graphModel(entries, logic.graphRange(state.graphRange).seconds, selection, state.graphCollapsed);
         setMarkup(graphSlot, graphSessions.length > 0 ? logic.graphMarkup(logic.graphLayout(model), labels, selection) : '');
+        setMarkup(legendSlot, graphSessions.length > 0 && state.graphLegend ? logic.graphLegendMarkup(labels) : '');
         fitGraphText(graphSlot);
     } else if (grouping === 'urgency') {
         setMarkup(chipsSlot, '');
