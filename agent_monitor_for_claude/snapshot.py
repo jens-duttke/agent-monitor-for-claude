@@ -36,12 +36,18 @@ from .roots import session_roots
 from .sessions import list_sessions
 from .settings import ENDED_MAX_AGE, INCLUDE_COMPLETED
 from .subagents import SubagentInfo, count_subagents
-from .transcript import AgentLaunch, MessageEvent, ToolCall, TranscriptState, full_texts, prune_scan_cache, session_steps, state_for
+from .transcript import (
+    AgentLaunch, MessageEvent, ToolCall, TranscriptState, edited_files, full_texts, hook_failures, media_image, media_index, prune_scan_cache,
+    session_steps, state_for,
+)
 from .usage_parts import UsageScan, session_usage
 from .worktrees import prune_worktree_cache, resolve_worktree
 from .wsl import probe_wsl_sessions
 
-__all__ = ['build_snapshot', 'live_or_recent_ids', 'registry_fingerprint', 'session_activity', 'session_texts']
+__all__ = [
+    'build_snapshot', 'live_or_recent_ids', 'registry_fingerprint', 'session_activity', 'session_hook_failures', 'session_media', 'session_media_image',
+    'session_texts',
+]
 
 # How far back the worked intervals reach on the snapshot.  The messages go out
 # whole (the scan keeps the newest ones); the graph narrows them to its window.
@@ -264,6 +270,41 @@ def session_activity(root: SessionRoot, session_id: str, cwd: str) -> dict[str, 
 
     steps, partial = session_steps(path)
     return {'steps': steps, 'partial': partial}
+
+
+# The files a session wrote listed beside its images, at most.
+_MAX_MEDIA_FILES = 100
+
+
+def session_media(root: SessionRoot, session_id: str, cwd: str) -> dict[str, Any] | None:
+    """Return the images in the session's own transcript, newest first, and the files it wrote, or None without a transcript.
+
+    Read on request, for the session the details show (see :func:`transcript.media_index`);
+    the files come from the full scan's record of its file-writing tool calls.
+    """
+    path = transcript_path(root, session_id, cwd)
+    if not path.is_file():
+        return None
+
+    return {'images': media_index(path), 'files': list(edited_files(root, session_id, cwd))[:_MAX_MEDIA_FILES]}
+
+
+def session_hook_failures(root: SessionRoot, session_id: str, cwd: str) -> list[dict[str, Any]] | None:
+    """Return the session's failed hooks, newest first (see :func:`transcript.hook_failures`), or None without a transcript."""
+    path = transcript_path(root, session_id, cwd)
+    if not path.is_file():
+        return None
+
+    return hook_failures(path)
+
+
+def session_media_image(root: SessionRoot, session_id: str, cwd: str, media_id: str) -> dict[str, str] | None:
+    """Return one image :func:`session_media` listed, or None."""
+    path = transcript_path(root, session_id, cwd)
+    if not path.is_file():
+        return None
+
+    return media_image(path, media_id)
 
 
 def _tool_call_record(call: ToolCall | None) -> dict[str, Any] | None:

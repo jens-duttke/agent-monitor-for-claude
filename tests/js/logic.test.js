@@ -2247,6 +2247,31 @@ test('changelogUrl: the version reaches the href only as digits and dots', () =>
     }
 });
 
+test('diffToHtml: a diff becomes one classed line each, without the file header', () => {
+    const diff = 'diff --git a/x b/x\nindex 1..2 100644\n--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n keep\n-old\n+new\n\\ No newline at end of file\n';
+    assert.equal(logic.diffToHtml(diff),
+        '<div class="diff-line diff-hunk">@@ -1,2 +1,2 @@</div>'
+        + '<div class="diff-line diff-ctx"> keep</div>'
+        + '<div class="diff-line diff-del">-old</div>'
+        + '<div class="diff-line diff-add">+new</div>'
+        + '<div class="diff-line diff-meta">\\ No newline at end of file</div>');
+    assert.equal(logic.diffToHtml('diff --git a/i b/i\nBinary files a/i and b/i differ\n'),
+        '<div class="diff-line diff-meta">Binary files a/i and b/i differ</div>');
+    assert.equal(logic.diffToHtml(''), '');
+    assert.equal(logic.diffToHtml(null), '');
+});
+
+test('diffToHtml: markup in a file stays text and never reaches a class', () => {
+    const html = logic.diffToHtml('@@ -1 +1 @@\n+<script>alert(1)</script> & "q" \'s\'\n<img src=x onerror=alert(1)>\n');
+    assert.ok(!html.includes('<script') && !html.includes('<img'));
+    assert.ok(html.includes('+&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;q&quot; &#39;s&#39;'));
+    // A line of any other first character is context, never a class taken from the text.
+    assert.ok(html.includes('<div class="diff-line diff-ctx">&lt;img src=x onerror=alert(1)&gt;</div>'));
+    for (const match of html.matchAll(/class="([^"]*)"/g)) {
+        assert.ok(/^diff-line diff-(add|del|ctx|hunk|meta)$/.test(match[1]), match[1]);
+    }
+});
+
 test('ansiToHtml: markup in process output stays text', () => {
     const html = logic.ansiToHtml('<script>alert(1)</script> & "quoted" \'single\'');
     assert.equal(html, '&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;quoted&quot; &#39;single&#39;');
@@ -2761,16 +2786,13 @@ const SIGNAL_LABELS = {
     signal_processes: 'Processes: {count}',
     signal_agents: 'Agents: {count}',
     signal_workflow: 'Workflow {done}/{total}',
-    signal_context: 'Context {percent}%',
     signal_budget: 'Budget {percent}%',
-    signal_cache: 'Cache expired · {cost}',
     signal_auto_paused: 'Auto mode paused',
     signal_update: 'Update {version}',
-    signal_hook_errors: 'Hook errors: {count}',
     signal_queued: 'Queued: {count}',
 };
 
-test('sessionSignals: the facts worth spelling out, in rank order', () => {
+test('sessionSignals: the facts worth spelling out, in rank order - the context, the prompt cache and hook errors stay in the details', () => {
     const signals = logic.sessionSignals({
         processes: 2,
         workflow_active: false,
@@ -2787,8 +2809,7 @@ test('sessionSignals: the facts worth spelling out, in rank order', () => {
     }, SIGNAL_LABELS);
 
     assert.deepEqual(signals.map((signal) => signal.text), [
-        'Processes: 2', 'Agents: 4', 'Context 87%', 'Budget 82%', 'Cache expired · $2', 'Auto mode paused',
-        'Update 2.1.228', 'Hook errors: 14', 'Queued: 1',
+        'Processes: 2', 'Agents: 4', 'Budget 82%', 'Auto mode paused', 'Update 2.1.228', 'Queued: 1',
     ]);
     assert.deepEqual(signals.slice(0, logic.LIST_SIGNAL_LIMIT).map((signal) => signal.tone), ['work', 'background']);
 });
@@ -3282,6 +3303,178 @@ test('graph processes: each process is a node under the one that started it, and
     assert.ok(html.includes('>python<') && html.includes('>PID 400<'));
     assert.ok(/class="gnode gnode-process running selected"[^>]*data-key="k" data-process="400"/.test(html));
     assert.ok(!/gnode-session[^"]*selected/.test(html));
+});
+
+test('ended processes: kept dimmed for a minute, longer while selected, and live again when listed again', () => {
+    const bash = { pid: 300, parent: 0, name: 'bash' };
+    const python = { pid: 400, parent: 300, name: 'python' };
+    let tracker = logic.trackEndedProcesses(null, [{ key: 'k', processes: [bash, python] }], 1000);
+    assert.equal(tracker.ended.size, 0);
+    // Both gone: both ended now, with their tree kept.
+    tracker = logic.trackEndedProcesses(tracker, [{ key: 'k', processes: [] }], 2000);
+    const fadeAt = 2000 + logic.PROCESS_LINGER_SECONDS * 1000;
+    assert.deepEqual(tracker.ended.get('k'), [
+        { pid: 300, parent: 0, name: 'bash', ended_at: 2000, fade_at: fadeAt },
+        { pid: 400, parent: 300, name: 'python', ended_at: 2000, fade_at: fadeAt },
+    ]);
+    // A re-render of the same snapshot changes nothing.
+    assert.deepEqual(logic.trackEndedProcesses(tracker, [{ key: 'k', processes: [] }], 2500).ended.get('k').map((p) => p.ended_at), [2000, 2000]);
+    // The pid listed again is live, not ended.
+    const reused = logic.trackEndedProcesses(tracker, [{ key: 'k', processes: [{ pid: 300, parent: 0, name: 'node' }] }], 3000);
+    assert.deepEqual(reused.ended.get('k').map((p) => p.pid), [400]);
+    // While it fades it is still there; once faded only the selected one stays.
+    const fading = fadeAt + 1000;
+    assert.deepEqual(logic.trackEndedProcesses(tracker, [{ key: 'k', processes: [] }], fading).ended.get('k').map((p) => p.pid), [300, 400]);
+    const late = fadeAt + logic.PROCESS_FADE_SECONDS * 1000 + 1;
+    const kept = logic.trackEndedProcesses(tracker, [{ key: 'k', processes: [] }], late, (key, pid) => key === 'k' && pid === 400);
+    assert.deepEqual(kept.ended.get('k').map((p) => p.pid), [400]);
+    assert.equal(logic.trackEndedProcesses(tracker, [{ key: 'k', processes: [] }], late).ended.size, 0);
+    // The selected one fades in full once let go: its fade stays a fade's length ahead.
+    assert.equal(kept.ended.get('k')[0].fade_at, late + logic.PROCESS_FADE_SECONDS * 1000);
+    const letGo = logic.trackEndedProcesses(kept, [{ key: 'k', processes: [] }], late + 3000);
+    assert.deepEqual(letGo.ended.get('k').map((p) => p.pid), [400]);
+    // A session no longer listed takes its processes along.
+    assert.equal(logic.trackEndedProcesses(tracker, [], 2500).ended.size, 0);
+});
+
+test('graph processes: an ended process stays under its parent, dimmed and selectable', () => {
+    const session = { name: 'Build', session_id: 'eeeeeeee-1111-2222-3333-444444444444', status: 'working', agents: [], messages: [],
+        processes: 1, process_list: [{ pid: 300, parent: 0, name: 'bash' }] };
+    const ended = [{ pid: 400, parent: 300, name: 'python', ended_at: 1, fade_in: -2 }];
+    const model = logic.graphModel([{ key: 'k', session: session, ended: ended }]);
+    const node = model.nodes.find((item) => item.id === 's:k/p:400');
+    assert.equal(node.parent, 's:k/p:300');
+    assert.equal(node.running, false);
+    assert.equal(node.ended, true);
+    assert.deepEqual(model.edges.filter((edge) => edge.to === 's:k/p:400').map((edge) => [edge.kind, edge.active]), [['ended', false]]);
+
+    assert.equal(node.fade_in, -2);
+    const html = logic.graphMarkup(logic.graphLayout(model), { fact_pid: 'PID', process_ended: 'Ended' }, { key: 'k', agent: null, process: 400 });
+    assert.ok(html.includes('>Ended · PID 400<'));
+    assert.ok(/class="gnode gnode-process ended selected"[^>]*data-key="k" data-process="400"/.test(html));
+    assert.ok(html.includes('edge edge-ended"'));
+    // While it is selected neither the node nor its edge fades, however long no render comes.
+    assert.ok(!html.includes('attributeName="stroke-opacity"'));
+    assert.ok(!html.includes('attributeName="opacity"'));
+    // Let go, both fade from wherever the fade stood.
+    const unselected = logic.graphMarkup(logic.graphLayout(model), { fact_pid: 'PID', process_ended: 'Ended' }, { key: 'k', agent: null });
+    assert.ok(unselected.includes('<animate attributeName="stroke-opacity" from="1" to="0" begin="-2s" dur="5s" fill="freeze"></animate></path>'));
+    assert.ok(/data-process="400"[^>]*><g><animate attributeName="opacity" from="1" to="0" begin="-2s" dur="5s" fill="freeze"><\/animate><rect/.test(unselected));
+    // A running process never fades.
+    assert.equal((unselected.match(/<animate attributeName="opacity"/g) || []).length, 1);
+});
+
+test('gitSignal: what is not finished, in one signal ranked first', () => {
+    const labels = {
+        git_uncommitted: 'Uncommitted: {count}', git_unpushed: 'Not pushed: {count}', git_local_only: 'Only local: {count}',
+        git_merged: 'Merged', git_gone: 'Deleted on origin', git_tip_branch: 'Branch: {branch}',
+        git_tip_files: 'Changed: {changed} · new: {untracked}', git_tip_unmerged: 'Commits not in {branch}: {count}',
+        git_tip_squashed: 'In {branch} (squash)', git_tip_fetched: 'Fetched {age} ago', git_tip_never_fetched: 'Never fetched',
+        git_tip_shared: 'Whole directory',
+        signal_processes: 'Processes: {count}', signal_budget: 'Budget {percent}%', age_minutes: '{m}m',
+    };
+    const base = { branch: 'feature', detached: false, upstream: 'origin/feature', upstream_gone: false, ahead: 0, behind: 0,
+        on_remote: true, default_branch: 'main', unmerged: 2, changes_in_default: null, changed: 0, untracked: 0, fetched_seconds: 120 };
+    const signal = (overrides) => logic.gitSignal(Object.assign({}, base, overrides), labels);
+
+    // Everything committed and pushed: nothing to say.
+    assert.equal(signal({}), null);
+    assert.equal(logic.gitSignal(null, labels), null);
+
+    const open = signal({ changed: 2, untracked: 1, ahead: 3 });
+    assert.equal(open.text, 'Uncommitted: 3 · Not pushed: 3');
+    assert.equal(open.tone, 'warn');
+    assert.equal(open.tip, 'Branch: feature → origin/feature\nChanged: 2 · new: 1\nWhole directory\nCommits not in main: 2\nFetched 2m ago');
+
+    // Never pushed, and the commits are in no default branch.
+    assert.equal(signal({ upstream: '', on_remote: false, ahead: null }).text, 'Only local: 2');
+    // A fresh worktree branch with nothing of its own says nothing.
+    assert.equal(signal({ upstream: '', on_remote: false, ahead: null, unmerged: 0 }), null);
+
+    // Deleted on the remote: merged when its changes are in the default branch, a warning when not.
+    const merged = signal({ on_remote: false, upstream_gone: true, ahead: null, changes_in_default: true });
+    assert.deepEqual([merged.text, merged.tone], ['Merged', 'plain']);
+    assert.ok(merged.tip.includes('In main (squash)'));
+    const gone = signal({ on_remote: false, upstream_gone: true, ahead: null, changes_in_default: false, fetched_seconds: null });
+    assert.deepEqual([gone.text, gone.tone], ['Deleted on origin', 'warn']);
+    assert.ok(gone.tip.endsWith('Never fetched'));
+
+    // The default branch itself is never "only local" or "merged".
+    assert.equal(signal({ branch: 'main', upstream: '', on_remote: false, unmerged: null }), null);
+    // A remote without a known default branch: nothing to count a local branch against, files still count.
+    const noDefault = { default_branch: '', unmerged: null, upstream: '', on_remote: false, ahead: null };
+    assert.equal(signal(noDefault), null);
+    const dirtyNoDefault = signal(Object.assign({}, noDefault, { changed: 1 }));
+    assert.equal(dirtyNoDefault.text, 'Uncommitted: 1');
+    assert.ok(!dirtyNoDefault.tip.includes('Commits not in'));
+
+    // Ranked first, ahead of running work and the budget warning.
+    const session = { processes: 2, budget: { ratio: 0.9 }, git: Object.assign({}, base, { changed: 1 }) };
+    assert.deepEqual(logic.sessionSignals(session, labels).map((item) => item.kind), ['git', 'processes', 'budget']);
+
+    // The key is one per root and directory, the worktree first.
+    assert.equal(logic.gitDirKey({ origin: 'wsl:U', cwd: '/a', worktree_cwd: '/a/wt' }), 'wsl:U\n/a/wt');
+    assert.equal(logic.gitDirKey({ cwd: '' }), '');
+});
+
+test('gitSignal: html safety - a branch name stays text in the tooltip attribute', () => {
+    const labels = { git_uncommitted: 'Uncommitted: {count}', git_tip_branch: 'Branch: {branch}', git_tip_never_fetched: 'Never fetched' };
+    const hostile = logic.gitSignal({ branch: '"><img src=x onerror=alert(1)>', changed: 1, untracked: 0, on_remote: true }, labels);
+    const markup = '<span' + logic.attr('data-tip', hostile.tip) + '>' + logic.esc(hostile.text) + '</span>';
+    assert.ok(!markup.includes('<img'));
+    assert.ok(markup.includes('&quot;&gt;&lt;img'));
+});
+
+test('media: listed images are checked, captioned by where they came from, and only real base64 becomes an address', () => {
+    const items = logic.mediaItemsOf({ images: [
+        { id: '120.0', media_type: 'image/png', at: 1700000000, origin: 'tool', tool: 'Read', path: 'C:\\docs\\shot.png', bytes: 2048 },
+        { id: '80.1', media_type: 'image/jpeg', at: null, origin: 'pasted', tool: '', path: '', bytes: 10 },
+        { id: '60.0', media_type: 'image/webp', origin: 'tool', tool: 'mcp__browser__browser_take_screenshot' },
+        { id: '40.0', media_type: 'image/png', origin: 'tool', tool: 'mcp__figma__export_frame' },
+        { id: '../etc', media_type: 'image/png' }, { id: '1.0', media_type: 'image/svg+xml' }, null, 'x',
+    ] });
+    assert.deepEqual(items.map((item) => item.id), ['120.0', '80.1', '60.0', '40.0']);
+    assert.equal(logic.mediaItemsOf(null).length, 0);
+
+    const labels = { media_pasted: 'Pasted by you', media_read: 'Read: {name}', media_screenshot: 'Browser screenshot' };
+    assert.deepEqual(items.map((item) => logic.mediaCaption(item, labels)), ['Read: shot.png', 'Pasted by you', 'Browser screenshot', 'export_frame']);
+
+    assert.equal(logic.mediaDataUrl('image/png', 'iVBORw0KGgo='), 'data:image/png;base64,iVBORw0KGgo=');
+    assert.equal(logic.mediaDataUrl('image/svg+xml', 'PHN2Zz4='), '');
+    assert.equal(logic.mediaDataUrl('image/png', '"><img src=x onerror=alert(1)>'), '');
+    assert.equal(logic.mediaDataUrl('image/png', null), '');
+});
+
+test('branchWebUrl: the forge from the host or a pull request on it, each branch segment encoded, else no link', () => {
+    assert.equal(logic.branchWebUrl('https://github.com/o/r', 'feat/x y'), 'https://github.com/o/r/tree/feat/x%20y');
+    assert.equal(logic.branchWebUrl('https://gitlab.example.com/team.sub/repo', 'bug/ABC/Fix'), 'https://gitlab.example.com/team.sub/repo/-/tree/bug/ABC/Fix');
+    assert.equal(logic.branchWebUrl('https://bitbucket.org/o/r', 'main'), 'https://bitbucket.org/o/r/src/main');
+    assert.equal(logic.branchWebUrl('https://codeberg.org/o/r', 'main'), 'https://codeberg.org/o/r/src/branch/main');
+    // A host that does not say what it is: a merge request on it does.
+    assert.equal(logic.branchWebUrl('https://code.example.com/o/r', 'main', ['https://code.example.com/o/r/-/merge_requests/4']),
+        'https://code.example.com/o/r/-/tree/main');
+    assert.equal(logic.branchWebUrl('https://code.example.com/o/r', 'main', ['https://code.example.com/o/r/pull-requests/4']),
+        'https://code.example.com/o/r/src/main');
+    assert.equal(logic.branchWebUrl('https://code.example.com/o/r', 'main', ['https://code.example.com/o/r/pull/4']),
+        'https://code.example.com/o/r/tree/main');
+    assert.equal(logic.branchWebUrl('https://code.example.com/o/r', 'main', ['https://other.example.com/o/r/pull/4']), '');
+    assert.equal(logic.branchWebUrl('https://code.example.com/o/r', 'main'), '');
+    // html safety: a branch cannot leave its path segment, an odd address gives no link at all.
+    assert.equal(logic.branchWebUrl('https://github.com/o/r', '"><img src=x>'), 'https://github.com/o/r/tree/%22%3E%3Cimg%20src%3Dx%3E');
+    assert.equal(logic.branchWebUrl('javascript:alert(1)//github.com/o/r', 'main'), '');
+    assert.equal(logic.branchWebUrl('https://github.com/o/r?x=1', 'main'), '');
+    assert.equal(logic.branchWebUrl('https://github.com/o/r', ''), '');
+});
+
+test('commandLineText: arguments as one line, quoted only where a space, a tab or a quote needs it', () => {
+    assert.equal(logic.commandLineText(['cmake', '--build', 'build']), 'cmake --build build');
+    assert.equal(logic.commandLineText(['C:\\Program Files\\CMake\\cmake.exe', '-S', '.']), '"C:\\Program Files\\CMake\\cmake.exe" -S .');
+    assert.equal(logic.commandLineText(['bash', '-c', 'echo "hi"']), 'bash -c "echo \\"hi\\""');
+    // An empty argument stays visible; a trailing backslash cannot escape the closing quote.
+    assert.equal(logic.commandLineText(['run', '']), 'run ""');
+    assert.equal(logic.commandLineText(['cd', 'C:\\dir with space\\']), 'cd "C:\\dir with space\\\\"');
+    assert.equal(logic.commandLineText(null), null);
+    assert.equal(logic.commandLineText([]), '');
 });
 
 test('graph model: a session with background processes gets one running process node', () => {

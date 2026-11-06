@@ -22,10 +22,8 @@ function applyBootstrap(bootstrap) {
     if (searchInput) {
         searchInput.placeholder = state.labels.search_placeholder;
         searchInput.setAttribute('aria-label', state.labels.search_placeholder);
-    }
-    const searchKey = document.getElementById('search-key');
-    if (searchKey) {
-        searchKey.textContent = (state.labels.key_ctrl || 'Ctrl') + ' K';
+        // The shortcut that jumps here, on hover rather than in the box.
+        searchInput.dataset.tip = (state.labels.key_ctrl || 'Ctrl') + ' K';
     }
     refreshSearchOptButtons();
     refreshCompactButton();
@@ -236,6 +234,7 @@ async function boot() {
         document.addEventListener('pointerup', onGraphPointerUp);
         document.addEventListener('pointercancel', onGraphPointerUp);
         content.addEventListener('contextmenu', onContentContextMenu);
+        document.addEventListener('contextmenu', onSelectionContextMenu);
         document.getElementById('detail').addEventListener('click', onDetailClick);
         // A <details> toggle does not bubble; the capture phase sees it.
         document.getElementById('detail').addEventListener('toggle', onStepToggle, true);
@@ -261,6 +260,7 @@ async function boot() {
     setInterval(tick, state.pollInterval * 1000);
     setInterval(checkForChanges, FINGERPRINT_INTERVAL);
     setInterval(tickAges, 1000);
+    gitOverviewLoop();
 }
 
 function tryBoot() {

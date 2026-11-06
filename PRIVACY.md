@@ -15,8 +15,8 @@ Last reviewed: 2026-11-05
 
 | Question | Answer |
 | --- | --- |
-| Does the application connect to the internet? | No. It has no HTTP client in any of its own modules, and opens no connection of any kind - its one use of a network socket binds a port on your own machine to check that the interface server can have it. It carries exactly one remote address - a link to Claude Code's public changelog - which it never requests itself; clicking it opens your normal browser. It can also link a pull request Claude Code itself recorded for a session, opened the same way and only on your click. See [Network Communication](#network-communication). The embedded Microsoft browser engine it renders in is a separate matter, stated there too. |
-| Does it run any other program? | Two. `git`, on both systems, only for the session you selected, to show which of its changes are not committed yet - read-only, with fixed arguments. And on Windows `wsl.exe --list --running --quiet`, to list which WSL distributions are currently running, invoked by its absolute `System32` path. Nothing is ever run *inside* a distribution. See [Programs it runs](#programs-it-runs). |
+| Does the application connect to the internet? | No. It has no HTTP client in any of its own modules, and opens no connection of any kind - its one use of a network socket binds a port on your own machine to check that the interface server can have it. It carries exactly one remote address - a link to Claude Code's public changelog - which it never requests itself; clicking it opens your normal browser. It can also link a pull request Claude Code itself recorded for a session, and a session's branch on the repository's own website, each opened the same way and only on your click. See [Network Communication](#network-communication). The embedded Microsoft browser engine it renders in is a separate matter, stated there too. |
+| Does it run any other program? | Two. `git`, on both systems, read-only and with fixed arguments: for every listed session's directory in the background, to show whether its work is committed, pushed and merged, and for the session you selected, to show which of its changes are not committed yet. It never contacts a remote. And on Windows `wsl.exe --list --running --quiet`, to list which WSL distributions are currently running, invoked by its absolute `System32` path. Nothing is ever run *inside* a distribution. See [Programs it runs](#programs-it-runs). |
 | Does it read your credentials? | No. It never opens `.credentials.json` and never reads a token, key, or cookie. |
 | Does it send telemetry, analytics, or crash reports? | No. None, of any kind. |
 | Does it send your data anywhere? | No. It never transmits anything it reads, and the page it renders declares a Content-Security-Policy that forbids network requests outright, so the browser engine would refuse one even if the code asked. |
@@ -62,6 +62,13 @@ One more kind of address can appear in the window, though none is written in the
   changelog link. The address is shown as a link only in one plain shape - `https://`, a host name, and
   a path of letters, digits and `. _ ~ % + -` - with no query, fragment, quote or `user@` part. Anything
   else is listed by repository and number without a link.
+- **Branch links.** A session's branch links to its page on the repository's website - GitHub, GitLab,
+  Bitbucket or Gitea/Forgejo - built from the address of the repository's remote (`git remote get-url`,
+  see [Programs it runs](#programs-it-runs)). A user name, password or token in that address, an ssh port
+  and the `.git` ending are dropped where it is read, so they never reach the window. The kind of website
+  is read from its host name, or else from the shape of a pull request address on the same host; when
+  neither says, the branch is not linked. It is linked only while the branch exists on the remote as of
+  your last fetch, and the application never requests the address - a click hands it to your browser.
 
 Two further things about the running process are worth stating plainly, because anyone inspecting it
 will find them:
@@ -87,11 +94,13 @@ will find them:
   the interface code contains no `fetch`, `XMLHttpRequest`, `WebSocket`, or remote resource reference at
   all. That is not left to good behaviour: the page declares a **Content-Security-Policy** that forbids
   it structurally - `default-src 'none'` with `connect-src 'none'`, so `fetch`, `XMLHttpRequest`,
-  `WebSocket`, and `EventSource` have nowhere to go, and scripts, styles, and images may come from this
-  page's own origin only. A remote address in the interface would be refused by the engine, not merely
-  absent from the code. The policy does carry one relaxation, `'unsafe-eval'`, which the window host's
-  own bridge needs and which admits no script source - see [Verify it
-  yourself](#verify-it-yourself). If you want the runtime's own machinery off, that is configured at
+  `WebSocket`, and `EventSource` have nowhere to go, and scripts and styles may come from this page's
+  own origin only. Images may come from that origin or from a `data:` address - the form in which the
+  pictures a session holds are shown (see [Transcripts, for images](#transcripts-for-images-on-demand));
+  a `data:` image carries its bytes with it and reaches nothing. A remote address in the interface would
+  be refused by the engine, not merely absent from the code. The policy does carry one relaxation for
+  scripts, `'unsafe-eval'`, which the window host's own bridge needs and which admits no script source -
+  see [Verify it yourself](#verify-it-yourself). If you want the runtime's own machinery off, that is configured at
   the system level, not by this application.
 
 ## Credentials
@@ -117,14 +126,23 @@ directory are not committed yet, the lines they add and remove, how far the bran
 behind its upstream, and how many of the files the session itself edited are still uncommitted. To get
 that, the application runs three read-only git commands in the session's directory (or the worktree it
 switched into): `rev-parse --show-toplevel`, `status --porcelain=v1 --branch -z
---untracked-files=normal`, and `diff --numstat -z HEAD`. Details:
+--untracked-files=normal`, and `diff --numstat -z HEAD`. When you click one of the listed files, it
+shows that file's changes: `diff --no-color --no-ext-diff --no-textconv HEAD -- <file>`, and for a file
+git does not track yet, `ls-files -z -- <file>` to tell, then `diff --no-index --no-color --no-ext-diff
+--no-textconv -- /dev/null <file>`. Details:
 
 - It runs only for the selected session, again every five seconds while it stays selected, and never
   on the regular refresh.
 - The executable is looked up on `PATH` only; a relative `PATH` entry and the current directory are
   skipped, so a file named `git` planted in the application's working directory is never run.
 - The arguments are fixed. The only value from your data is the working directory, which must be an
-  existing directory and is passed as git's `-C` argument, never through a shell.
+  existing directory and is passed as git's `-C` argument, never through a shell. A clicked file's path
+  is the second: it must be relative, without a `..` part, inside the repository, and follows `--` as a
+  literal pathspec, so it can never be read as an option or a pattern.
+- A diff never runs an external diff or text-conversion program your repository's configuration may
+  name (`--no-ext-diff --no-textconv`), and it is cut after 256 KB. It is read only on your click and
+  again while the file's line counts change, and shown only in the details - file content, never
+  conversation.
 - Nothing is written. `GIT_OPTIONAL_LOCKS=0` keeps `git status` from refreshing the index, and
   `GIT_TERMINAL_PROMPT=0` keeps git from asking for anything. `-c safe.directory=*` applies to this one
   call, so a repository owned by another user (a WSL distribution's, reached over
@@ -133,6 +151,21 @@ switched into): `rev-parse --show-toplevel`, `status --porcelain=v1 --branch -z
   directory is not a repository, or a call fails, the block is simply not shown.
 - To say which uncommitted files the session edited, the paths of the session's own file-writing tool
   calls (see below) are compared with git's list in memory.
+
+The list itself shows, per entry, whether that work is finished in git: uncommitted files, commits not
+pushed, a branch that exists only on this machine, or one deleted on the remote - and whether that one
+was merged. For this, every listed session's directory (or the worktree it switched into) is read in
+the background, by up to six directories at once, and again at most every 30 seconds; the list never
+waits for it. The commands, with the same safeguards as above: `remote get-url -- <remote>` for the
+address a branch link is built from (see [Network Communication](#network-communication)); `status --porcelain=v2 --branch -z
+--untracked-files=normal`; `for-each-ref --format=%(refname)%09%(symref)` for the remote's default
+branch and the remote branch of the same name; `rev-list --count <ref>..HEAD` for the commits the remote
+branch or the default branch lacks; `rev-parse --git-common-dir`, whose `FETCH_HEAD` file's time says
+how old the remote's picture is; and, only for a branch that is gone from the remote, `diff --name-only
+-z --no-renames <default>...HEAD --` and `diff --name-only --no-renames HEAD <default> -- <files>` to tell
+a squash merge from a deleted branch. Everything about the remote is read from the repository's own
+remote-tracking refs, so it is as current as your last `git fetch`; no command here contacts a remote,
+and the tooltip says when that fetch was.
 
 **`wsl.exe`, on Windows only**, and only when a WSL distribution might be involved:
 
@@ -389,6 +422,36 @@ feature that matches conversation text against something you supplied, so it is 
 - Your query itself is not saved. The three search toggles (match case, whole word, regular
   expression) are remembered; the text you searched for is not.
 
+### Transcripts, for failed hooks (on demand)
+
+When a session's hooks failed, its details list each failure: when, which hook, its exit code and
+duration, the **command** it ran, what it wrote to **stderr and stdout**, and the tool call that set it
+off. That is read only when the details show such a session, and again when another failure arrived:
+the lines holding a failure are parsed, then only the call lines naming one of their ids. Command and
+output are cut to 4,000 characters, the newest 100 failures are listed, and nothing of it is written or
+leaves your machine. The regular refresh keeps reading only each hook's name, exit code and the first
+line of its stderr.
+
+### Transcripts, for images (on demand)
+
+The details of a session or a subagent show the **images** its transcript holds - screenshots you
+pasted into a prompt, pictures Claude opened with `Read`, and screenshots a browser tool returned - as
+thumbnails you can open large. Claude Code stores each of them inside the transcript itself, as base64.
+
+- It reads only for the session or subagent whose details you have open, never on the regular refresh.
+  First it lists where each image is: only lines holding an image, or a call that can return one (a
+  `Read`, an MCP tool), are parsed, for each image's format, size, time, the tool that returned it and
+  the path a `Read` opened. Then each image's data is read as its thumbnail scrolls into view.
+- An image is read only at a place that listing found, so a request cannot point the read anywhere
+  else in the file. Only PNG, JPEG, GIF and WebP are shown, only real base64, and none larger than
+  12 MB. The newest 200 per transcript are listed.
+- They are shown in the window and kept in memory for the newest 60 opened, never written to disk, and
+  - there being no network - never leave your machine. A screenshot shows whatever was on the screen,
+  so the details can show it too.
+- Beside them the same block names the session's artifacts and pull requests (already read, see
+  above) and the files its tools wrote, from the same record the git block compares against; a click
+  shows such a file in the file manager, the same action as "Show transcript".
+
 ### Background-task output (on demand)
 
 Expanding a background task's row shows that task's live console output. This surfaces **process
@@ -420,12 +483,21 @@ where only each process's own `stat` file is opened. Either snapshot is machine-
 yields the process id, parent process id, and name of every running process - and the application uses
 it to walk the ancestry and descendants of the session processes. The name, id and parent of each
 counted descendant are passed to the window, so the connection graph can draw them as a tree. Nothing else
-about a process is read: no command line, no environment, no open handles, no memory contents. For the sessions on screen
+about a process is read by that snapshot: no command line, no environment, no open handles, no memory contents. For the sessions on screen
 it additionally samples CPU, memory, and start time; when you select a **Windows**
 session whose tools run through the `wsl.exe`/`wslhost.exe` relay, the shared WSL virtual machine's CPU
 and memory are sampled too, which its details label as machine-wide because that figure is not specific to
 your session. (This is not the same as a session running natively inside a WSL distribution - see
 [Sessions running inside WSL](#sessions-running-inside-wsl) below.)
+
+When you **select one background process** - a node in the connection graph or a row of the process
+table - that one process's **command line**, executable path, working directory, start time and thread
+count are read, once, and shown in its details. This is the only place a command line is read. It is
+refused for any process that is not a listed descendant of a session the registry names, so no other
+process on the machine can be asked about. On Windows the values come from the process itself (`psutil`),
+on Linux from its own `/proc/<pid>/cmdline`, `exe`, `cwd` and `status`. A command line can hold whatever
+the agent passed to the program, a token included; it stays in the window, is never written anywhere and,
+there being no network, never leaves the machine.
 
 When you click a session, the titles of all visible top-level windows are enumerated in memory to find
 the right window to raise - through the standard Windows calls, or on Linux by reading the window
@@ -488,9 +560,12 @@ opened. (A kernel that keeps no such lists gets the full table instead.)
 Selecting a session running inside WSL that has background processes reads that same mount further,
 on demand, exactly as for a Windows session: the memory size and accumulated CPU time of each of the
 session's own descendant processes, so its details show live CPU, memory, and uptime for a WSL session too.
-Nothing beyond those figures is ever taken from it: no command line, no environment variable, no open file
-handle, and no actual memory content - only the byte count and CPU-time figures the kernel reports for
-each process. Because this is the session's own Linux process tree rather than a Windows-side relay, the
+Nothing beyond those figures is taken from it: no environment variable, no open file handle, and no actual
+memory content - only the byte count and CPU-time figures the kernel reports for each process. The one
+exception is a background process you select: its `cmdline` and `status` are read as described under
+[Processes and windows](#processes-and-windows). Its program path and working directory stay unknown,
+because the `\\wsl.localhost` share does not resolve the links that hold them.
+Because this is the session's own Linux process tree rather than a Windows-side relay, the
 table never adds the shared `vmmem*` row described above - these rows already are the session's real work,
 not a stand-in for work happening elsewhere.
 
@@ -646,8 +721,10 @@ These guarantees are meant to be checked, not taken on faith. In a clone of the 
 grep -rnE "^\s*(import|from)\s+(requests|urllib|http|socket|ssl)\b" agent_monitor_for_claude/
 
 # Every remote address in the application code - interface files included, not
-# just Python. Two hits: the changelog link described above, and the check that
-# an artifact address recorded in a transcript starts with https://
+# just Python. Three hits: the changelog link described above, the check that
+# an artifact address recorded in a transcript starts with https://, and the
+# line that forms a branch link's address from a remote's host and path
+#   git_overview.py: return 'https://' + host.lower() + '/' + '/'.join(segments)
 #   transcript.py: if not isinstance(url, str) or not url.startswith('https://') ...
 #   ui/logic.js: const CHANGELOG_URL = 'https://github.com/anthropics/claude-code/...'
 grep -rn "https\?://" agent_monitor_for_claude/ --include=*.py --include=*.js --include=*.html --include=*.css
@@ -673,9 +750,11 @@ of them is accounted for here, so that nothing looks like a hidden exception:
   to find out whether the interface server can have it and closes it again. The only address it names
   is `127.0.0.1`, and all it does with the socket is bind it and read back which port it got - there
   is no connect, and nothing is ever sent or received.
-- The remote-address search finds two hits: the changelog link, and a scheme check in
+- The remote-address search finds three hits: the changelog link; a scheme check in
   [transcript.py](agent_monitor_for_claude/transcript.py) that drops any artifact address not starting
-  with `https://`. The second names no destination; it only filters addresses Claude Code recorded.
+  with `https://`; and the line in [git_overview.py](agent_monitor_for_claude/git_overview.py) that puts
+  `https://` in front of a repository's host and path to form the address a branch link is built from.
+  The last two name no destination; they only filter or shape addresses read from your own data.
 - The credential search matches one docstring, stating that no credentials are read.
 - The write search matches the two deletion calls in
   [session_delete.py](agent_monitor_for_claude/session_delete.py) - the confirmed session deletion
@@ -725,7 +804,9 @@ grep -rn "_WSL_EXE" agent_monitor_for_claude/ --include=*.py
 
 The git call in [git_status.py](agent_monitor_for_claude/git_status.py) builds its argument list from
 the executable found on `PATH`, the fixed options described under [Programs it runs](#programs-it-runs),
-the working directory and one of the three fixed subcommands - and runs it without a shell.
+the working directory and one of the fixed subcommands - and runs it without a shell. The list's git
+overview ([git_overview.py](agent_monitor_for_claude/git_overview.py)) starts no process of its own: it
+calls that same function.
 
 The `_WSL_EXE` search prints exactly two lines, both in `wsl.py`: line 63, where the absolute path is built
 (`_WSL_EXE = str(Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32' / 'wsl.exe')`), and
@@ -762,6 +843,10 @@ so a green run means everything applicable to your system passed.
   name, so a marker can reach the interface only through them.
 - [tests/test_git_status.py](tests/test_git_status.py) asserts that git is never looked up through a
   relative `PATH` entry, and reads a real repository to check the reported files and counts.
+- [tests/test_git_overview.py](tests/test_git_overview.py) clones a local bare repository - so no
+  network is involved - and checks the list's verdicts: work not pushed, a branch only on this machine,
+  and a branch squash-merged and deleted on the remote; and that a request answers at once while git is
+  still being asked.
 - [tests/test_search.py](tests/test_search.py) asserts the search boundary: that a session reports at
   most five excerpts however many hits it holds, that text beyond the context window either side of a
   hit is never reported, that a greedy regular expression still cannot return more than its clipped

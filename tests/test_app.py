@@ -12,7 +12,7 @@ from unittest import mock
 from agent_monitor_for_claude import app
 from agent_monitor_for_claude.app import _LOG_MAX_LEN, _MonitorApi, _sanitize_log
 from agent_monitor_for_claude.paths import SessionRoot, cwd_to_slug, local_root
-from agent_monitor_for_claude.process_probe import ChildProcessStat
+from agent_monitor_for_claude.process_probe import ChildProcessStat, ProcessDetails
 from agent_monitor_for_claude.tasks import TaskInfo
 
 
@@ -428,6 +428,87 @@ class UnknownOriginRefusalTest(unittest.TestCase):
         self.assertIsNone(api.read_task_output(self._SESSION, self._CWD, 'task1', origin=123))
         self.assertEqual(api.get_process_stats(4242, origin=123), [])
         self.assertEqual(api.scratchpad_path(self._SESSION, self._CWD, origin=123), '')
+
+
+class ProcessDetailsBridgeTest(unittest.TestCase):
+    """A process's command line is read only for a process listed below a session the registry names."""
+
+    def _windows_root(self) -> SessionRoot:
+        return SessionRoot(origin='local', label=None, config_dir=Path('cfg'), proc_dir=None, claude_temp_dir=Path('tmp'))
+
+    def test_a_listed_process_is_described(self) -> None:
+        api = _MonitorApi()
+        details = ProcessDetails(pid=99, command_line=('node', 'build.js'), executable='C:\\node.exe', cwd='C:\\proj', started_at=1.5, threads=4)
+        with mock.patch.object(app, 'root_for_origin', return_value=self._windows_root()), \
+             mock.patch.object(app, 'list_sessions', return_value=[{'pid': 4242, 'proc_start_ticks': 999}]), \
+             mock.patch.object(app, 'process_details', return_value=details) as details_mock:
+            result = api.get_process_details(4242, 99)
+
+        self.assertEqual(result, {
+            'pid': 99, 'command_line': ['node', 'build.js'], 'command_line_clipped': False, 'executable': 'C:\\node.exe',
+            'cwd': 'C:\\proj', 'started_at': 1.5, 'threads': 4,
+        })
+        details_mock.assert_called_once_with(4242, 999, 99)
+
+    def test_a_pid_the_registry_does_not_name_is_never_probed(self) -> None:
+        api = _MonitorApi()
+        with mock.patch.object(app, 'root_for_origin', return_value=self._windows_root()), \
+             mock.patch.object(app, 'list_sessions', return_value=[{'pid': 1, 'proc_start_ticks': 999}]), \
+             mock.patch.object(app, 'process_details') as details_mock:
+            self.assertIsNone(api.get_process_details(4242, 99))
+
+        details_mock.assert_not_called()
+
+    def test_malformed_arguments_are_refused(self) -> None:
+        api = _MonitorApi()
+        with mock.patch.object(app, 'process_details') as details_mock:
+            self.assertIsNone(api.get_process_details(True, 99))
+            self.assertIsNone(api.get_process_details(4242, 'x'))
+            self.assertIsNone(api.get_process_details(4242, 0))
+            self.assertIsNone(api.get_process_details(4242, 99, origin=123))
+
+        details_mock.assert_not_called()
+
+    def test_a_wsl_origin_reads_the_distro(self) -> None:
+        api = _MonitorApi()
+        wsl_root = SessionRoot(origin='wsl:U', label='U', config_dir=Path('cfg'), proc_dir=Path('proc'), claude_temp_dir=Path('tmp'))
+        with mock.patch.object(app, 'root_for_origin', return_value=wsl_root), \
+             mock.patch.object(app, 'list_sessions', return_value=[{'pid': 4242, 'proc_start_ticks': 5000}]), \
+             mock.patch.object(app, 'wsl_process_details', return_value=None) as wsl_mock:
+            self.assertIsNone(api.get_process_details(4242, 99, origin='wsl:U'))
+
+        wsl_mock.assert_called_once_with(wsl_root, 4242, 5000, 99)
+
+
+class GitOverviewBridgeTest(unittest.TestCase):
+    """Each ref is answered in its place; a ref that is not a session's is refused without reaching git."""
+
+    _SESSION = '6e22e66f-6298-442a-9762-2a5b65052389'
+
+    def test_valid_refs_reach_the_overview_and_refused_ones_read_none(self) -> None:
+        api = _MonitorApi()
+        root = SessionRoot(origin='local', label=None, config_dir=Path('cfg'), proc_dir=None, claude_temp_dir=Path('tmp'))
+        refs = [
+            {'session_id': self._SESSION, 'cwd': 'D:\\proj', 'worktree_cwd': 'D:\\proj\\wt', 'origin': 'local'},
+            {'session_id': 'not-a-uuid', 'cwd': 'D:\\proj', 'origin': 'local'},
+            'garbage',
+            {'session_id': self._SESSION, 'cwd': 'D:\\other', 'origin': 'local'},
+        ]
+        with mock.patch.object(app, 'root_for_origin', return_value=root), \
+             mock.patch.object(app, 'git_overview', return_value=[{'branch': 'wt'}, 'pending']) as overview_mock:
+            result = api.get_git_overview(refs)
+
+        self.assertEqual(result, [{'branch': 'wt'}, None, None, 'pending'])
+        overview_mock.assert_called_once_with(['D:\\proj\\wt', 'D:\\other'])
+
+    def test_an_unknown_origin_or_a_non_list_is_refused(self) -> None:
+        api = _MonitorApi()
+        with mock.patch.object(app, 'root_for_origin', return_value=None), \
+             mock.patch.object(app, 'git_overview', return_value=[]) as overview_mock:
+            self.assertEqual(api.get_git_overview([{'session_id': self._SESSION, 'cwd': 'D:\\proj', 'origin': 'gone:X'}]), [None])
+            self.assertEqual(api.get_git_overview('nope'), [])
+
+        overview_mock.assert_called_once_with([])
 
 
 class PrioritizeSessionTest(unittest.TestCase):

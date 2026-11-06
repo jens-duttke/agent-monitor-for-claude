@@ -5,7 +5,8 @@ Git status
 What a session's working directory holds that is not committed yet: the
 changed and untracked files, the lines they add and remove against ``HEAD``,
 the branch's distance to its upstream, and which of the files the session
-itself edited are among them.
+itself edited are among them - and, for one of those files on request, its
+diff.
 
 This module runs the ``git`` executable - with fixed arguments, a working
 directory that must be an existing directory, a timeout and no window - and
@@ -14,7 +15,8 @@ optional index refresh ``git status`` may perform is switched off through
 ``GIT_OPTIONAL_LOCKS=0``, and ``safe.directory`` is overridden for this one
 call only, so a repository owned by another user (a WSL distro's, reached over
 ``\\\\wsl.localhost``) can still be read.  The executable is looked up on
-``PATH`` alone, never in the current directory.
+``PATH`` alone, never in the current directory.  A diff never runs an external
+diff or text-conversion program a repository may configure.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ from typing import Any, Iterable
 
 from . import platforms
 
-__all__ = ['git_status']
+__all__ = ['git_diff', 'git_status']
 
 # How long a result is reused for the same directory and edited files; the UI
 # asks again while the session stays selected.
@@ -37,6 +39,13 @@ _CACHE_SECONDS = 4.0
 _TIMEOUT_SECONDS = 8.0
 # The changed files listed by name; the counts cover all of them.
 _MAX_FILES = 60
+# A file's diff is cut after this many bytes, at a line end.
+_MAX_DIFF_BYTES = 256 * 1024
+# The longest file path a diff is asked for.
+_MAX_PATH_CHARS = 4096
+# Options every diff carries: no colour, and no program the repository's
+# configuration names for diffing or converting a file.
+_DIFF_OPTIONS = ('--no-color', '--no-ext-diff', '--no-textconv')
 
 _cache: dict[tuple[str, tuple[str, ...]], tuple[float, dict[str, Any] | None]] = {}
 _cache_lock = threading.Lock()
@@ -78,6 +87,70 @@ def git_status(directory: str, edited: Iterable[str] = ()) -> dict[str, Any] | N
         _cache[key] = (now, result)
 
     return result
+
+
+def git_diff(directory: str, path: str) -> dict[str, Any] | None:
+    """Return the uncommitted changes of one file of the repository holding *directory*.
+
+    Parameters
+    ----------
+    directory : str
+        A directory this host can open (a WSL path already translated).
+    path : str
+        The file as ``git_status`` lists it: relative to the repository's top
+        level, with forward slashes.
+
+    Returns
+    -------
+    dict or None
+        ``{'path', 'diff', 'truncated'}`` - the unified diff against ``HEAD``,
+        or for an untracked file its whole content as added lines - or None
+        when the directory or path is unusable, the path leaves the
+        repository, or git fails.
+    """
+    if not isinstance(directory, str) or not directory or not os.path.isdir(directory) or not _valid_relative_path(path):
+        return None
+    toplevel = _git(directory, 'rev-parse', '--show-toplevel')
+    if not toplevel or not toplevel.strip():
+        return None
+    root = toplevel.strip()
+    if not _inside(os.path.normcase(os.path.normpath(os.path.join(root, path))), os.path.normcase(os.path.normpath(root))):
+        return None
+
+    # Run from the top level, which the listed path is relative to; a literal
+    # pathspec, so a name holding * or : is that name and nothing else.
+    diff = _git(root, '--literal-pathspecs', 'diff', *_DIFF_OPTIONS, 'HEAD', '--', path)
+    if not diff and _git(root, '--literal-pathspecs', 'ls-files', '-z', '--', path) == '':
+        # An untracked file: its whole content is new, so compare it with
+        # nothing. This form reports a difference with exit code 1.
+        diff = _git(root, 'diff', '--no-index', *_DIFF_OPTIONS, '--', '/dev/null', path, ok_codes=(0, 1))
+    if diff is None:
+        return None
+
+    text, truncated = _clip_diff(diff)
+    return {'path': path, 'diff': text, 'truncated': truncated}
+
+
+def _valid_relative_path(path: object) -> bool:
+    """Whether *path* is a relative path below its top level: no drive, no root, no ``..`` part, no NUL."""
+    if not isinstance(path, str) or not path or len(path) > _MAX_PATH_CHARS or '\0' in path:
+        return False
+    if os.path.isabs(path) or path.startswith(('/', '\\')) or os.path.splitdrive(path)[0]:
+        return False
+    parts = path.replace('\\', '/').split('/')
+
+    return '..' not in parts and all(parts)
+
+
+def _clip_diff(diff: str) -> tuple[str, bool]:
+    """Cut *diff* at the last line end within ``_MAX_DIFF_BYTES``; say whether anything was cut."""
+    encoded = diff.encode('utf-8')
+    if len(encoded) <= _MAX_DIFF_BYTES:
+        return diff, False
+    head = encoded[:_MAX_DIFF_BYTES]
+    end = head.rfind(b'\n')
+
+    return head[:end + 1 if end >= 0 else len(head)].decode('utf-8', errors='ignore'), True
 
 
 def _read_status(directory: str, edited: tuple[str, ...]) -> dict[str, Any] | None:
@@ -196,8 +269,11 @@ def _inside(path: str, root: str) -> bool:
     return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
 
 
-def _git(directory: str, *args: str) -> str | None:
-    """Run one git command in *directory* and return its standard output, or None when it fails."""
+def _git(directory: str, *args: str, ok_codes: tuple[int, ...] = (0,)) -> str | None:
+    """Run one git command in *directory* and return its standard output, or None when it fails.
+
+    *ok_codes* are the exit codes that count as success.
+    """
     executable = _git_executable()
     if executable is None:
         return None
@@ -210,7 +286,7 @@ def _git(directory: str, *args: str) -> str | None:
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
-    if result.returncode != 0:
+    if result.returncode not in ok_codes:
         return None
 
     return result.stdout.decode('utf-8', errors='replace')

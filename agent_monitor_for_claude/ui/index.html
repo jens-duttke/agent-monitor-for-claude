@@ -21,7 +21,7 @@
          admit a single new script source, and no application code here calls
          eval, new Function, or a string-bodied timer. -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'none';
-        script-src 'self' 'unsafe-eval'; style-src 'self'; img-src 'self';
+        script-src 'self' 'unsafe-eval'; style-src 'self'; img-src 'self' data:;
         connect-src 'none'; base-uri 'none'; form-action 'none'">
     <title>Agent Monitor for Claude</title>
     <script src="boot.js"></script>
@@ -40,7 +40,6 @@
                 <button id="opt-word" class="search-opt search-opt-word" type="button" aria-pressed="false">ab</button>
                 <button id="opt-regex" class="search-opt" type="button" aria-pressed="false">.*</button>
             </div>
-            <kbd id="search-key" class="search-key"></kbd>
         </div>
         <div class="group-switch" id="group-switch" role="radiogroup">
             <button type="button" role="radio" data-group="urgency"></button>

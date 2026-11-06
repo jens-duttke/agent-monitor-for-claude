@@ -7,12 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A right-click on selected text, such as an agent's last reply, offers to copy it.
+- Every entry in the list says whether its work is finished in git: uncommitted files, commits not pushed, a branch only on this machine, or one deleted on origin - and whether that one was merged, squash merges included. The list shows at once; these signals follow within seconds. The remote's state is that of your last `git fetch`, whose age the tooltip names.
+- The session block spans the details' full width, lists each failed hook with its command, exit code, output and the tool call that set it off, and links the branch to its page on GitHub, GitLab, Bitbucket or Gitea - found from the repository's remote, while the branch is on it.
+- A session's and a subagent's details show the images from its conversation - screenshots you pasted, pictures Claude read, browser screenshots - as thumbnails that open large, together with its artifacts, pull requests and the files it wrote.
+- The details of a selected background process show how it was started: its command line, program, working directory, start time and thread count. For a process inside WSL, the program and working directory are not available.
+- Click a file in the uncommitted changes to see its diff below the list; click it again to close it.
+- A background process that ended stays in the graph for a minute, dimmed, then fades out over five seconds, so a short-lived command can still be seen and selected. Its details say it ended and show the last CPU, memory and running time measured, if any.
+
 ### Changed
+- Project and section headers in the list stand out as bands of their own and stay at the top while their sessions scroll past.
+- The details' git block is titled "Uncommitted in this working directory", lists the files this session edited first, and says when none of the changes are this session's or when it edited files outside the repository. It counts every change in the checkout, so sessions sharing one show the same list. The block now always spans the full width, and each file is one row that lights up as a whole on hover, so each count stays with its path.
+- The search box no longer shows the Ctrl+K hint; hovering the box shows it as a tooltip.
+- The details' "Activity" block is now titled "Tool calls & replies", which is what it lists.
+- The git signal now comes first on a list entry. The context, the lapsed prompt cache and hook errors are no longer list signals; the details still show them.
+- A selected process's details start with the session's process table, titled "All processes of this session" and without its background tasks; the selected process follows below it, so picking another one changes only what is under the list.
 - Costs and session details of long transcripts fill in about three times faster after the start, and the *Older* section loads its sessions about three times faster.
 - Running from source needs the `msgspec` package; run `pip install -r requirements.txt` again after updating.
 
 ### Fixed
 - With a WSL distribution that has kept many ended sessions, the window no longer keeps a CPU core busy and reacts to changes within a second again.
+- The graph's scrollbars sit at the edges of its pane instead of directly under the drawing, and its button row stays in place while you scroll.
+- A click on one of the search options (match case, whole word, regular expression) no longer misses because the button moved as it was pressed.
+- The line counts of the uncommitted files no longer touch the scrollbar.
+- A graph node shows a tooltip only when its title is cut short, instead of repeating a title it shows whole.
+- The session details name the branch of a session that has no prompt yet, as git reports it for its folder.
 
 ## [0.13.0] - 2026-11-05
 

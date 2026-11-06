@@ -49,11 +49,11 @@ from typing import Iterable
 from . import procfs
 from .paths import SessionRoot, claude_temp_dir
 from .platforms import IS_WINDOWS, no_window_kwargs
-from .procinfo import ChildProcessStat, ProcessInfo, child_processes
+from .procinfo import ChildProcessStat, ProcessDetails, ProcessInfo, child_processes
 from .process_probe import vmmem_present as _vmmem_present
 from .settings import WSL_MONITORING
 
-__all__ = ['wsl_roots', 'probe_wsl_sessions', 'wsl_process_stats', 'reset_caches']
+__all__ = ['wsl_roots', 'probe_wsl_sessions', 'wsl_process_details', 'wsl_process_stats', 'reset_caches']
 
 # Absolute path to wsl.exe. A relative name would resolve through the Win32
 # process-creation search order, which checks the application's own directory
@@ -392,6 +392,41 @@ def _session_table(root: SessionRoot, sessions: list[tuple[int, int | None]]) ->
         table = procfs.read_proc_table(root.proc_dir)
 
     return table
+
+
+def wsl_process_details(root: SessionRoot, pid: int, proc_start_ticks: int | None, child_pid: int) -> ProcessDetails | None:
+    """Return how one of a WSL session's background processes was started, from where and when.
+
+    Only a process the session's own panel lists is read - the descendant set
+    :func:`wsl_process_stats` reports.  Its ``cmdline`` and ``status`` read fine over the share,
+    but the share cannot resolve the ``exe`` and ``cwd`` links, so those two stay ``None``.
+
+    Parameters
+    ----------
+    root : SessionRoot
+        A WSL root as returned by :func:`wsl_roots`.
+    pid : int
+        The session process id from the registry.
+    proc_start_ticks : int or None
+        The recorded process start time (``/proc/[pid]/stat`` field 22); a mismatch means a recycled pid.
+    child_pid : int
+        The background process asked about.
+
+    Returns
+    -------
+    ProcessDetails or None
+        None when the session is gone or stale, or *child_pid* is not one of its listed processes.
+    """
+    if root.proc_dir is None:
+        return None
+
+    table = _session_table(root, [(pid, proc_start_ticks)])
+    descendants = procfs.live_descendants(pid, proc_start_ticks, table, procfs.children_index(table))
+    entry = table.get(child_pid)
+    if descendants is None or entry is None or child_pid not in {child for child, _name in descendants}:
+        return None
+
+    return procfs.read_process_details(root.proc_dir, child_pid, entry.starttime, procfs.read_btime(root.proc_dir), procfs.DEFAULT_CLK_TCK)
 
 
 def wsl_process_stats(root: SessionRoot, pid: int, proc_start_ticks: int | None) -> list[ChildProcessStat]:

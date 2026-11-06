@@ -1,6 +1,7 @@
 'use strict';
 
-/* --- the session menu (right-click on a list entry) --- */
+/* --- the floating menu: the session menu (right-click on a list entry) and
+   the copy menu (right-click on selected text) --- */
 
 // One floating menu at a time. The state remembers which session it belongs to,
 // so a re-render can follow the entry instead of tearing the menu down.
@@ -80,7 +81,10 @@ function showMenu(el, anchor, context) {
     };
 
     menu.onDocClick = (event) => {
-        if (!el.contains(event.target) && !menu.anchorEl.contains(event.target) && event.target !== menu.anchorEl) {
+        // A copy menu's anchor is only the element right-clicked, which a click
+        // into it does not toggle - so any click outside the menu closes it.
+        const onAnchor = menu.type !== 'selection' && (menu.anchorEl.contains(event.target) || event.target === menu.anchorEl);
+        if (!el.contains(event.target) && !onAnchor) {
             closeMenu();
         }
     };
@@ -129,6 +133,12 @@ function showMenu(el, anchor, context) {
 function syncOpenMenu() {
     const menu = openMenuState;
     if (!menu) {
+        return;
+    }
+
+    // A copy menu holds its text already and sits at the pointer, so a render
+    // that replaced the selected element leaves it open where it is.
+    if (menu.type === 'selection') {
         return;
     }
 

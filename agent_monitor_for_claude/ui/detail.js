@@ -15,15 +15,21 @@
 // poll. `key` is the session they were checked for.
 const detailPaths = { key: null, isNew: false, transcript: '', scratchpad: '' };
 
-const DETAIL_BLOCKS = ['now', 'hits', 'proc', 'plan', 'git', 'agents', 'activity', 'cost', 'session'];
+const DETAIL_BLOCKS = ['now', 'hits', 'proc', 'plan', 'git', 'media', 'agents', 'activity', 'cost', 'session'];
 // A block that spans the pane's width instead of sharing a row: the live ones,
 // and a subagent's task and result, which read top to bottom.
-const WIDE_BLOCKS = new Set(['now', 'hits', 'proc', 'task', 'result', 'activity']);
+const WIDE_BLOCKS = new Set(['now', 'hits', 'proc', 'procinfo', 'git', 'media', 'task', 'result', 'activity', 'session']);
 
 // The selected session's uncommitted changes, asked of git on selection and
 // again every GIT_REFRESH_MS while it stays selected - never on the poll.
 const GIT_REFRESH_MS = 5000;
-const gitState = { key: null, result: null, at: 0, pending: false };
+const gitState = { key: null, result: null, at: 0, pending: false, diff: noGitDiff() };
+
+// The diff of the one file opened in the git block: asked for on the click and
+// again when the file's line counts change. `result` is false when git gave none.
+function noGitDiff() {
+    return { path: null, sig: null, result: null, pending: false };
+}
 
 // The selected session's current call and last reply, whole: the snapshot cuts
 // them to a display length, so the details ask for the whole text whenever the
@@ -86,7 +92,9 @@ function renderDetail() {
     updateBlock(pane.querySelector('.block-plan'), state.labels.block_plan,
         session.plan ? session.plan.step + ' / ' + session.plan.total : '', planBodyMarkup(session));
     const git = gitState.key === rowKey(session) ? gitState.result : null;
-    updateBlock(pane.querySelector('.block-git'), state.labels.block_git, gitNote(git), gitBodyMarkup(git));
+    const gitBlock = pane.querySelector('.block-git');
+    updateBlock(gitBlock, state.labels.block_git, gitNote(git), gitBodyMarkup(git, session));
+    updateMediaBlock(pane, session, null);
     updateBlock(pane.querySelector('.block-agents'), state.labels.block_agents, '', agentsBodyMarkup(session));
     updateBlock(pane.querySelector('.block-cost'), state.labels.block_cost, session.usage_compact || '', costBodyMarkup(session));
     updateBlock(pane.querySelector('.block-session'), state.labels.block_session, '', sessionBodyMarkup(session));
@@ -221,8 +229,12 @@ function requestGit(session) {
     const bridge = apiBridge();
     if (!bridge && window.__MOCK_GIT__) {
         // The browser preview's fabricated answers (dev-mock.js).
+        if (gitState.key !== key) {
+            gitState.diff = noGitDiff();
+        }
         gitState.key = key;
         gitState.result = window.__MOCK_GIT__[session.session_id] || null;
+        requestGitDiff(session);
         return;
     }
     if (!bridge || typeof bridge.get_git_status !== 'function' || !session.session_id || !session.cwd) {
@@ -233,6 +245,7 @@ function requestGit(session) {
         gitState.result = null;
         gitState.at = 0;
         gitState.pending = false;
+        gitState.diff = noGitDiff();
     }
     if (gitState.pending || Date.now() - gitState.at < GIT_REFRESH_MS) {
         return;
@@ -247,8 +260,87 @@ function requestGit(session) {
         gitState.pending = false;
         gitState.at = Date.now();
         gitState.result = result && typeof result === 'object' ? result : null;
+        requestGitDiff(session);
         renderDetail();
     });
+}
+
+// Open the diff of `path` in the git block, or close it when it is open.
+function toggleGitDiff(path) {
+    const session = selectedSession();
+    if (!session || typeof path !== 'string' || !path) {
+        return;
+    }
+    gitState.diff = gitState.diff.path === path ? noGitDiff() : Object.assign(noGitDiff(), { path: path });
+    requestGitDiff(session);
+    renderDetail();
+}
+
+// The listed file the open diff belongs to, or null once it left the list.
+function openGitFile() {
+    const path = gitState.diff.path;
+    const files = gitState.result && Array.isArray(gitState.result.files) ? gitState.result.files : [];
+    return path ? (files.find((file) => file.path === path) || null) : null;
+}
+
+// Ask for the open file's diff when there is none yet or its line counts
+// changed; close it once the file is no longer listed (committed or reverted).
+function requestGitDiff(session) {
+    const diff = gitState.diff;
+    if (!diff.path || diff.pending) {
+        return;
+    }
+    const file = openGitFile();
+    if (!file) {
+        if (gitState.result) {
+            gitState.diff = noGitDiff();
+        }
+        return;
+    }
+    const sig = [file.status, file.added, file.removed].join('/');
+    if (diff.result !== null && diff.sig === sig) {
+        return;
+    }
+    const bridge = apiBridge();
+    if (!bridge && window.__MOCK_GIT_DIFF__) {
+        diff.sig = sig;
+        diff.result = window.__MOCK_GIT_DIFF__[diff.path] || false;
+        return;
+    }
+    if (!bridge || typeof bridge.get_git_diff !== 'function') {
+        return;
+    }
+    diff.pending = true;
+    const worktree = session.worktree_cwd || '';
+    const call = () => bridge.get_git_diff(session.session_id, session.cwd, worktree, session.origin || 'local', diff.path);
+    Promise.resolve(logic.settleCall(call)).then((result) => {
+        diff.pending = false;
+        if (gitState.diff !== diff) {
+            return;
+        }
+        diff.sig = sig;
+        diff.result = result && typeof result === 'object' && typeof result.diff === 'string' ? result : false;
+        renderDetail();
+    });
+}
+
+// The open file's diff under the list: its path, then its lines.
+function gitDiffMarkup() {
+    const diff = gitState.diff;
+    if (!diff.path || !openGitFile()) {
+        return '';
+    }
+    const labels = state.labels;
+    let body;
+    if (diff.result === null) {
+        body = '<div class="git-diff-note">…</div>';
+    } else if (diff.result === false || !diff.result.diff) {
+        body = '<div class="git-diff-note">' + esc(labels.git_diff_none || '') + '</div>';
+    } else {
+        body = '<div class="git-diff-lines">' + logic.diffToHtml(diff.result.diff) + '</div>'
+            + (diff.result.truncated ? '<div class="git-diff-note">' + esc(labels.git_diff_truncated || '') + '</div>' : '');
+    }
+    return '<div class="git-diff"><div class="git-diff-path">' + esc(diff.path) + '</div>' + body + '</div>';
 }
 
 // The selected session's current call and last reply, whole, once the cut ones
@@ -628,9 +720,10 @@ function gitNote(git) {
     return parts.join(' · ');
 }
 
-// The working directory's uncommitted files and lines, and how many of the
-// files this session edited are among them.
-function gitBodyMarkup(git) {
+// The working directory's uncommitted files and lines - whoever changed them:
+// every session in the same checkout sees the same list - and which of them
+// this session edited, listed first.
+function gitBodyMarkup(git, session) {
     if (!git) {
         return '';
     }
@@ -645,20 +738,33 @@ function gitBodyMarkup(git) {
     }
     let html = '<div class="line-list"><div>' + esc(fmt(labels.git_summary, { changed: changed, untracked: untracked }))
         + ' · ' + plusMinus(git.added, git.removed) + '</div>';
-    if (count(git.edited_total) > 0) {
-        html += '<div>' + esc(fmt(labels.git_edited, { uncommitted: count(git.edited_uncommitted), total: count(git.edited_total) })) + '</div>';
+    html += '<div>' + esc(count(git.edited_total) > 0
+        ? fmt(labels.git_edited, { uncommitted: count(git.edited_uncommitted), total: count(git.edited_total) })
+        : labels.git_session_none || '') + '</div>';
+    // What the session edited outside this repository (its scratchpad, another
+    // checkout) counts in its changed-lines figure but cannot appear here.
+    const outside = count((session && session.files_edited) || 0) - count(git.edited_total);
+    if (outside > 0) {
+        html += '<div class="line-sub">' + esc(fmt(labels.git_session_outside, { count: outside })) + '</div>';
     }
     html += '</div>';
-    const files = Array.isArray(git.files) ? git.files : [];
+    const listed = Array.isArray(git.files) ? git.files : [];
+    const files = listed.filter((file) => file.edited === true).concat(listed.filter((file) => file.edited !== true));
     if (files.length > 0) {
+        // A click on any cell of a file's row opens its diff below the list.
         html += '<div class="git-files">' + files.map((file) => {
             const edited = file.edited === true;
+            const path = typeof file.path === 'string' ? file.path : '';
+            const open = path !== '' && path === gitState.diff.path ? ' open' : '';
             const lines = Number.isInteger(file.added) || Number.isInteger(file.removed) ? plusMinus(file.added, file.removed) : '';
-            return '<span class="git-code">' + esc(typeof file.status === 'string' ? file.status : '') + '</span>'
-                + '<span' + attr('class', 'git-path' + (edited ? ' edited' : '')) + (edited ? attr('data-tip', labels.git_edited_tip || '') : '') + '>'
-                + esc(typeof file.path === 'string' ? file.path : '') + '</span>'
-                + '<span class="git-lines">' + lines + '</span>';
+            // One row element across the three columns, so a hover or the open file marks the whole line.
+            return '<div' + attr('class', 'git-row' + (edited ? ' edited' : '') + open) + attr('data-git-path', path)
+                + (edited ? attr('data-tip', labels.git_edited_tip || '') : '') + '>'
+                + '<span class="git-code">' + esc(typeof file.status === 'string' ? file.status : '') + '</span>'
+                + '<span class="git-path">' + esc(path) + '</span>'
+                + '<span class="git-lines">' + lines + '</span></div>';
         }).join('') + '</div>';
+        html += gitDiffMarkup();
     }
     return html;
 }
@@ -694,15 +800,16 @@ function updateHitsBlock(el, session) {
 }
 
 // The live processes and tasks, polled only while this block is on screen.
-function updateProcBlock(el, session) {
+function updateProcBlock(el, session, options) {
+    const opts = options || {};
     const show = session.processes > 0 && !session.is_history;
     el.hidden = !show;
     if (!show) {
         stopProcBlock();
         return;
     }
-    setText(el.querySelector('.block-title'), state.labels.block_processes);
-    showProcBlock(el.querySelector('.block-body'), el.querySelector('.block-note'), session);
+    setText(el.querySelector('.block-title'), opts.title || state.labels.block_processes);
+    showProcBlock(el.querySelector('.block-body'), el.querySelector('.block-note'), session, opts.tasks !== false);
 }
 
 function agentsBodyMarkup(session) {
@@ -742,6 +849,78 @@ function kvRow(key, valueMarkup) {
     return valueMarkup ? '<span class="kv-key">' + esc(key) + '</span><span class="kv-value">' + valueMarkup + '</span>' : '';
 }
 
+// The branch, linked to its page on the remote while it is there (as of the
+// last fetch) and the forge is one whose address scheme is known.
+function branchMarkup(session, branch) {
+    const git = session.git;
+    const url = git && git.on_remote && git.branch === branch
+        ? logic.branchWebUrl(git.remote_web, branch, session.pull_requests.map((pr) => pr.url))
+        : '';
+    // Opened by the host in the system browser, like a pull request.
+    return url
+        ? '<a' + attr('href', url) + ' target="_blank" rel="noreferrer"' + attr('data-tip', url) + '>' + esc(branch) + '</a>'
+        : esc(branch);
+}
+
+/* Every failed hook of the selected session, whole - asked once per selection
+   and again when another one failed. */
+const hookFailures = { key: null, sig: null, list: [], pending: false };
+
+function requestHookFailures(session) {
+    const key = rowKey(session);
+    const sig = session.hook_errors.reduce((sum, error) => sum + error.count, 0);
+    if (hookFailures.pending || (hookFailures.key === key && hookFailures.sig === sig)) {
+        return;
+    }
+    if (hookFailures.key !== key) {
+        hookFailures.list = [];
+    }
+    hookFailures.key = key;
+    hookFailures.sig = sig;
+    const bridge = apiBridge();
+    if (!bridge && window.__MOCK_HOOK_FAILURES__) {
+        hookFailures.list = window.__MOCK_HOOK_FAILURES__[session.session_id] || [];
+        return;
+    }
+    if (!bridge || typeof bridge.get_hook_failures !== 'function' || !session.session_id || !session.cwd) {
+        return;
+    }
+    hookFailures.pending = true;
+    const call = () => bridge.get_hook_failures(session.session_id, session.cwd, session.origin || 'local');
+    Promise.resolve(logic.settleCall(call)).then((result) => {
+        hookFailures.pending = false;
+        if (hookFailures.key === key) {
+            hookFailures.list = Array.isArray(result) ? result : [];
+        }
+        renderDetail();
+    });
+}
+
+// One collapsed row per failure, newest first: when, which hook, how it ended;
+// opened, the call that set it off, the command it ran and what it wrote.
+function hookFailuresMarkup(session) {
+    if (hookFailures.key !== rowKey(session) || hookFailures.list.length === 0) {
+        return '';
+    }
+    const labels = state.labels;
+    const code = (text) => '<pre class="hook-text">' + esc(text) + '</pre>';
+    return '<details class="hook-failures"><summary>' + esc(fmt(labels.hook_failures_title, { count: hookFailures.list.length })) + '</summary>'
+        + hookFailures.list.map((failure) => {
+            const head = [failure.at ? fmtDateTime(failure.at * 1000) : '', failure.hook || failure.event || '',
+                failure.exit_code === null || failure.exit_code === undefined ? '' : fmt(labels.hook_exit_code, { code: failure.exit_code }),
+                Number.isInteger(failure.duration_ms) ? logic.stepDuration(failure.duration_ms / 1000, labels) : ''].filter(Boolean).join(' · ');
+            let body = '';
+            if (failure.tool) {
+                body += kvRow(labels.hook_trigger, '<span class="mono">' + esc(failure.tool + (failure.tool_text ? ': ' + failure.tool_text : '')) + '</span>');
+            }
+            body += kvRow(labels.hook_command, failure.command ? code(failure.command) : '');
+            body += kvRow('stderr', failure.stderr ? code(failure.stderr) : '');
+            body += kvRow('stdout', failure.stdout ? code(failure.stdout) : '');
+            return '<details class="hook-failure"><summary>' + esc(head) + '</summary>'
+                + (body ? '<div class="kv">' + body + '</div>' : '') + '</details>';
+        }).join('') + '</details>';
+}
+
 // One row per failing hook - its name, exit code and how often it failed -
 // and the first line of its error output under it when it wrote one.
 function hookErrorsMarkup(errors) {
@@ -755,27 +934,18 @@ function hookErrorsMarkup(errors) {
 function sessionBodyMarkup(session) {
     const labels = state.labels;
     let kv = kvRow(labels.session_id_label, '<span class="mono">' + esc(session.session_id || '') + '</span>');
-    kv += kvRow(labels.fact_branch, session.branch ? esc(session.branch) : '');
+    // The transcript names the branch of its newest turn; a session without a
+    // turn yet takes the one git reports for its directory.
+    const git = gitState.key === rowKey(session) ? gitState.result : null;
+    const branch = session.branch || (git && typeof git.branch === 'string' ? git.branch : '');
+    kv += kvRow(labels.fact_branch, branch ? branchMarkup(session, branch) : '');
     if (session.worktree) {
         kv += kvRow(labels.fact_worktree, esc(session.worktree.path)
             + (session.worktree.branch ? ' · ' + esc(session.worktree.branch) : ''));
     }
-    if (session.pull_requests.length > 0) {
-        kv += kvRow(labels.pr_label, session.pull_requests.map((pr) => {
-            const text = esc(pr.repository + ' #' + pr.number);
-            // Like the changelog link: the host opens the address in the system
-            // browser; one that failed logic.pullRequestUrl is listed as text.
-            return pr.url ? '<a' + attr('href', pr.url) + ' target="_blank" rel="noreferrer">' + text + '</a>' : text;
-        }).join('<br>'));
-    }
-    if (session.artifact_links.length > 0) {
-        // Opened by the host in the system browser, like a pull request.
-        kv += kvRow(labels.artifacts_label, session.artifact_links.map((artifact) => (artifact.url
-            ? '<a' + attr('href', artifact.url) + ' target="_blank" rel="noreferrer">' + esc(artifact.title) + '</a>'
-            : esc(artifact.title))).join('<br>'));
-    }
     if (session.hook_errors.length > 0) {
-        kv += kvRow(labels.hook_errors_label, hookErrorsMarkup(session.hook_errors));
+        requestHookFailures(session);
+        kv += kvRow(labels.hook_errors_label, hookErrorsMarkup(session.hook_errors) + hookFailuresMarkup(session));
     }
     if (session.model_switched) {
         kv += kvRow(labels.model_history_label, session.model_history
@@ -802,6 +972,231 @@ function sessionBodyMarkup(session) {
         + (counts.length > 0 ? '<div class="line-list">' + counts.map((line) => '<div>' + esc(line) + '</div>').join('') + '</div>' : '');
 }
 
+/* --- what a session or subagent produced: images, links, written files ---
+
+   The images are read from the transcript on request - first where each one
+   is and where it came from (get_session_media), then each image's data as
+   its thumbnail scrolls into view (get_media_image). Nothing of it is on the
+   snapshot. */
+const MEDIA_IMAGES_KEPT = 60;
+const mediaState = { key: null, sig: null, items: [], files: [], pending: false };
+const mediaImages = new Map();
+// Images being asked of the bridge, so two tiles of one image share the request.
+const mediaImageRequests = new Map();
+let mediaObserver = null;
+
+// The block for a session (agent null) or one of its subagents.
+function updateMediaBlock(pane, session, agent) {
+    requestMedia(session, agent);
+    const key = mediaKey(session, agent);
+    const items = mediaState.key === key ? mediaState.items : [];
+    const files = mediaState.key === key ? mediaState.files : [];
+    const block = pane.querySelector('.block-media');
+    const note = items.length > 0 ? fmt(state.labels.media_count, { count: items.length }) : '';
+    updateBlock(block, state.labels.block_media || '', note, mediaBodyMarkup(key, items, agent ? null : session, files, session.origin || 'local'));
+    fillMediaThumbs(block, key);
+}
+
+function mediaKey(session, agent) {
+    return rowKey(session) + (agent ? '/a:' + agent.id : '');
+}
+
+// Asked on selection and again once the transcript was written to.
+function requestMedia(session, agent) {
+    const key = mediaKey(session, agent);
+    const age = agent ? agent.age_seconds : session.age_seconds;
+    // A history session's age is frozen at its own fetch, so it is measured from that moment.
+    const ageAt = session.is_history ? state.historyReceivedAt : state.receivedAt;
+    const sig = age !== null && age !== undefined && ageAt !== null ? Math.round(ageAt / 1000 - age) : 0;
+    if (mediaState.pending || (mediaState.key === key && mediaState.sig === sig)) {
+        return;
+    }
+    if (mediaState.key !== key) {
+        mediaState.items = [];
+        mediaState.files = [];
+    }
+    mediaState.key = key;
+    mediaState.sig = sig;
+    const bridge = apiBridge();
+    if (!bridge && window.__MOCK_MEDIA__) {
+        // The browser preview's fabricated images (dev-mock.js).
+        const mock = window.__MOCK_MEDIA__[agent ? agent.id : session.session_id];
+        mediaState.items = logic.mediaItemsOf(mock);
+        mediaState.files = mock && Array.isArray(mock.files) ? mock.files.filter((path) => typeof path === 'string') : [];
+        return;
+    }
+    if (!bridge || typeof bridge.get_session_media !== 'function' || !session.session_id || !session.cwd) {
+        return;
+    }
+    mediaState.pending = true;
+    const call = () => bridge.get_session_media(session.session_id, session.cwd, session.origin || 'local', agent ? agent.id : '');
+    Promise.resolve(logic.settleCall(call)).then((result) => {
+        mediaState.pending = false;
+        if (mediaState.key === key) {
+            mediaState.items = logic.mediaItemsOf(result);
+            mediaState.files = result && Array.isArray(result.files) ? result.files.filter((path) => typeof path === 'string') : [];
+        }
+        renderDetail();
+    });
+}
+
+// Thumbnails, then the session's artifacts and pull requests, then the files
+// it wrote - each part only when it has something.  *session* is null for a
+// subagent, which has no artifacts or pull requests of its own; *origin* is
+// always the session's, which the written files are revealed under.
+function mediaBodyMarkup(key, items, session, files, origin) {
+    const labels = state.labels;
+    let html = '';
+    if (items.length > 0) {
+        html += '<div class="media-grid">' + items.map((item) => '<figure' + attr('class', 'media-tile') + attr('data-media-id', item.id)
+            + attr('data-media-key', key) + '><div class="media-thumb"><img' + attr('alt', logic.mediaCaption(item, labels)) + '></div>'
+            + '<figcaption><span class="media-caption">' + esc(logic.mediaCaption(item, labels)) + '</span>'
+            + '<span class="media-at">' + esc(item.at ? fmtDateTime(item.at * 1000) : '') + '</span></figcaption></figure>').join('')
+            + '</div>';
+    }
+    let kv = '';
+    if (session && session.artifact_links.length > 0) {
+        // Opened by the host in the system browser, like a pull request.
+        kv += kvRow(labels.artifacts_label, session.artifact_links.map((artifact) => (artifact.url
+            ? '<a' + attr('href', artifact.url) + ' target="_blank" rel="noreferrer">' + esc(artifact.title) + '</a>'
+            : esc(artifact.title))).join('<br>'));
+    }
+    if (session && session.pull_requests.length > 0) {
+        kv += kvRow(labels.pr_label, session.pull_requests.map((pr) => {
+            const text = esc(pr.repository + ' #' + pr.number);
+            // Like the changelog link: the host opens the address in the system
+            // browser; one that failed logic.pullRequestUrl is listed as text.
+            return pr.url ? '<a' + attr('href', pr.url) + ' target="_blank" rel="noreferrer">' + text + '</a>' : text;
+        }).join('<br>'));
+    }
+    if (files.length > 0) {
+        kv += kvRow(labels.media_files, files.map((path) => '<button type="button" class="path-open media-file"'
+            + attr('data-reveal-path', path) + attr('data-origin', origin)
+            + attr('data-tip', labels.show_in_file_manager || '') + '>' + esc(path) + '</button>').join('<br>'));
+    }
+    if (kv) {
+        html += '<div class="kv">' + kv + '</div>';
+    }
+    return html;
+}
+
+// Give each thumbnail its image once it scrolls into view - from the kept
+// ones at once, else asked of the bridge.
+function fillMediaThumbs(block, key) {
+    if (!block || block.hidden) {
+        return;
+    }
+    if (!mediaObserver && typeof IntersectionObserver === 'function') {
+        mediaObserver = new IntersectionObserver((entries) => {
+            for (const entry of entries) {
+                if (entry.isIntersecting) {
+                    mediaObserver.unobserve(entry.target);
+                    loadMediaThumb(entry.target);
+                }
+            }
+        }, { root: document.getElementById('detail'), rootMargin: '200px' });
+    }
+    // Tiles a markup change replaced are no longer in the page: start over with the current ones.
+    if (mediaObserver) {
+        mediaObserver.disconnect();
+    }
+    block.querySelectorAll('.media-tile').forEach((tile) => {
+        const img = tile.querySelector('img');
+        if (!img || img.getAttribute('src')) {
+            return;
+        }
+        const kept = mediaImages.get(key + '#' + tile.dataset.mediaId);
+        if (kept) {
+            img.src = kept;
+        } else if (mediaObserver) {
+            mediaObserver.observe(tile);
+        } else {
+            loadMediaThumb(tile);
+        }
+    });
+}
+
+async function loadMediaThumb(tile) {
+    const key = tile.dataset.mediaKey;
+    const id = tile.dataset.mediaId;
+    const url = await mediaImageUrl(key, id);
+    const img = tile.querySelector('img');
+    if (url && img && tile.isConnected) {
+        img.src = url;
+    }
+}
+
+// One image as a data: address, kept for the newest MEDIA_IMAGES_KEPT.
+function mediaImageUrl(key, id) {
+    const cacheKey = key + '#' + id;
+    if (mediaImages.has(cacheKey)) {
+        return Promise.resolve(mediaImages.get(cacheKey));
+    }
+    if (!mediaImageRequests.has(cacheKey)) {
+        mediaImageRequests.set(cacheKey, fetchMediaImage(key, id, cacheKey).finally(() => mediaImageRequests.delete(cacheKey)));
+    }
+    return mediaImageRequests.get(cacheKey);
+}
+
+async function fetchMediaImage(key, id, cacheKey) {
+    const session = state.sessionsByKey.get(key.split('/a:')[0]);
+    const agentId = key.includes('/a:') ? key.split('/a:')[1] : '';
+    let image = null;
+    const bridge = apiBridge();
+    if (!bridge && window.__MOCK_MEDIA_IMAGES__) {
+        image = window.__MOCK_MEDIA_IMAGES__[id] || null;
+    } else if (bridge && typeof bridge.get_media_image === 'function' && session) {
+        image = await logic.settleCall(() => bridge.get_media_image(session.session_id, session.cwd, session.origin || 'local', agentId, id));
+    }
+    const url = image ? logic.mediaDataUrl(image.media_type, image.data) : '';
+    if (url) {
+        mediaImages.set(cacheKey, url);
+        while (mediaImages.size > MEDIA_IMAGES_KEPT) {
+            mediaImages.delete(mediaImages.keys().next().value);
+        }
+    }
+    return url;
+}
+
+// The image large, over everything; a click anywhere or Escape closes it.
+function openMediaViewer(tile) {
+    const img = tile.querySelector('img');
+    if (!img || !img.getAttribute('src')) {
+        return;
+    }
+    closeMediaViewer();
+    const overlay = document.createElement('div');
+    overlay.className = 'media-viewer';
+    overlay.id = 'media-viewer';
+    const large = document.createElement('img');
+    large.src = img.getAttribute('src');
+    large.alt = img.alt;
+    const caption = document.createElement('div');
+    caption.className = 'media-viewer-caption';
+    caption.textContent = ['.media-caption', '.media-at']
+        .map((selector) => (tile.querySelector(selector) || {}).textContent || '').filter(Boolean).join(' · ');
+    overlay.append(large, caption);
+    overlay.addEventListener('click', closeMediaViewer);
+    document.body.appendChild(overlay);
+    document.addEventListener('keydown', onMediaViewerKey, true);
+}
+
+function closeMediaViewer() {
+    const overlay = document.getElementById('media-viewer');
+    if (overlay) {
+        overlay.remove();
+    }
+    document.removeEventListener('keydown', onMediaViewerKey, true);
+}
+
+function onMediaViewerKey(event) {
+    if (event.key === 'Escape') {
+        // The Escape is spent on the viewer: the page would otherwise also leave the detail.
+        event.stopPropagation();
+        closeMediaViewer();
+    }
+}
+
 /* --- a subagent selected in the graph --- */
 
 // The selected subagent of `session`, numbered like the graph numbers it, or
@@ -824,7 +1219,7 @@ function renderAgentDetail(pane, session, agent) {
         pane.__shell = false;
         pane.__processShell = false;
         pane.__markup = null;
-        buildPane(pane, ['task', 'result', 'activity']);
+        buildPane(pane, ['task', 'result', 'media', 'activity']);
     }
     requestAgentTexts(session, agent);
 
@@ -836,6 +1231,7 @@ function renderAgentDetail(pane, session, agent) {
     updateBlock(pane.querySelector('.block-result'), resultTitle, '', texts.result ? textMarkup(texts.result, true) : '', markdownToggleMarkup());
     updateBlock(pane.querySelector('.block-task'), state.labels.block_task, '', texts.task ? textMarkup(texts.task, true) : '', markdownToggleMarkup());
     updateActivityBlock(pane, texts.steps, agent.running, false);
+    updateMediaBlock(pane, session, agent);
     applyShares(pane);
 }
 
@@ -986,17 +1382,31 @@ function agentKpisMarkup(agent) {
 
 /* --- a background process selected in the graph or the process table --- */
 
-// The selected process of `session`, or null - one that ended falls back to the session.
+// The selected process of `session`, or null. One that ended lately is still
+// found, marked `ended`; one no longer kept falls back to the session.
 function selectedProcessOf(session) {
     if (!state.selectedProcess) {
         return null;
     }
-    const process = (session.process_list || []).find((item) => item.pid === state.selectedProcess) || null;
+    const process = sessionProcesses(session).find((item) => item.pid === state.selectedProcess) || null;
     if (!process) {
         state.selectedProcess = null;
     }
     return process;
 }
+
+// The session's running processes, then the ones that ended lately.
+function sessionProcesses(session) {
+    const ended = endedProcessesOf(rowKey(session)).map((process) => Object.assign({}, process, { ended: true }));
+    return (session.process_list || []).concat(ended);
+}
+
+// Each process's latest sample from the process table, so one that ended can
+// still show what it last used - kept while it is in the graph.  When each pid
+// was last sampled, so a sample outlives its process for as long as the graph
+// can still show it.
+let lastProcessStats = new Map();
+const lastProcessSampledAt = new Map();
 
 // Its name, pid and parent on top, its own live figures under them (filled by
 // the process table's poll), then the session's whole table with this row marked.
@@ -1007,45 +1417,166 @@ function renderProcessDetail(pane, session, process) {
         pane.__shell = false;
         pane.__agentShell = false;
         pane.__markup = null;
-        buildPane(pane, ['proc']);
+        buildProcessPane(pane);
     }
+    setMarkup(pane.querySelector('.detail-crumb-slot'), processCrumbMarkup(session));
     setMarkup(pane.querySelector('.detail-head'), processHeadMarkup(session, process));
-    updateProcBlock(pane.querySelector('.block-proc'), session);
+    requestProcessInfo(session, process);
+    updateBlock(pane.querySelector('.block-procinfo'), state.labels.block_process_info || '', '',
+        processInfoMarkup(processInfo.byKey.get(processInfoKey(session, process.pid))));
+    if (process.ended) {
+        // Its last measured figures are all there is of it; the table only lists what runs now.
+        setMarkup(pane.querySelector('.detail-kpis'), processKpisMarkup(lastProcessStats.get(process.pid)));
+    }
+    // Every process of the session, this one marked: the list to pick from,
+    // named for the session and without the session's tasks.
+    updateProcBlock(pane.querySelector('.block-proc'), session, { title: state.labels.block_session_processes, tasks: false });
+}
+
+// The pane for a selected process: the way back to its session, the session's
+// processes to pick from, then the picked one - its name, figures and how it
+// was started. Picking another changes only what is below the list.
+function buildProcessPane(pane) {
+    buildPane(pane, ['procinfo']);
+    const list = document.createElement('div');
+    list.className = 'detail-blocks';
+    list.innerHTML = '<section' + attr('class', 'block block-proc wide')
+        + ' hidden><div class="block-head"><span class="block-title"></span><span class="block-note"></span><span class="block-tools"></span></div>'
+        + '<div class="block-body"></div></section>';
+    const crumb = document.createElement('div');
+    crumb.className = 'detail-crumb-slot';
+    const head = pane.querySelector('.detail-head');
+    pane.insertBefore(crumb, head);
+    pane.insertBefore(list, head);
+}
+
+function processCrumbMarkup(session) {
+    return '<div class="detail-crumb"><button type="button" class="crumb-link" data-action="agent-session">'
+        + esc('← ' + (session.name || '')) + '</button></div>';
+}
+
+/* How a selected process was started - asked once per process while it runs,
+   and kept, so one that ended still shows it. */
+const PROCESS_INFO_KEPT = 50;
+const processInfo = { byKey: new Map(), pending: new Set() };
+
+function processInfoKey(session, pid) {
+    return rowKey(session) + '/' + pid;
+}
+
+function requestProcessInfo(session, process) {
+    const key = processInfoKey(session, process.pid);
+    if (process.ended || processInfo.byKey.has(key) || processInfo.pending.has(key)) {
+        return;
+    }
+    processInfo.pending.add(key);
+    callProcessDetails(Number(session.pid), process.pid, session.origin || 'local').then((details) => {
+        processInfo.pending.delete(key);
+        processInfo.byKey.set(key, details);
+        while (processInfo.byKey.size > PROCESS_INFO_KEPT) {
+            processInfo.byKey.delete(processInfo.byKey.keys().next().value);
+        }
+        if (state.selectedProcess === process.pid && rowKey(session) === state.selectedKey) {
+            renderDetail();
+        }
+    });
+}
+
+async function callProcessDetails(pid, childPid, origin) {
+    const bridge = apiBridge();
+    if (bridge && typeof bridge.get_process_details === 'function') {
+        try {
+            return (await bridge.get_process_details(pid, childPid, origin)) || null;
+        } catch (e) {
+            return null;
+        }
+    }
+    const mock = window.__MOCK_PROCESS_DETAILS__;
+    return (mock && mock[childPid]) || null;
+}
+
+// The command line, program, working directory, start and threads, each only
+// when the system told it.
+function processInfoMarkup(details) {
+    if (!details) {
+        return '';
+    }
+    const labels = state.labels;
+    const command = logic.commandLineText(details.command_line);
+    let kv = kvRow(labels.process_command_line, command
+        ? '<span class="mono command-line">' + esc(command) + '</span>'
+            + (details.command_line_clipped ? ' <span class="line-sub">' + esc(labels.process_command_clipped || '') + '</span>' : '')
+        : '');
+    kv += kvRow(labels.process_executable, details.executable ? '<span class="mono">' + esc(details.executable) + '</span>' : '');
+    kv += kvRow(labels.process_cwd, details.cwd ? '<span class="mono">' + esc(details.cwd) + '</span>' : '');
+    kv += kvRow(labels.process_started, Number.isFinite(details.started_at) ? esc(fmtDateTime(details.started_at * 1000)) : '');
+    kv += kvRow(labels.process_threads, Number.isInteger(details.threads) ? esc(details.threads) : '');
+    return kv ? '<div class="kv">' + kv + '</div>' : '';
 }
 
 function processHeadMarkup(session, process) {
     const labels = state.labels;
-    const parent = process.parent ? (session.process_list || []).find((item) => item.pid === process.parent) : null;
+    const parent = process.parent ? sessionProcesses(session).find((item) => item.pid === process.parent) : null;
     const parentMarkup = parent
         ? '<button type="button" class="crumb-link"' + attr('data-action', 'process-parent') + attr('data-process', parent.pid) + '>'
             + esc(parent.name + ' ' + parent.pid) + '</button>'
         : '<button type="button" class="crumb-link" data-action="agent-session">' + esc(session.name || '') + '</button>';
-    return '<div class="detail-crumb"><button type="button" class="crumb-link" data-action="agent-session">'
-        + esc('← ' + (session.name || '')) + '</button></div>'
-        + '<h2 class="detail-title">' + esc(process.name) + '</h2>'
-        + '<div class="detail-status"><span class="chip status-working"><i></i><span class="chip-label">'
-        + esc(labels.agent_running || '') + '</span></span></div>'
+    return '<h2 class="detail-title">' + esc(process.name) + '</h2>'
+        + '<div class="detail-status"><span' + attr('class', 'chip ' + (process.ended ? 'status-completed' : 'status-working'))
+        + '><i></i><span class="chip-label">' + esc((process.ended ? labels.process_ended : labels.agent_running) || '') + '</span></span></div>'
         + '<div class="detail-facts">'
         + fact(labels.fact_pid || 'PID', esc(process.pid))
         + fact(labels.fact_parent_process, parentMarkup)
-        + '</div>';
+        + '</div>'
+        + (process.ended ? '<div class="line-sub">' + esc((lastProcessStats.has(process.pid)
+            ? labels.process_ended_measured : labels.process_ended_unmeasured) || '') + '</div>' : '');
 }
 
 // The selected process's CPU, memory and uptime from the process table's
-// latest sample; called by that table on every tick.
+// latest sample; called by that table on every tick. Every sample is kept, so
+// a process selected only after it ended still shows its last one.
 function updateProcessKpis(stats) {
+    const now = Date.now();
+    const latest = new Map();
+    for (const stat of stats) {
+        if (Number.isInteger(stat.pid)) {
+            latest.set(stat.pid, stat);
+            lastProcessSampledAt.set(stat.pid, now);
+        }
+    }
+    // A process leaves the table up to a snapshot before the graph learns that
+    // it ended, so a missing one keeps its sample for as long as the graph can
+    // still show it - and while it is listed as ended or selected.
+    const keepMs = (logic.PROCESS_LINGER_SECONDS + 2 * logic.PROCESS_FADE_SECONDS) * 1000;
+    const wanted = new Set(endedProcessesOf(state.selectedKey).map((process) => process.pid).concat([state.selectedProcess]));
+    for (const [pid, stat] of lastProcessStats) {
+        if (!latest.has(pid) && (wanted.has(pid) || now - (lastProcessSampledAt.get(pid) || 0) < keepMs)) {
+            latest.set(pid, stat);
+        }
+    }
+    for (const pid of lastProcessSampledAt.keys()) {
+        if (!latest.has(pid)) {
+            lastProcessSampledAt.delete(pid);
+        }
+    }
+    lastProcessStats = latest;
+
     const pane = document.getElementById('detail');
     if (!pane || !pane.__processShell || state.selectedProcess === null) {
         return;
     }
+    setMarkup(pane.querySelector('.detail-kpis'), processKpisMarkup(latest.get(state.selectedProcess)));
+}
+
+// A process's CPU, memory and uptime from one sample, or nothing without one.
+function processKpisMarkup(stat) {
+    if (!stat) {
+        return '';
+    }
     const labels = state.labels;
-    const stat = stats.find((item) => item.pid === state.selectedProcess);
-    const kpis = stat
-        ? kpiMarkup(labels.proc_col_cpu, esc(formatCpu(stat.cpu)), '')
-            + kpiMarkup(labels.proc_col_memory, esc(formatBytes(stat.rss)), '')
-            + kpiMarkup(labels.proc_col_uptime, esc(formatDurationShort(stat.uptime)), '')
-        : '';
-    setMarkup(pane.querySelector('.detail-kpis'), kpis);
+    return kpiMarkup(labels.proc_col_cpu, esc(formatCpu(stat.cpu)), '')
+        + kpiMarkup(labels.proc_col_memory, esc(formatBytes(stat.rss)), '')
+        + kpiMarkup(labels.proc_col_uptime, esc(formatDurationShort(stat.uptime)), '');
 }
 
 /* --- a subagent's steps: every tool call with its request and result --- */

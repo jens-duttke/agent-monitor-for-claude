@@ -68,6 +68,35 @@ const ANSI_FG = {
     94: 'ansi-bright-blue', 95: 'ansi-bright-magenta', 96: 'ansi-bright-cyan', 97: 'ansi-bright-white',
 };
 
+// The class each kind of unified-diff line gets, by its first character.
+const DIFF_LINE_CLASSES = new Map([['+', 'diff-add'], ['-', 'diff-del'], [' ', 'diff-ctx'], ['@', 'diff-hunk'], ['\\', 'diff-meta']]);
+
+// Render one file's unified diff as safe HTML, one line per element: the file
+// header up to the first hunk is left out (the block names the file), except
+// git's note on a binary file. Every line goes through `esc`; the only markup
+// is a fixed class per kind of line.
+function diffToHtml(value) {
+    const lines = String(value == null ? '' : value).split('\n');
+    if (lines.length > 0 && lines[lines.length - 1] === '') {
+        lines.pop();
+    }
+    let html = '';
+    let inHunk = false;
+    for (const line of lines) {
+        if (line.startsWith('@@')) {
+            inHunk = true;
+        }
+        if (!inHunk) {
+            if (line.startsWith('Binary files')) {
+                html += '<div class="diff-line diff-meta">' + esc(line) + '</div>';
+            }
+            continue;
+        }
+        html += '<div' + attr('class', 'diff-line ' + (DIFF_LINE_CLASSES.get(line.charAt(0)) || 'diff-ctx')) + '>' + esc(line) + '</div>';
+    }
+    return html;
+}
+
 // Render a background task's output as safe HTML: escape every text run, turn
 // ANSI SGR color codes into themed spans, and drop the other control sequences
 // a non-emulating console cannot honor (cursor moves, line erases). This is the
@@ -812,6 +841,12 @@ function sessionSignals(session, labels) {
         }
     };
 
+    // First: whether the work is committed and on the remote - the status chip
+    // already says that something runs, the figures below say how much.
+    const git = gitSignal(session.git, strings);
+    if (git) {
+        signals.push(git);
+    }
     if (session.processes > 0) {
         push('processes', 'work', fmt(strings.signal_processes, { count: session.processes }));
     }
@@ -820,14 +855,8 @@ function sessionSignals(session, labels) {
     } else if (session.subagents_running > 0) {
         push('agents', 'background', fmt(strings.signal_agents, { count: session.subagents_running }));
     }
-    if (session.context_warn) {
-        push('context', 'warn', fmt(strings.signal_context, { percent: Math.round(session.context.ratio * 100) }));
-    }
     if (session.budget && session.budget.ratio >= NEAR_LIMIT_RATIO) {
         push('budget', 'warn', fmt(strings.signal_budget, { percent: Math.round(session.budget.ratio * 100) }));
-    }
-    if (session.cache_warn) {
-        push('cache', 'warn', fmt(strings.signal_cache, { cost: formatCost(session.cache.rewrite_usd) }));
     }
     if (session.auto_paused) {
         push('auto-paused', 'warn', strings.signal_auto_paused);
@@ -835,14 +864,90 @@ function sessionSignals(session, labels) {
     if (session.cli_update) {
         push('update', 'plain', fmt(strings.signal_update, { version: session.cli_update.available }));
     }
-    const hookErrors = (session.hook_errors || []).reduce((sum, error) => sum + error.count, 0);
-    if (hookErrors > 0) {
-        push('hooks', 'warn', fmt(strings.signal_hook_errors, { count: hookErrors }));
-    }
     if (session.queued > 0) {
         push('queued', 'plain', fmt(strings.signal_queued, { count: session.queued }));
     }
     return signals;
+}
+
+/* --- where the work stands in git ---
+
+   A session's directory as git reports it (git_overview.py): uncommitted
+   files, commits not pushed, and whether the branch is on the remote or
+   already merged - as of the repository's last fetch, which the tooltip names. */
+
+// The key a session's git state is kept under: one per directory and root.
+function gitDirKey(session) {
+    const directory = session.worktree_cwd || session.cwd || '';
+    return directory ? (session.origin || 'local') + '\n' + directory : '';
+}
+
+// Whether a git record says the branch's work reached the default branch:
+// no commit of its own is missing there, or its changes are (a squash merge).
+function gitMerged(git) {
+    return git.unmerged === 0 || git.changes_in_default === true;
+}
+
+// One signal for what is not finished: uncommitted files, commits not pushed,
+// a branch only on this machine, or one deleted on the remote. A branch that
+// was merged and deleted says so calmly; everything settled says nothing.
+function gitSignal(git, labels) {
+    if (!git || typeof git !== 'object') {
+        return null;
+    }
+    const strings = labels || {};
+    const count = (value) => (Number.isInteger(value) && value > 0 ? value : 0);
+    const parts = [];
+    let unfinished = false;
+
+    const dirty = count(git.changed) + count(git.untracked);
+    if (dirty > 0) {
+        parts.push(fmt(strings.git_uncommitted, { count: dirty }));
+        unfinished = true;
+    }
+    if (git.on_remote && count(git.ahead) > 0) {
+        parts.push(fmt(strings.git_unpushed, { count: git.ahead }));
+        unfinished = true;
+    }
+    const ownBranch = !git.detached && git.branch && git.branch !== git.default_branch;
+    if (ownBranch && !git.on_remote) {
+        if (git.upstream_gone) {
+            const merged = gitMerged(git);
+            parts.push(merged ? strings.git_merged : strings.git_gone);
+            unfinished = unfinished || !merged;
+        } else if (count(git.unmerged) > 0) {
+            parts.push(fmt(strings.git_local_only, { count: git.unmerged }));
+            unfinished = true;
+        }
+    }
+    const text = parts.filter(Boolean).join(' · ');
+    if (!text) {
+        return null;
+    }
+    return { kind: 'git', tone: unfinished ? 'warn' : 'plain', text: text, tip: gitTip(git, strings) };
+}
+
+// The lines behind the signal: the branch and its remote, the files, how far
+// it is from the default branch, and how old the remote's picture is.
+function gitTip(git, strings) {
+    const lines = [];
+    if (git.branch) {
+        lines.push(fmt(strings.git_tip_branch, { branch: git.branch })
+            + (git.upstream ? ' → ' + git.upstream : ''));
+    }
+    if (Number.isInteger(git.changed) && Number.isInteger(git.untracked) && git.changed + git.untracked > 0) {
+        lines.push(fmt(strings.git_tip_files, { changed: git.changed, untracked: git.untracked }));
+        // Git cannot tell which session made a change: every session in this checkout counts all of them.
+        lines.push(strings.git_tip_shared);
+    }
+    if (git.default_branch && Number.isInteger(git.unmerged) && git.unmerged > 0) {
+        lines.push(git.changes_in_default === true
+            ? fmt(strings.git_tip_squashed, { branch: git.default_branch })
+            : fmt(strings.git_tip_unmerged, { branch: git.default_branch, count: git.unmerged }));
+    }
+    const age = finiteOrNull(git.fetched_seconds);
+    lines.push(age === null ? strings.git_tip_never_fetched : fmt(strings.git_tip_fetched, { age: formatAge(Math.max(0, age), strings) }));
+    return lines.filter(Boolean).join('\n');
 }
 
 /* --- search over what the list already shows ---
@@ -2627,6 +2732,54 @@ function pullRequestUrl(url) {
     return url;
 }
 
+// The address of a branch on the web, from the repository's web address
+// (git_overview.py reduces the remote to its host and path) and the kind
+// of forge it is - read from the host's name, else from the shape of a pull
+// request address on the same host. '' when the forge is not one of these.
+const REPOSITORY_WEB_URL = /^https:\/\/[A-Za-z0-9.-]+(\/[A-Za-z0-9._~+-]+){2,}$/;
+const FORGE_BRANCH_PATHS = new Map([
+    ['github', '/tree/'], ['gitlab', '/-/tree/'], ['bitbucket', '/src/'], ['gitea', '/src/branch/'],
+]);
+
+function branchWebUrl(repositoryUrl, branch, pullRequestUrls) {
+    if (typeof repositoryUrl !== 'string' || !REPOSITORY_WEB_URL.test(repositoryUrl) || typeof branch !== 'string' || !branch) {
+        return '';
+    }
+    const forge = forgeOf(repositoryUrl, pullRequestUrls);
+    if (!forge) {
+        return '';
+    }
+    const encoded = branch.split('/').map((segment) => encodeURIComponent(segment)).join('/');
+    return repositoryUrl + FORGE_BRANCH_PATHS.get(forge) + encoded;
+}
+
+function forgeOf(repositoryUrl, pullRequestUrls) {
+    const host = repositoryUrl.split('/')[2].toLowerCase();
+    for (const name of ['github', 'gitlab', 'bitbucket']) {
+        if (host.includes(name)) {
+            return name;
+        }
+    }
+    if (host.includes('gitea') || host.includes('forgejo') || host === 'codeberg.org') {
+        return 'gitea';
+    }
+    for (const url of Array.isArray(pullRequestUrls) ? pullRequestUrls : []) {
+        if (typeof url !== 'string' || pullRequestUrl(url) === null || url.split('/')[2].toLowerCase() !== host) {
+            continue;
+        }
+        if (url.includes('/-/merge_requests/')) {
+            return 'gitlab';
+        }
+        if (url.includes('/pull-requests/')) {
+            return 'bitbucket';
+        }
+        if (url.includes('/pull/')) {
+            return 'github';
+        }
+    }
+    return '';
+}
+
 // The pull requests Claude Code linked to the session, newest first.
 function pullRequestsOf(raw) {
     const result = [];
@@ -3391,6 +3544,116 @@ function processesOf(raw) {
     return result;
 }
 
+// How long a background process stays in the graph after it ended, so one that
+// ran for a moment can still be seen and selected, and how long it then takes
+// to fade out.
+const PROCESS_LINGER_SECONDS = 60;
+const PROCESS_FADE_SECONDS = 5;
+
+// The processes that ended lately, per session: a pure step from the previous
+// tracker and the sessions now listed (`{key, processes}`) to the next one. A
+// process the last snapshot listed and this one does not ended now; one that
+// is listed again (a reused pid) is live, not ended. An ended process starts to
+// fade PROCESS_LINGER_SECONDS later (`fade_at`) and is gone PROCESS_FADE_SECONDS
+// after that. While `keep(key, pid)` says so (the selected one) its fade keeps
+// moving ahead, so it fades out in full once let go. A session no longer
+// listed takes its processes with it.
+function trackEndedProcesses(tracker, entries, nowMs, keep = () => false) {
+    const previousLive = tracker && tracker.live instanceof Map ? tracker.live : new Map();
+    const previousEnded = tracker && tracker.ended instanceof Map ? tracker.ended : new Map();
+    const live = new Map();
+    const ended = new Map();
+    for (const { key, processes } of entries) {
+        const current = Array.isArray(processes) ? processes : [];
+        const livePids = new Set(current.map((process) => process.pid));
+        const kept = [];
+        for (const process of previousEnded.get(key) || []) {
+            if (livePids.has(process.pid)) {
+                continue;
+            }
+            // Kept a fade's length ahead, so letting go never cuts a fade short
+            // between two renders.
+            const fadeAt = keep(key, process.pid) ? Math.max(process.fade_at, nowMs + PROCESS_FADE_SECONDS * 1000) : process.fade_at;
+            if (nowMs <= fadeAt + PROCESS_FADE_SECONDS * 1000) {
+                kept.push(Object.assign({}, process, { fade_at: fadeAt }));
+            }
+        }
+        const endedPids = new Set(kept.map((process) => process.pid));
+        for (const process of previousLive.get(key) || []) {
+            if (!livePids.has(process.pid) && !endedPids.has(process.pid)) {
+                kept.push({ pid: process.pid, parent: process.parent, name: process.name, ended_at: nowMs,
+                    fade_at: nowMs + PROCESS_LINGER_SECONDS * 1000 });
+            }
+        }
+        live.set(key, current);
+        if (kept.length > 0) {
+            ended.set(key, kept);
+        }
+    }
+    return { live: live, ended: ended };
+}
+
+// A process's arguments as one line to read and copy: an argument that is
+// empty or holds a space, a tab or a quote is put in double quotes, with its
+// own quotes and the backslashes before them escaped. Not a list: null.
+function commandLineText(args) {
+    if (!Array.isArray(args)) {
+        return null;
+    }
+    return args.map((arg) => {
+        const text = String(arg);
+        if (text !== '' && !/[\s"]/.test(text)) {
+            return text;
+        }
+        return '"' + text.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"';
+    }).join(' ');
+}
+
+// The images get_session_media listed, checked: an id the reader can find
+// again, a format the page shows, and the rest as plain values.
+const MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+function mediaItemsOf(result) {
+    const items = [];
+    for (const item of result && Array.isArray(result.images) ? result.images : []) {
+        if (!item || typeof item.id !== 'string' || !/^\d+\.\d+$/.test(item.id) || !MEDIA_TYPES.has(item.media_type)) {
+            continue;
+        }
+        items.push({
+            id: item.id, media_type: item.media_type, at: finiteOrNull(item.at),
+            origin: item.origin === 'pasted' ? 'pasted' : 'tool',
+            tool: typeof item.tool === 'string' ? item.tool : '', path: typeof item.path === 'string' ? item.path : '',
+            bytes: Number.isInteger(item.bytes) && item.bytes > 0 ? item.bytes : 0,
+        });
+    }
+    return items;
+}
+
+// Where an image came from, in words: pasted into a prompt, a file a Read
+// opened, a browser screenshot, or the tool that returned it.
+function mediaCaption(item, labels) {
+    const strings = labels || {};
+    if (item.origin === 'pasted') {
+        return strings.media_pasted || '';
+    }
+    if (item.tool === 'Read') {
+        return fmt(strings.media_read, { name: lastPathSegment(item.path) || item.path });
+    }
+    if (/screenshot|computer|browser/i.test(item.tool)) {
+        return strings.media_screenshot || '';
+    }
+    return toolDisplayName(item.tool);
+}
+
+// The data: address of one image's base64 data, or '' for anything that is
+// not one of the shown formats with real base64.
+function mediaDataUrl(mediaType, data) {
+    if (!MEDIA_TYPES.has(mediaType) || typeof data !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) {
+        return '';
+    }
+    return 'data:' + mediaType + ';base64,' + data;
+}
+
 // The model that wrote most of a usage-by-model map's output, or null.
 function mainModel(usageByModel) {
     let best = null;
@@ -3502,6 +3765,7 @@ function graphModel(entries, maxAgeSeconds = null, focus = null, collapsed = nul
             edge.age_seconds = ageSeconds;
         }
         edges.set(id, edge);
+        return edge;
     };
     // The tools a session or a subagent called within the window, each a node of
     // its own under that caller (one per MCP server), carrying the calls - drawn
@@ -3551,12 +3815,14 @@ function graphModel(entries, maxAgeSeconds = null, focus = null, collapsed = nul
         return match ? match[1] : null;
     };
 
-    for (const { key, session } of entries) {
+    for (const { key, session, ended } of entries) {
         const sessionNode = 's:' + key;
         // Numbered over every listed agent, so a number stays the same whatever
         // the window shows; drawn top to bottom in the order they started.
         const listedAgents = agentsInWindow(agentsByStart(session.agents || []), maxAgeSeconds);
-        const processes = session.process_list || [];
+        const liveProcesses = session.process_list || [];
+        const endedProcesses = (Array.isArray(ended) ? ended : []).map((process) => Object.assign({}, process, { ended: true }));
+        const processes = liveProcesses.concat(endedProcesses);
         const below = listedAgents.length + (processes.length || session.processes || 0);
         const folded = Boolean(collapsed && session.session_id && collapsed.has(session.session_id));
         Object.assign(byId.get(sessionNode), { sessionId: session.session_id || '', below: below, collapsed: folded });
@@ -3588,21 +3854,23 @@ function graphModel(entries, maxAgeSeconds = null, focus = null, collapsed = nul
         }
 
         // The background processes the session's tools started, each under the
-        // process that started it; only a count when the list is unknown.
+        // process that started it, and the ones that ended lately, dimmed; only
+        // a count when the list is unknown.
         const listed = new Set(processes.map((process) => process.pid));
         for (const process of folded ? [] : processes) {
             const processNode = sessionNode + '/p:' + process.pid;
+            const fadeIn = process.ended ? finiteOrNull(process.fade_in) : null;
             const parent = process.parent && listed.has(process.parent) && process.parent !== process.pid ? sessionNode + '/p:' + process.parent : sessionNode;
             addNode({
                 id: processNode, kind: 'process', key: key, process: process.pid, label: process.name,
-                parent: parent, root: sessionNode, running: true,
+                parent: parent, root: sessionNode, running: !process.ended, ended: Boolean(process.ended), fade_in: fadeIn,
             });
-            addEdge(parent, processNode, 'spawn', 0, true);
+            addEdge(parent, processNode, process.ended ? 'ended' : 'spawn', 0, !process.ended).fade_in = fadeIn;
         }
         if (!folded) {
             addToolNodes(sessionNode, session.tools, key, null, sessionNode);
         }
-        if (!folded && processes.length === 0 && session.processes > 0) {
+        if (!folded && liveProcesses.length === 0 && session.processes > 0) {
             const processNode = sessionNode + '/p';
             addNode({ id: processNode, kind: 'process', count: session.processes, parent: sessionNode, root: sessionNode, running: true });
             addEdge(sessionNode, processNode, 'spawn', 0, true);
@@ -3746,6 +4014,18 @@ function graphToggleMarkup(node) {
         + '<text' + attr('x', 11) + attr('y', GRAPH_NODE_H / 2 + 4) + ' text-anchor="middle">' + (node.collapsed ? '▸' : '▾') + '</text></g>';
 }
 
+// Fades `attribute` from full to nothing over PROCESS_FADE_SECONDS, starting
+// `fadeIn` seconds from now (negative: already under way). A graph is drawn
+// afresh on every render, and the start is counted from that drawing, so a fade
+// carries on where the last one stood instead of starting over.
+function graphFadeMarkup(attribute, fadeIn) {
+    if (fadeIn === null || fadeIn === undefined || !Number.isFinite(fadeIn)) {
+        return '';
+    }
+    return '<animate' + attr('attributeName', attribute) + attr('from', 1) + attr('to', 0)
+        + attr('begin', Math.round(fadeIn * 10) / 10 + 's') + attr('dur', PROCESS_FADE_SECONDS + 's') + attr('fill', 'freeze') + '></animate>';
+}
+
 function clipLabel(text, max) {
     const value = typeof text === 'string' ? text : '';
     return value.length > max ? value.slice(0, max - 1) + '…' : value;
@@ -3761,6 +4041,11 @@ function graphMarkup(layout, labels, selection) {
     const selected = selection && typeof selection === 'object' ? selection : { key: selection, agent: null };
     const width = Math.max(layout.width, 1);
     const height = Math.max(layout.height, 1);
+    // A node is selected when everything it names matches the selection: its
+    // session, and its subagent, process or tool, or none of them.
+    const isSelected = (node) => Boolean(node.key) && node.key === selected.key && (node.agent || null) === (selected.agent || null)
+        && (node.process || null) === (selected.process || null) && (node.tool || null) === (selected.tool || null);
+    const selectedIds = new Set(layout.nodes.filter(isSelected).map((node) => node.id));
     let edgesHtml = '';
     let dotsHtml = '';
     layout.edges.forEach((edge, index) => {
@@ -3772,7 +4057,9 @@ function graphMarkup(layout, labels, selection) {
             tip = fmt(strings.graph_tool_calls, { count: edge.count });
         }
         edgesHtml += '<path' + attr('id', id) + attr('class', 'edge edge-' + edge.kind + (edge.active ? ' active' : ''))
-            + attr('d', edge.path) + (tip ? attr('data-tip', tip) : '') + '></path>';
+            + attr('d', edge.path) + (tip ? attr('data-tip', tip) : '') + '>'
+            // The edge to a selected process stays with its node.
+            + (selectedIds.has(edge.to) ? '' : graphFadeMarkup('stroke-opacity', edge.fade_in)) + '</path>';
         if (edge.active) {
             for (const delay of [0, 0.9]) {
                 dotsHtml += '<circle' + attr('class', 'dot dot-' + edge.kind) + ' r="3">'
@@ -3796,7 +4083,7 @@ function graphMarkup(layout, labels, selection) {
         if (node.kind === 'agent') {
             sub = agentFacts(node, strings).join(' · ');
         } else if (node.kind === 'process' && node.process) {
-            sub = (strings.fact_pid || 'PID') + ' ' + node.process;
+            sub = (node.ended ? (strings.process_ended || '') + ' · ' : '') + (strings.fact_pid || 'PID') + ' ' + node.process;
         } else if (node.kind === 'session' && node.collapsed && node.below > 0) {
             sub = fmt(strings.graph_hidden, { count: node.below });
         } else if (node.kind === 'peer') {
@@ -3805,27 +4092,30 @@ function graphMarkup(layout, labels, selection) {
             sub = (node.mcp ? (strings.graph_mcp || '') + ' · ' : '') + fmt(strings.graph_tool_calls, { count: node.calls })
                 + (node.failed > 0 ? ' · ' + fmt(strings.graph_tool_failed, { count: node.failed }) : '');
         }
-        // The tooltip only completes a title the box cut short.
+        // The tooltip only completes a title the box cut short: the page drops
+        // it once the label turns out to fit (render.js fitGraphText).
         const tip = node.kind === 'workflow' ? '' : label;
-        // A node is selected when everything it names matches the selection: its
-        // session, and its subagent, process or tool, or none of them.
-        const isSelected = Boolean(node.key) && node.key === selected.key && (node.agent || null) === (selected.agent || null)
-            && (node.process || null) === (selected.process || null) && (node.tool || null) === (selected.tool || null);
+        const nodeSelected = selectedIds.has(node.id);
+        // A selected process is kept, so it does not fade while you look at it.
+        const fading = !nodeSelected && node.fade_in !== null && node.fade_in !== undefined;
         const classes = 'gnode gnode-' + node.kind
             + (node.kind === 'session' ? ' status-' + node.status : '')
             + (node.running ? ' running' : '')
+            + (node.ended ? ' ended' : '')
             + (node.failed > 0 ? ' failed' : '')
-            + (isSelected ? ' selected' : '');
+            + (nodeSelected ? ' selected' : '');
         nodesHtml += '<g' + attr('class', classes) + attr('transform', 'translate(' + node.x + ' ' + node.y + ')')
             + (node.key ? attr('data-key', node.key) : '') + (node.agent ? attr('data-agent', node.agent) : '')
             + (node.process ? attr('data-process', node.process) : '')
             + (node.kind === 'tool' ? attr('data-tool', node.tool) : '')
             + (tip ? attr('data-tip', tip) : '') + '>'
+            + (fading ? '<g>' + graphFadeMarkup('opacity', node.fade_in) : '')
             + '<rect' + attr('width', GRAPH_NODE_W) + attr('height', GRAPH_NODE_H) + ' rx="7"></rect>'
             + '<circle class="gnode-dot" cx="13"' + attr('cy', GRAPH_NODE_H / 2) + ' r="4"></circle>'
             + '<text class="gnode-label"' + attr('x', GRAPH_TEXT_X) + attr('y', sub ? 16 : GRAPH_NODE_H / 2 + 4) + '>' + esc(clipLabel(label, GRAPH_LABEL_MAX)) + '</text>'
             + (sub ? '<text class="gnode-sub"' + attr('x', GRAPH_TEXT_X) + ' y="29">' + esc(clipLabel(sub, GRAPH_LABEL_MAX)) + '</text>' : '')
             + (node.kind === 'session' && node.below > 0 && node.sessionId ? graphToggleMarkup(node) : '')
+            + (fading ? '</g>' : '')
             + '</g>';
     }
     return '<svg class="graph"' + attr('viewBox', '0 0 ' + width + ' ' + height) + attr('width', width) + attr('height', height)
@@ -4010,6 +4300,7 @@ const AMC_LOGIC = {
     esc,
     attr,
     ansiToHtml,
+    diffToHtml,
     classify,
     deriveStatus,
     refineWithNative,
@@ -4038,6 +4329,9 @@ const AMC_LOGIC = {
     defaultFilterKeys,
     LIST_SECTIONS,
     LIST_SIGNAL_LIMIT,
+    gitDirKey,
+    branchWebUrl,
+    gitSignal,
     sectionOf,
     sectionActive,
     toggledSectionKeys,
@@ -4129,6 +4423,13 @@ const AMC_LOGIC = {
     agentsOf,
     finiteOrNull,
     processesOf,
+    PROCESS_LINGER_SECONDS,
+    PROCESS_FADE_SECONDS,
+    trackEndedProcesses,
+    commandLineText,
+    mediaItemsOf,
+    mediaCaption,
+    mediaDataUrl,
     toolsOf,
     toolNodeKey,
     toolNodeLabel,

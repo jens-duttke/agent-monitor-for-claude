@@ -98,5 +98,50 @@ class GitStatusTest(unittest.TestCase):
                 self.assertIsNone(gmod.git_status(directory))
 
 
+
+class GitDiffTest(unittest.TestCase):
+    def test_a_path_that_leaves_the_repository_is_refused_before_git_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(gmod, '_git') as git:
+            for path in ('', '../outside.txt', 'a/../../outside.txt', '/etc/passwd', '\\server\\share\\x', 'C:/x.txt',
+                         'a//b', 'a/', 'nul\0byte', 42, None):
+                self.assertIsNone(gmod.git_diff(directory, path), path)
+            git.assert_not_called()
+
+    def test_a_long_diff_is_cut_at_a_line_end(self) -> None:
+        with mock.patch.object(gmod, '_MAX_DIFF_BYTES', 10):
+            self.assertEqual(gmod._clip_diff('+one\n+two\n+three\n'), ('+one\n+two\n', True))
+            self.assertEqual(gmod._clip_diff('+one\n'), ('+one\n', False))
+
+    @unittest.skipIf(gmod._git_executable() is None, 'git is not installed')
+    def test_a_real_repository_shows_a_changed_and_an_untracked_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            def git(*args: str) -> None:
+                subprocess.run(['git', '-C', directory, *args], check=True, capture_output=True,
+                               env=dict(os.environ, GIT_AUTHOR_NAME='t', GIT_AUTHOR_EMAIL='t@t', GIT_COMMITTER_NAME='t', GIT_COMMITTER_EMAIL='t@t'))
+
+            git('init', '-q')
+            (Path(directory) / 'src').mkdir()
+            tracked = Path(directory) / 'src' / 'tracked.txt'
+            tracked.write_text('one\ntwo\n', encoding='utf-8')
+            (Path(directory) / 'same.txt').write_text('same\n', encoding='utf-8')
+            git('add', '.')
+            git('commit', '-q', '-m', 'first')
+            tracked.write_text('one\nthree\n', encoding='utf-8')
+            (Path(directory) / 'new [1].txt').write_text('fresh\nlines\n', encoding='utf-8')
+
+            # Asked from a subdirectory: the path is still relative to the top level.
+            changed = gmod.git_diff(str(Path(directory) / 'src'), 'src/tracked.txt')
+            untracked = gmod.git_diff(directory, 'new [1].txt')
+            unchanged = gmod.git_diff(directory, 'same.txt')
+
+        self.assertIsNotNone(changed)
+        self.assertIn('-two\n+three', changed['diff'])
+        self.assertFalse(changed['truncated'])
+        self.assertIsNotNone(untracked)
+        self.assertIn('+fresh\n+lines', untracked['diff'])
+        # A file without changes has no diff - it is not shown as new.
+        self.assertEqual(unchanged, {'path': 'same.txt', 'diff': '', 'truncated': False})
+
+
 if __name__ == '__main__':
     unittest.main()

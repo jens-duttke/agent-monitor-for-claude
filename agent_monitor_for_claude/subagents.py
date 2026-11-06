@@ -46,10 +46,10 @@ from typing import Any
 
 from .paths import SessionRoot, cwd_to_slug, projects_dir
 from .settings import SUBAGENT_RECENT_SECONDS
-from .transcript import agent_steps, final_reply, usage_scan, usage_scan_once
+from .transcript import agent_steps, final_reply, media_image, media_index, usage_scan, usage_scan_once
 from .usage_parts import UsageScan, merge_scans
 
-__all__ = ['AgentNode', 'SubagentInfo', 'WorkflowActivity', 'agent_texts', 'count_subagents', 'past_subagent_usage']
+__all__ = ['AgentNode', 'SubagentInfo', 'WorkflowActivity', 'agent_media', 'agent_media_image', 'agent_texts', 'count_subagents', 'past_subagent_usage']
 
 _SUBAGENT_TAIL_BYTES = 65536
 
@@ -281,6 +281,27 @@ def agent_texts(root: SessionRoot, session_id: str, agent_id: str) -> dict[str, 
         return None
 
     return {'task': _first_prompt(path) or '', 'result': final_reply(path) or '', 'steps': agent_steps(path)}
+
+
+def agent_media(root: SessionRoot, session_id: str, agent_id: str) -> dict[str, Any] | None:
+    """Return the images in one of the session's subagents' transcript, newest first, or None when it cannot be found.
+
+    Found and confined like :func:`agent_texts`; read on request, for the agent the details show.
+    """
+    path = _agent_file(root, session_id, agent_id)
+    if path is None:
+        return None
+
+    return {'images': media_index(path), 'files': []}
+
+
+def agent_media_image(root: SessionRoot, session_id: str, agent_id: str, media_id: str) -> dict[str, str] | None:
+    """Return one image :func:`agent_media` listed, or None."""
+    path = _agent_file(root, session_id, agent_id)
+    if path is None:
+        return None
+
+    return media_image(path, media_id)
 
 
 def _agent_file(root: SessionRoot, session_id: str, agent_id: str) -> Path | None:

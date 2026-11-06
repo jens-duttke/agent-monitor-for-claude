@@ -153,6 +153,38 @@ class LiveDescendantsTests(unittest.TestCase):
         self.assertIsNotNone(self._descendants(100, None))
 
 
+class ReadProcessDetailsTests(unittest.TestCase):
+    def test_reads_arguments_threads_and_the_start(self) -> None:
+        with tempfile.TemporaryDirectory() as base:
+            pid_dir = Path(base) / '42'
+            pid_dir.mkdir()
+            (pid_dir / 'cmdline').write_bytes(b'python3\0-m\0pytest\0tests dir\0')
+            (pid_dir / 'status').write_text('Name:\tpython3\nThreads:\t7\n', encoding='utf-8')
+
+            details = procfs.read_process_details(Path(base), 42, starttime=500, btime=1_700_000_000, ticks_per_second=100)
+
+        self.assertEqual(details.command_line, ('python3', '-m', 'pytest', 'tests dir'))
+        self.assertFalse(details.command_line_clipped)
+        self.assertEqual(details.threads, 7)
+        self.assertEqual(details.started_at, 1_700_000_005)
+        # No exe or cwd link here, as over the \\wsl.localhost share: each degrades on its own.
+        self.assertIsNone(details.executable)
+        self.assertIsNone(details.cwd)
+
+    def test_a_vanished_process_or_a_kernel_thread_has_no_command_line(self) -> None:
+        with tempfile.TemporaryDirectory() as base:
+            (Path(base) / '7').mkdir()
+            (Path(base) / '7' / 'cmdline').write_bytes(b'')
+
+            kernel_thread = procfs.read_process_details(Path(base), 7, starttime=0, btime=None, ticks_per_second=100)
+            gone = procfs.read_process_details(Path(base), 8, starttime=0, btime=None, ticks_per_second=100)
+
+        for details in (kernel_thread, gone):
+            self.assertIsNone(details.command_line)
+            self.assertIsNone(details.threads)
+            self.assertIsNone(details.started_at)
+
+
 class BootTimeTests(unittest.TestCase):
     def test_reads_the_btime_line(self) -> None:
         with tempfile.TemporaryDirectory() as base:

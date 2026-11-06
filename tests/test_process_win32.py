@@ -12,14 +12,18 @@ import sys
 import time
 import unittest
 from datetime import datetime, timedelta
+from typing import Any
+from unittest import mock
 
 import psutil
 
 _WINDOWS_ONLY = unittest.skipUnless(sys.platform == 'win32', 'Windows process backend')
+_MODULE = 'agent_monitor_for_claude.platforms.process_win32'
 
 if sys.platform == 'win32':
     from agent_monitor_for_claude.platforms.process_win32 import (
         TERMINAL_WINDOW_OWNERS,
+        process_details,
         process_stats,
         _classify_ancestry,
         _is_child_link_real,
@@ -286,6 +290,49 @@ class ProcessStatsTest(unittest.TestCase):
         cpu, rss = _sample_process(pid, create_time)
         self.assertIsInstance(cpu, float)
         self.assertGreaterEqual(cpu, 0.0)
+
+
+@_WINDOWS_ONLY
+class ProcessDetailsTest(unittest.TestCase):
+    """A command line is read only for a process the session's own panel lists, and only for that very process."""
+
+    _SESSION = 1000
+
+    def _listing(self, children: list[tuple[int, str]] | None, start_offset: float = 0.0) -> Any:
+        """A stand-in for the session walk that lists *children*, recording each one's start shifted by *start_offset*."""
+        def walk(_pid: int, _ticks: int | None, _table: dict, cache: dict) -> list[tuple[int, str]] | None:
+            for child_pid, _name in children or ():
+                cache[child_pid] = psutil.Process(child_pid).create_time() + start_offset
+            return children
+
+        return walk
+
+    def test_a_listed_process_is_described(self) -> None:
+        own = os.getpid()
+        with mock.patch(f'{_MODULE}._session_children', side_effect=self._listing([(own, 'python.exe')])):
+            details = process_details(self._SESSION, None, own)
+
+        self.assertIsNotNone(details)
+        self.assertEqual(details.pid, own)
+        self.assertTrue(details.command_line)
+        self.assertFalse(details.command_line_clipped)
+        self.assertTrue(details.executable)
+        self.assertGreater(details.threads, 0)
+
+    def test_a_process_the_panel_does_not_list_is_never_read(self) -> None:
+        with mock.patch(f'{_MODULE}._session_children', side_effect=self._listing([])), \
+                mock.patch(f'{_MODULE}.psutil.Process') as handle:
+            self.assertIsNone(process_details(self._SESSION, None, os.getpid()))
+        handle.assert_not_called()
+
+    def test_an_ended_or_recycled_session_reads_nothing(self) -> None:
+        with mock.patch(f'{_MODULE}._session_children', side_effect=self._listing(None)):
+            self.assertIsNone(process_details(self._SESSION, None, os.getpid()))
+
+    def test_a_pid_taken_over_since_the_scan_is_refused(self) -> None:
+        own = os.getpid()
+        with mock.patch(f'{_MODULE}._session_children', side_effect=self._listing([(own, 'python.exe')], start_offset=-60.0)):
+            self.assertIsNone(process_details(self._SESSION, None, own))
 
 
 if __name__ == '__main__':

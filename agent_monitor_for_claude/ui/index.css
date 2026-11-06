@@ -257,7 +257,6 @@ button {
     text-underline-offset: 2px;
 }
 
-.search-key,
 .kbd {
     flex: none;
     padding: 0 5px;
@@ -268,10 +267,6 @@ button {
     font-size: 10.5px;
     line-height: 16px;
     white-space: nowrap;
-}
-
-.search-box:focus-within .search-key {
-    display: none;
 }
 
 .group-switch {
@@ -449,6 +444,8 @@ body.splitter-dragging {
 .content {
     min-height: 0;
     overflow-y: auto;
+    /* Keeps an entry scrolled into view clear of the sticky header above it. */
+    scroll-padding-top: 40px;
     overflow-x: hidden;
     background: var(--surface);
     border-right: 1px solid var(--border);
@@ -472,17 +469,23 @@ body.splitter-dragging {
 
 /* --- List: sections (urgency grouping) --- */
 
+/* A header is a band of its own and stays at the top while its sessions scroll
+   past, so where one section or project ends is always visible. */
 .section-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
     display: flex;
     align-items: center;
     gap: 8px;
     width: 100%;
-    padding: 12px 14px 7px;
+    padding: 10px 14px 9px;
     border: none;
-    border-top: 1px solid var(--border);
-    background: transparent;
-    color: var(--fg-faint);
-    font-size: 11px;
+    border-top: 1px solid var(--border-strong);
+    border-bottom: 1px solid var(--border);
+    background: var(--sunken);
+    color: var(--fg-dim);
+    font-size: 11.5px;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -494,7 +497,7 @@ body.splitter-dragging {
     }
 
     &:hover {
-        color: var(--fg-dim);
+        color: var(--fg);
     }
 
     .section-dot {
@@ -528,8 +531,6 @@ body.splitter-dragging {
     }
 
     .list-section.closed & {
-        padding-bottom: 11px;
-
         .chevron {
             transform: rotate(-90deg);
         }
@@ -541,7 +542,7 @@ body.splitter-dragging {
     flex-wrap: wrap;
     align-items: center;
     gap: 4px;
-    padding: 0 14px 9px;
+    padding: 9px 14px;
 }
 
 .section-ranges:empty,
@@ -572,7 +573,7 @@ body.splitter-dragging {
 }
 
 .section-note-line {
-    padding: 0 14px 10px;
+    padding: 8px 14px;
     color: var(--fg-faint);
     font-size: 12px;
 }
@@ -635,12 +636,21 @@ body.splitter-dragging {
 /* --- List: project and ticket groups --- */
 
 .group-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 11px 14px 8px;
-    border-top: 1px solid var(--border);
+    padding: 10px 14px 8px;
+    border-top: 1px solid var(--border-strong);
+    background: var(--sunken);
     cursor: pointer;
+
+    .list-group.closed &,
+    &:has(+ .group-path:empty) {
+        border-bottom: 1px solid var(--border);
+    }
 
     .list-groups > :first-child & {
         border-top: none;
@@ -691,10 +701,12 @@ body.splitter-dragging {
     }
 }
 
+/* Part of the header's band, but scrolls away with the group. */
 .group-path {
     display: block;
-    padding: 0 14px 8px 32px;
-    margin-top: -4px;
+    padding: 0 14px 9px 32px;
+    border-bottom: 1px solid var(--border);
+    background: var(--sunken);
     font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
     font-size: 11px;
     color: var(--fg-faint);
@@ -1637,6 +1649,39 @@ body.splitter-dragging {
     font-size: 11.5px;
 }
 
+/* Every failed hook, whole: a collapsed list under the summary, one collapsed row each. */
+.hook-failures {
+    margin-top: 8px;
+
+    & > summary {
+        cursor: pointer;
+        color: var(--fg-dim);
+    }
+
+    .hook-failure {
+        margin: 6px 0 0 12px;
+
+        & > summary {
+            cursor: pointer;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .kv {
+            margin: 6px 0 4px 14px;
+        }
+    }
+
+    .hook-text {
+        margin: 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+        font-size: 11.5px;
+        font-variant-ligatures: none;
+        color: var(--fg);
+    }
+}
+
 /* Failing hooks: name, exit code, count; the error line spans the row below. */
 .hook-list {
     display: grid;
@@ -1854,12 +1899,41 @@ body.splitter-dragging {
 .git-files {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
-    gap: 3px 10px;
     max-height: 240px;
     overflow: auto;
     font-size: 12px;
     font-variant-numeric: tabular-nums;
     user-select: text;
+
+    /* Each file is one row across the shared columns, lit as a whole on hover,
+       so a count is read against its own path however wide the list is. */
+    .git-row {
+        display: grid;
+        grid-column: 1 / -1;
+        grid-template-columns: subgrid;
+        column-gap: 10px;
+        align-items: baseline;
+        padding: 2px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+
+        &:hover {
+            background: var(--surface-hover);
+        }
+
+        &.edited .git-path {
+            color: var(--fg-heading);
+        }
+
+        /* The file whose diff is open - after `edited`, so it wins for a file of this session too. */
+        &.open {
+            background: var(--selected);
+
+            .git-path {
+                color: var(--accent);
+            }
+        }
+    }
 
     .git-code {
         font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
@@ -1870,15 +1944,166 @@ body.splitter-dragging {
         min-width: 0;
         overflow-wrap: anywhere;
         color: var(--fg-dim);
-
-        &.edited {
-            color: var(--fg-heading);
-        }
     }
 
     .git-lines {
         text-align: right;
         white-space: nowrap;
+    }
+}
+
+/* --- what a session produced: thumbnails, links, written files --- */
+
+.media-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.media-tile {
+    margin: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--sunken);
+    overflow: hidden;
+    cursor: zoom-in;
+
+    &:hover {
+        border-color: var(--border-strong);
+    }
+
+    .media-thumb {
+        height: 110px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg);
+
+        img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+    }
+
+    figcaption {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        padding: 5px 8px 6px;
+        font-size: 11.5px;
+        min-width: 0;
+    }
+
+    .media-caption {
+        color: var(--fg);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .media-at {
+        color: var(--fg-faint);
+        font-variant-numeric: tabular-nums;
+    }
+}
+
+.media-file {
+    border: none;
+    background: none;
+    padding: 0;
+    color: var(--fg-dim);
+    font: inherit;
+    text-align: left;
+    overflow-wrap: anywhere;
+}
+
+/* The image large, over the whole window. */
+.media-viewer {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 24px;
+    background: rgba(0, 0, 0, 0.82);
+    cursor: zoom-out;
+
+    img {
+        max-width: 100%;
+        max-height: calc(100% - 40px);
+        object-fit: contain;
+        box-shadow: var(--shadow);
+    }
+
+    .media-viewer-caption {
+        color: var(--fg);
+        font-size: 12.5px;
+    }
+}
+
+/* One file's diff under the list. */
+.git-diff {
+    margin-top: 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--sunken);
+    overflow: hidden;
+
+    .git-diff-path {
+        padding: 6px 10px;
+        border-bottom: 1px solid var(--border);
+        color: var(--fg-heading);
+        font-size: 12px;
+        overflow-wrap: anywhere;
+    }
+
+    /* One column as wide as the longest line, so every line's colour spans it. */
+    .git-diff-lines {
+        display: grid;
+        grid-template-columns: minmax(100%, max-content);
+        max-height: 420px;
+        overflow: auto;
+        padding: 4px 0;
+        font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+        font-size: 11.5px;
+        line-height: 1.5;
+        user-select: text;
+    }
+
+    .diff-line {
+        padding: 0 10px;
+        white-space: pre;
+        color: var(--fg-dim);
+    }
+
+    .diff-add {
+        background: color-mix(in srgb, var(--c-awaiting_input) 14%, transparent);
+        color: var(--fg);
+    }
+
+    .diff-del {
+        background: color-mix(in srgb, var(--c-errored) 14%, transparent);
+        color: var(--fg);
+    }
+
+    .diff-hunk {
+        margin-top: 4px;
+        color: var(--c-working);
+    }
+
+    .diff-meta {
+        color: var(--fg-faint);
+    }
+
+    .git-diff-note {
+        padding: 6px 10px;
+        color: var(--fg-faint);
+        font-size: 12px;
     }
 }
 
@@ -1889,12 +2114,29 @@ body.splitter-dragging {
     flex: 1 1 auto;
 }
 
+/* The graph scrolls both ways in its own slot, which fills the pane below the
+   button row - so its scrollbars sit at the pane's edges, not under the drawing. */
+body.group-graph .content {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+
+    & > * {
+        flex: none;
+    }
+}
+
 .graph-slot {
     padding: 8px 6px 16px;
-    overflow-x: auto;
+    overflow: auto;
     /* A press and a move pans the graph (actions.js); its labels are not text to select. */
     cursor: grab;
     user-select: none;
+
+    body.group-graph .content > & {
+        flex: 1 1 auto;
+        min-height: 0;
+    }
 
     &.dragging,
     &.dragging * {
@@ -1930,6 +2172,11 @@ body.splitter-dragging {
         &.edge-tool {
             stroke: var(--border-strong);
             stroke-dasharray: 2 3;
+        }
+
+        &.edge-ended {
+            stroke-dasharray: 3 3;
+            opacity: 0.5;
         }
 
         &.edge-tool.active {
@@ -1994,6 +2241,19 @@ body.splitter-dragging {
             .gnode-label {
                 font-weight: 500;
                 fill: var(--fg);
+            }
+        }
+
+        /* A process that ended lately: still there to see and select, but dimmed. */
+        &.gnode-process.ended {
+            opacity: 0.5;
+
+            rect {
+                stroke-dasharray: 3 3;
+            }
+
+            &.selected {
+                opacity: 0.8;
             }
         }
 
@@ -2645,8 +2905,7 @@ body.compact .item:not(.is-history):not(.no-window) {
 }
 
 @media (max-width: 760px) {
-    .toolbar-summary,
-    .search-key {
+    .toolbar-summary {
         display: none;
     }
 
@@ -2682,7 +2941,6 @@ body.compact {
     .group-switch,
     .toolbar-summary,
     .toolbar-gap,
-    .search-key,
     .search-opts {
         display: none;
     }
@@ -2718,12 +2976,12 @@ body.compact {
     }
 
     .section-head {
-        padding: 8px 12px 5px;
+        padding: 7px 12px 6px;
         font-size: 10.5px;
     }
 
     .section-ranges {
-        padding: 0 12px 7px;
+        padding: 7px 12px;
     }
 
     .section-note-line {

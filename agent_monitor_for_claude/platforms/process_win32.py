@@ -8,8 +8,10 @@ each function promises.  A single Toolhelp snapshot per scan answers, for every
 session at once: is the process alive, is a tool currently executing
 (meaningful child process), which application hosts it right now, and is it
 driven through the CLI (a shell sits between the session process and its GUI
-host).  Only process names, parent links, and start times are inspected here -
-never command lines or arguments.
+host).  Only process names, parent links, and start times are inspected by
+the scan - never command lines or arguments.  :func:`process_details` reads one
+process's command line, executable, working directory and thread count, and
+only for the background process the user selected.
 
 When the registry record carries the original process start time (``procStart``,
 a 100 ns tick count - see ``_ticks_match_epoch`` for the two zero points Claude
@@ -28,11 +30,11 @@ from typing import Any, Iterable
 
 import psutil
 
-from ..procinfo import ChildProcessStat, ProcessInfo, SESSION_HELPER_WINDOW_SECONDS, child_processes
+from ..procinfo import ChildProcessStat, ProcessDetails, ProcessInfo, SESSION_HELPER_WINDOW_SECONDS, child_processes, clip_arguments
 
 __all__ = [
     'IGNORED_ANCESTOR_NAMES', 'TERMINAL_WINDOW_OWNERS',
-    'ancestry', 'probe_all', 'process_names', 'process_stats', 'vmmem_present',
+    'ancestry', 'probe_all', 'process_details', 'process_names', 'process_stats', 'vmmem_present',
 ]
 
 # Child processes that a Claude Code session always owns while idle; their
@@ -228,22 +230,10 @@ def process_stats(pid: int, proc_start_ticks: int | None = None) -> list[ChildPr
         stale.
     """
     table = _scan_processes()
-    if table.get(pid) is None:
-        return []
-
     create_time_cache: dict[int, float | None] = {}
-    create_time = _create_time(pid, create_time_cache)
-    if create_time is None:
+    children = _session_children(pid, proc_start_ticks, table, create_time_cache)
+    if children is None:
         return []
-
-    if proc_start_ticks and not _ticks_match_epoch(proc_start_ticks, create_time):
-        return []
-
-    children_index: dict[int, list[int]] = {}
-    for child_pid, (ppid, _name) in table.items():
-        children_index.setdefault(ppid, []).append(child_pid)
-
-    children = _meaningful_children(pid, table, children_index, create_time_cache)
 
     now = time.time()
     stats: list[ChildProcessStat] = []
@@ -266,6 +256,83 @@ def process_stats(pid: int, proc_start_ticks: int | None = None) -> list[ChildPr
         stats.append(vm_stat)
 
     return stats
+
+
+def process_details(pid: int, proc_start_ticks: int | None, child_pid: int) -> ProcessDetails | None:
+    """Return how one of a session's background processes was started, from where and when.
+
+    Only a process the session's own process panel lists is read - the same
+    descendant set ``process_stats`` reports - so no other process on the
+    system can be asked for.  Each field degrades to ``None`` on its own when
+    Windows denies it (a process running elevated or as another user).
+
+    Parameters
+    ----------
+    pid : int
+        The session process id from the registry.
+    proc_start_ticks : int or None
+        The recorded process start time; a mismatch means a recycled PID.
+    child_pid : int
+        The background process asked about.
+
+    Returns
+    -------
+    ProcessDetails or None
+        None when the session is gone or stale, or *child_pid* is not one of its listed processes.
+    """
+    table = _scan_processes()
+    create_time_cache: dict[int, float | None] = {}
+    children = _session_children(pid, proc_start_ticks, table, create_time_cache)
+    if children is None or child_pid not in {child for child, _name in children}:
+        return None
+
+    try:
+        proc = psutil.Process(child_pid)
+    except psutil.Error:
+        return None
+
+    # The handle must be the process the scan listed, not one that took over its PID since.
+    listed_start = create_time_cache.get(child_pid)
+    started_at = _psutil_value(proc.create_time)
+    if listed_start is not None and started_at is not None and abs(started_at - listed_start) > 1.0:
+        return None
+
+    arguments = _psutil_value(proc.cmdline)
+    command_line, clipped = (None, False) if not arguments else clip_arguments([str(argument) for argument in arguments])
+
+    return ProcessDetails(
+        pid=child_pid, command_line=command_line, executable=_psutil_value(proc.exe) or None, cwd=_psutil_value(proc.cwd) or None,
+        started_at=started_at, threads=_psutil_value(proc.num_threads), command_line_clipped=clipped,
+    )
+
+
+def _psutil_value(getter: Any) -> Any:
+    """Call one psutil accessor, or None when the process is gone or the value denied."""
+    try:
+        return getter()
+    except (psutil.Error, OSError):
+        return None
+
+
+def _session_children(
+    pid: int, proc_start_ticks: int | None, table: dict[int, tuple[int, str]], create_time_cache: dict[int, float | None],
+) -> list[tuple[int, str]] | None:
+    """The session's counted descendants, or None when its process is gone or its PID was recycled."""
+    if table.get(pid) is None:
+        return None
+
+    create_time = _create_time(pid, create_time_cache)
+    if create_time is None:
+        return None
+
+    if proc_start_ticks and not _ticks_match_epoch(proc_start_ticks, create_time):
+        return None
+
+    children_index: dict[int, list[int]] = {}
+    for child_pid, (ppid, _name) in table.items():
+        children_index.setdefault(ppid, []).append(child_pid)
+
+    return _meaningful_children(pid, table, children_index, create_time_cache)
 
 
 # Live psutil handles kept between calls so cpu_percent() can report the delta

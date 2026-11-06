@@ -496,6 +496,44 @@ window.__MOCK_PROC_STATS__ = {
     ]),
 };
 
+// Where each directory's work stands in git, keyed by the directory (get_git_overview).
+window.__MOCK_GIT_OVERVIEW__ = {
+    'D:\\Projects\\helios-renderer': {
+        branch: 'feat/restir-denoiser', detached: false, upstream: 'origin/feat/restir-denoiser', upstream_gone: false, ahead: 2, behind: 0,
+        on_remote: true, default_branch: 'main', unmerged: 9, changes_in_default: null, changed: 4, untracked: 1,
+        fetched_at: Date.now() / 1000 - 1500,
+    },
+    'D:\\Projects\\aurora-realtime\\.claude\\worktrees\\cursor-drift': {
+        branch: 'wt/cursor-drift', detached: false, upstream: 'origin/wt/cursor-drift', upstream_gone: true, ahead: null, behind: 0,
+        on_remote: false, default_branch: 'main', unmerged: 3, changes_in_default: true, changed: 0, untracked: 0,
+        fetched_at: Date.now() / 1000 - 600,
+    },
+    'D:\\Projects\\nimbus-gateway': {
+        branch: 'spike/mtls', detached: false, upstream: '', upstream_gone: false, ahead: null, behind: 0,
+        on_remote: false, default_branch: 'main', unmerged: 5, changes_in_default: null, changed: 0, untracked: 0,
+        fetched_at: Date.now() / 1000 - 7200,
+    },
+    'D:\\Projects\\cipher-vault': {
+        branch: 'main', detached: false, upstream: 'origin/main', upstream_gone: false, ahead: 0, behind: 3,
+        on_remote: true, default_branch: 'main', unmerged: null, changes_in_default: null, changed: 0, untracked: 0,
+        fetched_at: Date.now() / 1000 - 300,
+    },
+};
+
+// How a selected process was started, keyed by its pid (get_process_details).
+window.__MOCK_PROCESS_DETAILS__ = {
+    21804: {
+        pid: 21804, command_line: ['C:\\Program Files\\CMake\\bin\\cmake.exe', '--build', 'build', '--target', 'helios-viewer', '--parallel', '16'],
+        command_line_clipped: false, executable: 'C:\\Program Files\\CMake\\bin\\cmake.exe', cwd: 'D:\\Projects\\helios-renderer',
+        started_at: Date.now() / 1000 - 368, threads: 6,
+    },
+    22190: {
+        pid: 22190, command_line: ['D:\\Projects\\helios-renderer\\build\\bin\\helios-viewer.exe', '--scene', 'scenes/sponza dense.json', '--hot-reload'],
+        command_line_clipped: false, executable: 'D:\\Projects\\helios-renderer\\build\\bin\\helios-viewer.exe',
+        cwd: 'D:\\Projects\\helios-renderer', started_at: Date.now() / 1000 - 366, threads: 23,
+    },
+};
+
 window.__MOCK_TASKS__ = {
     h2b: [
         { id: 'a7f3k9', size: 4200, age: 1, label: 'Build spectral upsampling in the background' },
@@ -614,6 +652,22 @@ window.__MOCK_GIT__ = {
     },
 };
 
+// One file's diff (get_git_diff), by path; any other file shows none.
+window.__MOCK_GIT_DIFF__ = {
+    'src/brdf/sampler.h': {
+        path: 'src/brdf/sampler.h', truncated: false,
+        diff: 'diff --git a/src/brdf/sampler.h b/src/brdf/sampler.h\nindex 3f2a1c0..8b9d4e2 100644\n'
+            + '--- a/src/brdf/sampler.h\n+++ b/src/brdf/sampler.h\n'
+            + '@@ -12,9 +12,18 @@ namespace helios::brdf {\n'
+            + ' struct SampleResult {\n     Vec3 direction;\n-    float pdf;\n+    float pdf = 0.0f;\n+    Spectrum weight;\n };\n \n'
+            + '-SampleResult sample(const Material& m, Vec3 wo, Vec2 u);\n'
+            + '+SampleResult sample(const Material& m, Vec3 wo, Vec2 u, const SpectralBasis& basis);\n'
+            + '+\n+// Upsamples an RGB albedo into the sampler\'s spectral basis.\n'
+            + '+Spectrum upsample(const Rgb& albedo, const SpectralBasis& basis);\n'
+            + ' \n } // namespace helios::brdf\n',
+    },
+};
+
 // What a subagent's details read on a click - its task, its result and its
 // steps - and a session's own newest steps, by agent id and session id. The
 // times are relative to now, as the real ones would be.
@@ -665,4 +719,32 @@ window.__MOCK_SESSION_ACTIVITY__ = {
             __mockStep('m4', 'mcp__github__get_issue', { issue: 214 }, '{"title": "Hot reload deadlocks the GPU fence"}', 900, 0.8),
         ],
     },
+};
+
+// Invented images for the media block (get_session_media / get_media_image): small gradients, never real screenshots.
+window.__MOCK_MEDIA__ = {
+    h1a: {
+        images: [
+            { id: '1200.0', at: Date.now() / 1000 - 240, origin: 'tool', tool: 'mcp__browser__browser_take_screenshot', path: '', media_type: 'image/png', bytes: 3000 },
+            { id: '980.0', at: Date.now() / 1000 - 1500, origin: 'tool', tool: 'Read', path: 'D:\\Projects\\helios-renderer\\docs\\brdf-lobes.png', media_type: 'image/png', bytes: 2000 },
+            { id: '640.0', at: Date.now() / 1000 - 3600, origin: 'pasted', tool: '', path: '', media_type: 'image/png', bytes: 2500 },
+        ],
+        files: ['D:\\Projects\\helios-renderer\\src\\brdf\\sampler.cpp', 'C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\scratchpad\\lobe-report.html'],
+    },
+};
+window.__MOCK_MEDIA_IMAGES__ = {
+    '1200.0': { media_type: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAUAAAADICAIAAAAWZq/8AAADXElEQVR42u3TZ06WYRiE0XcRikpTpEhTBKRbsPcuVqxYsez/nxLhW8KTO5OcydnB5Oomz/8BQnWnNn4DoQQM2QH/AkIJGAQM1AS8/hMIJWAQMFAU8C4QqptY3wVCCRiiA177AYQSMAgYKAr4OxBKwCBgoCbg1W9AKAFDcsDjq1+BUAIGAQM1Aa98AUIJGAQMFAX8GQglYBAwUBPw8g4Qqhtb3mnkr5n9X7vKBGyWHfCnRtxm1gu4VWUCNhOwgM1qAl762IjbzA4CblaZgM2yA/7QiNvMegG3qkzAZgIWsFlJwKPn3jfiNrP9tatMwGYCFrBZUcDvGnGbWS/gVpUJ2EzAAjarCXjxbSNuMzsIuFllAjYTsIDNigLebsRtZr2AW1XWnVzcbsRtZvtrV5mAzaIDXnjTiNvMDgJuVpmAzQQsYLOigF834jazXsCtKhOwWXTA868acZvZQcDNKhOwmYAFbFYS8Mj8SyCUgEHAQE3AZ18AoQQMAgaKAn4OhBIwCBioCXhuCwjVnZjbAkIJGLIDfgaEEjBEB3zmKRBKwCBgoCjgJ0AoAYOAgZKAj59+DIQSMAgYKAr4ERBKwCBgoCbg2YdAKAGDgIGigB8Aobrh2QdAqG545j4QSsAgYKAo4HtAKAGDgIGagKfvAqEEDAIGSgIemr4DhBIwCBioCXjqNhBKwCBgoCjgW0AoAYOAgZqAJ28CobrByZtAqL2AbwChBAwCBmoCPnUdCCVgEDBQFPA1IJSAQcBAScADE1eBUAIGAQNFAV8BQgkYBAzUBDx+GQglYMgOeBMIJWBIDrh/fBMI1fWPXQJCCRgEDBQFfBEIJWAQMFAT8OgFIJSAQcBAScDHRs8DoQQMAgZqAj65AYQSMGQHvA6EEjAIGKgJeGQNCCVgSA746MgaEGov4FUglIBBwEBNwCdWgFACBgEDRQEvA6EEDAIGSgI+cnwJCCVgEDBQFPA5IJSAITrg4UUglIBBwEBRwAtAKAFDcsB9wwtAqK5vaB4IJWAQMFAU8FkglIBBwEBNwINzQCgBg4CBkoAPD54BQgkYogMeOA2EEjAIGCgKeBYIJWAQMFATcP8MEErAkBzwof4ZINRewNNAKAGDgIGagI9NAaEEDAIGigKeBEIJGAQMVPgHsIY0JRYHsdAAAAAASUVORK5CYII=' },
+    '980.0': { media_type: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAUAAAADICAIAAAAWZq/8AAAEQ0lEQVR42u3TVdYdBRhE0R7Edff7uyQBggd3twQNHnT+bzCMb1X3rrWHUKf5984JEKr55/YIhBIwJAf89+0RCCVgSA74r9sjEErAEB3wzREI1fx5cwRCCRiSA/7j5gCEEjAIGCgJ+MnNAQjVPLk+AKGa368PQCgBg4CBkoB/uz4AoQQMyQH/erUHQgkYBAyUBPzL1R4IJWBIDvjnqz0QSsAQHfDlHgjV/HS5B0IJGJID/vFyB4QSMAgYKAn48eUOCNU8vtgBoZofLnZAKAGDgIGSgL+/2AGhBAzJAX93vgVCCRgEDJQE/O35FgglYEgO+JvzLRBKwBAd8NkWCNV8fbYFQgkYkgN+dLYBQgkYBAyUBPzwbAOEah6eboBQzVenGyCUgEHAQEnAX55ugFAChuSAvzhZA6EEDAIGSgL+/GQNhBIwJAf82ckaCCVgiA74uAZCNZ8e10AoAUNywJ8cV0AoAYOAgZKAPz6sgFAChuSAPzqsgFACBgEDJQF/eFgBoQQMyQF/sF8CoQQMAgZKAn5/vwRCCRiSA35vvwRCCRiiA94tgVDNu7slEErAkBzwO7sFEErAIGCgJOC3twsglIAhOeC3tgsglIBBwEBJwG9uF0AoAUNywG9s5kAoAUNywK9v5kAoAYOAgZKAX9vMgVAChuSAX13PgVACBgEDJQG/sp4BoQQMyQE/WM+AUM2D1QwIJWBIDvjl1QwIJWBIDvil1QwIJWAQMFAS8IvLaYn/rNWr+lXXCNgEnBzwC8tpCRdv96p+1TUCNgELWMAm4JKAn19OS7h4u1f1q64RsAk4OeDnFtMSLt7uVf2qawRsAhawgE3AJQE/u5iUcPF2r+pXXSNgE3BywPcXkxIu3u5V/aprmvvzSQkXb3nARb/qGgGbgJMDfmY+KeHi7V7Vr7pGwCbg5ICfnk9KuHi7V/WrrhGwCVjAAjYBlwT81GxcwsXbvapfdY2ATcDJAd+bjUu4eLtX9auuEbAJWMACNgGXBHx3Ni7h4u1e1a+6prk7HZdw8ZYHXPSrrmnuTMclXLzdq/pV1wjYBCxgAZuASwK+nY5KuHi7V/WrrhGwCTg54JvpqISLt3tVv+qa5mYyKuHiLQ+46FddI2ATcHLA15NRCRdv96p+1TUCNgEnB3w1GZVw8Xav6lddI2ATsIAFbAIuCfhyPCzh4u1e1a+6RsAm4OSAL8bDEi7e7lX9qmsEbAIWsIBNwCUBn4+HJVy83av6Vdc056NhCRdvecBFv+qa5mw0LOHi7V7Vr7pGwCZgAQvYBFwS8OloAIQSMCQHfDIaAKGak+EACCVgSA74OBwAoQQMyQEfhgMglIBBwEBJwPtBHwglYEgOeDfoA6EEDAIGSgLeDvpAqGbb7wOhmk2/D4QSMAgYKAl43e8BoQQMyQGv+j0gVLPq9YBQAobkgJe9HhBKwJAc8KLXA0IJGAQMVPgfKx8cPmF3dpQAAAAASUVORK5CYII=' },
+    '640.0': { media_type: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAPAAAAFACAIAAAANimYEAAAET0lEQVR42u3SV5LeVACE0X8HBhsMk3POOecZgzPY5P3vA+aFBdyrkkrVOl1nBV3faPqfNxBjNPX3E8QQNIIGQYOgoTTov54ghqBJC/oRYggaQUN/g/7zEWIIGkGDoKGboB8gxmjqjweIIWgEDYIGQYOgGXLQk7/fQwxBI2gQNAgaSoP+7R5iCJq0oO8ghqARNPQ36K93EEPQCBoEDd0EfQsxBE1Y0F9uIYagEfT//jVrYYI2QQvaIoOe+PWmmuutjTVpUtAmaEGboM0EbYIuDfqXm2qut1aCbtCkoC0t6Otqrrd2gq5vUtAmaEGboM06CfrzdTXXWytBN2hS0CZoQVuPg76q5nprJ+j6JgVtYUF/uqrmemsl6AZNCtoELWgTtJmgTdCFQY9/vKzmemtjTZoUtAla0CZoM0GboAVtgw76w2U111srQTdo8jnoi2qut3aCrm9S0CZoQZugzToJ+v1FNddbK0E3aFLQJmhBW4+DPq/memsn6PomBW1hQb87r+Z6ayXoBk0K2gQtaBO0maBN0IK2IQc99vasmuutjTVpUtAmaEGboM36HjT0zWjs5zOIIWjSgj6FGIJG0NDfoH86hRiCRtAgaOgm6BOIIWjCgn5zAjEEjaBB0CBoKAz6x6djiCFoBA2CBkFDadCPxxBD0KQFfQQxBI2gob9BPxxBDEEjaBA0dBP0IcQQNGFB3x9CDEEjaBA0CBoKg/7h7gBiCBpBg6BB0FAa9O0BxBA0aUHvQwxBI2gQNHQS9M0+xBA0goYeB70HMQRNWNDXexBD0AgaBA2ChsKgX1/tQgxBI2gQNAgaBM2gg77chRjPQe9ADEEjaBA0dBL0xQ7EEDSCBkFDN0FvQ4zR6/NtiCFoBA2CBkGDoBly0N+fbUEMQSNoEDQIGkqDPt2CGIImLehNiCFoBA39DfpkE2IIGkGDoKGboDcghqAJC/p4A2IIGkGDoEHQUBj0d0frEEPQCBoEDYKG0qAP1yGGoEkLeg1iCBpBg6Chk6AP1iCGoBE09DjoVYghaMKC3l+FGIJG0CBoEDQUBv1qbwViCBpBg6BB0FAa9O4KxBA0aUEvQwxBI2gQNHQS9M4yxBA0goYeB70EMQRNWNDbSxBD0AgaBA2ChsKgX24tQgxBI2gQNAgaBM2gg95chBiCJi3oBYghaAQN/Q16YwFiCBpBg6Chm6DnIcbo5fo8xBA0ggZBg6BB0Aw56G/X5iCGoBE0CBoEDaVBr85BDEGTFvQsxBA0gob+Br0yCzEEjaBB0NBN0DMQQ9CEBb08AzEEjaBB0CBoKAz6m6VpiCFoBA2CBkFDadCL0xBD0KQFPQUxBI2gQdDQSdALUxBD0Agaehz0JMQQNGFBz09CDEEjaBA0CBoKg34xNwExBI2gQdAgaBA0gw56dgJiPAc9DjEEjaBB0NBJ0DPjEEPQCBp6HPQYxBA0YUFPj0EMQSNoEDQIGgTNgP0HT1dS9yv/zwkAAAAASUVORK5CYII=' },
+};
+
+// Each failed hook of a session, whole (get_hook_failures) - invented.
+window.__MOCK_HOOK_FAILURES__ = {
+    n1g: [
+        { at: Date.now() / 1000 - 90, event: 'PostToolUse', hook: 'PostToolUse:Bash', command: 'node .claude/hooks/lint-changed.mjs',
+          exit_code: 7, duration_ms: 2150, stderr: 'eslint: 3 problems (2 errors, 1 warning)\n  src/limiter.ts:41:7  error  no-unused-vars', stdout: '',
+          tool: 'Bash', tool_text: 'npm test -- --runInBand' },
+        { at: Date.now() / 1000 - 1200, event: 'UserPromptSubmit', hook: 'UserPromptSubmit', command: 'node .claude/hooks/require-ticket.mjs',
+          exit_code: 7, duration_ms: 80, stderr: 'ticket key missing in branch name', stdout: '', tool: '', tool_text: '' },
+    ],
 };

@@ -228,9 +228,9 @@ async function transcriptPath(sessionId, cwd, origin) {
 
 /* --- dragging the graph: press anywhere on it and move to pan it both ways ---
 
-   The graph scrolls sideways in its slot and up and down with the list pane;
-   a drag moves both. A press that moves less than GRAPH_DRAG_THRESHOLD pixels
-   stays a click, so a node still selects. */
+   The graph scrolls both ways in its slot; a drag moves both. A press that
+   moves less than GRAPH_DRAG_THRESHOLD pixels stays a click, so a node still
+   selects. */
 const GRAPH_DRAG_THRESHOLD = 4;
 let graphDrag = null;
 let graphDragClick = false;
@@ -241,9 +241,8 @@ function onGraphPointerDown(event) {
     if (!slot) {
         return;
     }
-    const content = document.getElementById('content');
-    graphDrag = { slot: slot, content: content, pointerId: event.pointerId, x: event.clientX, y: event.clientY,
-        left: slot.scrollLeft, top: content.scrollTop, moved: false };
+    graphDrag = { slot: slot, pointerId: event.pointerId, x: event.clientX, y: event.clientY,
+        left: slot.scrollLeft, top: slot.scrollTop, moved: false };
 }
 
 function onGraphPointerMove(event) {
@@ -264,7 +263,7 @@ function onGraphPointerMove(event) {
         } catch (e) { /* the pointer is gone already */ }
     }
     drag.slot.scrollLeft = drag.left - dx;
-    drag.content.scrollTop = drag.top - dy;
+    drag.slot.scrollTop = drag.top - dy;
     event.preventDefault();
 }
 
@@ -568,6 +567,50 @@ function onContentContextMenu(event) {
     openSessionMenu(item, { x: event.clientX, y: event.clientY });
 }
 
+// The host shows no context menu of its own, so a right-click on selected text
+// offers to copy it. The text is taken now: a render can drop the selection.
+function onSelectionContextMenu(event) {
+    if (event.defaultPrevented) {
+        return;
+    }
+    const text = selectedTextAt(event.target, event.clientX, event.clientY);
+    if (!text) {
+        return;
+    }
+    event.preventDefault();
+    const anchor = event.target instanceof Element ? event.target : document.body;
+    const items = [{ key: 'copy', label: state.labels.copy_selection }];
+    // A second right-click on the same element must reopen the menu, not toggle it shut.
+    closeMenu();
+    openMenu(anchor, items, () => copyToClipboard(text), { type: 'selection', point: { x: event.clientX, y: event.clientY } });
+}
+
+// The text selected in a field under `target`, else the page's selection - but
+// only when the point (x, y) lies on the selected text itself, as a browser's
+// own menu decides: a right-click elsewhere in the pane is no copy request.
+function selectedTextAt(target, x, y) {
+    const field = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ? target : null;
+    if (field) {
+        try {
+            return field.value.slice(field.selectionStart || 0, field.selectionEnd || 0);
+        } catch (e) {
+            return '';
+        }
+    }
+    const selection = window.getSelection ? window.getSelection() : null;
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+        return '';
+    }
+    for (let index = 0; index < selection.rangeCount; index++) {
+        for (const rect of selection.getRangeAt(index).getClientRects()) {
+            if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+                return String(selection);
+            }
+        }
+    }
+    return '';
+}
+
 function onDetailClick(event) {
     // A row of the process table selects that process.
     const processRow = event.target.closest('[data-proc-pid]');
@@ -575,9 +618,27 @@ function onDetailClick(event) {
         selectProcess(state.selectedKey, Number(processRow.dataset.procPid));
         return;
     }
+    const mediaTile = event.target.closest('.media-tile');
+    if (mediaTile) {
+        openMediaViewer(mediaTile);
+        return;
+    }
+    const revealButton = event.target.closest('[data-reveal-path]');
+    if (revealButton) {
+        revealPath(revealButton.dataset.revealPath, revealButton.dataset.origin);
+        return;
+    }
     const pathOpen = event.target.closest('.path-open');
     if (pathOpen) {
         openPath(pathOpen.dataset.cwd, pathOpen.dataset.origin);
+        return;
+    }
+    // A file of the git block opens its diff - unless the click ended a text selection.
+    const gitFile = event.target.closest('[data-git-path]');
+    if (gitFile) {
+        if (!(window.getSelection && String(window.getSelection()))) {
+            toggleGitDiff(gitFile.dataset.gitPath);
+        }
         return;
     }
     const button = event.target.closest('[data-action]');

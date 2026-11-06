@@ -7,7 +7,8 @@ Linux implementation of the process-introspection API; see
 each function promises.  Everything is derived from one scan of ``/proc``
 (:mod:`agent_monitor_for_claude.procfs`), which reads only ``/proc/[pid]/stat``
 - process names, parent links, start times, and resource counters, never a
-command line.
+command line.  :func:`process_details` reads one process's ``cmdline``, ``exe``,
+``cwd`` and ``status``, and only for the background process the user selected.
 
 The session registry's ``procStart`` means something different here than it
 does on Windows: on Linux Claude Code records exactly field 22 of
@@ -29,11 +30,11 @@ from pathlib import Path
 from typing import Iterable
 
 from .. import procfs
-from ..procinfo import ChildProcessStat, ProcessInfo, child_processes
+from ..procinfo import ChildProcessStat, ProcessDetails, ProcessInfo, child_processes
 
 __all__ = [
     'IGNORED_ANCESTOR_NAMES', 'TERMINAL_WINDOW_OWNERS',
-    'ancestry', 'probe_all', 'process_names', 'process_stats', 'vmmem_present',
+    'ancestry', 'probe_all', 'process_details', 'process_names', 'process_stats', 'vmmem_present',
 ]
 
 # The running system's own process tree.
@@ -262,6 +263,38 @@ def process_stats(pid: int, proc_start_ticks: int | None = None) -> list[ChildPr
     procfs.prune_sample_cache(_ORIGIN, live_pids)
 
     return stats
+
+
+def process_details(pid: int, proc_start_ticks: int | None, child_pid: int) -> ProcessDetails | None:
+    """Return how one of a session's background processes was started, from where and when.
+
+    Only a process the session's own process panel lists is read - the descendant set
+    :func:`process_stats` reports - so no other process on the system can be asked for.
+
+    Parameters
+    ----------
+    pid : int
+        The session process id from the registry.
+    proc_start_ticks : int or None
+        The recorded process start time (``/proc/[pid]/stat`` field 22); a mismatch means a recycled pid.
+    child_pid : int
+        The background process asked about.
+
+    Returns
+    -------
+    ProcessDetails or None
+        None when the session is gone or stale, or *child_pid* is not one of its listed processes.
+    """
+    table = procfs.read_proc_table(_PROC_DIR)
+    index = procfs.children_index(table)
+    ticks_per_second = procfs.clk_tck()
+
+    descendants = procfs.live_descendants(pid, proc_start_ticks, table, index, ticks_per_second)
+    entry = table.get(child_pid)
+    if descendants is None or entry is None or child_pid not in {child for child, _name in descendants}:
+        return None
+
+    return procfs.read_process_details(_PROC_DIR, child_pid, entry.starttime, procfs.read_btime(_PROC_DIR), ticks_per_second)
 
 
 def _classify_ancestry(ancestor_names: list[str]) -> tuple[str | None, bool]:

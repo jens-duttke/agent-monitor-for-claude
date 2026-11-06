@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import unittest
 
-from agent_monitor_for_claude.procinfo import ChildProcess, child_processes
+from agent_monitor_for_claude import procinfo
+from agent_monitor_for_claude.procinfo import ChildProcess, child_processes, clip_arguments
 
 _SESSION = 100
 
@@ -36,3 +37,17 @@ class ChildProcessTreeTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ClipArgumentsTest(unittest.TestCase):
+    def test_a_short_command_line_is_kept_whole(self) -> None:
+        self.assertEqual(clip_arguments(['bash', '-c', 'echo hi']), (('bash', '-c', 'echo hi'), False))
+
+    def test_a_long_one_keeps_whole_arguments_only_and_says_so(self) -> None:
+        limit = procinfo._MAX_COMMAND_LINE_CHARS
+        arguments = ['node', 'a' * (limit // 2), 'b' * (limit // 2)]
+
+        kept, clipped = clip_arguments(arguments)
+
+        self.assertEqual(kept, ('node', 'a' * (limit // 2)))
+        self.assertTrue(clipped)

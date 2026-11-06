@@ -16,12 +16,13 @@ const TASK_AGE_GRACE_SECONDS = 60;   // keep tasks up to this much older than th
 
 let procBlock = null;
 
-// Show the processes and tasks of `session` in `el` (the block's body) and its
-// process count in `noteEl` (the block's header). The same session keeps its
-// running poll and its expanded consoles; another one starts afresh.
-function showProcBlock(el, noteEl, session) {
+// Show the processes of `session` in `el` (the block's body), with its
+// background tasks unless `withTasks` is false, and its process count in
+// `noteEl` (the block's header). The same session keeps its running poll and
+// its expanded consoles; another one starts afresh.
+function showProcBlock(el, noteEl, session, withTasks = true) {
     const key = rowKey(session);
-    if (procBlock && procBlock.key === key && procBlock.el === el) {
+    if (procBlock && procBlock.key === key && procBlock.el === el && procBlock.withTasks === withTasks) {
         return;
     }
     stopProcBlock();
@@ -35,15 +36,17 @@ function showProcBlock(el, noteEl, session) {
         +     '</tr></thead>'
         +     '<tbody></tbody>'
         + '</table>'
-        + '<div class="block-sub"></div>'
-        + '<div class="proc-task-list"></div>'
-        + '<div class="proc-task-note" hidden></div>';
+        + (withTasks
+            ? '<div class="block-sub"></div><div class="proc-task-list"></div><div class="proc-task-note" hidden></div>'
+            : '');
     const headCells = el.querySelectorAll('.proc-table thead th');
     headCells[0].textContent = labels.proc_col_process || '';
     headCells[1].textContent = labels.proc_col_cpu || '';
     headCells[2].textContent = labels.proc_col_memory || '';
     headCells[3].textContent = labels.proc_col_uptime || '';
-    el.querySelector('.block-sub').textContent = labels.proc_tasks_title || '';
+    if (withTasks) {
+        el.querySelector('.block-sub').textContent = labels.proc_tasks_title || '';
+    }
 
     procBlock = {
         el,
@@ -53,6 +56,7 @@ function showProcBlock(el, noteEl, session) {
         sessionId: session.session_id || '',
         cwd: session.cwd || '',
         origin: session.origin || 'local',
+        withTasks: withTasks,
         expanded: new Set(),
         tick: 0,
         timer: null,
@@ -97,6 +101,9 @@ async function refreshProcBlock(panel) {
 
     // The task list changes rarely, so re-list it only occasionally; the output
     // of expanded rows is what needs the per-second refresh.
+    if (!panel.withTasks) {
+        return;
+    }
     if (panel.tick === 1 || panel.tick % TASK_LIST_REFRESH_TICKS === 1) {
         // A task last written before the oldest running process started belongs
         // to an earlier run and is irrelevant, so it is dropped (small grace to

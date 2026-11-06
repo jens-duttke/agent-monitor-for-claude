@@ -57,7 +57,7 @@ from .usage_parts import UsageScan
 __all__ = [
     'AgentLaunch', 'ApiRetry', 'Artifact', 'HookError', 'MessageEvent', 'PlanItem', 'PullRequest', 'Question', 'ToolCall', 'TranscriptState',
     'HistoryState', 'WorktreeState', 'agent_steps', 'final_reply', 'full_texts', 'session_steps', 'state_for', 'history_state_for', 'worktree_for',
-    'edited_files', 'prioritize_session', 'prune_scan_cache', 'usage_scan', 'usage_scan_once',
+    'edited_files', 'hook_failures', 'media_image', 'media_index', 'prioritize_session', 'prune_scan_cache', 'usage_scan', 'usage_scan_once',
 ]
 
 # Bytes read from the end of the transcript.  Large enough to contain the last
@@ -1112,6 +1112,278 @@ def _read_steps(handle: BinaryIO, main_only: bool) -> list[dict[str, Any]]:
     steps: list[dict[str, Any]] = []
     _absorb_steps(handle, main_only, steps, {})
     return steps
+
+
+# --- failed hooks in a transcript, each with what it ran and answered ---
+
+_HOOK_FAILURE_MARKER = b'"hook_non_blocking_error"'
+# The newest failures listed, and the most of a hook's command and output passed on.
+_MAX_HOOK_FAILURES = 100
+_HOOK_TEXT_MAX_CHARS = 4000
+
+
+def hook_failures(path: Path) -> list[dict[str, Any]]:
+    """Return the session's failed hooks, newest first, each whole: what ran, how it ended, what it wrote, and which call set it off.
+
+    A failure is ``{at, event, hook, command, exit_code, duration_ms, stderr,
+    stdout, tool, tool_text}`` - ``tool``/``tool_text`` describe the tool call
+    whose use started the hook (empty for a hook no call started, such as one
+    on a prompt).  Read on request, for the session the details show: only the
+    lines holding a failure are parsed, then only the call lines naming one of
+    their ids.  Command and output are cut to ``_HOOK_TEXT_MAX_CHARS``.
+    """
+    failures: list[dict[str, Any]] = []
+    try:
+        with path.open('rb') as handle:
+            for line in handle:
+                if _HOOK_FAILURE_MARKER in line:
+                    failure = _hook_failure(line)
+                    if failure is not None:
+                        failures.append(failure)
+            failures = failures[-_MAX_HOOK_FAILURES:]
+            wanted = {failure['tool_use_id'] for failure in failures if failure['tool_use_id']}
+            calls = _calls_by_id(handle, wanted) if wanted else {}
+    except OSError:
+        return []
+
+    for failure in failures:
+        call = calls.get(failure.pop('tool_use_id'))
+        failure['tool'] = call.tool if call else ''
+        failure['tool_text'] = call.text if call else ''
+
+    return list(reversed(failures))
+
+
+def _hook_failure(line: bytes) -> dict[str, Any] | None:
+    """One ``hook_non_blocking_error`` attachment's fields, or None when the line is something else."""
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        return None
+    attachment = entry.get('attachment') if isinstance(entry, dict) else None
+    if not isinstance(attachment, dict) or attachment.get('type') != 'hook_non_blocking_error':
+        return None
+
+    def text(key: str) -> str:
+        value = attachment.get(key)
+        return _clip(value, _HOOK_TEXT_MAX_CHARS) if isinstance(value, str) else ''
+
+    def number(key: str) -> int | None:
+        value = attachment.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    stderr = text('stderr')
+    if _hook_message(stderr) == '' and _HOOK_NO_OUTPUT in stderr:
+        stderr = ''
+
+    return {
+        'at': _timestamp_epoch(entry.get('timestamp') if isinstance(entry.get('timestamp'), str) else None),
+        'event': text('hookEvent'), 'hook': text('hookName'), 'command': text('command'),
+        'exit_code': number('exitCode'), 'duration_ms': number('durationMs'), 'stderr': stderr, 'stdout': text('stdout'),
+        'tool_use_id': attachment.get('toolUseID') if isinstance(attachment.get('toolUseID'), str) else '',
+    }
+
+
+def _calls_by_id(handle: BinaryIO, wanted: set[str]) -> dict[str, ToolCall]:
+    """The tool calls in *handle* whose ids are in *wanted*, described like the current call; the file is read again from its start."""
+    markers = [identifier.encode('utf-8') for identifier in wanted]
+    calls: dict[str, ToolCall] = {}
+    handle.seek(0)
+    for line in handle:
+        if b'"tool_use"' not in line or not any(marker in line for marker in markers):
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        message = entry.get('message') if isinstance(entry, dict) else None
+        content = message.get('content') if isinstance(message, dict) else None
+        for block in content if isinstance(content, list) else []:
+            if isinstance(block, dict) and block.get('type') == 'tool_use' and block.get('id') in wanted:
+                call = _tool_call(block)
+                if call is not None:
+                    calls[block['id']] = call
+
+    return calls
+
+
+# --- images in a transcript: where they are, and one of them on request ---
+
+# A line holding an image block; Claude Code writes its JSON without spaces.
+_IMAGE_MARKER = b'"type":"image"'
+# A line holding a call that can return an image: a file read, or an MCP tool (a browser screenshot).
+_IMAGE_TOOL_MARKERS = (b'"name":"Read"', b'"name":"mcp__')
+# The image formats shown; anything else in a transcript is left out.
+_IMAGE_MEDIA_TYPES = frozenset({'image/png', 'image/jpeg', 'image/gif', 'image/webp'})
+# The newest images listed per file, and the largest one handed over (decoded bytes).
+_MAX_MEDIA = 200
+_MAX_IMAGE_BYTES = 12 * 1024 * 1024
+# Calls remembered by id while a file is indexed, for the tool name and path beside an image.
+_MAX_MEDIA_CALLS = 4000
+_MEDIA_CACHE_MAX = 8
+_BASE64_PATTERN = re.compile(r'[A-Za-z0-9+/]*={0,2}')
+
+
+def media_index(path: Path) -> list[dict[str, Any]]:
+    """Return the images in a transcript, newest first: where each came from and when, never its data.
+
+    An image is ``{id, at, origin, tool, path, media_type, bytes}``: ``origin``
+    is ``pasted`` for one the user put into a prompt and ``tool`` for one a tool
+    returned - ``tool`` names it, ``path`` is the file a ``Read`` opened;
+    ``bytes`` is its size decoded; ``id`` locates it for :func:`media_image`.
+    Read on request, for the session or subagent the details show; only lines
+    holding an image block or a call that can return one are parsed, the file
+    is indexed once and then only what was appended since, like
+    :func:`agent_steps`.  An unreadable file has no images.
+    """
+    key = os.path.normcase(str(path))
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return []
+
+    with _media_lock:
+        cache = _media_cache.pop(key, None)
+        if cache is None or size < cache.consumed:
+            cache = _MediaCache()
+        if size > cache.consumed:
+            try:
+                _absorb_media(path, cache, size)
+            except OSError:
+                return []
+        _media_cache[key] = cache
+        while len(_media_cache) > _MEDIA_CACHE_MAX:
+            _media_cache.pop(next(iter(_media_cache)))
+
+        return [dict(item) for item in reversed(cache.images[-_MAX_MEDIA:])]
+
+
+def media_image(path: Path, media_id: str) -> dict[str, str] | None:
+    """Return one image :func:`media_index` listed for *path*: ``{media_type, data}`` with the data base64, or None.
+
+    Only an id the index holds is read, so a request can never point the read
+    at another place in the file; the image must be one of the listed formats,
+    real base64 and no larger than ``_MAX_IMAGE_BYTES``.
+    """
+    if not isinstance(media_id, str):
+        return None
+    with _media_lock:
+        cache = _media_cache.get(os.path.normcase(str(path)))
+        known = cache is not None and any(item['id'] == media_id for item in cache.images)
+    if not known:
+        return None
+    offset_text, _, index_text = media_id.partition('.')
+    if not offset_text.isdigit() or not index_text.isdigit():
+        return None
+
+    try:
+        with path.open('rb') as handle:
+            handle.seek(int(offset_text))
+            line = handle.readline()
+    except OSError:
+        return None
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        return None
+    images = list(_entry_images(entry))
+    index = int(index_text)
+    if index >= len(images):
+        return None
+    source = images[index][0]
+    media_type, data = source.get('media_type'), source.get('data')
+    if media_type not in _IMAGE_MEDIA_TYPES or not isinstance(data, str) or len(data) * 3 // 4 > _MAX_IMAGE_BYTES:
+        return None
+    if not _BASE64_PATTERN.fullmatch(data):
+        return None
+
+    return {'media_type': media_type, 'data': data}
+
+
+@dataclass
+class _MediaCache:
+    """The images found in one file so far, the calls that can return one (id -> (tool, path)), and the bytes consumed."""
+
+    consumed: int = 0
+    images: list[dict[str, Any]] = field(default_factory=list)
+    calls: dict[str, tuple[str, str]] = field(default_factory=dict)
+
+
+_media_cache: dict[str, _MediaCache] = {}
+_media_lock = threading.Lock()
+
+
+def _absorb_media(path: Path, cache: _MediaCache, size: int) -> None:
+    """Index the complete lines of *path* from ``cache.consumed`` up to *size*, line by line, keeping each image line's offset."""
+    with path.open('rb') as handle:
+        handle.seek(cache.consumed)
+        offset = cache.consumed
+        while offset < size:
+            line = handle.readline()
+            if not line or not line.endswith(b'\n'):
+                break
+            if _IMAGE_MARKER in line or (b'"tool_use"' in line and any(marker in line for marker in _IMAGE_TOOL_MARKERS)):
+                _note_media_line(line, offset, cache)
+            offset += len(line)
+        cache.consumed = offset
+    del cache.images[:-_MAX_MEDIA]
+
+
+def _note_media_line(line: bytes, offset: int, cache: _MediaCache) -> None:
+    """Remember the image-capable calls of one line and list its images."""
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        return
+    if not isinstance(entry, dict):
+        return
+    message = entry.get('message')
+    content = message.get('content') if isinstance(message, dict) else None
+    if entry.get('type') == 'assistant' and isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get('type') == 'tool_use' and isinstance(block.get('id'), str):
+                name = block.get('name') if isinstance(block.get('name'), str) else ''
+                tool_input = block.get('input') if isinstance(block.get('input'), dict) else {}
+                file_path = tool_input.get('file_path') if name == 'Read' else None
+                cache.calls[block['id']] = (name, file_path if isinstance(file_path, str) else '')
+        while len(cache.calls) > _MAX_MEDIA_CALLS:
+            cache.calls.pop(next(iter(cache.calls)))
+        return
+
+    at = _timestamp_epoch(entry.get('timestamp') if isinstance(entry.get('timestamp'), str) else None)
+    for index, (source, tool_use_id) in enumerate(_entry_images(entry)):
+        media_type = source.get('media_type')
+        data = source.get('data')
+        if media_type not in _IMAGE_MEDIA_TYPES or not isinstance(data, str):
+            continue
+        tool, file_path = cache.calls.get(tool_use_id, ('', '')) if tool_use_id else ('', '')
+        cache.images.append({
+            'id': f'{offset}.{index}', 'at': at, 'origin': 'tool' if tool_use_id else 'pasted',
+            'tool': tool, 'path': file_path, 'media_type': media_type, 'bytes': len(data) * 3 // 4,
+        })
+
+
+def _entry_images(entry: Any) -> Iterator[tuple[dict[str, Any], str]]:
+    """Each base64 image block of a user entry, in order, with the id of the call whose result holds it ('' for a prompt's own)."""
+    if not isinstance(entry, dict) or entry.get('type') != 'user':
+        return
+    message = entry.get('message')
+    content = message.get('content') if isinstance(message, dict) else None
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict):
+            continue
+        if block.get('type') == 'image':
+            source = block.get('source')
+            if isinstance(source, dict) and source.get('type') == 'base64':
+                yield source, ''
+        elif block.get('type') == 'tool_result':
+            tool_use_id = block.get('tool_use_id') if isinstance(block.get('tool_use_id'), str) else ''
+            inner = block.get('content')
+            for item in inner if isinstance(inner, list) else []:
+                if isinstance(item, dict) and item.get('type') == 'image':
+                    source = item.get('source')
+                    if isinstance(source, dict) and source.get('type') == 'base64':
+                        yield source, tool_use_id
 
 
 def _absorb_steps(lines: Iterable[bytes], main_only: bool, steps: list[dict[str, Any]], calls: dict[str, dict[str, Any]]) -> None:

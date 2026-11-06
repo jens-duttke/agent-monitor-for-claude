@@ -6,8 +6,9 @@ Reads a Linux ``/proc`` tree and answers the questions the process probe asks
 of it: which pids exist, how they are related, when each started, and what CPU
 and memory each is using.  Per process, ``/proc/[pid]/stat`` is opened - process
 names, parent links, start times, and resource counters - and, for a walk down
-from known pids (:func:`read_proc_subtree`), the ``task/[tid]/children`` lists;
-never a command line.
+from known pids (:func:`read_proc_subtree`), the ``task/[tid]/children`` lists.
+One process's ``cmdline``, ``exe``, ``cwd`` and ``status`` are read only by
+:func:`read_process_details`, for the one process the user selected.
 
 Two callers share it, and they differ only in which ``/proc`` they hand in:
 
@@ -30,12 +31,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from .procinfo import SESSION_HELPER_WINDOW_SECONDS
+from .procinfo import SESSION_HELPER_WINDOW_SECONDS, ProcessDetails, clip_arguments
 
 __all__ = [
     'DEFAULT_CLK_TCK', 'DEFAULT_PAGE_SIZE', 'ProcEntry', 'ancestors', 'children_index', 'clk_tck',
-    'live_descendants', 'page_size', 'parse_stat', 'prune_sample_cache', 'read_btime', 'read_proc_subtree',
-    'read_proc_table', 'sample_cpu',
+    'live_descendants', 'page_size', 'parse_stat', 'prune_sample_cache', 'read_btime', 'read_process_details',
+    'read_proc_subtree', 'read_proc_table', 'sample_cpu',
 ]
 
 # Linux clock ticks per second, used to interpret /proc/[pid]/stat's tick-based fields (starttime,
@@ -56,6 +57,9 @@ _MAX_ANCESTOR_DEPTH = 15
 
 # Files read at once while walking down a process tree (see read_proc_subtree).
 _SUBTREE_WORKERS = 16
+
+# The most of a process's cmdline file read; the arguments are cut to less than this anyway.
+_CMDLINE_MAX_BYTES = 64 * 1024
 
 
 @dataclass(frozen=True)
@@ -364,6 +368,66 @@ def live_descendants(
         pending.extend(index.get(child_pid, []))
 
     return descendants
+
+
+def read_process_details(proc_dir: Path, pid: int, starttime: int, btime: int | None, ticks_per_second: int) -> ProcessDetails:
+    """Return how *pid* was started, from where and when, read from its own ``/proc`` entry.
+
+    The arguments come from ``cmdline`` (NUL-separated), the executable and the working directory
+    from the ``exe`` and ``cwd`` links, the thread count from ``status``, and the start from the
+    boot time plus *starttime*.  Each degrades to ``None`` on its own: another user's process hides
+    its links, and the ``\\\\wsl.localhost`` share cannot resolve a link at all.
+    """
+    pid_dir = proc_dir / str(pid)
+    started_at = None if btime is None else btime + starttime / ticks_per_second
+    arguments, clipped = _read_cmdline(pid_dir)
+
+    return ProcessDetails(
+        pid=pid, command_line=arguments, executable=_read_link(pid_dir / 'exe'), cwd=_read_link(pid_dir / 'cwd'),
+        started_at=started_at, threads=_read_threads(pid_dir), command_line_clipped=clipped,
+    )
+
+
+def _read_cmdline(pid_dir: Path) -> tuple[tuple[str, ...] | None, bool]:
+    """The process's arguments and whether some were cut, or ``(None, False)`` when unreadable or empty (a kernel thread)."""
+    try:
+        with open(pid_dir / 'cmdline', 'rb') as handle:
+            raw = handle.read(_CMDLINE_MAX_BYTES)
+    except OSError:
+        return None, False
+
+    parts = raw.decode('utf-8', errors='replace').split('\0')
+    if parts and parts[-1] == '':
+        parts.pop()
+    if not parts:
+        return None, False
+
+    arguments, clipped = clip_arguments(parts)
+    return arguments, clipped or len(raw) >= _CMDLINE_MAX_BYTES
+
+
+def _read_link(path: Path) -> str | None:
+    """Where a ``/proc`` link points, or None when it cannot be resolved."""
+    try:
+        target = os.readlink(path)
+    except (OSError, ValueError):
+        return None
+
+    return target or None
+
+
+def _read_threads(pid_dir: Path) -> int | None:
+    """The ``Threads:`` count from the process's ``status`` file, or None."""
+    try:
+        text = (pid_dir / 'status').read_text(encoding='utf-8', errors='ignore')
+    except OSError:
+        return None
+
+    for line in text.splitlines():
+        if line.startswith('Threads:'):
+            return _optional_int(line.split(), 1)
+
+    return None
 
 
 def read_btime(proc_dir: Path) -> int | None:

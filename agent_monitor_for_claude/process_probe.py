@@ -22,6 +22,11 @@ while the user has the process panel open.  It inspects a handful of processes
 rather than the whole table, which is why it stays out of the per-second
 snapshot scan above.  It still reads no command line or argument.
 
+``process_details`` is the one path that does: for the single background
+process the user selected, it reports its command line, executable, working
+directory, start time and thread count - and only for a process the session's
+own panel lists, so no other process on the system can be asked for.
+
 Both backends validate the session registry's recorded process start time
 (``procStart``) against the live process: a mismatch means the system recycled
 the PID for an unrelated process and the registry entry is stale, so the
@@ -33,20 +38,23 @@ from __future__ import annotations
 
 import sys
 
-from .procinfo import ChildProcessStat, ProcessInfo, SESSION_HELPER_WINDOW_SECONDS
+from .procinfo import ChildProcessStat, ProcessDetails, ProcessInfo, SESSION_HELPER_WINDOW_SECONDS
 
 if sys.platform == 'win32':
     from .platforms.process_win32 import (
-        IGNORED_ANCESTOR_NAMES, TERMINAL_WINDOW_OWNERS, ancestry, probe_all, process_names, process_stats, vmmem_present,
+        IGNORED_ANCESTOR_NAMES, TERMINAL_WINDOW_OWNERS, ancestry, probe_all, process_details, process_names, process_stats,
+        vmmem_present,
     )
 else:
     from .platforms.process_linux import (
-        IGNORED_ANCESTOR_NAMES, TERMINAL_WINDOW_OWNERS, ancestry, probe_all, process_names, process_stats, vmmem_present,
+        IGNORED_ANCESTOR_NAMES, TERMINAL_WINDOW_OWNERS, ancestry, probe_all, process_details, process_names, process_stats,
+        vmmem_present,
     )
 
 __all__ = [
-    'ChildProcessStat', 'IGNORED_ANCESTOR_NAMES', 'ProcessInfo', 'SESSION_HELPER_WINDOW_SECONDS',
-    'TERMINAL_WINDOW_OWNERS', 'ancestry', 'probe', 'probe_all', 'process_names', 'process_stats', 'vmmem_present',
+    'ChildProcessStat', 'IGNORED_ANCESTOR_NAMES', 'ProcessDetails', 'ProcessInfo', 'SESSION_HELPER_WINDOW_SECONDS',
+    'TERMINAL_WINDOW_OWNERS', 'ancestry', 'probe', 'probe_all', 'process_details', 'process_names', 'process_stats',
+    'vmmem_present',
 ]
 
 

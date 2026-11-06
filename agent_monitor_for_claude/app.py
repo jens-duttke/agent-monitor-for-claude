@@ -23,21 +23,24 @@ import webview  # type: ignore[import-untyped]  # no type stubs available
 
 from . import __version__
 from .clipboard import copy_text as _copy_text
-from .git_status import git_status
+from .git_overview import git_overview
+from .git_status import git_diff, git_status
 from .history import list_history
 from .i18n import T
-from .paths import config_dir, host_path, local_root, projects_dir, scratchpad_dir
+from .paths import SessionRoot, config_dir, host_path, local_root, projects_dir, scratchpad_dir
 from .paths import transcript_path as _transcript_path
 from .platforms import prepare_gui_environment, storage_dir
 from .pricing import load_pricing
-from .process_probe import process_stats
+from .process_probe import process_details, process_stats
 from .roots import root_for_origin
 from .search import run_search
 from .session_delete import delete_session as _delete_session
 from .sessions import list_sessions
 from .settings import POLL_INTERVAL, WINDOW_HEIGHT, WINDOW_WIDTH
-from .snapshot import build_snapshot, registry_fingerprint, session_activity, session_texts
-from .subagents import agent_texts
+from .snapshot import (
+    build_snapshot, registry_fingerprint, session_activity, session_hook_failures, session_media, session_media_image, session_texts,
+)
+from .subagents import agent_media, agent_media_image, agent_texts
 from .tasks import list_tasks
 from .tasks import read_task_output as _read_task_output
 from .test_results import TestSummary
@@ -47,7 +50,7 @@ from .verbose import print_runtime_diagnostics
 from .window_background import apply_native_background, window_background_color
 from .window_focus import focus_session_window, focus_terminal_window, open_directory, open_vscode_session, reveal_in_file_manager
 from .window_layout import NORMAL_MIN_SIZE, enter_compact, keep_on_top, leave_compact, show_attention
-from .wsl import wsl_process_stats
+from .wsl import wsl_process_details, wsl_process_stats
 
 __all__ = ['run']
 
@@ -56,6 +59,9 @@ _LOG_MAX_LEN = 2000
 
 # Session ids are UUIDs; validated before a session id is built into a path.
 _SESSION_UUID = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+
+# The most sessions one git overview request may name.
+_MAX_GIT_OVERVIEW_REFS = 400
 
 # Ports offered to pywebview's own asset server, in order.  The first is the one it would
 # pick by itself; the rest sit far apart because Windows reserves whole contiguous blocks
@@ -95,6 +101,45 @@ def _proc_start_ticks_for(records: list[dict[str, Any]], pid_value: int) -> int 
             return record.get('proc_start_ticks')
 
     return None
+
+
+def _git_overview_directory(ref: object) -> str | None:
+    """The host directory git is asked about for one ``get_git_overview`` ref, or None when the ref is refused.
+
+    Like ``get_git_status``: the session id must be a UUID and the origin a
+    currently available root; the worktree the session switched into wins over
+    its own directory.
+    """
+    if not isinstance(ref, dict):
+        return None
+    session_id, cwd, worktree_cwd, origin = (ref.get('session_id'), ref.get('cwd'), ref.get('worktree_cwd'), ref.get('origin', 'local'))
+    if not isinstance(session_id, str) or not _SESSION_UUID.match(session_id) or not isinstance(cwd, str) or not cwd:
+        return None
+    root = root_for_origin(origin) if isinstance(origin, str) else None
+    if root is None:
+        return None
+    directory = worktree_cwd if isinstance(worktree_cwd, str) and worktree_cwd else cwd
+
+    return host_path(root, directory)
+
+
+def _media_root(session_id: object, cwd: object, origin: object) -> SessionRoot | None:
+    """The root a media request reads from, or None when the session id is no UUID, the cwd is empty or the origin unknown."""
+    if not isinstance(session_id, str) or not _SESSION_UUID.match(session_id) or not isinstance(cwd, str) or not cwd:
+        return None
+
+    return root_for_origin(origin) if isinstance(origin, str) else None
+
+
+def _int_or_none(value: object) -> int | None:
+    """A bridge argument as an int, or None for a bool, a non-number or a string that is not one."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def _tests_record(tests: TestSummary | None) -> dict[str, Any] | None:
@@ -274,6 +319,46 @@ class _MonitorApi:
             }
             for stat in stats
         ]
+
+    def get_process_details(self, pid: object, child_pid: object, origin: object = 'local') -> dict[str, Any] | None:
+        """Return the command line, executable, working directory, start and thread count of one background process.
+
+        Called once when the user selects that process.  *pid* is the session's
+        process; *child_pid* must be one of the processes its own panel lists,
+        so no other process on the system can be asked about.  A WSL origin is
+        routed to the distro's ``/proc`` like ``get_process_stats``.
+        """
+        if not isinstance(origin, str):
+            return None
+
+        pid_value = _int_or_none(pid)
+        child_value = _int_or_none(child_pid)
+        if pid_value is None or child_value is None or child_value <= 0:
+            return None
+
+        root = root_for_origin(origin)
+        if root is None:
+            return None
+
+        # Only below a session the registry names: a command line is not read for an arbitrary process tree.
+        records = list_sessions(root if root.proc_dir is not None else local_root())
+        if not any(record.get('pid') == pid_value for record in records):
+            return None
+
+        proc_start_ticks = _proc_start_ticks_for(records, pid_value)
+        if root.proc_dir is not None:
+            details = wsl_process_details(root, pid_value, proc_start_ticks, child_value)
+        else:
+            details = process_details(pid_value, proc_start_ticks, child_value)
+
+        if details is None:
+            return None
+
+        return {
+            'pid': details.pid, 'command_line': None if details.command_line is None else list(details.command_line),
+            'command_line_clipped': details.command_line_clipped, 'executable': details.executable, 'cwd': details.cwd,
+            'started_at': details.started_at, 'threads': details.threads,
+        }
 
     def get_tasks(self, session_id: object, cwd: object, max_age: object = None, origin: object = 'local') -> dict[str, Any]:
         """Return the session's recent background tasks (metadata, plus labels).
@@ -581,6 +666,51 @@ class _MonitorApi:
 
         return agent_texts(root, session_id, agent_id)
 
+    def get_session_media(self, session_id: object, cwd: object, origin: object = 'local', agent_id: object = '') -> dict[str, Any] | None:
+        """Return the images of the selected session - or of one of its subagents - and the files it wrote, or None.
+
+        Read on request for the session or agent the details show: where each
+        image is and where it came from, never its data, which
+        ``get_media_image`` hands over one image at a time.  The session id must
+        be a UUID and the origin a currently available root; an agent id is
+        checked by its reader, and its file must lie inside ``projects/``.
+        """
+        root = _media_root(session_id, cwd, origin)
+        if root is None:
+            return None
+        if isinstance(agent_id, str) and agent_id:
+            return agent_media(root, session_id, agent_id)
+
+        return session_media(root, session_id, cwd)
+
+    def get_hook_failures(self, session_id: object, cwd: object, origin: object = 'local') -> list[dict[str, Any]] | None:
+        """Return the selected session's failed hooks, newest first - each with its command, exit code, output and the call that set it off.
+
+        Read on request, when the details show a session with failing hooks.
+        The session id must be a UUID and the origin a currently available root.
+        """
+        root = _media_root(session_id, cwd, origin)
+        if root is None:
+            return None
+
+        return session_hook_failures(root, session_id, cwd)
+
+    def get_media_image(self, session_id: object, cwd: object, origin: object = 'local', agent_id: object = '',
+                        media_id: object = '') -> dict[str, str] | None:
+        """Return one image ``get_session_media`` listed - its format and base64 data - or None.
+
+        Only an id the listing holds is read; the image must be PNG, JPEG, GIF
+        or WebP, real base64 and of bounded size.  Called as a thumbnail scrolls
+        into view, for the session or agent the details show.
+        """
+        root = _media_root(session_id, cwd, origin)
+        if root is None or not isinstance(media_id, str) or not media_id:
+            return None
+        if isinstance(agent_id, str) and agent_id:
+            return agent_media_image(root, session_id, agent_id, media_id)
+
+        return session_media_image(root, session_id, cwd, media_id)
+
     def get_git_status(self, session_id: object, cwd: object, worktree_cwd: object = '', origin: object = 'local') -> dict[str, Any] | None:
         """Return what the session's working directory holds that is not committed yet, or None.
 
@@ -601,6 +731,50 @@ class _MonitorApi:
         directory = worktree_cwd if isinstance(worktree_cwd, str) and worktree_cwd else cwd
         edited = [host_path(root, path) for path in edited_files(root, session_id, cwd)]
         return git_status(host_path(root, directory), edited)
+
+    def get_git_overview(self, refs: object) -> list[dict[str, Any] | str | None]:
+        """Return where the work stands in each listed session's directory, at once and from a cache.
+
+        *refs* is a list of ``{session_id, cwd, worktree_cwd, origin}``; the
+        answer holds one entry per ref, in order - the state, None for no
+        repository or a refused ref, or ``'pending'`` while git is still being
+        asked in the background.  Nothing here waits for git.
+        """
+        if not isinstance(refs, list):
+            return []
+
+        answers: list[dict[str, Any] | str | None] = [None] * len(refs)
+        directories: list[str] = []
+        slots: list[int] = []
+        for index, ref in enumerate(refs[:_MAX_GIT_OVERVIEW_REFS]):
+            directory = _git_overview_directory(ref)
+            if directory:
+                directories.append(directory)
+                slots.append(index)
+        for index, answer in zip(slots, git_overview(directories)):
+            answers[index] = answer
+
+        return answers
+
+    def get_git_diff(self, session_id: object, cwd: object, worktree_cwd: object = '', origin: object = 'local',
+                     path: object = '') -> dict[str, Any] | None:
+        """Return the uncommitted changes of one file the git block lists, or None.
+
+        Called only when a file of the selected session's git block is clicked.
+        The directory is chosen exactly as for ``get_git_status``; the path is
+        relative to the repository's top level and is refused when it leaves it.
+        """
+        if not isinstance(session_id, str) or not _SESSION_UUID.match(session_id) or not isinstance(cwd, str) or not cwd:
+            return None
+        if not isinstance(path, str) or not path:
+            return None
+
+        root = root_for_origin(origin) if isinstance(origin, str) else None
+        if root is None:
+            return None
+
+        directory = worktree_cwd if isinstance(worktree_cwd, str) and worktree_cwd else cwd
+        return git_diff(host_path(root, directory), path)
 
     def transcript_path(self, session_id: object, cwd: object, origin: object = 'local') -> str:
         """Return the session's transcript file if it exists, else ''.

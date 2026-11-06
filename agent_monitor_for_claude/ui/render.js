@@ -44,6 +44,88 @@ function rowKey(session) {
     return (session.session_id || 'nosid') + '#' + session.pid;
 }
 
+/* --- where each listed session's work stands in git ---
+
+   Asked of the bridge in a loop of its own, never on the render path: the
+   bridge answers from its cache at once and reads git in the background, so
+   the list shows first and the git signals follow. */
+const GIT_OVERVIEW_MS = 4000;
+const GIT_OVERVIEW_PENDING_MS = 1000;
+
+// Give each session its directory's latest git record, with the age of the
+// remote's picture as of now.
+function attachGitState(sessions) {
+    const nowSeconds = Date.now() / 1000;
+    for (const session of sessions) {
+        const record = state.gitOverview.get(logic.gitDirKey(session));
+        session.git = record && typeof record === 'object'
+            ? Object.assign({}, record, { fetched_seconds: Number.isFinite(record.fetched_at) ? nowSeconds - record.fetched_at : null })
+            : null;
+    }
+}
+
+// Ask for every listed directory once, then again: soon while a first answer
+// is still pending, else every GIT_OVERVIEW_MS. A changed answer re-renders.
+async function gitOverviewLoop() {
+    let pending = false;
+    try {
+        pending = await refreshGitOverview();
+    } catch (err) {
+        // A bridge hiccup - the next round asks again.
+    }
+    setTimeout(gitOverviewLoop, pending ? GIT_OVERVIEW_PENDING_MS : GIT_OVERVIEW_MS);
+}
+
+async function refreshGitOverview() {
+    const refs = new Map();
+    for (const session of state.sessionsByKey.values()) {
+        const key = logic.gitDirKey(session);
+        if (key && !refs.has(key)) {
+            refs.set(key, { session_id: session.session_id || '', cwd: session.cwd || '', worktree_cwd: session.worktree_cwd || '',
+                origin: session.origin || 'local' });
+        }
+    }
+    if (refs.size === 0) {
+        return false;
+    }
+    const keys = Array.from(refs.keys());
+    const answers = await callGitOverview(Array.from(refs.values()));
+    let pending = false;
+    let changed = false;
+    keys.forEach((key, index) => {
+        const answer = answers[index];
+        if (answer === 'pending') {
+            pending = true;
+            return;
+        }
+        const value = answer && typeof answer === 'object' ? answer : null;
+        if (JSON.stringify(state.gitOverview.get(key) || null) !== JSON.stringify(value)) {
+            state.gitOverview.set(key, value);
+            changed = true;
+        }
+    });
+    if (changed && state.last) {
+        render(state.last);
+    }
+    return pending;
+}
+
+async function callGitOverview(refs) {
+    const bridge = apiBridge();
+    if (bridge && typeof bridge.get_git_overview === 'function') {
+        const answers = await bridge.get_git_overview(refs);
+        return Array.isArray(answers) ? answers : [];
+    }
+    const mock = window.__MOCK_GIT_OVERVIEW__ || {};
+    return refs.map((ref) => mock[ref.worktree_cwd || ref.cwd] || null);
+}
+
+// The processes of the session under `key` that ended lately (see trackEndedProcesses).
+function endedProcessesOf(key) {
+    const tracker = state.processTracker;
+    return (tracker && tracker.ended.get(key)) || [];
+}
+
 // Whether a click can bring the session's window forward: a past session has no
 // process, and a background agent runs under the daemon with no window - the
 // title fallback in focus_session_window could otherwise raise an unrelated
@@ -238,14 +320,27 @@ function fitGraphText(root) {
         const cacheKey = text.getAttribute('class') + '|' + text.textContent;
         if (graphTextFits.has(cacheKey)) {
             text.textContent = graphTextFits.get(cacheKey);
-            return;
+        } else {
+            fitOneGraphText(text);
+            if (graphTextFits.size >= GRAPH_TEXT_FITS_MAX) {
+                graphTextFits.clear();
+            }
+            graphTextFits.set(cacheKey, text.textContent);
         }
-        fitOneGraphText(text);
-        if (graphTextFits.size >= GRAPH_TEXT_FITS_MAX) {
-            graphTextFits.clear();
-        }
-        graphTextFits.set(cacheKey, text.textContent);
+        dropRedundantGraphTip(text);
     });
+}
+
+// A node's tooltip only completes a title its box cut short; one that fits
+// whole would repeat it.
+function dropRedundantGraphTip(text) {
+    if (!text.classList.contains('gnode-label') || text.textContent.endsWith('…')) {
+        return;
+    }
+    const node = text.closest('.gnode');
+    if (node) {
+        node.removeAttribute('data-tip');
+    }
 }
 
 // Shorten one label to the room its box has, by halving the length that fits.
@@ -341,7 +436,8 @@ function itemMetaMarkup(session) {
     }
     const signals = logic.sessionSignals(session, state.labels).slice(0, logic.LIST_SIGNAL_LIMIT);
     for (const signal of signals) {
-        parts.push('<span' + attr('class', 'sig sig-' + signal.tone) + '>' + esc(signal.text) + '</span>');
+        parts.push('<span' + attr('class', 'sig sig-' + signal.tone) + (signal.tip ? attr('data-tip', signal.tip) : '') + '>'
+            + esc(signal.text) + '</span>');
     }
     return parts.join('');
 }
@@ -567,6 +663,11 @@ function ensureShell() {
 function render(snapshot) {
     const previous = state.last;
     state.last = snapshot;
+    // What ended since the last snapshot stays in the graph for a while; a
+    // re-render of the same snapshot finds nothing new.
+    state.processTracker = logic.trackEndedProcesses(state.processTracker,
+        (snapshot.sessions || []).map((raw) => ({ key: rowKey(raw), processes: logic.processesOf(raw) })),
+        Date.now(), (key, pid) => key === state.selectedKey && pid === state.selectedProcess);
 
     const labels = state.labels;
     const prices = logic.resolvePrices(state.pricing, todayIso());
@@ -605,6 +706,7 @@ function render(snapshot) {
 
     const projects = logic.groupProjects(rawSessions, labels, prices);
     const sessions = logic.flattenProjects(projects);
+    attachGitState(sessions);
 
     // The query filters on the session's own fields at once and on its content
     // as the scan reports matches.
@@ -659,7 +761,12 @@ function render(snapshot) {
         listSlot.replaceChildren();
         const graphSessions = found.filter((session) => !session.is_history);
         shown.push(...graphSessions);
-        const entries = graphSessions.map((session) => ({ key: rowKey(session), session: session }));
+        // An ended process carries how many seconds from now its fade starts.
+        const now = Date.now();
+        const entries = graphSessions.map((session) => ({
+            key: rowKey(session), session: session,
+            ended: endedProcessesOf(rowKey(session)).map((process) => Object.assign({}, process, { fade_in: (process.fade_at - now) / 1000 })),
+        }));
         const selection = { key: state.selectedKey, agent: state.selectedAgent, process: state.selectedProcess, tool: state.selectedTool };
         const model = logic.graphModel(entries, logic.graphRange(state.graphRange).seconds, selection, state.graphCollapsed);
         setMarkup(graphSlot, graphSessions.length > 0 ? logic.graphMarkup(logic.graphLayout(model), labels, selection) : '');

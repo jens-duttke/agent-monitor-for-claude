@@ -14,12 +14,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-__all__ = ['ChildProcess', 'ChildProcessStat', 'ProcessInfo', 'SESSION_HELPER_WINDOW_SECONDS', 'child_processes']
+__all__ = [
+    'ChildProcess', 'ChildProcessStat', 'ProcessDetails', 'ProcessInfo', 'SESSION_HELPER_WINDOW_SECONDS', 'child_processes',
+    'clip_arguments',
+]
 
 # Background processes listed per session; past this many the rest still count.
 _MAX_CHILD_PROCESSES = 200
 # How far up the tree a listed process looks for the nearest listed ancestor.
 _MAX_PARENT_HOPS = 32
+# The most of a command line passed on; a longer one is cut after the last whole argument that fits.
+_MAX_COMMAND_LINE_CHARS = 16_000
 
 # A child that starts together with the session process is a session-lifetime
 # helper (a stdio MCP server, a file watcher), not a tool execution: a tool
@@ -91,3 +96,35 @@ class ChildProcessStat:
     rss_bytes: int | None
     uptime_seconds: float | None
     kind: str = 'process'
+
+
+@dataclass(frozen=True)
+class ProcessDetails:
+    """What one background process is: how it was started, from where, and when.
+
+    Every field but ``pid`` is ``None`` when the system would not tell - an
+    access denied, a process gone meanwhile, or a ``/proc`` share that cannot
+    resolve its links.  ``command_line_clipped`` says that arguments past
+    ``_MAX_COMMAND_LINE_CHARS`` were left out.
+    """
+
+    pid: int
+    command_line: tuple[str, ...] | None
+    executable: str | None
+    cwd: str | None
+    started_at: float | None
+    threads: int | None
+    command_line_clipped: bool = False
+
+
+def clip_arguments(arguments: list[str]) -> tuple[tuple[str, ...], bool]:
+    """The arguments that fit in ``_MAX_COMMAND_LINE_CHARS``, whole ones only, and whether any were left out."""
+    kept: list[str] = []
+    used = 0
+    for argument in arguments:
+        used += len(argument) + 1
+        if used > _MAX_COMMAND_LINE_CHARS:
+            return tuple(kept), True
+        kept.append(argument)
+
+    return tuple(kept), False
