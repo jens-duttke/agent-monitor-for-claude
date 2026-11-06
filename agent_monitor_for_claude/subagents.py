@@ -635,8 +635,10 @@ _AGENT_TYPE_PATTERN = re.compile(r'[A-Za-z0-9][A-Za-z0-9:._-]{0,63}')
 # {agent transcript path: agentType} - the metadata never changes once written,
 # so each agent's file is read once, not on every poll.  A failed read is not
 # cached: the metadata can land a moment after the transcript.  Bounded so a
-# long-lived monitor cannot grow it without limit.
+# long-lived monitor cannot grow it without limit.  The History listing reads
+# several sessions at once, so the eviction is locked.
 _agent_type_cache: dict[str, str] = {}
+_agent_type_lock = threading.Lock()
 _AGENT_TYPE_CACHE_MAX = 4096
 
 
@@ -652,9 +654,10 @@ def _agent_type(agent_path: Path) -> str:
     if not isinstance(agent_type, str) or not _AGENT_TYPE_PATTERN.fullmatch(agent_type):
         return ''
 
-    while len(_agent_type_cache) >= _AGENT_TYPE_CACHE_MAX:
-        _agent_type_cache.pop(next(iter(_agent_type_cache)))
-    _agent_type_cache[key] = agent_type
+    with _agent_type_lock:
+        while len(_agent_type_cache) >= _AGENT_TYPE_CACHE_MAX:
+            _agent_type_cache.pop(next(iter(_agent_type_cache)))
+        _agent_type_cache[key] = agent_type
     return agent_type
 
 

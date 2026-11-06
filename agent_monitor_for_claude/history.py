@@ -36,7 +36,10 @@ JSON-serializable and free of conversation content.
 from __future__ import annotations
 
 import math
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +52,9 @@ from .transcript import history_state_for
 from .usage_parts import session_usage
 
 __all__ = ['list_history']
+
+# Transcripts read at once per session root.
+_MAX_WORKERS = 16
 
 
 def list_history(max_age_seconds: float | None = None) -> list[dict[str, Any]]:
@@ -82,14 +88,24 @@ def list_history(max_age_seconds: float | None = None) -> list[dict[str, Any]]:
     window = _valid_window(max_age_seconds)
     live_ids = live_or_recent_ids()
 
+    # The roots are scanned side by side: a WSL root spends its time waiting on
+    # the share, which the local root's parsing can fill.  Results keep the
+    # roots' order, which _one_record_per_session relies on.
+    roots = session_roots()
     found: list[tuple[dict[str, Any], bool]] = []
-    for root in session_roots():
-        try:
-            found.extend(_list_root_history(root, live_ids, window))
-        except Exception:
-            continue
+    with ThreadPoolExecutor(max_workers=max(1, len(roots))) as pool:
+        for records in pool.map(partial(_root_history_or_none, live_ids=live_ids, window=window), roots):
+            found.extend(records or ())
 
     return _one_record_per_session(found)
+
+
+def _root_history_or_none(root: SessionRoot, live_ids: set[str], window: float | None) -> list[tuple[dict[str, Any], bool]] | None:
+    """Return :func:`_list_root_history` for *root*, or None when its scan raises - one broken root never blanks the others."""
+    try:
+        return _list_root_history(root, live_ids, window)
+    except Exception:
+        return None
 
 
 def _one_record_per_session(found: list[tuple[dict[str, Any], bool]]) -> list[dict[str, Any]]:
@@ -181,22 +197,21 @@ def _list_root_history(root: SessionRoot, live_ids: set[str], window: float | No
     except OSError:
         return []
 
-    records: list[tuple[dict[str, Any], bool]] = []
+    folders: list[tuple[Path, list[Path]]] = []
     for project_dir in project_dirs:
         try:
             transcripts = sorted(project_dir.glob('*.jsonl'))
         except OSError:
             continue
+        folders.append((project_dir, [path for path in transcripts if path.stem not in live_ids]))
 
+    built = _read_transcripts([path for _, paths in folders for path in paths], cutoff)
+
+    records: list[tuple[dict[str, Any], bool]] = []
+    for project_dir, paths in folders:
         folder_records: list[dict[str, Any]] = []
-        for path in transcripts:
-            if path.stem in live_ids:
-                continue
-
-            if not _touched_since(path, cutoff):
-                continue
-
-            record = _build_history_record(path)
+        for path in paths:
+            record = built[path]
             if record is not None:
                 record['origin'] = root.origin
                 record['origin_label'] = root.label
@@ -217,6 +232,30 @@ def _list_root_history(root: SessionRoot, live_ids: set[str], window: float | No
                 records.append((record, cwd_to_slug(record['cwd']).lower() == project_dir.name.lower()))
 
     return records
+
+
+def _read_transcripts(paths: list[Path], cutoff: float | None) -> dict[Path, dict[str, Any] | None]:
+    """Build the history record of every transcript in *paths* touched since *cutoff*, several files at once.
+
+    Most of a file's time is spent waiting on the disk - and on a WSL root on
+    the ``\\\\wsl.localhost`` share, where every open and read is a round trip -
+    so files are read concurrently.  A file outside the window, or one that
+    cannot be read, maps to None.
+    """
+    if not paths:
+        return {}
+
+    workers = min(_MAX_WORKERS, (os.cpu_count() or 1) * 4, len(paths))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return dict(zip(paths, pool.map(partial(_read_transcript, cutoff=cutoff), paths)))
+
+
+def _read_transcript(path: Path, cutoff: float | None) -> dict[str, Any] | None:
+    """Return the history record of *path*, or None when it predates *cutoff* or cannot be read."""
+    if not _touched_since(path, cutoff):
+        return None
+
+    return _build_history_record(path)
 
 
 def _touched_since(path: Path, cutoff: float | None) -> bool:

@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- Costs and session details of long transcripts fill in about three times faster after the start.
+- Costs and session details of long transcripts fill in about three times faster after the start, and the *Older* section loads its sessions about three times faster.
 - Running from source needs the `msgspec` package; run `pip install -r requirements.txt` again after updating.
 
 ## [0.13.0] - 2026-11-05
