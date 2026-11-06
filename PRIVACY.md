@@ -627,7 +627,8 @@ The application integrates with **no** third-party service. No analytics, no tra
 no telemetry, no crash reporting, no update check, no remote configuration. Model prices are read from
 a hand-maintained local `pricing.json` in the installation, never fetched from anywhere.
 
-It has two direct Python dependencies, `pywebview` and `psutil`. Through pywebview it also uses
+It has three direct Python dependencies, `pywebview`, `psutil` and `msgspec` (a JSON decoder; it parses
+the transcripts locally and opens no connection). Through pywebview it also uses
 `bottle` (the loopback file server described above) and, on Windows, `pythonnet`/`clr_loader` (the .NET
 bridge to the window host, which the application calls directly to keep the window background in step
 with the page and to let the compact view make the window narrower). On Linux the same role is filled by PyGObject, the GTK bindings your distribution

@@ -48,6 +48,8 @@ from functools import partial
 from pathlib import Path
 from typing import Any, BinaryIO
 
+import msgspec
+
 from .background_scans import drop_pending, prioritize, queue_scan, wait_for_readers
 from .paths import SessionRoot, transcript_path
 from .usage_parts import UsageScan
@@ -170,11 +172,6 @@ _FILE_EDIT_TOOLS = {'Edit': 'file_path', 'MultiEdit': 'file_path', 'Write': 'fil
 # the skill that started it.  A name of any other shape is not attributed.
 _SKILL_NAME_PATTERN = re.compile(r'[A-Za-z0-9][A-Za-z0-9:._-]{0,63}')
 
-# A web search's result records how many searches it made; each is billed on
-# top of the tokens.  Only that count is read - the query and the results stay
-# unread.
-_SEARCH_COUNT_MARKER = b'"searchCount"'
-
 # A short lowercase token Claude Code writes as an effort level or a speed
 # (``high``, ``xhigh``, ``fast``); anything else is not displayed.
 _LABEL_TOKEN_PATTERN = re.compile(r'^[a-z][a-z0-9_-]{0,15}$')
@@ -189,9 +186,8 @@ _PR_URL_MAX_CHARS = 400
 # The artifacts a session published, newest last; past this many the oldest
 # drop out.  Claude Code writes an artifact's address and title only into the
 # first ``frame-link`` entry for it - the later ones carry just the count - so
-# they are collected by the full scan, behind this marker.
+# they are collected by the full scan.
 _MAX_ARTIFACTS = 20
-_FRAME_URL_MARKER = b'"frameUrl"'
 
 # What a call the session runs or waits on shows: its command, path, question
 # or plan, cut to these lengths.  A plan is the longest, since it is read
@@ -210,12 +206,7 @@ _HOOK_NO_OUTPUT = 'No stderr output'
 # The plan's step texts.
 _PLAN_ITEM_MAX_CHARS = 160
 
-# Full-scan markers: an edit's patch, a subagent's tool statistics, a message
-# from a peer (another session or a subagent handing back), and the tools that
-# send one.
-_PATCH_MARKER = b'"structuredPatch"'
-_TOOL_STATS_MARKER = b'"toolStats"'
-_PEER_MARKER = b'"kind":"peer"'
+# The tool that sends a message to a peer (another session, or a subagent handing back).
 _SEND_MESSAGE_TOOL = 'SendMessage'
 # A message that arrives while a turn runs is recorded as this attachment, its
 # sender in the attachment's own ``origin`` - not as a prompt entry.
@@ -230,21 +221,17 @@ _STRUCTURED_OUTPUT_TOOL = 'StructuredOutput'
 # A subagent's own lines carry an ``agentId`` too, and are told apart by being
 # sidechain lines.  Launches kept per session, newest last.
 _AGENT_TOOLS = frozenset({'Agent', 'Task'})
-_AGENT_ID_MARKER = b'"agentId"'
-_SIDECHAIN_MARKER = b'"isSidechain":true'
 _MAX_AGENT_LAUNCHES = 200
 # A tool's name as the graph shows it: what Claude Code and an MCP server name
 # their tools, nothing that could carry text.
 _TOOL_NAME_PATTERN = re.compile(r'^[A-Za-z0-9_.:-]{1,128}$')
 _MAX_TOOL_NAMES = 200
-# A failed tool call: its result carries ``is_error``.  That byte marker lets
-# just those lines through the pre-filter, and the call's id names the tool
-# (the ids of recent calls are kept for that).  Three kinds of call are marked
-# the same way without the tool having failed, each told apart by the fixed
-# wording Claude Code opens its result with: one you rejected, one a
-# permission rule or the classifier denied, and one cut off because the
-# session ended first.
-_ERROR_RESULT_MARKER = b'"is_error":true'
+# A failed tool call: its result carries ``is_error``, and the call's id names
+# the tool (the ids of recent calls are kept for that).  Three kinds of call are
+# marked the same way without the tool having failed, each told apart by the
+# fixed wording Claude Code opens its result with: one you rejected, one a
+# permission rule or the classifier denied, and one cut off because the session
+# ended first.
 _DECLINED_RESULTS = (
     (re.compile(r"^The user doesn't want to proceed with this tool use"), 'rejected'),
     (re.compile(r'^Permission for this \w+ was denied'), 'rejected'),
@@ -285,44 +272,28 @@ _TURN_ORIGINS = {
 # happened.
 _TURN_ENTRY_TYPES = frozenset({'assistant', 'user', 'system'})
 
-_USAGE_MARKER = b'"usage"'
+# Byte markers of the lines a running first scan's stand-in looks at (see
+# _recent_title_and_mode).  The permission mode matches the field name, which
+# both of its shapes carry (see _absorb_line); the type name alone would see
+# only the dedicated ``permission-mode`` entry.
 _AI_TITLE_MARKER = b'ai-title'
 _CUSTOM_TITLE_MARKER = b'custom-title'
-# Matches the field name, which both shapes of the permission mode carry (see
-# _absorb_line): the dedicated ``permission-mode`` entry writes it alongside its
-# type, and an ordinary entry carries it on its own.  Matching the type name
-# instead would see only the first shape.  The wider match admits prompt entries
-# (only those carry the field - never a tool result), so the initial full scan
-# parses a few hundred more lines, some of them large when a prompt embeds an
-# image; measured on a 53 MB transcript that is ~231 ms -> ~240 ms, once per
-# session.  The per-second poll is untouched: it parses only appended bytes.
 _PERMISSION_MODE_MARKER = b'permissionMode'
 _CWD_MARKER = b'"cwd"'
-_USER_MARKER = b'"user"'
 
 # Claude Code records a switch into a git worktree (and back out, as a null
 # ``worktreeSession``) as an entry of this type.  The session keeps writing its
 # transcript under the project it was launched in, while the registry's ``cwd``
 # follows it into the worktree - this entry is what ties the two together.
-_WORKTREE_STATE_MARKER = b'worktree-state'
 _WORKTREE_STATE_TYPE = 'worktree-state'
 # Worktrees remembered per session; a session that hops between more than this
 # many finds the agents of the later ones only through the registry's cwd.
 _MAX_WORKTREE_PATHS = 20
 
-# A context compaction is recorded as a ``system`` entry of this subtype.  Rare
-# lines, so the extra marker costs one more byte search per line - measured at
-# about 2% of the first full scan.
-_COMPACT_BOUNDARY_MARKER = b'compact_boundary'
+# A context compaction is recorded as a ``system`` entry of this subtype.
 _COMPACT_BOUNDARY_SUBTYPE = 'compact_boundary'
 
-# The two markers behind the auto-mode denial streak.  Claude Code records why a
-# tool call was refused in its own field, so the streak is read from a control
-# value rather than from the refusal's wording.  The tool-result marker is used
-# on the raw bytes alone, never parsed: it only has to recognize that *some*
-# tool ran, and a transcript's bulk is tool results - parsing each one to learn
-# nothing else would cost far more than the byte scan.
-_DENIAL_KIND_MARKER = b'"toolDenialKind"'
+# A tool result, as a byte marker for the activity reader (see _read_steps).
 _TOOL_RESULT_MARKER = b'"tool_result"'
 
 # The one denial kind that counts.  Claude Code writes several (`user-rejected`,
@@ -364,6 +335,125 @@ _COMMAND_ARGS_PATTERN = re.compile(r'<command-args>(.*?)</command-args>', re.S)
 # session is about.  A meaningful opening command (/pr-review, a project's own
 # slash command) stays the title, exactly like any other first prompt.
 _HOUSEKEEPING_TITLE_COMMANDS = frozenset({'/clear'})
+
+
+class _Node(msgspec.Struct, gc=False):
+    """One JSON object of a transcript line, holding only the fields its subclass declares.
+
+    The full scan decodes every line into these (see :func:`_scan_entry`):
+    msgspec skips each undeclared field without building it, which is what
+    keeps the scan fast on transcripts whose bulk is tool output, and a field
+    declared ``Raw`` is skipped the same way until it is read.  The dict-style
+    accessors let the scan's helpers take a decoded line and a ``json`` dict
+    alike: a field absent from the line, or not declared, reads as missing.
+    """
+
+    def get(self, key: str, default: Any = None, _unset: Any = msgspec.UNSET, _raw: type = msgspec.Raw) -> Any:
+        # The two constants are bound as defaults: this runs millions of times per scan.
+        value = getattr(self, key, _unset)
+        if value is _unset:
+            return default
+        if type(value) is _raw:
+            value = _decode_raw(value)
+            setattr(self, key, value)
+
+        return value
+
+    def __contains__(self, key: str) -> bool:
+        return getattr(self, key, msgspec.UNSET) is not msgspec.UNSET
+
+    def __getitem__(self, key: str) -> Any:
+        if key not in self:
+            raise KeyError(key)
+
+        return self.get(key)
+
+
+class _ToolInput(_Node):
+    """The control values of a tool call's input; its text (a file's content, a command, a prompt) is never decoded."""
+
+    file_path: Any = msgspec.UNSET
+    notebook_path: Any = msgspec.UNSET
+    effort: Any = msgspec.UNSET
+    run_in_background: Any = msgspec.UNSET
+    to: Any = msgspec.UNSET
+    recipient: Any = msgspec.UNSET
+
+
+class _Block(_Node):
+    """A message content block; its text and a tool result's content are decoded only when read."""
+
+    type: Any = msgspec.UNSET
+    id: Any = msgspec.UNSET
+    name: Any = msgspec.UNSET
+    input: _ToolInput | None | msgspec.UnsetType = msgspec.UNSET
+    tool_use_id: Any = msgspec.UNSET
+    is_error: Any = msgspec.UNSET
+    text: msgspec.Raw | msgspec.UnsetType = msgspec.UNSET
+    content: msgspec.Raw | msgspec.UnsetType = msgspec.UNSET
+
+
+class _Message(_Node):
+    """An entry's ``message``: the reply's id, model, stop reason, usage and content blocks."""
+
+    id: Any = msgspec.UNSET
+    model: Any = msgspec.UNSET
+    stop_reason: Any = msgspec.UNSET
+    usage: Any = msgspec.UNSET
+    content: list[_Block] | str | None | msgspec.UnsetType = msgspec.UNSET
+
+
+class _ToolResult(_Node):
+    """An entry's ``toolUseResult``: counts, an edit's patch, a subagent's id and launch; a created file's content only when read."""
+
+    type: Any = msgspec.UNSET
+    searchCount: Any = msgspec.UNSET
+    structuredPatch: Any = msgspec.UNSET
+    toolStats: Any = msgspec.UNSET
+    agentId: Any = msgspec.UNSET
+    status: Any = msgspec.UNSET
+    isAsync: Any = msgspec.UNSET
+    content: msgspec.Raw | msgspec.UnsetType = msgspec.UNSET
+
+
+class _Attachment(_Node):
+    """An entry's ``attachment``: its type and, for a queued message, its sender."""
+
+    type: Any = msgspec.UNSET
+    origin: Any = msgspec.UNSET
+
+
+class _Entry(_Node):
+    """A transcript line as the full scan reads it (see :func:`_absorb_line`)."""
+
+    type: Any = msgspec.UNSET
+    subtype: Any = msgspec.UNSET
+    timestamp: Any = msgspec.UNSET
+    isSidechain: Any = msgspec.UNSET
+    isMeta: Any = msgspec.UNSET
+    isApiErrorMessage: Any = msgspec.UNSET
+    permissionMode: Any = msgspec.UNSET
+    toolDenialKind: Any = msgspec.UNSET
+    attributionSkill: Any = msgspec.UNSET
+    version: Any = msgspec.UNSET
+    entrypoint: Any = msgspec.UNSET
+    aiTitle: Any = msgspec.UNSET
+    customTitle: Any = msgspec.UNSET
+    frameUrl: Any = msgspec.UNSET
+    title: Any = msgspec.UNSET
+    origin: Any = msgspec.UNSET
+    worktreeSession: Any = msgspec.UNSET
+    message: _Message | None | msgspec.UnsetType = msgspec.UNSET
+    toolUseResult: _ToolResult | str | list[msgspec.Raw] | None | msgspec.UnsetType = msgspec.UNSET
+    attachment: _Attachment | None | msgspec.UnsetType = msgspec.UNSET
+
+
+# A JSON object as the scan's helpers meet it: decoded by the schema above, or by ``json``.
+_JSON_OBJECT = (dict, _Node)
+
+# Holds no state between calls, and a decode never gives up the GIL, so one
+# decoder serves the background scan thread and the snapshot alike.
+_ENTRY_DECODER = msgspec.json.Decoder(_Entry)
 
 @dataclass
 class _ScanState:
@@ -1330,7 +1420,7 @@ def _leading_text_starts_with(content: object, prefixes: tuple[str, ...]) -> boo
         text = content
     elif isinstance(content, list):
         for block in content:
-            if isinstance(block, dict) and block.get('type') == 'text':
+            if isinstance(block, _JSON_OBJECT) and block.get('type') == 'text':
                 text = block.get('text')
                 break
 
@@ -1909,7 +1999,7 @@ def _carries_tool_result(content: object) -> bool:
     if not isinstance(content, list):
         return False
 
-    return any(isinstance(block, dict) and block.get('type') == 'tool_result' for block in content)
+    return any(isinstance(block, _JSON_OBJECT) and block.get('type') == 'tool_result' for block in content)
 
 
 def _turn_origin(entry: dict) -> str | None:
@@ -2361,45 +2451,18 @@ def _unclaimed_usage(message: dict[str, object], usage: dict[str, object], state
 
 def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
     """Fold one transcript line into the scan state (usage, title, mode, denials)."""
-    # A tool result that is not a denial means a tool ran, which ends the streak
-    # (Claude Code resets the consecutive count on any allowed action).  Decided
-    # on the raw bytes and settled before the pre-filter below, because the reset
-    # has to see every tool result while the pre-filter is there precisely to
-    # leave them unparsed.  The looseness is one-directional and deliberate: a
-    # sidechain's tool result resets the main streak too, and a match is not
-    # proof the entry parses - both can only clear a streak early, never invent
-    # one, and an unnoticed pause is the calmer failure.
-    denial_line = _DENIAL_KIND_MARKER in raw_line
-    if not denial_line and _TOOL_RESULT_MARKER in raw_line:
-        state.auto_denials_consecutive = 0
-
-    # Marker pre-filtering skips irrelevant lines cheaply - except while the
-    # first prompt is still unknown, when user entries must be inspected too.
-    interesting = (
-        denial_line
-        or _USAGE_MARKER in raw_line
-        or _AI_TITLE_MARKER in raw_line
-        or _CUSTOM_TITLE_MARKER in raw_line
-        or _PERMISSION_MODE_MARKER in raw_line
-        or _WORKTREE_STATE_MARKER in raw_line
-        or _COMPACT_BOUNDARY_MARKER in raw_line
-        or _SEARCH_COUNT_MARKER in raw_line
-        or _FRAME_URL_MARKER in raw_line
-        or _PATCH_MARKER in raw_line
-        or _TOOL_STATS_MARKER in raw_line
-        or _PEER_MARKER in raw_line
-        or (_AGENT_ID_MARKER in raw_line and _SIDECHAIN_MARKER not in raw_line)
-        or _ERROR_RESULT_MARKER in raw_line
-    )
-    # A prompt opens a worked interval, so every prompt is parsed - a tool
-    # result, the bulk of a transcript's user lines, is not one.
-    prompt_line = _USER_MARKER in raw_line and _TOOL_RESULT_MARKER not in raw_line
-    if not interesting and not prompt_line:
-        return
-
-    entry = _load(raw_line.decode('utf-8', errors='ignore'))
+    entry = _scan_entry(raw_line)
     if entry is None:
         return
+
+    # A tool result that is not a denial means a tool ran, which ends the streak
+    # (Claude Code resets the consecutive count on any allowed action).  A
+    # sidechain's tool result resets the main streak too: that can only clear a
+    # streak early, never invent one, and an unnoticed pause is the calmer failure.
+    message = entry.get('message')
+    main_line = entry.get('isSidechain') is not True
+    if 'toolDenialKind' not in entry and _carries_tool_result(message.get('content') if isinstance(message, _JSON_OBJECT) else None):
+        state.auto_denials_consecutive = 0
 
     # The permission mode is recorded in two shapes, and a session can write only
     # one of them: the CLI logs a switch as its own ``permission-mode`` entry,
@@ -2409,7 +2472,7 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
     # one wins - covers either shape without a per-entrypoint rule.  Sidechain
     # turns are skipped like everywhere else: a subagent's entries do not report
     # the main conversation's mode.
-    if entry.get('isSidechain') is not True:
+    if main_line:
         permission_mode = entry.get('permissionMode')
         if isinstance(permission_mode, str) and permission_mode:
             state.permission_mode = permission_mode
@@ -2419,7 +2482,7 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
     # main conversation's streak.  Every other denial kind - a rejection by the
     # user, a deny rule, a cancelled call - neither counts nor resets, matching
     # the documented rule that only an *allowed* action clears the streak.
-    if entry.get('toolDenialKind') == _AUTO_MODE_DENIAL_KIND and entry.get('isSidechain') is not True:
+    if entry.get('toolDenialKind') == _AUTO_MODE_DENIAL_KIND and main_line:
         state.auto_denials_consecutive += 1
         state.auto_denials_total += 1
 
@@ -2430,27 +2493,27 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
     if entry_type == 'user':
         state.web_searches += _search_count(entry)
         _note_tool_failures(entry, state)
-        if entry.get('isSidechain') is not True:
+        if main_line:
             _note_user_entry(entry, state)
         else:
             added, removed = _edit_lines(entry)
             state.sidechain_lines_added += added
             state.sidechain_lines_removed += removed
 
-    if entry_type == 'attachment' and entry.get('isSidechain') is not True:
+    if entry_type == 'attachment' and main_line:
         _note_queued_message(entry, state)
 
     if entry_type == 'frame-link':
         _note_artifact(entry, state.artifacts)
 
     if entry_type == 'assistant':
-        message = entry.get('message')
-        content = message.get('content') if isinstance(message, dict) else None
+        is_message = isinstance(message, _JSON_OBJECT)
+        content = message.get('content') if is_message else None
         _note_edited_files(content, state.edited_files)
         state.tool_calls += _note_tool_uses(content, _timestamp_epoch(entry.get('timestamp')), state)
-        if entry.get('isSidechain') is not True and isinstance(message, dict):
+        if main_line and is_message:
             _note_assistant_entry(entry, message, state)
-        usage = message.get('usage') if isinstance(message, dict) else None
+        usage = message.get('usage') if is_message else None
         if isinstance(usage, dict):
             usage = _unclaimed_usage(message, usage, state)
             # Sum into the overall totals always, and into a per-model bucket for
@@ -2458,7 +2521,7 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
             # zero usage) is not a real model - bucketing it would put an
             # unpriceable key in usage_by_model and wrongly drop the whole
             # session's cost to a plain token total.
-            model = message.get('model') if isinstance(message, dict) else None
+            model = message.get('model')
             buckets = [state.totals]
             if model != _SYNTHETIC_MODEL:
                 model_key = model if isinstance(model, str) and model else ''
@@ -2486,7 +2549,7 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
             # not strictly ordered on disk. The model excludes the synthetic
             # sentinel; the version does not.
             timestamp = entry.get('timestamp')
-            main_turn = entry.get('isSidechain') is not True and isinstance(timestamp, str) and bool(timestamp)
+            main_turn = main_line and isinstance(timestamp, str) and bool(timestamp)
             if main_turn and isinstance(model, str) and model and model != _SYNTHETIC_MODEL:
                 state.model_events.append((timestamp, model))
 
@@ -2526,11 +2589,11 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
                     state.worktree_paths.append(worktree.path)
 
     elif entry_type == 'system' and entry.get('subtype') == _COMPACT_BOUNDARY_SUBTYPE:
-        if entry.get('isSidechain') is not True:
+        if main_line:
             state.compactions += 1
 
     elif (entry_type == 'user' and state.first_prompt is None
-            and entry.get('isSidechain') is not True and entry.get('isMeta') is not True):
+            and main_line and entry.get('isMeta') is not True):
         # Skip injected isMeta entries (a continuation summary), mirroring _parse:
         # the machine digest must not become the title, and it is a wider read
         # than the title path intends.
@@ -2545,7 +2608,7 @@ def _absorb_line(raw_line: bytes, state: _ScanState) -> None:
 def _search_count(entry: dict) -> int:
     """Return how many web searches the tool result on *entry* made, or 0; nothing else of the result is read."""
     result = entry.get('toolUseResult')
-    count = result.get('searchCount') if isinstance(result, dict) else None
+    count = result.get('searchCount') if isinstance(result, _JSON_OBJECT) else None
     return count if _is_count(count) else 0
 
 
@@ -2553,7 +2616,7 @@ def _note_user_entry(entry: dict, state: _ScanState) -> None:
     """Fold a main-conversation user entry: a prompt opens a worked interval, an edit's result adds its lines, a peer's message is logged."""
     at = _timestamp_epoch(entry.get('timestamp'))
     message = entry.get('message')
-    content = message.get('content') if isinstance(message, dict) else None
+    content = message.get('content') if isinstance(message, _JSON_OBJECT) else None
 
     added, removed = _edit_lines(entry)
     state.lines_added += added
@@ -2579,7 +2642,7 @@ def _note_tool_uses(content: object, at: float | None, state: _ScanState) -> int
     uses = state.tool_uses
     count = 0
     for block in content if isinstance(content, list) else ():
-        if not isinstance(block, dict) or block.get('type') != 'tool_use':
+        if not isinstance(block, _JSON_OBJECT) or block.get('type') != 'tool_use':
             continue
         count += 1
         name = block.get('name')
@@ -2604,9 +2667,9 @@ def _note_tool_uses(content: object, at: float | None, state: _ScanState) -> int
 def _note_tool_failures(entry: dict, state: _ScanState) -> None:
     """Count each failed tool result in a user entry against its tool; a rejected, denied or cut-off call is no failure."""
     message = entry.get('message')
-    content = message.get('content') if isinstance(message, dict) else None
+    content = message.get('content') if isinstance(message, _JSON_OBJECT) else None
     for block in content if isinstance(content, list) else ():
-        if not isinstance(block, dict) or block.get('type') != 'tool_result' or block.get('is_error') is not True:
+        if not isinstance(block, _JSON_OBJECT) or block.get('type') != 'tool_result' or block.get('is_error') is not True:
             continue
         name = state.tool_names_by_id.get(block.get('tool_use_id'))
         if name in state.tool_uses and _declined_outcome(_leading_result_text(block.get('content'))) is None:
@@ -2626,7 +2689,7 @@ def _declined_outcome(text: str) -> str | None:
 def _leading_result_text(content: object) -> str:
     """A tool result's text, or its first text block's, for the refusal check alone."""
     if isinstance(content, list):
-        content = next((block.get('text') for block in content if isinstance(block, dict) and block.get('type') == 'text'), None)
+        content = next((block.get('text') for block in content if isinstance(block, _JSON_OBJECT) and block.get('type') == 'text'), None)
 
     return content if isinstance(content, str) else ''
 
@@ -2639,12 +2702,12 @@ def _tool_use_tuples(uses: dict[str, list]) -> dict[str, tuple[int, float | None
 def _edit_lines(entry: dict) -> tuple[int, int]:
     """The lines a tool result's edit added and removed, plus a subagent's own totals on its result."""
     result = entry.get('toolUseResult')
-    if not isinstance(result, dict):
+    if not isinstance(result, _JSON_OBJECT):
         return 0, 0
 
     added, removed = _patch_lines(result)
     stats = result.get('toolStats')
-    if isinstance(stats, dict):
+    if isinstance(stats, _JSON_OBJECT):
         added += stats.get('linesAdded') if _is_count(stats.get('linesAdded')) else 0
         removed += stats.get('linesRemoved') if _is_count(stats.get('linesRemoved')) else 0
 
@@ -2654,12 +2717,12 @@ def _edit_lines(entry: dict) -> tuple[int, int]:
 def _note_agent_launch(entry: dict, content: object, state: _ScanState) -> None:
     """Record how the subagent a tool result names was started: its call's mode and effort, or a forked skill."""
     result = entry.get('toolUseResult')
-    agent_id = result.get('agentId') if isinstance(result, dict) else None
+    agent_id = result.get('agentId') if isinstance(result, _JSON_OBJECT) else None
     if not isinstance(agent_id, str) or not agent_id:
         return
 
     tool_use_id = next((block.get('tool_use_id') for block in (content if isinstance(content, list) else ())
-                        if isinstance(block, dict) and block.get('type') == 'tool_result'), None)
+                        if isinstance(block, _JSON_OBJECT) and block.get('type') == 'tool_result'), None)
     call = state.pending_launches.pop(tool_use_id, None) if isinstance(tool_use_id, str) else None
     effort = call.effort if call is not None else ''
     if result.get('status') == 'forked':
@@ -2679,7 +2742,7 @@ def _note_agent_call(block: dict, state: _ScanState) -> None:
     """Remember a subagent call until its result names the agent: whether it runs in the background, and its effort."""
     tool_use_id = block.get('id')
     tool_input = block.get('input')
-    if not isinstance(tool_use_id, str) or not isinstance(tool_input, dict):
+    if not isinstance(tool_use_id, str) or not isinstance(tool_input, _JSON_OBJECT):
         return
 
     effort = tool_input.get('effort')
@@ -2692,7 +2755,7 @@ def _note_agent_call(block: dict, state: _ScanState) -> None:
 def _note_queued_message(entry: dict, state: _ScanState) -> None:
     """Log a peer's message that arrived while a turn ran: Claude Code queues it as a ``queued_command`` attachment instead of a prompt."""
     attachment = entry.get('attachment')
-    if not isinstance(attachment, dict) or attachment.get('type') != _QUEUED_COMMAND_ATTACHMENT:
+    if not isinstance(attachment, _JSON_OBJECT) or attachment.get('type') != _QUEUED_COMMAND_ATTACHMENT:
         return
 
     _note_peer_message(attachment.get('origin'), _timestamp_epoch(entry.get('timestamp')), state)
@@ -2718,13 +2781,13 @@ def _note_assistant_entry(entry: dict, message: dict, state: _ScanState) -> None
     at = _timestamp_epoch(entry.get('timestamp'))
     content = message.get('content')
     for block in content if isinstance(content, list) else ():
-        if isinstance(block, dict) and block.get('type') == 'tool_use' and block.get('name') in _AGENT_TOOLS:
+        if isinstance(block, _JSON_OBJECT) and block.get('type') == 'tool_use' and block.get('name') in _AGENT_TOOLS:
             _note_agent_call(block, state)
-        if not isinstance(block, dict) or block.get('type') != 'tool_use' or block.get('name') != _SEND_MESSAGE_TOOL or at is None:
+        if not isinstance(block, _JSON_OBJECT) or block.get('type') != 'tool_use' or block.get('name') != _SEND_MESSAGE_TOOL or at is None:
             continue
         tool_input = block.get('input')
         target = None
-        if isinstance(tool_input, dict):
+        if isinstance(tool_input, _JSON_OBJECT):
             target = next((tool_input.get(key) for key in ('to', 'recipient') if isinstance(tool_input.get(key), str) and tool_input.get(key)), None)
         if target:
             _append_capped(state.messages, MessageEvent('sent', _clip(target, _NAME_MAX_CHARS), at), _MAX_MESSAGES)
@@ -2872,11 +2935,11 @@ def _note_edited_files(content: object, edited_files: set[str]) -> None:
         return
 
     for block in content:
-        if not isinstance(block, dict) or block.get('type') != 'tool_use':
+        if not isinstance(block, _JSON_OBJECT) or block.get('type') != 'tool_use':
             continue
         path_key = _FILE_EDIT_TOOLS.get(block.get('name'))
         tool_input = block.get('input')
-        if path_key is None or not isinstance(tool_input, dict):
+        if path_key is None or not isinstance(tool_input, _JSON_OBJECT):
             continue
         path = tool_input.get(path_key)
         if isinstance(path, str) and path:
@@ -2916,14 +2979,14 @@ def _prompt_display_parts(entry: dict) -> tuple[str | None, bool]:
         past when a later prompt can name the session better.
     """
     message = entry.get('message')
-    content = message.get('content') if isinstance(message, dict) else None
+    content = message.get('content') if isinstance(message, _JSON_OBJECT) else None
 
     text = None
     if isinstance(content, str):
         text = content
     elif isinstance(content, list):
         for block in content:
-            if not isinstance(block, dict):
+            if not isinstance(block, _JSON_OBJECT):
                 continue
             if block.get('type') == 'tool_result':
                 return None, False
@@ -2951,6 +3014,31 @@ def _prompt_display_parts(entry: dict) -> tuple[str | None, bool]:
         return None, False
 
     return _clip(cleaned, _TITLE_MAX_CHARS), False
+
+
+def _scan_entry(raw_line: bytes) -> _Entry | dict | None:
+    """Decode one transcript line for the full scan, or return None when it is not a JSON object.
+
+    The schema decode (see :class:`_Node`) reads only the fields the scan uses.
+    A line whose shape it does not expect - a field of another type, malformed
+    JSON, invalid UTF-8 - is parsed in full by ``json`` instead, so it is read
+    exactly as before, only slower.
+    """
+    if not raw_line:
+        return None
+
+    try:
+        return _ENTRY_DECODER.decode(raw_line)
+    except msgspec.MsgspecError:
+        return _load(raw_line.decode('utf-8', errors='ignore'))
+
+
+def _decode_raw(raw: msgspec.Raw) -> Any:
+    """Decode a field the schema left undecoded, or return None if it does not decode."""
+    try:
+        return msgspec.json.decode(raw)
+    except msgspec.MsgspecError:
+        return None
 
 
 def _load(line: str) -> dict | None:

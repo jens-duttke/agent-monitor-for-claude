@@ -568,6 +568,66 @@ class ModelEventGuardTest(unittest.TestCase):
         self.assertEqual(state.model_events, [('2026-07-11T10:00:00Z', 'claude-opus-4-8')])
 
 
+class SchemaDecodeTest(unittest.TestCase):
+    """The full scan decodes only the fields it reads; a line of another shape is parsed in full instead."""
+
+    @staticmethod
+    def _absorb(state, entry):
+        _absorb_line(json.dumps(entry).encode('utf-8'), state)
+
+    def test_a_line_of_an_unexpected_shape_is_still_read(self) -> None:
+        # A string where the schema expects an object fails the partial decode;
+        # the full parse still reads every other field on the line.
+        state = _ScanState()
+        self._absorb(state, {'type': 'ai-title', 'aiTitle': 'Renamed', 'message': 'not an object'})
+        self._absorb(state, {'type': 'user', 'permissionMode': 'plan', 'toolUseResult': 42, 'message': {'content': 7}})
+        self.assertEqual(state.ai_title, 'Renamed')
+        self.assertEqual(state.permission_mode, 'plan')
+
+    def test_malformed_json_is_skipped(self) -> None:
+        state = _ScanState()
+        _absorb_line(b'{"type": "ai-title", "aiTitle": "Half', state)
+        _absorb_line(b'', state)
+        _absorb_line(b'[1, 2]', state)
+        self.assertIsNone(state.ai_title)
+
+    def test_a_failed_tool_result_is_told_from_a_refusal_by_its_content(self) -> None:
+        # A tool result's content is left undecoded by the partial decode and
+        # read only for an error result - in either of its shapes.
+        state = _ScanState()
+        for tool_id, content in (
+            ('t1', 'Exit code 1'),
+            ('t2', [{'type': 'text', 'text': "The user doesn't want to proceed with this tool use."}]),
+        ):
+            self._absorb(state, {
+                'type': 'assistant', 'timestamp': '2026-07-11T10:00:00Z',
+                'message': {'id': f'msg-{tool_id}', 'content': [{'type': 'tool_use', 'id': tool_id, 'name': 'Bash', 'input': {'command': 'x'}}]},
+            })
+            self._absorb(state, {
+                'type': 'user', 'timestamp': '2026-07-11T10:00:01Z',
+                'message': {'content': [{'type': 'tool_result', 'tool_use_id': tool_id, 'is_error': True, 'content': content}]},
+            })
+        self.assertEqual(state.tool_uses['Bash'][0], 2)
+        self.assertEqual(state.tool_uses['Bash'][2], 1)
+
+    def test_a_created_file_counts_its_lines_from_the_undecoded_content(self) -> None:
+        state = _ScanState()
+        self._absorb(state, {
+            'type': 'user', 'timestamp': '2026-07-11T10:00:01Z',
+            'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't1'}]},
+            'toolUseResult': {'type': 'create', 'structuredPatch': [], 'content': 'one\ntwo\nthree'},
+        })
+        self.assertEqual(state.lines_added, 3)
+
+    def test_an_edited_file_is_read_from_the_tool_input_without_its_text(self) -> None:
+        state = _ScanState()
+        self._absorb(state, {
+            'type': 'assistant', 'timestamp': '2026-07-11T10:00:00Z',
+            'message': {'content': [{'type': 'tool_use', 'id': 't1', 'name': 'Write', 'input': {'file_path': 'a.py', 'content': 'x' * 10000}}]},
+        })
+        self.assertEqual(state.edited_files, {'a.py'})
+
+
 class AutoModeDenialStreakTest(unittest.TestCase):
     """The classifier-block streak behind the paused-auto-mode badge."""
 
