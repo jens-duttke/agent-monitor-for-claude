@@ -30,7 +30,7 @@ from .background_scans import completed_background_scans, pause_background_scans
 from .cli_install import installed_version
 from .last_seen import note_alive, prune_last_seen, seconds_since_alive
 from .model_catalog import context_window
-from .paths import SessionRoot, transcript_path
+from .paths import SessionRoot, TranscriptIndex, transcript_path
 from .process_probe import ProcessInfo, probe_all
 from .roots import session_roots
 from .sessions import list_sessions
@@ -67,13 +67,14 @@ def _build_snapshot(graph: bool) -> dict[str, Any]:
     """Assemble :func:`build_snapshot`'s result."""
     sessions: list[dict[str, Any]] = []
 
-    pairs = _collect_pairs()
+    index = TranscriptIndex()
+    pairs = _collect_pairs(index)
     probe_map = _probe_map(pairs)
     peers = _peer_index(pairs, probe_map)
 
     for root, record in _one_record_per_session(pairs, probe_map):
         try:
-            session = _build_session_record(root, record, probe_map, peers, graph)
+            session = _build_session_record(root, record, probe_map, peers, index, graph)
         except Exception:
             # Last-resort per-record isolation: the individual readers already
             # degrade gracefully, but an unforeseen failure on one record must
@@ -97,7 +98,7 @@ def _build_snapshot(graph: bool) -> dict[str, Any]:
 
 def _build_session_record(
     root: SessionRoot, record: dict[str, Any], probe_map: dict[tuple[str, int], ProcessInfo], peers: dict[tuple[str, str], tuple[str, str]],
-    graph: bool = False,
+    index: TranscriptIndex, graph: bool = False,
 ) -> dict[str, Any] | None:
     """Assemble one raw session record, or None when an ended session is dropped.
 
@@ -109,7 +110,7 @@ def _build_session_record(
     info = probe_map[(record['origin'], record['pid'])]
     if info.alive:
         note_alive(record['origin'], record['session_id'])
-    elif _ended_long_ago(root, record):
+    elif _ended_long_ago(root, record, index):
         return None
 
     transcript_state = state_for(root, record['session_id'], record['cwd'])
@@ -400,7 +401,8 @@ def live_or_recent_ids() -> set[str]:
     history listing instead of vanishing from both because a stale, un-pruned
     registry record still names it.
     """
-    pairs = _collect_pairs()
+    index = TranscriptIndex()
+    pairs = _collect_pairs(index)
     probe_map = _probe_map(pairs)
 
     ids: set[str] = set()
@@ -411,7 +413,7 @@ def live_or_recent_ids() -> set[str]:
             ids.add(record['session_id'])
             continue
 
-        if _ended_long_ago(root, record):
+        if _ended_long_ago(root, record, index):
             continue
 
         age = state_for(root, record['session_id'], record['cwd']).age_seconds
@@ -425,7 +427,8 @@ def registry_fingerprint() -> str:
     """Return a cheap change fingerprint of the session registry and transcripts, across every session root.
 
     Built from registry records (origin, pid, session, native status) and each
-    transcript's mtime and size - a handful of ``stat()`` calls, no transcript
+    transcript's mtime and size - one directory listing per project folder (see
+    :class:`~agent_monitor_for_claude.paths.TranscriptIndex`), no transcript
     parsing and no process probing.  The UI polls this every second and only
     requests a full snapshot when the fingerprint changes, which keeps idle
     cost minimal while reacting to real changes within about a second.  Each
@@ -440,14 +443,11 @@ def registry_fingerprint() -> str:
     reported it as pending is outdated from that moment on.
     """
     parts: list[str] = [f'scans:{completed_background_scans()}']
+    index = TranscriptIndex()
     with pause_background_scans():
-        for root, record in _collect_pairs():
-            transcript = transcript_path(root, record['session_id'], record['cwd'])
-            try:
-                stat_result = transcript.stat()
-                transcript_mark = f'{stat_result.st_mtime_ns}:{stat_result.st_size}'
-            except OSError:
-                transcript_mark = '-'
+        for root, record in _collect_pairs(index):
+            transcript = index.stat(root, record['session_id'], record['cwd'])
+            transcript_mark = f'{transcript[0]}:{transcript[1]}' if transcript is not None else '-'
             parts.append(
                 f"{root.origin}:{record['pid']}:{record['session_id']}:{record['native_status']}:"
                 f"{record['waiting_for']}:{record['remote_control']}:{transcript_mark}"
@@ -456,7 +456,7 @@ def registry_fingerprint() -> str:
     return '|'.join(parts)
 
 
-def _collect_pairs() -> list[tuple[SessionRoot, dict[str, Any]]]:
+def _collect_pairs(index: TranscriptIndex) -> list[tuple[SessionRoot, dict[str, Any]]]:
     """Return (root, record) for every session across every currently available root.
 
     A root whose registry listing raises an unexpected error is skipped
@@ -467,6 +467,7 @@ def _collect_pairs() -> list[tuple[SessionRoot, dict[str, Any]]]:
     A session working in a git worktree is filed back under the project it was
     launched in here (see :mod:`worktrees`), so every caller - the snapshot,
     the change fingerprint, the history dedupe - finds its files alike.
+    *index* is the caller's listing of the project folders for this poll.
     """
     pairs: list[tuple[SessionRoot, dict[str, Any]]] = []
     for root in session_roots():
@@ -475,12 +476,12 @@ def _collect_pairs() -> list[tuple[SessionRoot, dict[str, Any]]]:
         except Exception:
             continue
 
-        pairs.extend((root, _resolve_worktree_safely(root, record)) for record in records)
+        pairs.extend((root, _resolve_worktree_safely(root, record, index)) for record in records)
 
     return pairs
 
 
-def _resolve_worktree_safely(root: SessionRoot, record: dict[str, Any]) -> dict[str, Any]:
+def _resolve_worktree_safely(root: SessionRoot, record: dict[str, Any], index: TranscriptIndex) -> dict[str, Any]:
     """Return ``worktrees.resolve_worktree``'s record, or *record* unchanged if the lookup fails unexpectedly.
 
     The lookup degrades on every failure it anticipates; this is the same
@@ -488,7 +489,7 @@ def _resolve_worktree_safely(root: SessionRoot, record: dict[str, Any]) -> dict[
     stay where the registry put it.
     """
     try:
-        return resolve_worktree(root, record)
+        return resolve_worktree(root, record, index)
     except Exception:
         return record
 
@@ -646,7 +647,7 @@ def _older_than_process(age: float | None, process_age: float | None) -> bool:
     return age > process_age
 
 
-def _ended_long_ago(root: SessionRoot, record: dict[str, Any]) -> bool:
+def _ended_long_ago(root: SessionRoot, record: dict[str, Any], index: TranscriptIndex) -> bool:
     """Return True if an ended session is certainly past the retention window, judged without reading its transcript.
 
     The registry keeps the records of ended sessions until Claude Code removes
@@ -662,13 +663,12 @@ def _ended_long_ago(root: SessionRoot, record: dict[str, Any]) -> bool:
     if ended_seconds is not None or INCLUDE_COMPLETED:
         return not _include_ended(None, ended_seconds)
 
-    try:
-        modified = transcript_path(root, record['session_id'], record['cwd']).stat().st_mtime
-    except OSError:
+    transcript = index.stat(root, record['session_id'], record['cwd'])
+    if transcript is None:
         # No transcript means no age, which the exact rule drops as well.
         return True
 
-    return time.time() - modified >= ENDED_MAX_AGE
+    return time.time() - transcript[0] / 1e9 >= ENDED_MAX_AGE
 
 
 def _include_ended(age_seconds: float | None, ended_seconds: float | None) -> bool:

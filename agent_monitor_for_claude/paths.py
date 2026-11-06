@@ -26,8 +26,8 @@ from pathlib import Path
 from .platforms import IS_WINDOWS
 
 __all__ = [
-    'SessionRoot', 'local_root', 'claude_temp_dir', 'config_dir', 'sessions_dir', 'projects_dir', 'model_catalog_dir',
-    'update_result_path', 'cwd_to_slug', 'transcript_path','find_transcript', 'task_output_dir', 'task_output_path', 'scratchpad_dir', 'host_path',
+    'SessionRoot', 'TranscriptIndex', 'local_root', 'claude_temp_dir', 'config_dir', 'sessions_dir', 'projects_dir', 'model_catalog_dir',
+    'update_result_path', 'cwd_to_slug', 'transcript_path', 'find_transcript', 'task_output_dir', 'task_output_path', 'scratchpad_dir', 'host_path',
 ]
 
 _NON_ALNUM_PATTERN = re.compile(r'[^A-Za-z0-9]')
@@ -177,6 +177,50 @@ def transcript_path(root: SessionRoot, session_id: str, cwd: str) -> Path:
     callers must check.
     """
     return projects_dir(root) / cwd_to_slug(cwd) / f'{session_id}.jsonl'
+
+
+class TranscriptIndex:
+    """The transcripts of the project folders asked about, each folder read once.
+
+    A poll asks about every registry record, and a WSL distro that was switched
+    off keeps hundreds of them - one ``stat()`` each over ``\\\\wsl.localhost`` is
+    a round trip each, which took the change fingerprint to about 1.5 s.  One
+    directory listing per folder answers for every record in it: on Windows a
+    listing carries each file's time and size, so it needs no further call.
+    Lives for one poll, so nothing it answers is older than that poll.
+    """
+
+    def __init__(self) -> None:
+        self._folders: dict[Path, dict[str, tuple[int, int]]] = {}
+
+    def stat(self, root: SessionRoot, session_id: str, cwd: str) -> tuple[int, int] | None:
+        """Return the ``(mtime_ns, size)`` of the session's transcript under *root*, or None when it has none."""
+        folder = projects_dir(root) / cwd_to_slug(cwd)
+        files = self._folders.get(folder)
+        if files is None:
+            files = self._folders[folder] = _transcript_files(folder)
+
+        return files.get(os.path.normcase(f'{session_id}.jsonl'))
+
+
+def _transcript_files(folder: Path) -> dict[str, tuple[int, int]]:
+    """Return ``{file name: (mtime_ns, size)}`` for the transcripts in *folder*, empty when it cannot be listed."""
+    files: dict[str, tuple[int, int]] = {}
+    try:
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                if not entry.name.endswith('.jsonl'):
+                    continue
+                try:
+                    if entry.is_file():
+                        stat_result = entry.stat()
+                        files[os.path.normcase(entry.name)] = (stat_result.st_mtime_ns, stat_result.st_size)
+                except OSError:
+                    continue
+    except OSError:
+        return {}
+
+    return files
 
 
 def find_transcript(root: SessionRoot, session_id: str) -> Path | None:

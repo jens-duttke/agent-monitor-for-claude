@@ -22,9 +22,12 @@ record's ``cwd`` becomes that launch directory, and the worktree travels on as
 subagents, task output, scratchpad, search) then finds the files where Claude
 Code put them, and the session is grouped under its project.
 
-A lookup costs one ``stat()`` per project folder - too much for every poll - so
-its outcome is remembered in memory, keyed like the registry record it answers
-for: a hit for as long as its transcript is still there, a miss for
+Whether the transcript sits under the registry ``cwd`` is answered by the
+poll's :class:`~agent_monitor_for_claude.paths.TranscriptIndex`, one listing per
+folder for every record in it.  A lookup costs one ``stat()`` per project
+folder - too much for every poll - so its outcome is remembered in memory,
+keyed like the registry record it answers for: a hit for as long as its
+transcript is still there, a miss for
 ``_RETRY_SECONDS``.  A miss is retried rather than kept because it is usually a
 new session that has no transcript yet, and because the registry can name the
 worktree a moment before the transcript records the switch.  Nothing is written
@@ -39,7 +42,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from .paths import SessionRoot, cwd_to_slug, find_transcript, transcript_path
+from .paths import SessionRoot, TranscriptIndex, cwd_to_slug, find_transcript, transcript_path
 from .transcript import worktree_for
 
 __all__ = ['resolve_worktree', 'prune_worktree_cache']
@@ -66,7 +69,7 @@ _resolutions: dict[tuple[str, str, str], _Resolution] = {}
 _lock = threading.Lock()
 
 
-def resolve_worktree(root: SessionRoot, record: dict[str, Any]) -> dict[str, Any]:
+def resolve_worktree(root: SessionRoot, record: dict[str, Any], index: TranscriptIndex | None = None) -> dict[str, Any]:
     """Return *record* filed under its launch project when its session works in a worktree, else *record* unchanged.
 
     Parameters
@@ -75,6 +78,9 @@ def resolve_worktree(root: SessionRoot, record: dict[str, Any]) -> dict[str, Any
         The root the registry record was read from.
     record : dict
         One record as :func:`sessions.list_sessions` returns it.
+    index : TranscriptIndex or None
+        The poll's listing of the project folders, shared by every record of
+        that poll; a fresh one when omitted.
 
     Returns
     -------
@@ -84,16 +90,17 @@ def resolve_worktree(root: SessionRoot, record: dict[str, Any]) -> dict[str, Any
         ``worktree_branch`` (or None when the transcript names no branch for
         that worktree).
     """
+    index = index or TranscriptIndex()
     session_id = record['session_id']
     cwd = record['cwd']
-    if transcript_path(root, session_id, cwd).is_file():
+    if index.stat(root, session_id, cwd) is not None:
         return record
 
     key = (root.origin, session_id, cwd)
     with _lock:
         resolution = _resolutions.get(key)
 
-    if resolution is None or not _still_valid(root, session_id, resolution):
+    if resolution is None or not _still_valid(root, session_id, resolution, index):
         resolution = _locate(root, session_id, cwd)
         with _lock:
             _resolutions[key] = resolution
@@ -121,12 +128,12 @@ def prune_worktree_cache(active: Iterable[tuple[str, str, str]]) -> None:
             del _resolutions[key]
 
 
-def _still_valid(root: SessionRoot, session_id: str, resolution: _Resolution) -> bool:
+def _still_valid(root: SessionRoot, session_id: str, resolution: _Resolution, index: TranscriptIndex) -> bool:
     """Return True if a remembered lookup can be reused without searching again."""
     if resolution.project_cwd is None:
         return time.monotonic() - resolution.checked_at < _RETRY_SECONDS
 
-    return transcript_path(root, session_id, resolution.project_cwd).is_file()
+    return index.stat(root, session_id, resolution.project_cwd) is not None
 
 
 def _locate(root: SessionRoot, session_id: str, cwd: str) -> _Resolution:

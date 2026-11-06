@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_monitor_for_claude.paths import (
-    SessionRoot, claude_temp_dir, cwd_to_slug, find_transcript, host_path, local_root, task_output_dir, transcript_path,
+    SessionRoot, TranscriptIndex, claude_temp_dir, cwd_to_slug, find_transcript, host_path, local_root, task_output_dir, transcript_path,
 )
 
 _WINDOWS_ONLY = unittest.skipUnless(sys.platform == 'win32', 'Windows host behaviour')
@@ -101,6 +101,35 @@ class SessionRootTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = SessionRoot(origin='local', label=None, config_dir=Path(tmp), proc_dir=None, claude_temp_dir=Path(tmp))
             self.assertIsNone(find_transcript(root, '2ee860e9-a20e-4a39-bc18-3c87e9c6ec19'))
+
+    def test_transcript_index_reports_time_and_size_and_none_for_a_missing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = SessionRoot(origin='local', label=None, config_dir=Path(tmp), proc_dir=None, claude_temp_dir=Path(tmp))
+            target = transcript_path(root, 'abc', 'd:\\WebDev\\app')
+            target.parent.mkdir(parents=True)
+            target.write_bytes(b'{}\n')
+            stat_result = target.stat()
+
+            index = TranscriptIndex()
+            self.assertEqual(index.stat(root, 'abc', 'd:\\WebDev\\app'), (stat_result.st_mtime_ns, 3))
+            self.assertIsNone(index.stat(root, 'missing', 'd:\\WebDev\\app'))
+            self.assertIsNone(index.stat(root, 'abc', 'd:\\WebDev\\no-such-project'))
+
+    def test_transcript_index_lists_each_folder_once(self) -> None:
+        # The point of the index: a WSL distro keeps hundreds of registry records
+        # in a handful of folders, and every record must not cost a round trip.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = SessionRoot(origin='local', label=None, config_dir=Path(tmp), proc_dir=None, claude_temp_dir=Path(tmp))
+            folder = transcript_path(root, 'a', 'd:\\WebDev\\app').parent
+            folder.mkdir(parents=True)
+            for name in ('a', 'b', 'c'):
+                (folder / f'{name}.jsonl').write_bytes(b'')
+
+            index = TranscriptIndex()
+            with mock.patch('agent_monitor_for_claude.paths.os.scandir', wraps=os.scandir) as scandir:
+                for name in ('a', 'b', 'c', 'd'):
+                    index.stat(root, name, 'd:\\WebDev\\app')
+            self.assertEqual(scandir.call_count, 1)
 
     def test_task_output_dir_uses_root_temp(self) -> None:
         root = _wsl_root()
