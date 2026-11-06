@@ -3742,6 +3742,25 @@ function agentsInWindow(agents, maxAgeSeconds) {
     return agents.filter((agent) => keep.has(agent.id));
 }
 
+// Whether a session belongs in the graph's window of `maxAgeSeconds` (null:
+// every one): its last turn is inside it, or something of it is - a turn
+// running now, a subagent the window keeps, a message, a background process.
+const GRAPH_RUNNING_STATUSES = new Set(['working', 'processing']);
+
+function sessionInGraphWindow(session, maxAgeSeconds) {
+    if (maxAgeSeconds === null || maxAgeSeconds === undefined) {
+        return true;
+    }
+    const inWindow = (ageSeconds) => typeof ageSeconds === 'number' && Number.isFinite(ageSeconds) && ageSeconds <= maxAgeSeconds;
+    if (inWindow(session.age_seconds) || GRAPH_RUNNING_STATUSES.has(session.status) || session.processes > 0) {
+        return true;
+    }
+    if (agentsInWindow(session.agents || [], maxAgeSeconds).length > 0) {
+        return true;
+    }
+    return (session.messages || []).some((message) => inWindow(message.age_seconds));
+}
+
 // Whether a caller's tools (a session's, `agentId` null, or one of its
 // subagents') are drawn: a selected subagent's own, a selected session's and
 // those of all its subagents. Nothing selected, or a process, draws none.
@@ -4707,6 +4726,7 @@ const AMC_LOGIC = {
     DEFAULT_GRAPH_RANGE,
     graphRange,
     agentsInWindow,
+    sessionInGraphWindow,
     GRAPH_TEXT_WIDTH,
     graphModel,
     graphLayout,

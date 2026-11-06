@@ -765,7 +765,9 @@ function render(snapshot) {
         // Project grouping writes the same markup again.
         setMarkup(chipsSlot, graphRangeMarkup());
         listSlot.replaceChildren();
-        const graphSessions = found.filter((session) => !session.is_history);
+        // Only the sessions with something inside the graph's time window.
+        const graphSeconds = logic.graphRange(state.graphRange).seconds;
+        const graphSessions = found.filter((session) => !session.is_history && logic.sessionInGraphWindow(session, graphSeconds));
         shown.push(...graphSessions);
         // An ended process carries how many seconds from now its fade starts.
         const now = Date.now();
@@ -774,7 +776,7 @@ function render(snapshot) {
             ended: endedProcessesOf(rowKey(session)).map((process) => Object.assign({}, process, { fade_in: (process.fade_at - now) / 1000 })),
         }));
         const selection = { key: state.selectedKey, agent: state.selectedAgent, process: state.selectedProcess, tool: state.selectedTool };
-        const model = logic.graphModel(entries, logic.graphRange(state.graphRange).seconds, selection, state.graphCollapsed);
+        const model = logic.graphModel(entries, graphSeconds, selection, state.graphCollapsed);
         setMarkup(graphSlot, graphSessions.length > 0 ? logic.graphMarkup(logic.graphLayout(model), labels, selection) : '');
         setMarkup(legendSlot, graphSessions.length > 0 && state.graphLegend ? logic.graphLegendMarkup(labels) : '');
         fitGraphText(graphSlot);

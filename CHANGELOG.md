@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The line counts of the uncommitted files no longer touch the scrollbar.
 - A graph node shows a tooltip only when its title is cut short, instead of repeating a title it shows whole.
 - The session details name the branch of a session that has no prompt yet, as git reports it for its folder.
+- The graph's time window now hides sessions with nothing inside it. Before, every running session showed whatever its age, so "1 hour" still listed a session last active days ago.
 
 ## [0.13.0] - 2026-11-05
 

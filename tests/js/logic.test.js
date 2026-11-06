@@ -3322,6 +3322,27 @@ test('graph window: old agents drop out, running ones and the parents of kept on
     assert.equal(logic.agentsInWindow(agents, null).length, 5);
 });
 
+test('graph window: a session shows only with something inside it', () => {
+    const old = { age_seconds: 5 * 86400, status: 'interrupted', processes: 0, agents: [], messages: [] };
+    assert.equal(logic.sessionInGraphWindow(old, 3600), false);
+    assert.equal(logic.sessionInGraphWindow(old, null), true);
+    assert.equal(logic.sessionInGraphWindow({ ...old, age_seconds: 1200 }, 3600), true);
+    assert.equal(logic.sessionInGraphWindow({ ...old, age_seconds: null }, 3600), false);
+    assert.equal(logic.sessionInGraphWindow({ ...old, age_seconds: NaN }, 3600), false);
+    // Running now, in any way: a turn, a subagent, a background process.
+    assert.equal(logic.sessionInGraphWindow({ ...old, status: 'working' }, 3600), true);
+    assert.equal(logic.sessionInGraphWindow({ ...old, status: 'processing' }, 3600), true);
+    assert.equal(logic.sessionInGraphWindow({ ...old, processes: 1 }, 3600), true);
+    assert.equal(logic.sessionInGraphWindow({ ...old, agents: [{ id: 'a', running: true, age_seconds: 90000, parent_id: '' }] }, 3600), true);
+    // A subagent or a message inside the window, but not one outside it.
+    assert.equal(logic.sessionInGraphWindow({ ...old, agents: [{ id: 'a', running: false, age_seconds: 600, parent_id: '' }] }, 3600), true);
+    assert.equal(logic.sessionInGraphWindow({ ...old, agents: [{ id: 'a', running: false, age_seconds: 9000, parent_id: '' }] }, 3600), false);
+    assert.equal(logic.sessionInGraphWindow({ ...old, messages: [{ age_seconds: 60 }] }, 3600), true);
+    assert.equal(logic.sessionInGraphWindow({ ...old, messages: [{ age_seconds: 9000 }] }, 3600), false);
+    // Fields missing altogether.
+    assert.equal(logic.sessionInGraphWindow({}, 3600), false);
+});
+
 test('graph window: messages outside it draw no edge, and an unknown range key falls back to 24 h', () => {
     const lead = { name: 'Lead', session_id: 'aaaaaaaa-1111-2222-3333-444444444444', status: 'working', agents: [], processes: 0,
         messages: logic.messagesOf({ messages: [
