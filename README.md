@@ -2,69 +2,68 @@
 
 A local desktop window that shows every running Claude Code agent at a glance - grouped by project, with each agent's live status: working, waiting for you, blocked on a permission prompt, or finished.
 
-If you run many Claude Code agents across several projects, you cannot tell from the IDE which one is actually doing something and which is quietly waiting for you. Agent Monitor answers that in one glance.
-
 ![The Agent Monitor window: running Claude Code agents sorted into Needs you, Stopped and Running, each with its status, what it is doing and its cost; beside the list, the details of the selected agent with its cost, context, processes, subagents, plan, worked time and background tasks](docs/images/overview.png)
 
 ## Features
 
-### It just works
-- **Portable on Windows** - a single executable, no installation. On Linux it runs from source against the GTK and WebKit libraries your desktop already ships.
-- **Zero configuration** - it finds your Claude config directory automatically (honors `CLAUDE_CONFIG_DIR`).
+### Overview
+- **Who needs you, first** - the list is sorted into *Needs you* (a question, a plan to review, a permission prompt), *Stopped* (an error, a usage limit, an interrupt), *Running*, *Recent* and *Older*. Click a section header to fold it. The *Project* grouping shows the same sessions per project, with their cost. Claude Desktop chats without a project folder are listed under *This computer*.
+- **Status in words** - *working*, *retrying*, *waiting for you*, *question for you*, *plan review*, *blocked*, *interrupted*, *error* (with its cause, e.g. *error: servers overloaded*, or a countdown to a usage limit's reset), *wakes in 4m* for a `/loop`, or *finished*, with the time since the last activity.
+- **What it is doing** - each entry shows in one line what the agent waits on, what it is running, or the first line of its last answer.
+- **Signals** - each entry shows up to two of: unfinished git work (uncommitted, not pushed, local-only or deleted branch), running processes, subagents or workflow progress, a budget from 80% spent, Auto mode on hold, an available Claude Code update, and queued prompts.
+- **Cost** - an estimated dollar cost per session, including subagents and web searches. Prices are in an editable `pricing.json` (see [docs/configuration.md](docs/configuration.md)).
 
-### What you see every day
-- **Who needs you, first** - the list sorts every running Claude Code agent by what it asks of you: *Needs you* (a question, a plan to review, a permission prompt - the longest wait on top, with a clock counting up), *Stopped* (an error, a usage limit, or you interrupted it), *Running*, *Recent*, and *Older*. Click a section's header to fold it away. Switch the grouping to *Project* to see the same agents per project, each project with its cost. Claude Desktop chats without a project folder are listed together under *This computer*.
-- **Everything about one agent, without hovering** - select an agent and the details beside the list show its status with the reason behind it, its host, model, effort, mode and Claude Code version, and buttons to switch to its window, copy its session ID, show its transcript or scratchpad in your file manager, or copy the `claude attach` command of a background agent. Below follow its figures - cost, context, processes, subagents, plan step, budget, prompt cache, lines changed, and how long it worked and waited over the last day with a timeline - and blocks for its plan steps, its uncommitted changes (click a file to see its diff), its processes, subagents, cost breakdown and session - with links to the artifacts and pull requests it produced, and the first error line of a failing hook. Drag the line between the list and the details to change their widths. Below 800 pixels a click shows the details in place of the list; *Esc* goes back.
-- **Status in words** - every agent says what it is doing: *working* (or *retrying* while Claude Code retries a failed request), *waiting for you*, *question for you*, *plan review*, *blocked* (a Claude Desktop agent that needs your decision), *interrupted*, *error* (named as far as the error says, e.g. *error: servers overloaded*, and for a usage limit with a countdown to its reset), *wakes in 4m* for a self-paced `/loop`, or *finished*, with the time since its last activity. The details add the error's own message, what started the running turn, and how long the agent has been in its status.
-- **What it is doing, in one line** - under its title, every entry says what the agent waits on (the command a permission prompt is about, the question it asks, the plan to review), what it runs right now with a running clock, or the first line of its last answer. The details show the full command, the question with its answers, the plan text, or the whole last answer.
-- **The two facts that matter, on every entry** - next to the cost, an entry names up to two of: whether its work is finished in git (uncommitted files, commits not pushed, a branch only on this machine, or one deleted on origin - merged or not - as of your last fetch), running processes, subagents or a workflow's progress, a budget from 80% spent, Auto mode put on hold after three blocked calls, a newer Claude Code a restart would bring, and queued prompts. The context, a lapsed prompt cache and failing hooks are shown in the details.
-- **Search** - one field finds sessions by title, project, branch or the start of a session ID as you type, and by what their transcripts contain a moment later: message text, reasoning, tool calls and their results. An entry says why it matched, and shows the first hit with the text around it; the details show up to five, labelled with where each came from. Match case, whole word and regular expression work as in your editor. *Ctrl+K* jumps into the field, *Esc* clears it. The content search reads only the open sections. If nothing matches, the empty result offers to look wider, one step per click - first the closed sections, then a longer time window. What it reads and how much of it can ever be shown is bounded - see [PRIVACY.md](PRIVACY.md).
+### Details
+Select a session to see its details beside the list:
 
-  ![A content search for "fence": the list narrowed to the matching agents, each with its first hit, and the details of the selected agent listing up to five hits with the text around them](docs/images/search.png)
+- status with its reason, host, model, effort, mode and Claude Code version
+- cost breakdown, context, budget, prompt cache, lines changed, and a timeline of when it worked and waited
+- plan steps, the full command or question it waits on, and its whole last answer - formatted as Markdown or as written
+- its tool calls with their inputs and results, images from the conversation, artifacts and pull requests
+- **uncommitted changes** in its working directory - click a file to see its diff (needs `git` on your `PATH`)
+- **processes** with live CPU, memory and running time, and **background tasks** - expand one to follow its output. Test results (pytest, unittest, Jest, Vitest, Node, cargo, go test) are shown without expanding.
+- failed hooks with their command and output, and a link to the branch on GitHub, GitLab, Bitbucket or Gitea
 
-- **Background processes and task output** - for an agent running OS processes (a watched build, a scan), the details show a live table with CPU, memory and running time of each, and its background tasks; expand one to follow its output in a console that keeps the task's colors and lets you copy its text. If the task redirected its output to a file in its own scratchpad or project folder, the console follows that redirect. Output is read only while a task is expanded. A task that ran tests shows how many passed and failed (pytest, unittest, Jest, Vitest, Node's test runner, cargo and go test). For a Windows agent whose tools run through WSL, the table adds the shared WSL2 virtual machine's CPU and memory - a machine-wide figure, since that VM is where the Linux work runs.
-- **Uncommitted changes** - for the selected agent, the details list the files in its working directory (or its worktree) that are not committed yet, with the lines each adds and removes, how far the branch is ahead of or behind its upstream, and how many of the files the agent itself edited are still uncommitted. This needs `git` on your `PATH`.
-- **Failed hooks and branch links** - the session details list each failed hook with its command, output and the tool call that set it off, and link the branch to its page on GitHub, GitLab, Bitbucket or Gitea, read from the repository's remote.
-- **Media & results** - the details of a session or subagent show the images it holds - screenshots you pasted, pictures Claude opened, browser screenshots - as thumbnails that open large, beside its artifacts, pull requests and the files it wrote.
-- **Connection graph** - the *Graph* grouping draws the running agents with every subagent they started, grouped under their workflow, each background process under the process that started it (one that ended stays dimmed for a minute and then fades out, or stays as long as it is selected), the tools and MCP servers each of them called (for what you select), and the messages between agents and sessions - over a time window you choose, from an hour to everything. Click an agent, a subagent, a process or a tool to see it in the details: a subagent's whole task, its result and every tool call with its request and result, a process's live CPU, memory and uptime with its command line, program, working directory and start; a subagent's tool shows that tool's calls. Dots move along a connection while a subagent runs or a message was just sent, and a connection quiet for over an hour fades. A message ends in an arrowhead at whoever received it, and a mark beside each subagent says whether it reported its result back or ended without one; the legend below the graph explains every line and mark, and hovering a connection tells its details. Drag the graph to pan it, and fold a session's subtree away with its arrow. Replies, plans and tasks can be shown formatted (Markdown) or as written.
+Buttons switch to the session's window, copy its session ID, show its transcript or scratchpad in your file manager, or copy the `claude attach` command of a background agent. Drag the line between list and details to resize them. Below 800 pixels, the details replace the list; *Esc* goes back.
 
-  ![The connection graph: a selected agent with its subagents, workflow, background processes and the tools each of them called, failed tools framed in red, beside the agent's details](docs/images/graph.png)
+![The Agent Monitor window: running Claude Code agents sorted into Needs you, Stopped and Running, each with its status, what it is doing and its cost; beside the list, the details of the selected agent with its cost, context, processes, subagents, plan, worked time and background tasks](docs/images/overview.png)
 
-- **Cost** - each agent shows an estimated dollar cost that covers its subagents and web searches, priced per model. Its details split it into the main conversation, each kind of subagent, each skill and the web searches, and give the full token breakdown. Prices live in an editable `pricing.json` (see [docs/configuration.md](docs/configuration.md)); a future price change entered under its start date applies on its own.
-- **WSL sessions too** - on Windows, Claude Code agents running inside WSL distributions appear alongside your native agents, read over `\\wsl.localhost` with nothing ever executed inside the distro.
-- **Jump right to it** - double-click an agent or press *Enter* and its window comes to the foreground; for VS Code extension sessions the exact session tab is focused via the extension's official deep link. Right-click an agent for its menu. *J*/*K* or the arrow keys move through the list, *Ctrl+C* copies the selected session's ID, *T* shows its transcript.
-- **Revisit and clean up past sessions** - the *Older* section (closed by default) lists finished sessions that have left the overview - the ones `claude --resume` would show - loaded when you open it. Its buttons set how far back it reaches (1 hour to 30 days, or everything; 24 hours by default). From a past session's details or menu you can permanently delete its transcript and subagent files from disk, after a confirmation that names the session. That deletion is the only change the tool ever makes to your Claude Code data, and a running session is never touched (see [PRIVACY.md](PRIVACY.md)).
+### Search
+One field finds sessions by title, project, branch or session ID while you type, and by transcript content a moment later. Each entry shows its first hit; the details show up to five. Match case, whole word and regular expression are supported. *Ctrl+K* focuses the field, *Esc* clears it. The search covers the open sections; if nothing matches, it offers to widen the search. See [PRIVACY.md](PRIVACY.md) for what it reads.
 
-### Reach and preferences
-- **Compact view** - the *Compact* button turns the window into a narrow strip that stays above all other windows: one line per agent, with its status and time, under the same sections as the full view. A click switches to that agent's window; the symbol at the right end of a line, or a double-click, opens its details in the full view. The full view is never kept on top.
+![A content search for "fence": the list narrowed to the matching agents, each with its first hit, and the details of the selected agent listing up to five hits with the text around them](docs/images/search.png)
+
+### Connection graph
+The *Graph* grouping draws each session with its subagents, workflows, background processes, the tools they called, and the messages between sessions. Click a node to see it in the details - a subagent's task, result and tool calls, or a process's command line and live figures. Choose a time window from an hour to everything, drag to pan, and fold a session's subtree with its arrow. A legend explains the lines and marks.
+
+![The connection graph: a selected agent with its subagents, workflow, background processes and the tools each of them called, failed tools framed in red, beside the agent's details](docs/images/graph.png)
+
+### More
+- **Jump to a session** - double-click or press *Enter* to bring its window to the front; for the VS Code extension the exact session tab is focused. *J*/*K* or the arrow keys move through the list, *Ctrl+C* copies the session ID, *T* shows the transcript. Right-click for the menu.
+- **Older sessions** - the *Older* section (closed by default) lists past sessions within a time window you choose (24 hours by default). You can delete a past session's files from there after a confirmation. This is the only change the app makes to your Claude Code data.
+- **Compact view** - a narrow strip that stays on top of other windows, one line per session. A click switches to the session's window.
 
   <img src="docs/images/compact.png" width="320" alt="The compact view: a narrow strip with one line per agent under the sections Needs you, Stopped, Running and Recent, each with its status and time">
 
-- **On the taskbar** - on Windows the app's taskbar button shows how many agents are waiting for you, and flashes once when another one starts to wait while the window is in the background. On Linux the window asks for attention instead.
-- **13 languages** - auto-detected from your system locale (English, German, Spanish, French, Hindi, Indonesian, Italian, Japanese, Korean, Brazilian Portuguese, Ukrainian, Simplified and Traditional Chinese).
-- **Customizable** - an optional settings file tunes the poll interval and window size.
+- **Taskbar** - on Windows the taskbar button shows how many sessions wait for you. On Linux the window asks for attention.
+- **WSL** - on Windows, sessions running inside WSL distributions are listed too.
+- **13 languages** - English, German, Spanish, French, Hindi, Indonesian, Italian, Japanese, Korean, Brazilian Portuguese, Ukrainian, Simplified and Traditional Chinese, detected from your system locale.
+- **No setup** - a single executable on Windows. It finds your Claude config directory on its own (honors `CLAUDE_CONFIG_DIR`). An optional settings file adjusts the refresh interval and window size.
 
 ## Requirements
 
 - Windows 10 / 11, or Linux with a freedesktop desktop environment (see [Linux](#linux) below)
 - Claude Code (this tool reads the session data it writes under `~/.claude/`)
 - On Windows: the [Microsoft Edge WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/), pre-installed on current Windows
-- WSL sessions need WSL2 with the distro running, plus the `\\wsl.localhost` UNC share that Windows 11 (or Windows 10 with the Microsoft Store version of WSL) exposes for it. On an older inbox WSL build without that share, the feature quietly finds nothing - see [docs/configuration.md](docs/configuration.md) to turn WSL monitoring off
+- For WSL sessions: WSL2 with the `\\wsl.localhost` share (Windows 11, or Windows 10 with WSL from the Microsoft Store)
 - Python 3.10 or newer - required on Linux, and on Windows only to run or build from source; the prebuilt executable bundles its own Python
 
 ## Getting started
 
 ### Windows
-Download `AgentMonitorForClaude.exe` from the [latest release](https://github.com/jens-duttke/agent-monitor-for-claude/releases) and run it. No installation.
-The executable is code signed, so Windows names *Jens Duttke* as its publisher - the file properties show the signature under *Digital Signatures*.
+Download `AgentMonitorForClaude.exe` from the [latest release](https://github.com/jens-duttke/agent-monitor-for-claude/releases) and run it. No installation. The executable is signed by *Jens Duttke*.
 
-To run it from source instead, check which Python you have first - it has to be 3.10 or newer:
-
-```sh
-python --version
-```
-
-Then:
+To run it from source instead (Python 3.10 or newer, check with `python --version`):
 
 ```sh
 python -m venv .venv
@@ -72,19 +71,10 @@ python -m venv .venv
 .venv\Scripts\python -m agent_monitor_for_claude
 ```
 
-If `python --version` reports an older release, install a current one from
-[python.org](https://www.python.org/downloads/windows/) and create the environment with its full
-path, for example:
-
-```sh
-C:\Users\you\AppData\Local\Programs\Python\Python313\python.exe -m venv .venv
-```
-
-Do not reach for `py -3` instead - an outdated launcher picks the wrong installation. Delete an
-existing `.venv` before you start again: a virtual environment keeps the Python it was created with.
+If your Python is older, install a current one from [python.org](https://www.python.org/downloads/windows/), delete any existing `.venv`, and create it with the new Python's full path (for example `C:\Users\you\AppData\Local\Programs\Python\Python313\python.exe -m venv .venv`).
 
 ### Linux
-There is no prebuilt binary: PyInstaller cannot bundle GTK and WebKit reliably, so the app runs from source against the libraries your desktop already ships. Tested on Ubuntu with GNOME.
+There is no prebuilt binary; the app runs from source. Tested on Ubuntu with GNOME.
 
 ```sh
 sudo apt install python3-venv python3-gi gir1.2-webkit2-4.1
@@ -98,30 +88,27 @@ python3 -m venv --system-site-packages .venv
 ./agent-monitor-for-claude
 ```
 
-That last line is the launcher, and it is all you need from then on. It activates nothing and works
-from any directory. To start the app from your desktop's application launcher, with its own icon, add
-a desktop entry for it:
+The last line starts the app, from any directory. To add it to your desktop's application launcher:
 
 ```sh
 linux/install-desktop-entry
 ```
 
-The entry points at this checkout, so run the script again if you move the checkout. To start the app
-from any terminal as well, symlink the launcher onto your PATH:
+Run it again if you move the checkout. To start the app from any terminal, link the launcher onto your PATH:
 
 ```sh
 ln -s ~/agent-monitor-for-claude/agent-monitor-for-claude ~/.local/bin/agent-monitor-for-claude
 ```
 
-Two notes specific to Linux:
+Notes:
 
-- **The virtual environment needs `--system-site-packages`.** PyGObject is installed by apt, not by pip; without that flag the app stops at `ModuleNotFoundError: No module named 'gi'`. If you already have a `.venv` created without it, set `include-system-site-packages = true` in `.venv/pyvenv.cfg` rather than recreating it.
-- **Bringing an agent's window to the front goes through X11.** Applications drawn by XWayland - which is where VS Code and most terminals still run in a Wayland session - are found and raised as usual. A window belonging to a native Wayland client cannot be raised, because no Wayland protocol lets one application do that; clicking such an agent does nothing. Everything else works the same either way.
+- **The virtual environment needs `--system-site-packages`**, or the app stops with `No module named 'gi'`. For an existing `.venv`, set `include-system-site-packages = true` in `.venv/pyvenv.cfg`.
+- **Windows of native Wayland apps cannot be brought to the front.** VS Code and most terminals run under XWayland and work as usual.
 
 ### Uninstalling
 On Windows, delete the executable. On Linux, run `linux/install-desktop-entry --remove` if you added the desktop entry, then delete the checkout and its `.venv`.
 
-What either leaves behind is your interface preferences (open sections, grouping, compact view, collapsed groups), in `%LOCALAPPDATA%\AgentMonitorForClaude` on Windows and `~/.local/share/agent-monitor-for-claude` on Linux - delete that folder to remove those too. Linux additionally leaves a lock file in the session's runtime directory, which the system clears at logout. There is nothing else: no installer, no registry entries, no service. See [PRIVACY.md](PRIVACY.md).
+To remove your interface preferences as well, delete `%LOCALAPPDATA%\AgentMonitorForClaude` (Windows) or `~/.local/share/agent-monitor-for-claude` (Linux).
 
 ## Configuration
 
@@ -129,15 +116,15 @@ All settings are optional. See [docs/configuration.md](docs/configuration.md) fo
 
 ## How it works
 
-Agent Monitor reads the session registry and transcript metadata that Claude Code writes locally, and derives each agent's state from the last assistant turn's stop reason plus process liveness. See [docs/how-it-works.md](docs/how-it-works.md) for the details.
+Agent Monitor reads the session files Claude Code writes locally and the process list. See [docs/how-it-works.md](docs/how-it-works.md).
 
 ## Privacy
 
-No outbound network connections, no credentials, no telemetry. Apart from the session deletion described above, it writes only its own files. [PRIVACY.md](PRIVACY.md) states exactly what is read, what is kept, what is shown, and what is written, and lists the commands and tests to verify each claim yourself.
+No network connections, no credentials, no telemetry. Apart from a session deletion you confirm, it writes only its own files. See [PRIVACY.md](PRIVACY.md).
 
 ## Building
 
-The standalone executable is a Windows build; it additionally needs PyInstaller, kept out of the runtime requirements:
+The executable is built on Windows with PyInstaller:
 
 ```sh
 .venv\Scripts\pip install -r requirements-dev.txt
@@ -145,23 +132,15 @@ The standalone executable is a Windows build; it additionally needs PyInstaller,
 ```
 Produces `dist/AgentMonitorForClaude.exe`. There is no Linux equivalent - run the app from source there.
 
-Your own build is unsigned. To sign it, install the Windows SDK signing tools and put a `signing.env` next to `build.py` with `SIGNING_THUMBPRINT` (a code signing certificate in your Windows certificate store) and `SIGNING_TIMESTAMP_URL`. The build then signs the executable and verifies the result, and a failure of either stops it.
+Your own build is unsigned. To sign it, install the Windows SDK signing tools and put a `signing.env` next to `build.py` with `SIGNING_THUMBPRINT` (a certificate in your Windows certificate store) and `SIGNING_TIMESTAMP_URL`.
 
 ## Developing
 
-Iterate the UI in a browser, no Python or live session needed: open
-`agent_monitor_for_claude/ui/index.html?mock` (or the file directly via `file://`).
-It renders the showcase data from `ui/dev-mock.js` - a dev-only file that never
-ships in the built executable.
+To work on the UI in a browser, open `agent_monitor_for_claude/ui/index.html?mock`. It shows the sample data from `ui/dev-mock.js`, which is not part of the built executable.
 
-To refresh the screenshots in `docs/images/` from that preview, run
-`node tools/screenshots.mjs` (or name the scenes: `overview`, `graph`, `search`,
-`compact`). It needs Edge or Chrome; set `SCREENSHOT_BROWSER` if it finds neither.
+To refresh the screenshots in `docs/images/`, run `node tools/screenshots.mjs` (optionally with scene names: `overview`, `graph`, `search`, `compact`). It needs Edge or Chrome; set `SCREENSHOT_BROWSER` if it finds neither.
 
-Run the tests with `python -m unittest discover -s tests` and
-`node --test tests/js/logic.test.js tests/js/global-scope.test.js`. Both suites
-run on either system; the tests for the other operating system's backend skip
-themselves, so a green run means everything applicable to yours passed.
+Run the tests with `python -m unittest discover -s tests` and `node --test tests/js/logic.test.js tests/js/global-scope.test.js`.
 
 ## License
 

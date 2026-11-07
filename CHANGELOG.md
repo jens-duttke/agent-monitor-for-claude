@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - A right-click on selected text, such as an agent's last reply, offers to copy it.
-- Every entry in the list says whether its work is finished in git: uncommitted files, commits not pushed, a branch only on this machine, or one deleted on origin - and whether that one was merged, squash merges included. The list shows at once; these signals follow within seconds. The remote's state is that of your last `git fetch`, whose age the tooltip names.
-- The session block spans the details' full width, lists each failed hook with its command, exit code, output and the tool call that set it off, and links the branch to its page on GitHub, GitLab, Bitbucket or Gitea - found from the repository's remote, while the branch is on it.
+- Every entry in the list says whether its work is finished in git: uncommitted files, commits not pushed, a branch only on this machine, or one deleted on origin - merged or not. The remote's state is that of your last `git fetch`.
+- The session details list each failed hook with its command, exit code, output and the tool call that set it off, and link the branch to its page on GitHub, GitLab, Bitbucket or Gitea.
 - A session's and a subagent's details show the images from its conversation - screenshots you pasted, pictures Claude read, browser screenshots - as thumbnails that open large, together with its artifacts, pull requests and the files it wrote.
 - The details of a selected background process show how it was started: its command line, program, working directory, start time and thread count. For a process inside WSL, the program and working directory are not available.
 - Click a file in the uncommitted changes to see its diff below the list; click it again to close it.
@@ -20,14 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Project and section headers in the list stand out as bands of their own and stay at the top while their sessions scroll past.
-- The details' git block is titled "Uncommitted in this working directory", lists the files this session edited first, and says when none of the changes are this session's or when it edited files outside the repository. It counts every change in the checkout, so sessions sharing one show the same list. The block now always spans the full width, and each file is one row that lights up as a whole on hover, so each count stays with its path.
+- The details' git block is titled "Uncommitted in this working directory", lists the files this session edited first, and says when none of the changes are this session's. It counts every change in the checkout, so sessions sharing one show the same list.
 - The search box no longer shows the Ctrl+K hint; hovering the box shows it as a tooltip.
 - The details' "Activity" block is now titled "Tool calls & replies", which is what it lists.
 - The git signal now comes first on a list entry. The context, the lapsed prompt cache and hook errors are no longer list signals; the details still show them.
-- A selected process's details start with the session's process table, titled "All processes of this session" and without its background tasks; the selected process follows below it, so picking another one changes only what is under the list.
+- A selected process's details start with the session's process table; the selected process follows below it.
 - Costs and session details of long transcripts fill in about three times faster after the start, and the *Older* section loads its sessions about three times faster.
 - Running from source needs the `msgspec` package; run `pip install -r requirements.txt` again after updating.
-- In the graph, a subagent's report no longer draws a second line over the one that started it, and messages between two sessions share one line with an arrowhead at each receiver, so a one-way exchange is told apart from a conversation. Running work is drawn in the purple of its box, and a connection quiet for over an hour fades.
+- In the graph, a subagent's report no longer draws a second line over the one that started it, and messages between two sessions share one line with an arrowhead at each receiver. A connection quiet for over an hour fades.
 
 ### Fixed
 - The content search shows its first results within a fraction of a second, even right after start-up, and a query that matches nothing finishes several times faster. While a search is active, keeping its results up to date no longer re-reads every transcript.
@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The line counts of the uncommitted files no longer touch the scrollbar.
 - A graph node shows a tooltip only when its title is cut short, instead of repeating a title it shows whole.
 - The session details name the branch of a session that has no prompt yet, as git reports it for its folder.
-- The graph's time window now hides sessions with nothing inside it. Before, every running session showed whatever its age, so "1 hour" still listed a session last active days ago.
+- The graph's time window now hides sessions with nothing inside it, instead of listing every running session whatever its age.
 
 ## [0.13.0] - 2026-11-05
 
@@ -56,8 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The details show the lines an agent changed, and how long it worked and waited over the last day on a timeline.
 - The details list the selected agent's uncommitted files with their lines, the branch's distance to its upstream, and how many of the agent's own edits are not committed yet. This runs `git` in the agent's directory.
 - A background task that ran tests shows how many passed and failed, without expanding it.
-- The *Graph* grouping shows the running agents, every subagent they started, each background process under the process that started it, the tools and MCP servers each of them called with the number of calls (drawn for the session or subagent you select), and the messages between agents and sessions, with moving dots on active connections. Buttons above the graph choose how far back it reaches, from an hour to everything, and fold or unfold every session; a session's arrow folds its own subtree away, and dragging the graph pans it.
-- An agent's details list its newest tool calls with their request and result, like a subagent's. Click a subagent in the graph to see its result, its whole task, every tool call with its request and result (failed calls in red, with their exit code), runtime, start, cost, tool calls, changed lines and how it was started; subagents are numbered in the order they started. Click a process to see its live CPU, memory and uptime, with the session's process table beside it.
+- The *Graph* grouping shows the running agents with their subagents, background processes, the tools they called and the messages between them. Buttons above it choose the time window and fold or unfold sessions; drag to pan.
+- An agent's details list its newest tool calls with their request and result. Click a subagent or a process in the graph to see its details.
 - Replies, plans and subagent tasks in the details can be shown formatted as Markdown or as written, switched in the box's header. The details show the current command and the last reply whole instead of cut short.
 
 ### Changed
@@ -137,7 +137,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.8.0] - 2026-09-16
 
 ### Added
-- **Linux support** - Agent Monitor now runs on Linux as well as Windows. The overview, search, history, process and task panels, session deletion, and the jump to an agent's window all work there; see the [README](README.md#linux) for the packages it needs. There is no prebuilt binary - the app runs from source against the GTK and WebKit libraries your desktop ships.
+- **Linux support** - Agent Monitor now runs on Linux as well as Windows. It runs from source; see the [README](README.md#linux) for the packages it needs.
 - On Linux, an `agent-monitor-for-claude` launcher script in the checkout starts the app from any directory without activating the virtual environment first. Symlink it into `~/.local/bin` for a global command.
 - On Linux the app needs one file where Windows uses a named mutex: a lock file in the session's runtime directory that keeps a second window from starting. [PRIVACY.md](PRIVACY.md) lists everything the app touches, per system.
 - A background agent's row menu copies its `claude attach` command. That command is the only way back into a session that runs under the agent daemon with no window of its own.
@@ -148,17 +148,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Starting the app on a Python older than 3.10 now says so, naming the version and the interpreter it found, instead of failing with an `ImportError` about a `typing` helper. The README's Windows setup now shows how to check the version first, and what to do when it is too old.
 - Background agents started with `claude --bg` are now shown as such. Their host column read a raw `bg`, and clicking one tried to raise a window it does not have - which could bring an unrelated terminal to the front.
-- A session in *Auto* mode no longer claims to be working for five minutes while a permission prompt waits. Auto mode does still ask - an explicit ask rule, an MCP tool that needs your input, or the pause Claude Code falls back to after repeated classifier blocks - so a pending call with nothing running behind it now reads "Waiting for you" after 90 seconds. A call with a live process, subagent or workflow behind it keeps reading "Working".
-- On Linux, the app now starts from a terminal inside a Snap-packaged application - VS Code from the Snap Store, most likely - instead of dying with `symbol lookup error: ... libpthread.so.0`. Such a terminal points every program it starts at the Snap's own GTK libraries, which the app now steps out of before opening its window. That also keeps your interface preferences in `~/.local/share` rather than inside the Snap.
+- A session in *Auto* mode no longer shows "Working" for five minutes while a permission prompt waits; a pending call with nothing running behind it reads "Waiting for you" after 90 seconds.
+- On Linux, the app now starts from a terminal inside a Snap-packaged application (such as VS Code from the Snap Store) instead of failing with `symbol lookup error: ... libpthread.so.0`.
 - A WSL session's background-task output and scratchpad are found again. They were looked for under `\\wsl.localhost\<distro>\tmp\claude\...`, but Claude Code appends the owner's user id on Linux, so the task panel stayed empty and the row menu never offered the scratchpad.
 - Replacing a running instance no longer looks like a crash to whatever started it. The replaced instance was ended with an error exit code, so a launcher waiting on it - a tray tool that starts Agent Monitor on double-click - reported the replace as a failed command.
 - A session that hands its whole turn to a subagent no longer ages as though it had gone quiet. Its last-activity time kept climbing while the subagent worked, sinking the project panel down the list; the running subagent's activity now counts as the session's.
 - The last-activity time is no longer refreshed by Claude Code's own bookkeeping records. One of those is written whenever any tool writes a file, which could make an untouched session look as if the conversation had just moved on.
-- The window no longer stays empty on a machine where Windows has reserved the port the app serves its interface from. Hyper-V and WSL reserve whole blocks of ports, and a port inside one cannot be used at all - the app now falls back to the next port on a short list. Your interface preferences start out empty once when that happens.
+- The window no longer stays empty when Windows has reserved the port the app uses; it falls back to another port. Your interface preferences start out empty once when that happens.
 - A session reopened after its previous Claude Code process ended no longer reads *Working* - or *Permission needed* - on the strength of a turn that process never finished. It reads *Idle* until you send the next prompt.
 
 ### Changed
-- The content search now matches the conversation text rather than the raw transcript file, so a hit is always something written or read - a search no longer matches session identifiers, timestamps, or the project path that sits on every line. Counting the hits means reading each file to the end, so a search across a very large history window takes noticeably longer than before.
+- The content search now matches the conversation text instead of the raw transcript file, so it no longer finds session ids, timestamps or the project path. Searches over a large time window take longer.
 - The version badge's list now says where each run was written from - VS Code or the CLI. A version flipping back and forth every few seconds is two Claude Code processes holding the same session at once, which the list can now show.
 - The `dontAsk` permission mode now shows as *Don't ask* instead of its raw configuration name.
 - A session whose transcript holds no conversation turn yet reads *Quiet* instead of *Idle*, so it no longer sits under *Needs you* claiming a reply is owed.
@@ -169,48 +169,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - A session in *Auto-edit* mode no longer reads as "Working" while it waits for a permission prompt. That mode waives the prompt for file edits only - a pending command, fetch or MCP call still asks, and now reads "Needs you". A call with a subagent or workflow running under it keeps reading as "Working".
 - A tooltip no longer stays on screen after the element it describes is gone. Rebuilt in place it stays put, genuinely removed it disappears - on the filter chips, which are rebuilt on every refresh, it could previously stay standing indefinitely.
-- Sessions running in VS Code now show their permission mode. Only the terminal records a mode switch as its own entry; VS Code notes the mode on each turn, which was not read, so a VS Code session showed no mode at all. This also affects the status: with the mode unknown, a permission prompt could read as "Working" instead of "Needs you".
+- Sessions running in VS Code now show their permission mode, and a waiting permission prompt there no longer reads as "Working".
 
 ### Changed
 - The row menu's scratchpad entry and the tooltip on a project's path now read *Show scratchpad in Explorer* and *Show in Explorer* - the same wording as the new transcript entry, since all three raise an Explorer window.
-- A session stopped by an API error now names the cause instead of reading a bare "Error", so you can tell whether to wait, retry, or sign in again: "Error: servers overloaded", "Error: authentication failed", or "Error: HTTP 521" when only the status code is known. Hovering the status dot adds the error's own message line - Claude Code's wording, in English - which is where details like a usage limit's reset time show up. A usage limit is still called out as before.
+- A session stopped by an API error now names the cause, such as "Error: servers overloaded", "Error: authentication failed" or "Error: HTTP 521". Hovering the status shows the error's own message.
 - An empty result now says which of the two reasons emptied it. A search that matched nothing reads "The search text was not found in any session" instead of blaming the filter chips, with a line beneath naming what limited the scan - the sessions your chips hide, or the window the *Older* chip is set to.
 
 ### Added
 - A session's row menu can now show its transcript file in Windows Explorer, selected in its folder - for archiving the raw `.jsonl`, diffing it, or handing it to another tool. The file is only shown, never opened; the entry appears once a transcript exists.
-- A search that finds nothing now offers to look wider. Since it only reads the sessions your chips show, one button widens it by one step: first to the sessions the chips hide, then one time window further back. Matches found this way are shown even with their chip off and counted on a line above the list, and keep updating live. Your chips are never changed - the extra rows belong to that one query and go when you edit the search text, or via *Reset* on that same line.
+- A search that finds nothing now offers to look wider: first in the sessions your chips hide, then one time window further back. Your chips are not changed; the extra results go when you edit the search or click *Reset*.
 
 ## [0.6.1] - 2026-08-16
 
 ### Fixed
-- A session abandoned in the middle of a tool call no longer claims to be working for the rest of the day - for a VS Code session, days. A pending call with nothing running behind it and a transcript that has stood still for five minutes now reads "Waiting for you". A tool that genuinely takes hours keeps reading "Working" while its process is alive, and a silently thinking agent is untouched.
-- A session whose last activity was a local command - a `/compact`, or a `!` shell command - no longer stays on "Working" forever. Recent Claude Code versions record such a command as an ordinary user entry, which looked like an unanswered prompt; both recording formats are now understood. A slash command that briefs the agent still reads "Working", because that one really is awaiting a reply.
+- A session abandoned in the middle of a tool call no longer shows "Working" indefinitely; after five minutes without progress it reads "Waiting for you". A tool with a running process keeps reading "Working".
+- A session whose last activity was a local command (`/compact` or a `!` shell command) no longer stays on "Working" forever.
 
 ## [0.6.0] - 2026-08-15
 
 ### Changed
 - The *History* chip is now called *Older*. "History" is the browser's word for everything you have ever opened; this chip is the opposite - only the sessions that appear under none of the other chips. Everything else about it is unchanged.
-- The *Older* chip now reaches back a chosen distance instead of all the way: its right half opens a window picker (last hour, 24 hours, 7 days, 30 days, or everything) and starts at 24 hours. The scan skips everything outside the window without opening it - with 270 past sessions, the 24-hour listing drops from about two seconds to a fifth of one - and narrowing the window does not re-scan at all. The window also bounds what the content search reads.
-- Project panels are now ordered by their most recent activity within each urgency band, instead of alphabetically. A panel whose work finishes slides down to just below the projects still working, instead of disappearing into the middle of a long list. The urgency bands (blocked on you, then working, then idle and finished) are unchanged, and "Priority order" still gives the plain A-Z layout.
+- The *Older* chip now has a time window (last hour, 24 hours, 7 days, 30 days, or everything), 24 hours by default, which makes it load much faster. The window also limits the content search.
+- Project panels are now ordered by their most recent activity within each urgency band, instead of alphabetically.
 - The confirmation before deleting a past session now names it - its title and last-active age, quoted from the row you opened the menu on - and starts the keyboard focus on "Cancel", so pressing Enter or Space to dismiss the dialog can no longer delete anything.
-- A session that opens with `/clear` is no longer titled "/clear": the fallback title looks past it to the next real prompt, or to a meaningful opening command like `/pr-review`. Only a session containing nothing but `/clear` still shows it. A command title now also carries its arguments ("/work-on-issue #123"). (thanks to [@jeroenbu](https://github.com/jeroenbu) for the contribution)
+- A session that opens with `/clear` is no longer titled "/clear"; the title comes from the next real prompt or command, including its arguments ("/work-on-issue #123"). (thanks to [@jeroenbu](https://github.com/jeroenbu) for the contribution)
 
 ### Added
-- The Claude Code version a session runs on is now shown, but only when it says something: the column appears as soon as the sessions in view are not all on the same version. A session that outlived a CLI update carries a "+N" badge listing every version it spanned and when each took over. Clicking a version opens that release's changelog in your browser - the app itself still requests nothing (see `PRIVACY.md`).
+- The Claude Code version of each session is shown when the sessions in view are not all on the same version, with a "+N" badge for a session that spanned several. Clicking a version opens its changelog in your browser.
 - The window's page now declares a Content-Security-Policy that forbids it from reaching the network at all, and allows scripts, styles, and images only from the app's own bundled files. A new `PRIVACY.md` states what the app reads, keeps, shows, and writes, with the commands and tests to verify each claim yourself.
-- [WSL sessions](https://github.com/jens-duttke/agent-monitor-for-claude/issues/6) - Claude Code sessions running inside a WSL distribution now appear alongside Windows sessions, with status, cost, subagents, history, search, and deletion all working identically and the distro shown as the host. A new `wsl` setting (on by default) turns this off. (thanks to [@jeroenbu](https://github.com/jeroenbu) for the contribution)
+- [WSL sessions](https://github.com/jens-duttke/agent-monitor-for-claude/issues/6) - Claude Code sessions running inside a WSL distribution now appear alongside Windows sessions, with the distro shown as the host. The new `wsl` setting (on by default) turns this off. (thanks to [@jeroenbu](https://github.com/jeroenbu) for the contribution)
 - The background-process panel and task-output console now work for WSL sessions too: the per-process CPU, memory, and uptime table is read from the distribution's own process list, and a background task's output - including one redirected to a file in its scratchpad or project folder - streams the same way.
 
 ### Fixed
 - A session you close after it has been sitting idle no longer vanishes from the overview on the spot. A finished session stays visible for an hour (`ended_max_age`), but that hour was counted from its last activity rather than from when it ended; it now starts when the session ends.
 - A project panel now keeps showing its most urgent session status ("Working", "Needs you", ...) in the header while the panel is open - it used to appear only once the panel was collapsed.
-- Every session showed up as "Quiet" and no longer reacted to what its agent was doing: recent Claude Code versions record a session's process start time in a different format, which the check for recycled process IDs read as a date in the year 426, so every running session was mistaken for a stale registry entry. Statuses, the busy/idle signal, and the promotion to "Background" are live again, and both formats are accepted.
+- Every session showed up as "Quiet" with recent Claude Code versions, because their process start time was misread. Statuses are live again.
 - Project panels no longer pile up while the window is open: every refresh left an orphaned panel behind instead of reusing the existing one, so the list grew without bound and the window took more and more memory.
 
 ## [0.5.0] - 2026-07-18
 
 ### Added
-- The background-process badge now opens a panel instead of a plain tooltip, with two parts: a live table of the agent's descendant processes (per-process CPU, memory and uptime, refreshed every second), and a list of its background tasks. Each task row shows what it is - the description or command it was started with - and expands to a mono-space console that tails that task's live output, so you can watch progress. The console keeps the task's ANSI colors, and its text can be selected and copied (the refresh pauses while a selection is active). Only tasks from the current run are listed, and a task that redirected its output to a file in its own scratchpad or project folder is followed there. Output is read from disk only while a row is expanded, and only which processes exist plus their resource use ever leave the reader - never any command line.
+- The background-process badge now opens a panel with a live table of the agent's processes (CPU, memory, uptime) and its background tasks. Expand a task to follow its output, with colors and copyable text; output is read only while a task is expanded.
 - For agents working through WSL, the panel adds a clearly-labelled "WSL2 VM" row with the virtual machine's total CPU and memory. WSL runs its Linux processes inside that shared VM, so the Windows-side `wsl.exe` helpers read as idle; the row is marked machine-wide, not this session alone.
 - A session's row menu now offers "Open scratchpad", shown only when that session actually has a scratchpad directory.
 - The running-subagent badge (⚡) now shows a background workflow's total agent count and leads with it in the tooltip ("Workflow: 12 agents"), instead of only counting the agents running at that instant.
@@ -249,7 +249,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With History shown, resuming a past session no longer lists it twice (a live row plus a stale history row with a broken "Delete"). And a session that ends while the app is running now moves into History on its own instead of disappearing until the next restart.
 - A crashed or force-killed session whose leftover registry entry was never cleaned up no longer disappears from both views: once its last activity ages past the retention window it now appears under History.
 - A session that is waiting on you but has not yet recorded which prompt it is waiting for no longer shows a misleading label ("Question for you", "Plan review") left over from an already-answered tool. It reads the neutral "Waiting for you" until the prompt is known.
-- Sessions that use stdio MCP servers are no longer shown as permanently busy. Such a server runs as a long-lived child process, which was mistaken for a running tool - so an idle session read as "Background" and a session waiting on a permission prompt could read as "Working". Child processes that start together with the session are now recognized as session-lifetime helpers.
+- Sessions that use stdio MCP servers are no longer shown as permanently busy: the server process is no longer mistaken for a running tool.
 - A session's token total and estimated cost could jump too high and stay there: when two refreshes overlapped, a newly appended turn could be counted twice. The incremental usage scan is now serialized.
 - Choosing "replace the running instance" no longer risks terminating an unrelated process. If the running instance is closed while the confirmation dialog is open, Windows can reuse its process ID; the app now re-checks at the moment you confirm.
 - Subagent workflows are now recognized as finished when they complete. A completed workflow agent's final step is often a tool call rather than a plain closing message, so the ⚡ badge and the "Background" status could stay up until you sent a new prompt.
@@ -257,7 +257,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] - 2026-07-15
 
 ### Added
-- A search box in the toolbar that narrows the view to sessions whose transcript *content* contains what you type, with three editor-style toggles - match case, whole word, and regular expression (an invalid pattern turns the box red) - remembered across restarts. It searches only the sessions the active filter chips show, newest first, locally and on demand with a progress bar; matches stream in as they are found, the chip counts follow, and Escape clears it. A running session that newly contains the text appears on its own. Only which sessions matched is ever reported - never any of their content.
+- A search box that narrows the view to sessions whose transcript contains what you type, with match case, whole word and regular expression options. It searches the sessions the active filter chips show, and Escape clears it.
 
 ## [0.2.0] - 2026-07-13
 

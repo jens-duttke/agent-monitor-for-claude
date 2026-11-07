@@ -1,27 +1,27 @@
 # Configuration
 
-All settings are optional. Agent Monitor works out of the box; a settings file only overrides defaults.
+All settings are optional.
 
 ## Settings file
 
-Create `agent-monitor-settings.json`. The app never creates or writes this file - you place it manually. It is read from the first of these locations that exists:
+Create a file named `agent-monitor-settings.json` in one of these locations (the first one found is used):
 
-1. Next to the executable (or the project root when running from source, which is how it runs on Linux)
+1. Next to the executable, or in the project root when running from source
 2. `$CLAUDE_CONFIG_DIR/agent-monitor-settings.json` (if `CLAUDE_CONFIG_DIR` is set and differs from `~/.claude/`)
 3. `~/.claude/agent-monitor-settings.json`
 
-Invalid JSON or invalid values are reported in a dialog; invalid individual entries are ignored and the default is used.
+Errors are reported in a dialog at start; an invalid entry falls back to its default.
 
 ## Options
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `poll_interval` | integer (>= 1) | `5` | Seconds between full refreshes of the overview. A session or transcript that changes in between is picked up within about a second, whatever this is set to. |
-| `ended_max_age` | integer (>= 0) | `3600` | How long (seconds) a finished agent stays visible after its process exits, counted from the last refresh that saw the process running. If the session had already ended before Agent Monitor was started, its last transcript activity is used instead. |
-| `include_completed` | boolean | `false` | Show finished agents regardless of `ended_max_age`. |
-| `wsl` | boolean | `true` | Windows only. Discover and monitor Claude Code sessions running inside WSL distributions, alongside native Windows sessions. Set to `false` to turn this off entirely - no `wsl.exe` call and no `\\wsl.localhost` read ever happens. On Linux nothing here runs, whatever it is set to. |
-| `subagent_recent_seconds` | integer (>= 1) | `900` | How long (seconds) a subagent transcript is still counted as part of the current run - as running until it ends, then as recently finished. Older ones are ignored. |
-| `window_width` | integer (>= 320) | `1180` | Initial window width in logical pixels. The list and the details sit side by side from 800; below that, a click on a session shows its details in place of the list. |
+| `poll_interval` | integer (>= 1) | `5` | Seconds between full refreshes. Changes to sessions are picked up within about a second regardless. |
+| `ended_max_age` | integer (>= 0) | `3600` | How long (seconds) a finished session stays visible after its process exits. For sessions that ended before Agent Monitor started, counted from their last activity. |
+| `include_completed` | boolean | `false` | Show finished sessions regardless of `ended_max_age`. |
+| `wsl` | boolean | `true` | Windows only. List Claude Code sessions running inside WSL distributions. `false` turns off all WSL access. |
+| `subagent_recent_seconds` | integer (>= 1) | `900` | How long (seconds) a subagent is counted after its last write - as running, then as recently finished. |
+| `window_width` | integer (>= 320) | `1180` | Initial window width in logical pixels. |
 | `window_height` | integer (>= 240) | `760` | Initial window height in logical pixels. |
 | `language` | string | `""` | Force a language by locale code (see below). Empty means auto-detect from the system locale. |
 
@@ -44,9 +44,9 @@ Invalid JSON or invalid values are reported in a dialog; invalid individual entr
 
 ## Token pricing
 
-The per-session cost estimate is computed from `pricing.json` (at the repo root, and next to the executable in the packaged Windows build). This tool never fetches prices - the file is a hand-maintained snapshot of Anthropic's pricing page. Edit it to keep costs accurate.
+Costs are computed from `pricing.json` (in the repository root, or bundled with the Windows executable). Prices are never fetched online; edit the file when Anthropic's prices change.
 
-Top-level keys are **effective-from dates** (`YYYY-MM-DD`). The schedule with the latest date on or before today applies, so a future price change can be entered ahead of time and takes effect automatically on that day. Each date holds a complete table of `model -> rates`, where every rate is in US dollars per million tokens (MTok). In this example, the second schedule is an invented price change:
+Top-level keys are **effective-from dates** (`YYYY-MM-DD`). The latest date on or before today applies, so a future price change can be entered in advance. Each date holds a table of `model -> rates` in US dollars per million tokens. In this example, the second date is an invented price change:
 
 ```json
 {
@@ -61,9 +61,9 @@ Top-level keys are **effective-from dates** (`YYYY-MM-DD`). The schedule with th
 }
 ```
 
-- A dated schedule **fully replaces** the previous one. List **every** model you use in each dated table, even the ones whose price did not change (note `opus-5-5` is repeated unchanged above): a model omitted from the active schedule loses its cost estimate once that date takes effect.
-- **Model keys** are family-version - the model id with `claude-`, any `[tier]`, and a trailing snapshot date removed (e.g. `claude-opus-4-8[1m]` and `claude-haiku-4-5-20251001` both need `opus-4-8` / `haiku-4-5`). Versions can be priced differently, so list each one you use.
-- All five rate fields are explicit - no multipliers are applied, so enter each rate as it is published.
-- If a session uses a model that is not listed, it shows a plain token total instead of a cost - add the model to fix that.
-- The key `web_search` is not a model: `{ "per_request": 0.01 }` is the price of one web search in US dollars, added on top of the tokens. Repeat it in each dated table like a model; without it, web searches are left out of the cost.
-- A `_comment` key is allowed for notes and is ignored.
+- Each date **fully replaces** the previous one. List **every** model in each table, including unchanged ones (like `opus-5-5` above).
+- **Model keys** are the model id without `claude-`, `[tier]` and a trailing date: `claude-opus-4-8[1m]` becomes `opus-4-8`, `claude-haiku-4-5-20251001` becomes `haiku-4-5`.
+- Enter all five rates as published; no multipliers are applied.
+- A session using an unlisted model shows a token count instead of a cost.
+- `web_search` is the price of one web search in US dollars (`{ "per_request": 0.01 }`). Repeat it in each table; without it, web searches are not counted.
+- A `_comment` key is ignored.
