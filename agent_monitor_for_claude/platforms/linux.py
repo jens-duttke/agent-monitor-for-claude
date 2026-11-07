@@ -247,6 +247,21 @@ def storage_dir() -> Path:
     return root / _STORAGE_DIR_NAME
 
 
+def user_config_dir() -> Path:
+    """Return the directory the app's own settings file is written to (``$XDG_CONFIG_HOME``, else ``~/.config``).
+
+    A value pointing into a Snap is ignored: the settings are read at import,
+    before :func:`prepare_gui_environment` can restore what a Snap-confined
+    launcher replaced, and a configuration home inside a Snap is never this
+    application's.
+    """
+    base = os.environ.get('XDG_CONFIG_HOME')
+    if not base or _SNAP_PATH_MARKER in base:
+        return Path.home() / '.config' / _STORAGE_DIR_NAME
+
+    return Path(base) / _STORAGE_DIR_NAME
+
+
 def copy_text(text: str) -> bool:
     """Place *text* on the clipboard; return True on success.
 

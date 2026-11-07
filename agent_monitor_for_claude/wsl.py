@@ -51,7 +51,7 @@ from .paths import SessionRoot, claude_temp_dir
 from .platforms import IS_WINDOWS, no_window_kwargs
 from .procinfo import ChildProcessStat, ProcessDetails, ProcessInfo, child_processes
 from .process_probe import vmmem_present as _vmmem_present
-from .settings import WSL_MONITORING
+from .settings import current_settings
 
 __all__ = ['wsl_roots', 'probe_wsl_sessions', 'wsl_process_details', 'wsl_process_stats', 'reset_caches']
 
@@ -93,7 +93,7 @@ def wsl_roots() -> list[SessionRoot]:
     Returns ``[]`` without any subprocess call or filesystem access whenever
     this is not a Windows host (WSL is a Windows feature; a Linux machine runs
     its Claude Code sessions natively, under the local root), whenever
-    ``settings.WSL_MONITORING`` is off, or whenever no ``vmmem*`` process is
+    the ``wsl`` setting is off, or whenever no ``vmmem*`` process is
     running - no WSL2 utility VM means no distro can be running either.
     Otherwise the discovered root list is served from cache when fresh, or
     rediscovered via :func:`_discover_roots` (both checks cached, see the
@@ -106,7 +106,7 @@ def wsl_roots() -> list[SessionRoot]:
         One entry per discovered ``.claude`` directory, sorted by distro name
         for a stable fingerprint across polls.
     """
-    if not IS_WINDOWS or not WSL_MONITORING:
+    if not IS_WINDOWS or not current_settings().wsl:
         return []
 
     if not _vmmem_present_cached():

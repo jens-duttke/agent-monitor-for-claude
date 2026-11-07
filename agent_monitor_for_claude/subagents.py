@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import Any
 
 from .paths import SessionRoot, cwd_to_slug, projects_dir
-from .settings import SUBAGENT_RECENT_SECONDS
+from .settings import current_settings
 from .transcript import agent_steps, final_reply, media_image, media_index, usage_scan, usage_scan_once
 from .usage_parts import UsageScan, merge_scans
 
@@ -65,7 +65,7 @@ _DONE_STOP_REASONS = frozenset({'end_turn', 'stop_sequence'})
 # A transcript whose last turn was answered (a resolved tool call) but did not
 # end on a natural stop counts as finished only once the file has been quiet this
 # long, so a normal think/tool pause between a tool_result and the next turn is
-# not misread as done. Kept well below ``SUBAGENT_RECENT_SECONDS``.
+# not misread as done. Kept well below the ``subagent_recent_seconds`` setting.
 _SUBAGENT_SETTLE_SECONDS = 30
 
 # A workflow with no open agent (every started one has returned) still counts as
@@ -171,6 +171,7 @@ def count_subagents(root: SessionRoot, session_id: str, cwd: str, worktree_cwds:
         return SubagentInfo()
 
     now = time.time()
+    recent_seconds = current_settings().subagent_recent_seconds
     running_paths: list[Path] = []
     running_age: float | None = None
     recent_done = 0
@@ -191,7 +192,7 @@ def count_subagents(root: SessionRoot, session_id: str, cwd: str, worktree_cwds:
         # Older than the recent window: definitely long finished - only the
         # connection view still lists it (every agent the session ran; the view
         # narrows them to its time window itself).
-        if age > SUBAGENT_RECENT_SECONDS:
+        if age > recent_seconds:
             candidates.append((age, path, False))
             continue
 
@@ -529,6 +530,7 @@ def _workflow_activity(subagents_dir: Path, now: float) -> tuple[WorkflowActivit
     except OSError:
         return ()
 
+    recent_seconds = current_settings().subagent_recent_seconds
     activities: list[WorkflowActivity] = []
     for run_dir in run_dirs:
         journal = run_dir / 'journal.jsonl'
@@ -538,7 +540,7 @@ def _workflow_activity(subagents_dir: Path, now: float) -> tuple[WorkflowActivit
         except OSError:
             continue
 
-        if journal_age > SUBAGENT_RECENT_SECONDS:
+        if journal_age > recent_seconds:
             continue
 
         total, done = _journal_counts(journal)

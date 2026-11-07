@@ -27,6 +27,7 @@ function applyBootstrap(bootstrap) {
     }
     refreshSearchOptButtons();
     refreshCompactButton();
+    refreshSettingsButton();
     refreshGroupSwitch();
     state.defaultEffort = typeof bootstrap.default_effort === 'string' ? bootstrap.default_effort : '';
 }
@@ -75,10 +76,16 @@ function controlTarget(target) {
 
 function onKeyDown(event) {
     // A dialog owns the keys while it is open.
-    if (document.getElementById('confirm-overlay')) {
+    if (document.getElementById('confirm-overlay') || settingsOpen()) {
         return;
     }
     const ctrl = event.ctrlKey || event.metaKey;
+
+    if (ctrl && event.key === ',' && !state.compact) {
+        event.preventDefault();
+        openSettings();
+        return;
+    }
 
     if (ctrl && event.key.toLowerCase() === 'k') {
         event.preventDefault();
@@ -210,6 +217,11 @@ async function boot() {
         reportUiError(err);
     }
     try {
+        initSettingsButton();
+    } catch (err) {
+        reportUiError(err);
+    }
+    try {
         initListControls();
     } catch (err) {
         reportUiError(err);
@@ -257,10 +269,18 @@ async function boot() {
     if (state.filters.has('history')) {
         ensureHistoryLoaded();
     }
-    setInterval(tick, state.pollInterval * 1000);
+    startPoll();
     setInterval(checkForChanges, FINGERPRINT_INTERVAL);
     setInterval(tickAges, 1000);
     gitOverviewLoop();
+}
+
+// (Re)start the full poll at the interval in force; a saved setting restarts it.
+function startPoll() {
+    if (state.pollTimer) {
+        clearInterval(state.pollTimer);
+    }
+    state.pollTimer = setInterval(tick, state.pollInterval * 1000);
 }
 
 function tryBoot() {

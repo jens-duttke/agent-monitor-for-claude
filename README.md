@@ -47,8 +47,9 @@ The *Graph* grouping draws each session with its subagents, workflows, backgroun
 
 - **Taskbar** - on Windows the taskbar button shows how many sessions wait for you. On Linux the window asks for attention.
 - **WSL** - on Windows, sessions running inside WSL distributions are listed too.
-- **13 languages** - English, German, Spanish, French, Hindi, Indonesian, Italian, Japanese, Korean, Brazilian Portuguese, Ukrainian, Simplified and Traditional Chinese, detected from your system locale.
-- **No setup** - a single executable on Windows. It finds your Claude config directory on its own (honors `CLAUDE_CONFIG_DIR`). An optional settings file adjusts the refresh interval and window size.
+- **13 languages** - English, German, Spanish, French, Hindi, Indonesian, Italian, Japanese, Korean, Brazilian Portuguese, Ukrainian, Simplified and Traditional Chinese, detected from your system locale or chosen in the settings.
+- **Settings** - refresh interval, how long finished sessions stay, language, WSL and window size, changed in a settings dialog (gear in the toolbar).
+- **No setup** - a single executable on Windows. It finds your Claude config directory on its own (honors `CLAUDE_CONFIG_DIR`).
 
 ## Requirements
 
@@ -108,11 +109,11 @@ Notes:
 ### Uninstalling
 On Windows, delete the executable. On Linux, run `linux/install-desktop-entry --remove` if you added the desktop entry, then delete the checkout and its `.venv`.
 
-To remove your interface preferences as well, delete `%LOCALAPPDATA%\AgentMonitorForClaude` (Windows) or `~/.local/share/agent-monitor-for-claude` (Linux).
+To remove your interface preferences and settings as well, delete `%LOCALAPPDATA%\AgentMonitorForClaude` and `%APPDATA%\AgentMonitorForClaude` (Windows), or `~/.local/share/agent-monitor-for-claude` and `~/.config/agent-monitor-for-claude` (Linux).
 
 ## Configuration
 
-All settings are optional. See [docs/configuration.md](docs/configuration.md) for the full reference and the settings-file search order.
+All settings are optional. Click the gear in the toolbar to change them. See [docs/configuration.md](docs/configuration.md) for every option and where the settings file is stored.
 
 ## How it works
 

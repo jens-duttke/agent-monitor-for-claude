@@ -15,7 +15,7 @@ Last reviewed: 2026-11-07
 | Telemetry, analytics, crash reports | None. |
 | Data sent anywhere | Nothing. |
 | Programs it runs | `git` (read-only) and, on Windows, `wsl.exe --list --running --quiet`. |
-| Writes to disk | Its own interface preferences, a session deletion you confirm, and a temp folder (Windows) or lock file (Linux). |
+| Writes to disk | Its own interface preferences and settings, a session deletion you confirm, and a temp folder (Windows) or lock file (Linux). |
 | Changes to your Claude Code data | Only the session deletion you confirm. |
 
 ## Network
@@ -61,7 +61,7 @@ All reads are local and read-only. The paths below are under `~/.claude/` (or `C
 | `settings.json` | The default effort level. |
 | Process table (`/proc` on Linux) | Process ids, parent ids, names and start times, to tell live sessions from ended ones. CPU and memory for the selected session's processes. |
 | Window titles | Compared in memory to find the window to raise when you click a session. Not stored. |
-| `agent-monitor-settings.json` | The app's own optional settings. |
+| `agent-monitor-settings.json` | The app's own settings (see [What it writes](#what-it-writes)). An older copy in `~/.claude/` is still read. |
 
 ### Conversation text shown in the window
 
@@ -128,12 +128,15 @@ Nothing is ever run inside a distribution.
    stores open sections, time ranges, grouping, list width, search options, view settings, and which
    projects (by folder path) and graph sessions (by session id) you collapsed. The rest of the folder is
    the engine's own cache. You can delete the folder at any time; the preferences then reset.
-2. **Session deletion** - deletes a past session's transcript and subagent folder, only after you
+2. **Settings** - `agent-monitor-settings.json` in `%APPDATA%\AgentMonitorForClaude` (Windows) or
+   `~/.config/agent-monitor-for-claude` (Linux), or next to the executable if the file is already
+   there. Written only when you save in the settings dialog. It holds only the app's own settings.
+3. **Session deletion** - deletes a past session's transcript and subagent folder, only after you
    confirm. The app refuses if the session is still running, and only deletes files inside `projects/`.
-3. **Temp folder (Windows executable)** - the single-file executable unpacks itself to
+4. **Temp folder (Windows executable)** - the single-file executable unpacks itself to
    `%TEMP%\_MEIxxxxxx` at start and removes it on exit. If the app is killed, the folder stays and can be
    deleted.
-4. **Lock file (Linux)** - `$XDG_RUNTIME_DIR/agent-monitor-for-claude.lock`, holding the app's process
+5. **Lock file (Linux)** - `$XDG_RUNTIME_DIR/agent-monitor-for-claude.lock`, holding the app's process
    id and version, so only one window runs. Windows uses a named mutex and shared memory instead, which
    are not files.
 
@@ -178,8 +181,8 @@ grep -rn "https\?://" agent_monitor_for_claude/ --include=*.py --include=*.js --
 # Credentials - one hit: a docstring saying none are read
 grep -rni "credential" agent_monitor_for_claude/ --exclude-dir=__pycache__
 
-# Disk writes - the session deletion (session_delete.py), the Linux lock file
-# (platforms/instance_linux.py) and the console for --verbose (platforms/win32.py, CONOUT$)
+# Disk writes - the settings file (settings.py), the session deletion (session_delete.py), the Linux
+# lock file (platforms/instance_linux.py) and the console for --verbose (platforms/win32.py, CONOUT$)
 grep -rnE "write_text|write_bytes|open\([^)]*['\"][wax]|os\.open|os\.write|os\.ftruncate|\.unlink\(|shutil\.rmtree|os\.remove|\.mkdir\(" agent_monitor_for_claude/ --exclude-dir=__pycache__
 
 # Dynamic code - only regular expressions' .exec() calls and two comments

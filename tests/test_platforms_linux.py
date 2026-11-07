@@ -323,5 +323,22 @@ class ImportWithoutPyGObjectTest(unittest.TestCase):
         self.assertIn('ok', result.stdout)
 
 
+@_LINUX_ONLY
+class UserConfigDirTest(unittest.TestCase):
+    def test_follows_xdg_config_home(self) -> None:
+        with mock.patch.dict(os.environ, {'XDG_CONFIG_HOME': '/custom/config'}):
+            self.assertEqual(linux.user_config_dir(), Path('/custom/config/agent-monitor-for-claude'))
+
+    def test_falls_back_to_the_default_config_directory(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True), \
+             mock.patch.object(linux.Path, 'home', return_value=Path('/home/dev')):
+            self.assertEqual(linux.user_config_dir(), Path('/home/dev/.config/agent-monitor-for-claude'))
+
+    def test_ignores_a_config_home_inside_a_snap(self) -> None:
+        with mock.patch.dict(os.environ, {'XDG_CONFIG_HOME': '/home/dev/snap/code/123/.config'}), \
+             mock.patch.object(linux.Path, 'home', return_value=Path('/home/dev')):
+            self.assertEqual(linux.user_config_dir(), Path('/home/dev/.config/agent-monitor-for-claude'))
+
+
 if __name__ == '__main__':
     unittest.main()

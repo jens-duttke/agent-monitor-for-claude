@@ -35,6 +35,36 @@ window.__MOCK_BOOTSTRAP__ = {
     },
 };
 
+// What get_settings describes, so the settings dialog opens in the preview; a
+// save there only changes this copy. The path is invented.
+window.__MOCK_SETTINGS__ = {
+    specs: [
+        { key: 'language', kind: 'language', group: 'general', minimum: null, maximum: null, unit: '', applies: 'reload' },
+        { key: 'poll_interval', kind: 'int', group: 'refresh', minimum: 1, maximum: 3600, unit: 'seconds', applies: 'now' },
+        { key: 'ended_max_age', kind: 'int', group: 'sessions', minimum: 0, maximum: null, unit: 'seconds', applies: 'now' },
+        { key: 'include_completed', kind: 'bool', group: 'sessions', minimum: null, maximum: null, unit: '', applies: 'now' },
+        { key: 'subagent_recent_seconds', kind: 'int', group: 'sessions', minimum: 1, maximum: null, unit: 'seconds', applies: 'now' },
+        { key: 'wsl', kind: 'bool', group: 'wsl', minimum: null, maximum: null, unit: '', applies: 'now' },
+        { key: 'window_width', kind: 'int', group: 'window', minimum: 320, maximum: 10000, unit: 'pixels', applies: 'restart' },
+        { key: 'window_height', kind: 'int', group: 'window', minimum: 240, maximum: 10000, unit: 'pixels', applies: 'restart' },
+    ],
+    values: {
+        poll_interval: 5, ended_max_age: 7200, include_completed: false, subagent_recent_seconds: 900,
+        window_width: 1180, window_height: 760, language: '', wsl: true,
+    },
+    defaults: {
+        poll_interval: 5, ended_max_age: 3600, include_completed: false, subagent_recent_seconds: 900,
+        window_width: 1180, window_height: 760, language: '', wsl: true,
+    },
+    errors: [],
+    path: 'C:\\Users\\demo\\AppData\\Roaming\\AgentMonitorForClaude\\agent-monitor-settings.json',
+    exists: true,
+    source: 'config',
+    legacy_path: '',
+    languages: [{ code: 'de', name: 'Deutsch' }, { code: 'en', name: 'English' }, { code: 'fr', name: 'Français' }, { code: 'ja', name: '日本語' }],
+    window_size: [1180, 760],
+};
+
 // Raw session records - the exact shape the Python backend provides. All
 // derivation (status, labels, grouping, sorting, cost) happens in logic.js.
 function rawSession(overrides) {

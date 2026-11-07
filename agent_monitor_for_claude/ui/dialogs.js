@@ -106,8 +106,8 @@ function showConfirm(title, body, detail, okLabel, onConfirm) {
         + '<div class="modal-detail"></div>'
         + '<div class="modal-body"></div>'
         + '<div class="modal-actions">'
-        +     '<button class="modal-btn" type="button" data-act="cancel"></button>'
         +     '<button class="modal-btn danger" type="button" data-act="ok"></button>'
+        +     '<button class="modal-btn" type="button" data-act="cancel"></button>'
         + '</div></div>';
 
     overlay.querySelector('.modal-title').textContent = title || '';

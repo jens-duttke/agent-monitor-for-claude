@@ -2,9 +2,14 @@
 Internationalization
 =====================
 
-Loads translations for the detected system language with English fallback.
-The locale directory structure is the configuration - adding a
-``<code>.json`` file registers a language, no code change required.
+Loads translations for the configured or detected system language with
+English fallback.  The locale directory structure is the configuration - adding
+a ``<code>.json`` file registers a language, no code change required; its
+``language_name`` key is the name the settings dialog lists it under.
+
+``T`` is one dict for the life of the process: :func:`reload_translations`
+refills it in place after the language setting changed, so every module that
+imported it reads the new language.
 """
 from __future__ import annotations
 
@@ -13,7 +18,7 @@ import locale
 from pathlib import Path
 from typing import Any
 
-__all__ = ['LOCALE_DIR', 'detect_lang_code', 'load_translations', 'T']
+__all__ = ['LOCALE_DIR', 'available_languages', 'detect_lang_code', 'load_translations', 'reload_translations', 'T']
 
 LOCALE_DIR = Path(__file__).parent.parent / 'locale'
 
@@ -105,10 +110,10 @@ def load_translations() -> dict[str, Any]:
     the next candidate instead of crashing at startup (the UI falls back to its
     built-in default labels for any key an empty table omits).
     """
-    from .settings import LANGUAGE
+    from .settings import current_settings
 
     lang = locale.getlocale()[0] or ''
-    for code in (LANGUAGE, detect_lang_code(lang), 'en'):
+    for code in (current_settings().language, detect_lang_code(lang), 'en'):
         if not code:
             continue
         translations = _read_locale(code)
@@ -116,6 +121,32 @@ def load_translations() -> dict[str, Any]:
             return translations
 
     return {}
+
+
+def reload_translations() -> None:
+    """Refill :data:`T` in place for the language now configured."""
+    translations = load_translations()
+    T.clear()
+    T.update(translations)
+
+
+def available_languages() -> list[dict[str, str]]:
+    """Return one ``{code, name}`` per locale file, sorted by code.
+
+    The name is the file's own ``language_name`` - the language in itself, so a
+    reader finds their language whatever the interface currently shows - or
+    the code when the file names none.  A malformed file is left out.
+    """
+    languages: list[dict[str, str]] = []
+    for path in sorted(LOCALE_DIR.glob('*.json')):
+        translations = _read_locale(path.stem)
+        if translations is None:
+            continue
+
+        name = translations.get('language_name')
+        languages.append({'code': path.stem, 'name': name if isinstance(name, str) and name else path.stem})
+
+    return languages
 
 
 T: dict[str, Any] = load_translations()

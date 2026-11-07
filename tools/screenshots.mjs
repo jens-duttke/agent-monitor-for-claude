@@ -94,6 +94,14 @@ const SCENES = {
         await page.open({ 'amc-compact': '1' }, 420, 640);
         await page.shot('compact');
     },
+    async settings(page) {
+        await page.open({}, 1440, 900);
+        await page.run(SELECT_FOCUS);
+        await page.run('openSettings()');
+        await sleep(300);
+        await page.run('document.activeElement.blur()');
+        await page.shot('settings');
+    },
 };
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));

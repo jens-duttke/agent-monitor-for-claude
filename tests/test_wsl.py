@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_monitor_for_claude import procfs, wsl
+from agent_monitor_for_claude.settings import Settings
 
 _WINDOWS_ONLY = unittest.skipUnless(sys.platform == 'win32', 'WSL discovery runs on a Windows host only')
 
@@ -202,7 +203,7 @@ class WslRootsGateTests(unittest.TestCase):
             listing.assert_not_called()
 
     def test_setting_off_short_circuits(self) -> None:
-        with mock.patch.object(wsl, 'WSL_MONITORING', False), \
+        with mock.patch.object(wsl, 'current_settings', return_value=Settings(wsl=False)), \
              mock.patch.object(wsl, '_vmmem_present') as probe:
             self.assertEqual(wsl.wsl_roots(), [])
             probe.assert_not_called()

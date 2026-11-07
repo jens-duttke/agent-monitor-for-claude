@@ -3639,3 +3639,156 @@ test('graph model: a message to or from a subagent no longer listed draws nothin
     assert.deepEqual(model.nodes.map((node) => node.id), ['s:k']);
     assert.deepEqual(model.edges, []);
 });
+
+/* --- settings dialog --- */
+
+const SETTING_SPECS = [
+    { key: 'language', kind: 'language', group: 'general', minimum: null, maximum: null, unit: '', applies: 'reload' },
+    { key: 'poll_interval', kind: 'int', group: 'refresh', minimum: 1, maximum: 3600, unit: 'seconds', applies: 'now' },
+    { key: 'ended_max_age', kind: 'int', group: 'sessions', minimum: 0, maximum: null, unit: 'seconds', applies: 'now' },
+    { key: 'include_completed', kind: 'bool', group: 'sessions', minimum: null, maximum: null, unit: '', applies: 'now' },
+    { key: 'window_width', kind: 'int', group: 'window', minimum: 320, maximum: 10000, unit: 'pixels', applies: 'restart' },
+];
+const SETTING_LANGUAGES = [{ code: 'de', name: 'Deutsch' }, { code: 'en', name: 'English' }];
+const SETTING_LABELS = {
+    settings_group_general: 'General', settings_group_refresh: 'Refresh', settings_group_sessions: 'Sessions',
+    settings_group_window: 'Window', settings_group_wsl: 'WSL',
+    setting_language: 'Language', setting_language_auto: 'Automatic', setting_language_hint: 'Reloads.',
+    setting_poll_interval: 'Refresh every', setting_poll_interval_hint: 'Hint.',
+    setting_ended_max_age: 'Keep for', setting_ended_max_age_hint: 'Hint.',
+    setting_include_completed: 'Always keep', setting_include_completed_hint: 'Hint.',
+    setting_window_width: 'Width', setting_window_hint: 'At start.', settings_use_current_size: 'Use current size',
+    unit_seconds: 'seconds', unit_pixels: 'px', settings_reset_tip: 'Back to the default: {value}',
+    setting_on: 'On', setting_off: 'Off',
+    settings_error_integer: 'Enter a whole number.', settings_error_minimum: 'At least {limit}.',
+    settings_error_maximum: 'At most {limit}.', settings_error_language: 'Unknown language.',
+    settings_error_type: 'Invalid value.', settings_error_unknown: 'Unknown setting: {key}',
+    settings_error_file: 'Unreadable: {detail}', settings_error_write: 'Could not save: {detail}',
+    settings_legacy_note: 'Read from {path}.', settings_load_errors: 'Invalid entries.',
+    settings_file_label: 'Settings file', settings_file_new: 'Created when you save.', show_in_file_manager: 'Show',
+    age_seconds: '{s}s', age_minutes: '{m}m', age_hours: '{h}h {m}m', age_days: '{d}d',
+};
+
+function settingsView(overrides) {
+    return Object.assign({
+        specs: SETTING_SPECS,
+        values: { language: '', poll_interval: 5, ended_max_age: 7200, include_completed: false, window_width: 1180 },
+        defaults: { language: '', poll_interval: 5, ended_max_age: 3600, include_completed: false, window_width: 1180 },
+        errors: [],
+        languages: SETTING_LANGUAGES,
+        window_size: [1200, 800],
+        legacy_path: '',
+        path: 'C:\\config\\agent-monitor-settings.json',
+        exists: true,
+    }, overrides);
+}
+
+test('parseSettingInput: a number field takes whole numbers within its bounds only', () => {
+    const spec = SETTING_SPECS[1];
+    assert.deepEqual(logic.parseSettingInput(spec, ' 30 '), { value: 30 });
+    assert.deepEqual(logic.parseSettingInput(spec, '0'), { error: { code: 'minimum', limit: 1 } });
+    assert.deepEqual(logic.parseSettingInput(spec, '3601'), { error: { code: 'maximum', limit: 3600 } });
+    for (const input of ['', '5.0', '1e3', 'abc', '0x10', '99999999999999999999']) {
+        assert.deepEqual(logic.parseSettingInput(spec, input), { error: { code: 'integer' } }, input);
+    }
+    // A field without an upper bound takes any whole number from its minimum on.
+    assert.deepEqual(logic.parseSettingInput(SETTING_SPECS[2], '0'), { value: 0 });
+    assert.deepEqual(logic.parseSettingInput(SETTING_SPECS[2], '86400000'), { value: 86400000 });
+});
+
+test('parseSettingInput: a switch takes a bool, a language one the dialog lists or automatic', () => {
+    assert.deepEqual(logic.parseSettingInput(SETTING_SPECS[3], true), { value: true });
+    assert.deepEqual(logic.parseSettingInput(SETTING_SPECS[3], 'true'), { error: { code: 'type' } });
+    assert.deepEqual(logic.parseSettingInput(SETTING_SPECS[0], 'de', SETTING_LANGUAGES), { value: 'de' });
+    assert.deepEqual(logic.parseSettingInput(SETTING_SPECS[0], '', SETTING_LANGUAGES), { value: '' });
+    assert.deepEqual(logic.parseSettingInput(SETTING_SPECS[0], 'xx', SETTING_LANGUAGES), { error: { code: 'language' } });
+    assert.deepEqual(logic.parseSettingInput(null, '5'), { error: { code: 'type' } });
+});
+
+test('settingErrorText: each code has its message, an unknown one reads as an invalid value', () => {
+    assert.equal(logic.settingErrorText({ code: 'minimum', limit: 1 }, SETTING_LABELS), 'At least 1.');
+    assert.equal(logic.settingErrorText({ key: 'speling', code: 'unknown' }, SETTING_LABELS), 'Unknown setting: speling');
+    assert.equal(logic.settingErrorText({ code: 'write', detail: 'Access is denied' }, SETTING_LABELS), 'Could not save: Access is denied');
+    assert.equal(logic.settingErrorText({ code: 'invalid_json', detail: 'line 1' }, SETTING_LABELS), 'Unreadable: line 1');
+    assert.equal(logic.settingErrorText({ code: 'constructor' }, SETTING_LABELS), 'Invalid value.');
+    assert.equal(logic.settingErrorText(null, SETTING_LABELS), '');
+});
+
+test('settingsChangedKeys: names the keys whose value differs, in spec order', () => {
+    const current = settingsView().values;
+    const values = Object.assign({}, current, { include_completed: true, poll_interval: 9 });
+    assert.deepEqual(logic.settingsChangedKeys(SETTING_SPECS, values, current), ['poll_interval', 'include_completed']);
+    assert.deepEqual(logic.settingsChangedKeys(SETTING_SPECS, current, current), []);
+    assert.deepEqual(logic.settingsChangedKeys(null, values, current), []);
+});
+
+test('settingDisplayValue and settingDurationText: a value as the dialog names it', () => {
+    assert.equal(logic.settingDisplayValue(SETTING_SPECS[3], true, SETTING_LABELS), 'On');
+    assert.equal(logic.settingDisplayValue(SETTING_SPECS[0], '', SETTING_LABELS, SETTING_LANGUAGES), 'Automatic');
+    assert.equal(logic.settingDisplayValue(SETTING_SPECS[0], 'de', SETTING_LABELS, SETTING_LANGUAGES), 'Deutsch');
+    assert.equal(logic.settingDisplayValue(SETTING_SPECS[1], 5, SETTING_LABELS), '5 seconds');
+    assert.equal(logic.settingDurationText(SETTING_SPECS[2], 3600, SETTING_LABELS), '1h 0m');
+    assert.equal(logic.settingDurationText(SETTING_SPECS[2], 30, SETTING_LABELS), '');
+    assert.equal(logic.settingDurationText(SETTING_SPECS[4], 3600, SETTING_LABELS), '');
+});
+
+test('settingsFormMarkup: one group per heading in order, a reset only where the value is not the default', () => {
+    const html = logic.settingsFormMarkup(settingsView(), SETTING_LABELS);
+    const headings = [...html.matchAll(/<h3 class="settings-group-title">([^<]*)<\/h3>/g)].map((match) => match[1]);
+    assert.deepEqual(headings, ['General', 'Refresh', 'Sessions', 'Window']);
+    assert.match(html, /data-reset="ended_max_age" data-tip="Back to the default: 3600 seconds" aria-label="[^"]*">/);
+    assert.match(html, /data-reset="poll_interval"[^>]* hidden>/);
+    assert.match(html, /<input type="checkbox" class="setting-switch" id="setting-include_completed" data-key="include_completed">/);
+    assert.match(html, /<option value="de">Deutsch<\/option>/);
+    assert.match(html, /data-duration-for="ended_max_age">2h 0m</);
+    assert.ok(html.includes('data-use-size'));
+    assert.ok(html.includes('1200 × 800'));
+    assert.ok(!html.includes('settings-notice'));
+});
+
+test('settingsFormMarkup: a spec the page has no label for is left out, a missing size offers no button', () => {
+    const view = settingsView({ specs: SETTING_SPECS.concat([{ key: 'theme', kind: 'bool', group: 'general' }]), window_size: null });
+    const html = logic.settingsFormMarkup(view, SETTING_LABELS);
+    assert.ok(!html.includes('theme'));
+    assert.ok(!html.includes('data-use-size'));
+    assert.equal(logic.settingsFormMarkup({}, SETTING_LABELS), '');
+});
+
+test('settingsFormMarkup: load errors show at their field, the rest in the notice', () => {
+    const errors = [{ key: 'poll_interval', code: 'minimum', limit: 1 }, { key: 'speling', code: 'unknown' }];
+    const html = logic.settingsFormMarkup(settingsView({ errors, legacy_path: 'C:\\Users\\dev\\.claude\\x.json' }), SETTING_LABELS);
+    assert.ok(html.includes('data-error-for="poll_interval">At least 1.<'));
+    assert.ok(html.includes('<li>Unknown setting: speling</li>'));
+    assert.ok(html.includes('Read from C:\\Users\\dev\\.claude\\x.json.'));
+    assert.ok(!html.includes('<li>At least 1.</li>'));
+});
+
+test('settingsFileMarkup: names the file, says when it does not exist yet', () => {
+    assert.ok(logic.settingsFileMarkup(settingsView(), SETTING_LABELS).includes('C:\\config\\agent-monitor-settings.json'));
+    assert.ok(!logic.settingsFileMarkup(settingsView(), SETTING_LABELS).includes('Created when you save.'));
+    assert.ok(logic.settingsFileMarkup(settingsView({ exists: false }), SETTING_LABELS).includes('Created when you save.'));
+    assert.ok(logic.settingsFileMarkup(settingsView(), SETTING_LABELS).includes('data-reveal-settings'));
+    assert.ok(!logic.settingsFileMarkup(settingsView({ exists: false }), SETTING_LABELS).includes('data-reveal-settings'));
+    assert.equal(logic.settingsFileMarkup(settingsView({ path: '' }), SETTING_LABELS), '');
+});
+
+test('settings dialog: html safety - values, names, paths and errors from the bridge stay text', () => {
+    const hostile = '"><img src=x onerror=alert(1)>';
+    const view = settingsView({
+        values: Object.assign({}, settingsView().values, { language: hostile, poll_interval: hostile }),
+        defaults: Object.assign({}, settingsView().defaults, { window_width: hostile }),
+        languages: [{ code: hostile, name: hostile }],
+        errors: [{ key: hostile, code: 'unknown' }, { key: '', code: 'invalid_json', detail: hostile }],
+        legacy_path: hostile,
+        path: hostile,
+        window_size: [hostile, 800],
+    });
+    const labels = Object.assign({}, SETTING_LABELS, { settings_group_general: hostile, setting_language: hostile, settings_reset_tip: hostile + '{value}' });
+    const html = logic.settingsFormMarkup(view, labels) + logic.settingsFileMarkup(view, labels);
+    assert.ok(!html.includes('<img'));
+    assert.ok(!/onerror=alert\(1\)>/.test(html.replace(/&quot;&gt;&lt;img src=x onerror=alert\(1\)&gt;/g, '')));
+    assert.ok(html.includes('&quot;&gt;&lt;img src=x onerror=alert(1)&gt;'));
+    // The only elements are the dialog's own.
+    const tags = new Set([...html.matchAll(/<([a-z0-9]+)/g)].map((match) => match[1]));
+    assert.deepEqual([...tags].sort(), ['button', 'div', 'h3', 'input', 'label', 'li', 'option', 'path', 'section', 'select', 'span', 'svg', 'ul']);
+});

@@ -29,6 +29,7 @@ a = Analysis(
         ('agent_monitor_for_claude/ui/menu.js', 'agent_monitor_for_claude/ui'),
         ('agent_monitor_for_claude/ui/proc-panel.js', 'agent_monitor_for_claude/ui'),
         ('agent_monitor_for_claude/ui/dialogs.js', 'agent_monitor_for_claude/ui'),
+        ('agent_monitor_for_claude/ui/settings.js', 'agent_monitor_for_claude/ui'),
         ('agent_monitor_for_claude/ui/filters.js', 'agent_monitor_for_claude/ui'),
         ('agent_monitor_for_claude/ui/search.js', 'agent_monitor_for_claude/ui'),
         ('agent_monitor_for_claude/ui/render.js', 'agent_monitor_for_claude/ui'),

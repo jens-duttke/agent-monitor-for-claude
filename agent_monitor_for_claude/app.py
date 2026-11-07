@@ -4,7 +4,8 @@ Application
 
 Hosts the pywebview window and exposes a small JavaScript bridge.  The UI
 polls ``get_snapshot`` on an interval and renders the result; ``get_bootstrap``
-supplies static configuration (labels, theme, poll interval) once on load.
+supplies static configuration (labels, theme, poll interval) once on load, and
+``get_settings``/``save_settings`` serve the settings dialog.
 """
 from __future__ import annotations
 
@@ -26,7 +27,7 @@ from .clipboard import copy_text as _copy_text
 from .git_overview import git_overview
 from .git_status import git_diff, git_status
 from .history import list_history
-from .i18n import T
+from .i18n import T, available_languages, reload_translations
 from .paths import SessionRoot, config_dir, host_path, local_root, projects_dir, scratchpad_dir
 from .paths import transcript_path as _transcript_path
 from .platforms import prepare_gui_environment, storage_dir
@@ -36,7 +37,8 @@ from .roots import root_for_origin
 from .search import run_search
 from .session_delete import delete_session as _delete_session
 from .sessions import list_sessions
-from .settings import POLL_INTERVAL, WINDOW_HEIGHT, WINDOW_WIDTH
+from .settings import current_settings, describe_settings, settings_path
+from .settings import save_settings as _save_settings
 from .snapshot import (
     build_snapshot, registry_fingerprint, session_activity, session_hook_failures, session_media, session_media_image, session_texts,
 )
@@ -234,6 +236,59 @@ class _MonitorApi:
             return False
 
         return show_attention(window, count, flash)
+
+    def get_settings(self) -> dict[str, Any]:
+        """Describe the settings for the settings dialog.
+
+        Adds to :func:`settings.describe_settings` the languages a locale file
+        exists for and the window's current logical size - the size it had
+        before the compact view when that is on - so the dialog can offer it as
+        the size to start with (``None`` when the window cannot be measured).
+        """
+        description = describe_settings()
+        description['languages'] = available_languages()
+        description['window_size'] = self._window_size()
+
+        return description
+
+    def save_settings(self, values: object) -> dict[str, Any]:
+        """Validate and save the settings dialog's values and put them in force.
+
+        A new language refills the translations here; the page reloads itself
+        to pick them up (the result's ``reload``).  Anything but a mapping of
+        known keys to valid values is refused with the result's ``errors``.
+        """
+        result = _save_settings(values, {language['code'] for language in available_languages()})
+        if result.get('ok') and result.get('reload'):
+            reload_translations()
+
+        return result
+
+    def reveal_settings_file(self) -> bool:
+        """Show the settings file in the file manager, or its folder when no file was written yet (user-initiated).
+
+        Takes no path from the page: only the one file a save writes is ever
+        shown, through the same validated launchers as a session's files.
+        """
+        path = settings_path()
+        if path.is_file():
+            return reveal_in_file_manager(str(path))
+
+        return open_directory(str(path.parent))
+
+    def _window_size(self) -> list[int] | None:
+        """The window's logical size outside the compact view, or None when it cannot be measured."""
+        window = self._window
+        if window is None:
+            return None
+
+        with self._layout_lock:
+            if self._compact:
+                return list(self._normal_size) if self._normal_size else None
+            try:
+                return [int(window.width), int(window.height)]
+            except Exception:  # noqa: BLE001  # a window that is closing or not shown yet
+                return None
 
     def log(self, message: object) -> None:
         """Forward a UI-side diagnostic message to stderr.
@@ -860,7 +915,7 @@ class _MonitorApi:
 
         return {
             'labels': dict(T),
-            'poll_interval': POLL_INTERVAL,
+            'poll_interval': current_settings().poll_interval,
             'version': __version__,
             'default_effort': _default_effort(),
             'pricing': load_pricing(),
@@ -892,6 +947,7 @@ def run(verbose: bool = False) -> None:
     threading.Thread(target=_warm_up, name='snapshot-warm-up', daemon=True).start()
 
     api = _MonitorApi()
+    settings = current_settings()
 
     ui_dir = _ui_dir()
     window = webview.create_window(
@@ -900,8 +956,8 @@ def run(verbose: bool = False) -> None:
         T.get('app_title', 'Agent Monitor for Claude'),
         url=f'{ui_dir / "index.html"}?v={_asset_version(ui_dir)}',
         js_api=api,
-        width=WINDOW_WIDTH,
-        height=WINDOW_HEIGHT,
+        width=settings.window_width,
+        height=settings.window_height,
         min_size=NORMAL_MIN_SIZE,
         background_color=window_background_color(),
     )

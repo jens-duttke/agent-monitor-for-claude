@@ -197,5 +197,18 @@ class NoWindowKwargsTest(unittest.TestCase):
         self.assertEqual(win32.no_window_kwargs(), {'creationflags': 0x08000000})
 
 
+@_WINDOWS_ONLY
+class UserConfigDirTest(unittest.TestCase):
+    def test_follows_appdata(self) -> None:
+        with mock.patch.dict(os.environ, {'APPDATA': 'C:\\Users\\dev\\AppData\\Roaming'}):
+            self.assertEqual(str(win32.user_config_dir()), 'C:\\Users\\dev\\AppData\\Roaming\\AgentMonitorForClaude')
+
+    def test_falls_back_to_the_roaming_folder_under_home(self) -> None:
+        environment = {key: value for key, value in os.environ.items() if key != 'APPDATA'}
+        with mock.patch.dict(os.environ, environment, clear=True), \
+             mock.patch.object(win32.Path, 'home', return_value=win32.Path('C:/Users/dev')):
+            self.assertEqual(win32.user_config_dir(), win32.Path('C:/Users/dev/AppData/Roaming/AgentMonitorForClaude'))
+
+
 if __name__ == '__main__':
     unittest.main()

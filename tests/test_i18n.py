@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest import mock
 
-from agent_monitor_for_claude.i18n import LOCALE_DIR, detect_lang_code
+from agent_monitor_for_claude.i18n import LOCALE_DIR, T, available_languages, detect_lang_code, reload_translations
+from agent_monitor_for_claude.settings import Settings
 
 
 class DetectLangTest(unittest.TestCase):
@@ -45,6 +47,28 @@ class LocaleKeysetTest(unittest.TestCase):
         for path in locale_files:
             data = json.loads(path.read_text(encoding='utf-8'))
             self.assertEqual(set(data), expected, f'{path.name} keys differ from en.json')
+
+
+class LanguageSettingTest(unittest.TestCase):
+    def test_every_locale_file_is_offered_under_its_own_name(self) -> None:
+        languages = available_languages()
+
+        self.assertEqual([language['code'] for language in languages], sorted(path.stem for path in LOCALE_DIR.glob('*.json')))
+        names = [language['name'] for language in languages]
+        self.assertEqual(len(set(names)), len(names))
+        self.assertNotIn('', names)
+        self.assertIn('Deutsch', names)
+
+    def test_a_reload_refills_the_shared_table_in_place(self) -> None:
+        german = json.loads((LOCALE_DIR / 'de.json').read_text(encoding='utf-8'))
+        before = T
+        try:
+            with mock.patch('agent_monitor_for_claude.settings.current_settings', return_value=Settings(language='de')):
+                reload_translations()
+            self.assertIs(T, before)
+            self.assertEqual(T['cancel'], german['cancel'])
+        finally:
+            reload_translations()
 
 
 if __name__ == '__main__':

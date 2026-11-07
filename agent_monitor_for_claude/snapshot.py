@@ -34,7 +34,7 @@ from .paths import SessionRoot, TranscriptIndex, transcript_path
 from .process_probe import ProcessInfo, probe_all
 from .roots import session_roots
 from .sessions import list_sessions
-from .settings import ENDED_MAX_AGE, INCLUDE_COMPLETED
+from .settings import current_settings
 from .subagents import SubagentInfo, count_subagents
 from .transcript import (
     AgentLaunch, MessageEvent, ToolCall, TranscriptState, edited_files, full_texts, hook_failures, media_image, media_index, prune_scan_cache,
@@ -701,7 +701,8 @@ def _ended_long_ago(root: SessionRoot, record: dict[str, Any], index: Transcript
     through is still judged exactly by :func:`_include_ended`.
     """
     ended_seconds = seconds_since_alive(record['origin'], record['session_id'])
-    if ended_seconds is not None or INCLUDE_COMPLETED:
+    settings = current_settings()
+    if ended_seconds is not None or settings.include_completed:
         return not _include_ended(None, ended_seconds)
 
     transcript = index.stat(root, record['session_id'], record['cwd'])
@@ -709,7 +710,7 @@ def _ended_long_ago(root: SessionRoot, record: dict[str, Any], index: Transcript
         # No transcript means no age, which the exact rule drops as well.
         return True
 
-    return time.time() - transcript[0] / 1e9 >= ENDED_MAX_AGE
+    return time.time() - transcript[0] / 1e9 >= settings.ended_max_age
 
 
 def _include_ended(age_seconds: float | None, ended_seconds: float | None) -> bool:
@@ -733,10 +734,11 @@ def _include_ended(age_seconds: float | None, ended_seconds: float | None) -> bo
         A sighting can only ever be *newer* than the last entry, so consulting
         it never shortens the window.
     """
-    if INCLUDE_COMPLETED:
+    settings = current_settings()
+    if settings.include_completed:
         return True
 
     if ended_seconds is not None:
-        return ended_seconds < ENDED_MAX_AGE
+        return ended_seconds < settings.ended_max_age
 
-    return age_seconds is not None and age_seconds < ENDED_MAX_AGE
+    return age_seconds is not None and age_seconds < settings.ended_max_age

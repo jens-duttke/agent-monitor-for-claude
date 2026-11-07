@@ -29,7 +29,7 @@ if IS_WINDOWS:
         diagnostic_post_init_rows, diagnostic_runtime_rows, diagnostic_system_rows, enum_windows,
         no_window_kwargs, open_path, open_uri, paint_window, prepare_gui_environment, reveal_file,
         set_keep_on_top, set_min_window_size, set_taskbar_attention, setup_console, show_error_box, storage_dir,
-        window_background_color,
+        user_config_dir, window_background_color,
     )
 else:
     from .linux import (
@@ -37,7 +37,7 @@ else:
         diagnostic_post_init_rows, diagnostic_runtime_rows, diagnostic_system_rows, enum_windows,
         no_window_kwargs, open_path, open_uri, paint_window, prepare_gui_environment, reveal_file,
         set_keep_on_top, set_min_window_size, set_taskbar_attention, setup_console, show_error_box, storage_dir,
-        window_background_color,
+        user_config_dir, window_background_color,
     )
 
 __all__ = [
@@ -45,5 +45,5 @@ __all__ = [
     'diagnostic_display_rows', 'diagnostic_post_init_rows', 'diagnostic_runtime_rows', 'diagnostic_system_rows',
     'enum_windows', 'no_window_kwargs', 'open_path', 'open_uri', 'paint_window', 'prepare_gui_environment',
     'reveal_file', 'set_keep_on_top', 'set_min_window_size', 'set_taskbar_attention', 'setup_console', 'show_error_box',
-    'storage_dir', 'window_background_color',
+    'storage_dir', 'user_config_dir', 'window_background_color',
 ]

@@ -6,7 +6,7 @@ Remembers, in memory only, when each session's process was last observed alive,
 so an ended session can be retained for a window measured from *when it ended*
 rather than from its last transcript entry.
 
-Without this the retention window (``settings.ENDED_MAX_AGE``) is keyed on
+Without this the retention window (the ``ended_max_age`` setting) is keyed on
 transcript activity age, which answers a different question: a session that sat
 idle for hours and is then closed has an activity age far past the window and
 drops out of the overview in the very same poll - exactly the session a user

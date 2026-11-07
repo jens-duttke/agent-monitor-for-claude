@@ -14,6 +14,7 @@ from agent_monitor_for_claude import cli_install
 from agent_monitor_for_claude import snapshot as snapshot_mod
 from agent_monitor_for_claude.paths import SessionRoot, transcript_path, local_root
 from agent_monitor_for_claude.procinfo import ProcessInfo
+from agent_monitor_for_claude.settings import Settings
 from agent_monitor_for_claude.snapshot import build_snapshot, live_or_recent_ids, registry_fingerprint
 from agent_monitor_for_claude.transcript import MessageEvent
 
@@ -331,7 +332,7 @@ class EndedRetentionTest(_RegistryFixture):
     def test_session_ended_past_the_window_is_dropped(self) -> None:
         self._add_ended_session('closed')
 
-        with mock.patch.object(snapshot_mod, 'seconds_since_alive', return_value=snapshot_mod.ENDED_MAX_AGE + 1):
+        with mock.patch.object(snapshot_mod, 'seconds_since_alive', return_value=snapshot_mod.current_settings().ended_max_age + 1):
             self.assertNotIn('closed', self._ids())
 
     def test_without_a_sighting_the_activity_age_still_decides(self) -> None:
@@ -365,7 +366,7 @@ class EndedRetentionTest(_RegistryFixture):
         # Hundreds of stale registry records can pile up; each must cost one
         # stat, not a transcript read, before it is dropped.
         self._add_ended_session('closed')
-        self._age_transcript('closed', snapshot_mod.ENDED_MAX_AGE + 60)
+        self._age_transcript('closed', snapshot_mod.current_settings().ended_max_age + 60)
 
         retained, read = self._read_ids(self._ids)
 
@@ -402,16 +403,16 @@ class EndedRetentionTest(_RegistryFixture):
 
     def test_the_include_completed_setting_still_keeps_a_long_ended_session(self) -> None:
         self._add_ended_session('closed')
-        self._age_transcript('closed', snapshot_mod.ENDED_MAX_AGE + 60)
+        self._age_transcript('closed', snapshot_mod.current_settings().ended_max_age + 60)
 
-        with mock.patch.object(snapshot_mod, 'INCLUDE_COMPLETED', True):
+        with mock.patch.object(snapshot_mod, 'current_settings', return_value=Settings(include_completed=True)):
             retained, _ = self._read_ids(self._ids)
 
         self.assertIn('closed', retained)
 
     def test_live_or_recent_ids_drops_a_long_ended_session_unread(self) -> None:
         self._add_ended_session('closed')
-        self._age_transcript('closed', snapshot_mod.ENDED_MAX_AGE + 60)
+        self._age_transcript('closed', snapshot_mod.current_settings().ended_max_age + 60)
 
         retained, read = self._read_ids(live_or_recent_ids)
 

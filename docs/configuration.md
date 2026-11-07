@@ -2,27 +2,36 @@
 
 All settings are optional.
 
+## Settings dialog
+
+Click the gear in the toolbar, or press *Ctrl+,*, to change the settings. Changes apply when you save. A new language reloads the window, and the window size applies at the next start. A field that differs from its default shows a button that resets it.
+
+<img src="images/settings.png" width="720" alt="The settings dialog with the groups General, Refresh, Sessions, WSL and Window, and the settings file's path at the bottom">
+
 ## Settings file
 
-Create a file named `agent-monitor-settings.json` in one of these locations (the first one found is used):
+The dialog saves to `agent-monitor-settings.json`:
 
-1. Next to the executable, or in the project root when running from source
-2. `$CLAUDE_CONFIG_DIR/agent-monitor-settings.json` (if `CLAUDE_CONFIG_DIR` is set and differs from `~/.claude/`)
-3. `~/.claude/agent-monitor-settings.json`
+- Windows: `%APPDATA%\AgentMonitorForClaude\agent-monitor-settings.json`
+- Linux: `~/.config/agent-monitor-for-claude/agent-monitor-settings.json` (or under `$XDG_CONFIG_HOME` if set)
 
-Errors are reported in a dialog at start; an invalid entry falls back to its default.
+If a file named `agent-monitor-settings.json` is next to the executable (or in the project root when running from source), it is used instead, and the dialog saves to it. Use this for a portable setup.
+
+A settings file in `~/.claude/` or `$CLAUDE_CONFIG_DIR` from an earlier version is still read. The first save moves its settings to the location above and leaves the old file unchanged.
+
+You can edit the file by hand; the app reads it at start. Only values that differ from the default are written. Keys starting with `_` are kept as comments. An invalid entry uses its default, is reported at start and in the dialog, and is removed when you save.
 
 ## Options
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `poll_interval` | integer (>= 1) | `5` | Seconds between full refreshes. Changes to sessions are picked up within about a second regardless. |
+| `poll_interval` | integer (1 - 3600) | `5` | Seconds between full refreshes. Changes to sessions are picked up within about a second regardless. |
 | `ended_max_age` | integer (>= 0) | `3600` | How long (seconds) a finished session stays visible after its process exits. For sessions that ended before Agent Monitor started, counted from their last activity. |
 | `include_completed` | boolean | `false` | Show finished sessions regardless of `ended_max_age`. |
 | `wsl` | boolean | `true` | Windows only. List Claude Code sessions running inside WSL distributions. `false` turns off all WSL access. |
 | `subagent_recent_seconds` | integer (>= 1) | `900` | How long (seconds) a subagent is counted after its last write - as running, then as recently finished. |
-| `window_width` | integer (>= 320) | `1180` | Initial window width in logical pixels. |
-| `window_height` | integer (>= 240) | `760` | Initial window height in logical pixels. |
+| `window_width` | integer (320 - 10000) | `1180` | Window width at start, in logical pixels. |
+| `window_height` | integer (240 - 10000) | `760` | Window height at start, in logical pixels. |
 | `language` | string | `""` | Force a language by locale code (see below). Empty means auto-detect from the system locale. |
 
 ## Example

@@ -745,5 +745,72 @@ class BindablePortTest(unittest.TestCase):
             self.assertIsNone(app._bindable_port(app._HTTP_PORT_CANDIDATES[0]))
 
 
+class SettingsBridgeTest(unittest.TestCase):
+    def test_get_settings_adds_the_languages_and_the_window_size(self) -> None:
+        api = _MonitorApi()
+        api.attach_window(mock.Mock(width=1000.4, height=700))
+
+        description = api.get_settings()
+
+        self.assertIn('en', {language['code'] for language in description['languages']})
+        self.assertEqual(description['window_size'], [1000, 700])
+        json.dumps(description)
+
+    def test_the_size_to_start_with_is_the_one_from_before_the_compact_view(self) -> None:
+        api = _MonitorApi()
+        api.attach_window(mock.Mock(width=380, height=700))
+        api._compact = True
+        api._normal_size = (1200, 800)
+
+        self.assertEqual(api.get_settings()['window_size'], [1200, 800])
+
+    def test_no_window_means_no_size(self) -> None:
+        self.assertIsNone(_MonitorApi().get_settings()['window_size'])
+
+    def test_a_new_language_reloads_the_translations(self) -> None:
+        result = {'ok': True, 'reload': True}
+        with mock.patch.object(app, '_save_settings', return_value=result) as save, \
+             mock.patch.object(app, 'reload_translations') as reload:
+            self.assertEqual(_MonitorApi().save_settings({'language': 'de'}), result)
+
+        reload.assert_called_once()
+        self.assertIn('de', save.call_args[0][1])
+
+    def test_a_save_without_a_new_language_or_a_refused_one_keeps_them(self) -> None:
+        for result in ({'ok': True, 'reload': False}, {'ok': False, 'errors': []}):
+            with self.subTest(result=result), \
+                 mock.patch.object(app, '_save_settings', return_value=result), \
+                 mock.patch.object(app, 'reload_translations') as reload:
+                _MonitorApi().save_settings({})
+                reload.assert_not_called()
+
+    def test_reveal_settings_file_shows_the_file_once_written(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'agent-monitor-settings.json'
+            path.write_text('{}', encoding='utf-8')
+            with mock.patch.object(app, 'settings_path', return_value=path), \
+                 mock.patch.object(app, 'reveal_in_file_manager', return_value=True) as reveal, \
+                 mock.patch.object(app, 'open_directory') as folder:
+                self.assertTrue(_MonitorApi().reveal_settings_file())
+
+        reveal.assert_called_once_with(str(path))
+        folder.assert_not_called()
+
+    def test_reveal_settings_file_opens_the_folder_before_the_first_save(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'agent-monitor-settings.json'
+            with mock.patch.object(app, 'settings_path', return_value=path), \
+                 mock.patch.object(app, 'reveal_in_file_manager') as reveal, \
+                 mock.patch.object(app, 'open_directory', return_value=True) as folder:
+                _MonitorApi().reveal_settings_file()
+
+        reveal.assert_not_called()
+        folder.assert_called_once_with(str(path.parent))
+
+    def test_reveal_settings_file_takes_no_path_from_the_page(self) -> None:
+        with self.assertRaises(TypeError):
+            _MonitorApi().reveal_settings_file('C:/Windows/System32')  # type: ignore[call-arg]  # the refusal is the point
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -21,6 +21,7 @@
         'menu.js',
         'proc-panel.js',
         'dialogs.js',
+        'settings.js',
         'filters.js',
         'search.js',
         'render.js',

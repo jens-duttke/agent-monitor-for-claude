@@ -4569,8 +4569,288 @@ function groupProjects(rawSessions, labels, prices) {
     return [...groups.values()];
 }
 
+/* --- settings dialog ---
+
+   The dialog edits the app's settings file through the bridge; settings.py owns
+   the schema, the validation and the write, and describes them to the page
+   (specs, values in force, defaults, what the file's last read rejected). The
+   helpers below are pure: they turn a field's input into a typed value, tell
+   what changed, and build the form's markup from that description - every
+   value through esc/attr, like every other builder here. Every lookup keyed by
+   a value the bridge sent is a Map, so an unexpected key finds nothing rather
+   than an inherited property. */
+
+// The order the groups are listed in, and each one's heading.
+const SETTING_GROUP_LABEL_KEYS = new Map([
+    ['general', 'settings_group_general'],
+    ['refresh', 'settings_group_refresh'],
+    ['sessions', 'settings_group_sessions'],
+    ['wsl', 'settings_group_wsl'],
+    ['window', 'settings_group_window'],
+]);
+
+// A line under a group as a whole, for a group whose fields share one.
+const SETTING_GROUP_HINT_KEYS = new Map([['window', 'setting_window_hint']]);
+
+// Each setting's label and the line under it; a setting not listed here has no
+// field in the dialog.
+const SETTING_LABEL_KEYS = new Map([
+    ['language', { label: 'setting_language', hint: 'setting_language_hint' }],
+    ['poll_interval', { label: 'setting_poll_interval', hint: 'setting_poll_interval_hint' }],
+    ['ended_max_age', { label: 'setting_ended_max_age', hint: 'setting_ended_max_age_hint' }],
+    ['include_completed', { label: 'setting_include_completed', hint: 'setting_include_completed_hint' }],
+    ['subagent_recent_seconds', { label: 'setting_subagent_recent_seconds', hint: 'setting_subagent_recent_seconds_hint' }],
+    ['wsl', { label: 'setting_wsl', hint: 'setting_wsl_hint' }],
+    ['window_width', { label: 'setting_window_width', hint: '' }],
+    ['window_height', { label: 'setting_window_height', hint: '' }],
+]);
+
+const SETTING_UNIT_LABEL_KEYS = new Map([['seconds', 'unit_seconds'], ['pixels', 'unit_pixels']]);
+
+// The message for each error code, from the page's own check or the bridge's.
+const SETTING_ERROR_LABEL_KEYS = new Map([
+    ['integer', 'settings_error_integer'],
+    ['minimum', 'settings_error_minimum'],
+    ['maximum', 'settings_error_maximum'],
+    ['language', 'settings_error_language'],
+    ['type', 'settings_error_type'],
+    ['unknown', 'settings_error_unknown'],
+    ['unreadable', 'settings_error_file'],
+    ['invalid_json', 'settings_error_file'],
+    ['not_object', 'settings_error_file'],
+    ['write', 'settings_error_write'],
+]);
+
+const SETTING_RESET_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"'
+    + ' stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v5h5"></path></svg>';
+
+// One field's input as a typed value: `{ value }`, or `{ error }` with a code
+// (and the bound it broke) when the input is not valid for the spec. A number
+// field takes whole numbers only, written as digits - "1e3" or "5.0" are
+// refused rather than guessed at.
+function parseSettingInput(spec, input, languages) {
+    if (!spec || typeof spec !== 'object') {
+        return { error: { code: 'type' } };
+    }
+    if (spec.kind === 'bool') {
+        return typeof input === 'boolean' ? { value: input } : { error: { code: 'type' } };
+    }
+    if (spec.kind === 'language') {
+        const code = typeof input === 'string' ? input : '';
+        const known = Array.isArray(languages) && languages.some((language) => language && language.code === code);
+        return code === '' || known ? { value: code } : { error: { code: 'language' } };
+    }
+    const text = String(input == null ? '' : input).trim();
+    if (!/^-?\d+$/.test(text)) {
+        return { error: { code: 'integer' } };
+    }
+    const value = Number(text);
+    if (!Number.isSafeInteger(value)) {
+        return { error: { code: 'integer' } };
+    }
+    if (Number.isFinite(spec.minimum) && value < spec.minimum) {
+        return { error: { code: 'minimum', limit: spec.minimum } };
+    }
+    if (Number.isFinite(spec.maximum) && value > spec.maximum) {
+        return { error: { code: 'maximum', limit: spec.maximum } };
+    }
+    return { value };
+}
+
+// The message for one error record; an unknown code reads as an invalid value.
+function settingErrorText(error, labels) {
+    if (!error || typeof error !== 'object') {
+        return '';
+    }
+    const key = SETTING_ERROR_LABEL_KEYS.get(error.code) || 'settings_error_type';
+    return fmt(labels[key], { limit: error.limit, key: error.key, detail: error.detail });
+}
+
+// The keys of *specs* whose value in *values* differs from the one in *current*.
+function settingsChangedKeys(specs, values, current) {
+    const changed = [];
+    for (const spec of Array.isArray(specs) ? specs : []) {
+        if (spec && values && current && values[spec.key] !== current[spec.key]) {
+            changed.push(spec.key);
+        }
+    }
+    return changed;
+}
+
+// A value as the dialog names it: on/off, a language by its own name, a number
+// with its unit.
+function settingDisplayValue(spec, value, labels, languages) {
+    if (!spec) {
+        return '';
+    }
+    if (spec.kind === 'bool') {
+        return value ? labels.setting_on : labels.setting_off;
+    }
+    if (spec.kind === 'language') {
+        if (!value) {
+            return labels.setting_language_auto;
+        }
+        const language = (Array.isArray(languages) ? languages : []).find((entry) => entry && entry.code === value);
+        return language ? language.name : String(value);
+    }
+    const unitKey = SETTING_UNIT_LABEL_KEYS.get(spec.unit);
+    return unitKey ? value + ' ' + labels[unitKey] : String(value);
+}
+
+// The duration a number of seconds stands for, shown beside the field from a
+// minute on - "3600 seconds" reads better as "1h 0m". Empty otherwise.
+function settingDurationText(spec, value, labels) {
+    if (!spec || spec.unit !== 'seconds' || !Number.isFinite(value) || value < 60) {
+        return '';
+    }
+    return formatAge(value, labels);
+}
+
+// Whether a window size the bridge reported is usable: two positive whole numbers.
+function validWindowSize(size) {
+    return Array.isArray(size) && size.length === 2 && size.every((part) => Number.isSafeInteger(part) && part > 0);
+}
+
+function settingControlMarkup(spec, value, languages, labels) {
+    const id = 'setting-' + spec.key;
+    if (spec.kind === 'bool') {
+        return '<input type="checkbox" class="setting-switch"' + attr('id', id) + attr('data-key', spec.key)
+            + (value ? ' checked' : '') + '>';
+    }
+    if (spec.kind === 'language') {
+        let options = '<option value=""' + (value ? '' : ' selected') + '>' + esc(labels.setting_language_auto) + '</option>';
+        for (const language of Array.isArray(languages) ? languages : []) {
+            if (!language || typeof language.code !== 'string') {
+                continue;
+            }
+            options += '<option' + attr('value', language.code) + (language.code === value ? ' selected' : '') + '>'
+                + esc(language.name || language.code) + '</option>';
+        }
+        return '<select class="setting-select"' + attr('id', id) + attr('data-key', spec.key) + '>' + options + '</select>';
+    }
+    const unitKey = SETTING_UNIT_LABEL_KEYS.get(spec.unit);
+    let markup = '<input type="number" class="setting-number" inputmode="numeric" step="1"' + attr('id', id) + attr('data-key', spec.key)
+        + (Number.isFinite(spec.minimum) ? attr('min', spec.minimum) : '')
+        + (Number.isFinite(spec.maximum) ? attr('max', spec.maximum) : '')
+        + attr('value', value) + '>';
+    // The unit and the duration share one fixed-width slot, so every number
+    // field ends at the same place whatever its unit says.
+    markup += '<span class="setting-suffix">';
+    if (unitKey) {
+        markup += '<span class="setting-unit">' + esc(labels[unitKey]) + '</span>';
+    }
+    if (spec.unit === 'seconds') {
+        markup += '<span class="setting-duration"' + attr('data-duration-for', spec.key) + '>' + esc(settingDurationText(spec, value, labels)) + '</span>';
+    }
+    return markup + '</span>';
+}
+
+function settingFieldMarkup(spec, view, labels, errorsByKey) {
+    const names = SETTING_LABEL_KEYS.get(spec.key);
+    const value = view.values[spec.key];
+    const fallback = view.defaults[spec.key];
+    const resetTip = fmt(labels.settings_reset_tip, { value: settingDisplayValue(spec, fallback, labels, view.languages) });
+    const reset = '<button type="button" class="setting-reset"' + attr('data-reset', spec.key) + attr('data-tip', resetTip)
+        + attr('aria-label', resetTip) + (value === fallback ? ' hidden' : '') + '>' + SETTING_RESET_ICON + '</button>';
+    const hint = names.hint && labels[names.hint] ? '<div class="setting-hint">' + esc(labels[names.hint]) + '</div>' : '';
+    const error = errorsByKey.get(spec.key);
+
+    return '<div' + attr('class', 'setting setting-' + spec.kind) + attr('data-setting', spec.key) + '>'
+        + '<div class="setting-main">'
+        +     '<label class="setting-label"' + attr('for', 'setting-' + spec.key) + '>' + esc(labels[names.label]) + '</label>'
+        +     '<div class="setting-control">' + settingControlMarkup(spec, value, view.languages, labels) + reset + '</div>'
+        + '</div>'
+        + hint
+        + '<div class="setting-error"' + attr('data-error-for', spec.key) + '>' + esc(settingErrorText(error, labels)) + '</div>'
+        + '</div>';
+}
+
+// The notices above the groups: where the values were read from when that is
+// an earlier location, and what the file's last read rejected beyond the
+// fields themselves (an unknown key, a file that could not be read).
+function settingsNoticesMarkup(view, labels, fieldKeys) {
+    let markup = '';
+    if (view.legacy_path) {
+        markup += '<div class="settings-notice">' + esc(fmt(labels.settings_legacy_note, { path: view.legacy_path })) + '</div>';
+    }
+    const errors = Array.isArray(view.errors) ? view.errors.filter((error) => error && typeof error === 'object') : [];
+    if (errors.length > 0) {
+        const items = errors
+            .filter((error) => !fieldKeys.has(error.key))
+            .map((error) => '<li>' + esc(settingErrorText(error, labels)) + '</li>')
+            .join('');
+        markup += '<div class="settings-notice warn">' + esc(labels.settings_load_errors)
+            + (items ? '<ul>' + items + '</ul>' : '') + '</div>';
+    }
+    return markup;
+}
+
+// The dialog's form, from the bridge's description (`view`: specs, values,
+// defaults, errors, languages, window_size, legacy_path). A spec this page has
+// no label for is left out rather than shown under its raw key.
+function settingsFormMarkup(view, labels) {
+    const source = view && typeof view === 'object' ? view : {};
+    view = Object.assign({}, source, {
+        values: source.values && typeof source.values === 'object' ? source.values : {},
+        defaults: source.defaults && typeof source.defaults === 'object' ? source.defaults : {},
+    });
+    const specs = (Array.isArray(view.specs) ? view.specs : []).filter((spec) => spec && SETTING_LABEL_KEYS.has(spec.key));
+    const fieldKeys = new Set(specs.map((spec) => spec.key));
+    const errorsByKey = new Map();
+    for (const error of Array.isArray(view.errors) ? view.errors : []) {
+        if (error && fieldKeys.has(error.key) && !errorsByKey.has(error.key)) {
+            errorsByKey.set(error.key, error);
+        }
+    }
+
+    let markup = settingsNoticesMarkup(view, labels, fieldKeys);
+    for (const [group, headingKey] of SETTING_GROUP_LABEL_KEYS) {
+        const members = specs.filter((spec) => spec.group === group);
+        if (members.length === 0) {
+            continue;
+        }
+        markup += '<section class="settings-group"><h3 class="settings-group-title">' + esc(labels[headingKey]) + '</h3>';
+        for (const spec of members) {
+            markup += settingFieldMarkup(spec, view, labels, errorsByKey);
+        }
+        const hintKey = SETTING_GROUP_HINT_KEYS.get(group);
+        if (hintKey) {
+            markup += '<div class="setting-hint group-hint">' + esc(labels[hintKey]) + '</div>';
+        }
+        if (group === 'window' && validWindowSize(view.window_size)) {
+            markup += '<button type="button" class="setting-action" data-use-size>' + esc(labels.settings_use_current_size)
+                + ' <span class="setting-size">' + esc(view.window_size[0] + ' × ' + view.window_size[1]) + '</span></button>';
+        }
+        markup += '</section>';
+    }
+    return markup;
+}
+
+// The line naming the settings file, with the button that shows it - only once
+// it exists: before the first save its folder may not exist either.
+function settingsFileMarkup(view, labels) {
+    const path = view && typeof view.path === 'string' ? view.path : '';
+    if (!path) {
+        return '';
+    }
+    const markup = '<div class="settings-file-label">' + esc(labels.settings_file_label) + '</div>';
+    if (view.exists === false) {
+        return markup + '<div class="settings-file-path">' + esc(path) + ' <span class="settings-file-new">' + esc(labels.settings_file_new) + '</span></div>';
+    }
+    return markup + '<div class="settings-file-path">' + esc(path) + '</div>'
+        + '<button type="button" class="setting-action" data-reveal-settings>' + esc(labels.show_in_file_manager) + '</button>';
+}
+
 const AMC_LOGIC = {
     fmt,
+    parseSettingInput,
+    settingErrorText,
+    settingsChangedKeys,
+    settingDisplayValue,
+    settingDurationText,
+    validWindowSize,
+    settingsFormMarkup,
+    settingsFileMarkup,
     esc,
     attr,
     ansiToHtml,

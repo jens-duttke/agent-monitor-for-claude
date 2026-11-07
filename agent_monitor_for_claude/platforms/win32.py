@@ -207,6 +207,13 @@ def storage_dir() -> Path:
     return root / 'AgentMonitorForClaude'
 
 
+def user_config_dir() -> Path:
+    """Return the directory the app's own settings file is written to (the roaming application data folder)."""
+    base = os.environ.get('APPDATA')
+    root = Path(base) if base else Path.home() / 'AppData' / 'Roaming'
+    return root / 'AgentMonitorForClaude'
+
+
 def copy_text(text: str) -> bool:
     """Place *text* on the clipboard as Unicode; return True on success."""
     # Encode before touching the clipboard: a lone UTF-16 surrogate (which can
