@@ -75,7 +75,7 @@ function rawSession(overrides) {
         has_transcript: true, has_activity: true, last_entry_kind: 'assistant', last_stop_reason: 'end_turn',
         pending_tool: false, last_tool_name: null, permission_mode: null,
         auto_denials_consecutive: 0, auto_denials_total: 0, job_id: null, remote_control: false,
-        api_error_kind: null, api_error_status: null, api_error_detail: null,
+        api_error_kind: null, api_error_status: null, api_error_detail: null, api_refusal_category: null, api_refusal_explanation: null,
         model_id: null, usage: {}, usage_by_model: {}, model_timeline: [], title: null,
         // Every session runs the current CLI unless it says otherwise; the two
         // that do are what makes the conditional version column appear at all.

@@ -1658,6 +1658,26 @@ function statusDetailLines(status, raw, labels) {
     return lines;
 }
 
+// What the model's safeguards said when they refused the request: the policy
+// category as the API names it - the identifier to quote when reporting a false
+// positive - and the API's own one-sentence explanation. Only for `errored`, the
+// one status a refusal ends in; the details show both, the list keeps the label.
+function refusalLines(status, raw, labels) {
+    if (status !== 'errored' || !raw) {
+        return [];
+    }
+    const lines = [];
+    const category = typeof raw.api_refusal_category === 'string' ? raw.api_refusal_category.trim() : '';
+    if (category && labels.refusal_category) {
+        lines.push(fmt(labels.refusal_category, { category: category }));
+    }
+    const explanation = typeof raw.api_refusal_explanation === 'string' ? raw.api_refusal_explanation.trim() : '';
+    if (explanation) {
+        lines.push(explanation);
+    }
+    return lines;
+}
+
 function formatAge(seconds, labels) {
     if (seconds == null) {
         return '';
@@ -2485,6 +2505,7 @@ function buildSession(raw, labels, prices) {
         status: status,
         status_label: statusText,
         status_tip: statusTipText,
+        refusal_lines: refusalLines(status, raw, labels),
         needs_attention: needsAttention(status),
         model: formatModel(raw.model_id),
         model_switched: models.length > 1,
@@ -4915,6 +4936,7 @@ const AMC_LOGIC = {
     attentionLabel,
     refinedStatusLabel,
     statusDetailLines,
+    refusalLines,
     formatAge,
     formatAgeSince,
     formatModel,

@@ -805,6 +805,32 @@ test('statusDetailLines: each line speaks only for the status it describes', () 
     assert.deepEqual(lines('awaiting_input', { api_error_detail: 'API Error: 500' }), []);
 });
 
+test('refusalLines: a refusal names its category and explanation, only while errored', () => {
+    const labels = { refusal_category: 'Refusal category: {category}' };
+    const refused = { api_refusal_category: 'reasoning_extraction', api_refusal_explanation: 'This request was blocked.' };
+    assert.deepEqual(logic.refusalLines('errored', raw(refused), labels),
+        ['Refusal category: reasoning_extraction', 'This request was blocked.']);
+    // Either half alone still shows; nothing to say is no line at all.
+    assert.deepEqual(logic.refusalLines('errored', raw({ api_refusal_category: 'cyber' }), labels), ['Refusal category: cyber']);
+    assert.deepEqual(logic.refusalLines('errored', raw({ api_refusal_explanation: '  Blocked.  ' }), labels), ['Blocked.']);
+    assert.deepEqual(logic.refusalLines('errored', raw({ api_refusal_category: '  ', api_refusal_explanation: 42 }), labels), []);
+    // A later turn cleared the error: a refusal describes a stopped turn alone.
+    assert.deepEqual(logic.refusalLines('awaiting_input', raw(refused), labels), []);
+    assert.deepEqual(logic.refusalLines('errored', null, labels), []);
+});
+
+test('buildSession: a refused session carries its refusal lines for the details', () => {
+    const labels = { ...REFINED_LABELS, refusal_category: 'Refusal category: {category}' };
+    const session = logic.buildSession(raw({
+        last_entry_kind: 'api_error', api_error_kind: 'invalid_request',
+        api_refusal_category: 'reasoning_extraction', api_refusal_explanation: 'This request was blocked.',
+    }), labels);
+    assert.equal(session.status, 'errored');
+    assert.deepEqual(session.refusal_lines, ['Refusal category: reasoning_extraction', 'This request was blocked.']);
+    // The list's tooltip keeps to the error line; the refusal is the details' own.
+    assert.ok(!String(session.status_tip).includes('reasoning_extraction'));
+});
+
 test('statusTip: several detail lines follow the label in order, blanks dropped', () => {
     assert.equal(logic.statusTip('Working', ['Started by a finished background task', null, '  ', 'for 12m']),
         'Working\nStarted by a finished background task\nfor 12m');

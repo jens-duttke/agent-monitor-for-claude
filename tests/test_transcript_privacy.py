@@ -831,6 +831,33 @@ class PrivacyTest(TranscriptEnvTest):
         for secret in _SECRETS:
             self.assertNotIn(secret, serialized)
 
+    def test_a_refusal_reads_its_verdict_never_the_refused_text(self) -> None:
+        # A refusal's category and explanation are the API's own verdict, read
+        # from the error turn's stop_details alone; the explanation's first line
+        # only, and nothing else of the entry or of the turn that was refused.
+        self._write_transcript(_SESSION_ID, _CWD, [
+            # The first prompt names the session by design, so it carries no marker.
+            json.dumps({'type': 'user', 'timestamp': '2026-07-11T13:19:00Z', 'message': {'content': 'the refused prompt'}}),
+            json.dumps({
+                'type': 'assistant', 'timestamp': '2026-07-11T13:19:14Z',
+                'message': {'stop_reason': 'refusal', 'model': '<synthetic>',
+                            'usage': {'input_tokens': 0, 'output_tokens': 0},
+                            'stop_details': {'type': 'refusal', 'category': 'reasoning_extraction',
+                                             'explanation': 'This request was blocked.\nSECRET_TEXT',
+                                             'extra': 'SECRET_RESULT'},
+                            'content': [{'type': 'thinking', 'thinking': 'SECRET_THINKING'},
+                                        {'type': 'text', 'text': 'API Error: flagged'}]},
+                'error': 'invalid_request', 'isApiErrorMessage': True,
+            }),
+        ])
+        state = state_for(local_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual(state.api_refusal_category, 'reasoning_extraction')
+        self.assertEqual(state.api_refusal_explanation, 'This request was blocked.')
+        serialized = _guarded(state)
+        for secret in _SECRETS:
+            self.assertNotIn(secret, serialized)
+
     def test_an_ordinary_turn_text_is_never_read_as_an_error_detail(self) -> None:
         # The read above is keyed on the isApiErrorMessage flag alone. An
         # ordinary assistant turn - the same shape, minus that flag - must yield

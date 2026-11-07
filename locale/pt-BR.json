@@ -11,6 +11,7 @@
     "error_invalid_request": "Solicitação rejeitada",
     "error_auth": "Falha na autenticação",
     "error_http": "HTTP {status}",
+    "refusal_category": "Categoria da recusa: {category}",
     "status_awaiting_input": "Inativo",
     "status_awaiting_permission": "Permissão necessária",
     "status_needs_you": "Aguardando você",

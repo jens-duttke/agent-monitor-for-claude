@@ -176,6 +176,8 @@ def _build_session_record(
         'api_error_kind': transcript_state.api_error_kind,
         'api_error_status': transcript_state.api_error_status,
         'api_error_detail': transcript_state.api_error_detail,
+        'api_refusal_category': transcript_state.api_refusal_category,
+        'api_refusal_explanation': transcript_state.api_refusal_explanation,
         'rate_limit_type': transcript_state.rate_limit_type,
         'rate_limit_resets_in_seconds': _seconds_until(transcript_state.rate_limit_resets_at),
         'api_retry_attempt': api_retry.attempt if api_retry else None,

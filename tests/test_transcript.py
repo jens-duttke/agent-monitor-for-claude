@@ -313,6 +313,17 @@ _LIMIT_ERROR = {
 }
 
 
+_REFUSAL_ERROR = {
+    'type': 'assistant', 'timestamp': '2026-07-11T10:00:00Z', 'isApiErrorMessage': True, 'error': 'invalid_request',
+    'message': {
+        'stop_reason': 'refusal', 'model': '<synthetic>', 'usage': {},
+        'stop_details': {'type': 'refusal', 'category': 'reasoning_extraction',
+                         'explanation': 'This request was blocked as it seems to violate the terms.'},
+        'content': [{'type': 'text', 'text': "API Error: Opus 5.5's safeguards flagged this message."}],
+    },
+}
+
+
 class ApiErrorFieldsTest(unittest.TestCase):
     def test_trailing_error_reports_its_own_fields(self) -> None:
         state = _parse(_lines(_LIMIT_ERROR))
@@ -392,6 +403,47 @@ class ApiErrorFieldsTest(unittest.TestCase):
         self.assertIsNone(state.api_error_status)
         self.assertIsNone(state.api_error_kind)
         self.assertIsNone(state.api_error_detail)
+
+    def test_a_refusal_reports_its_category_and_explanation(self) -> None:
+        state = _parse(_lines(_REFUSAL_ERROR))
+        self.assertEqual(state.last_entry_kind, 'api_error')
+        self.assertEqual(state.api_refusal_category, 'reasoning_extraction')
+        self.assertEqual(state.api_refusal_explanation, 'This request was blocked as it seems to violate the terms.')
+
+    def test_an_error_that_is_no_refusal_reports_none(self) -> None:
+        for details in (None, {'type': 'max_tokens', 'category': 'cyber', 'explanation': 'x'}, 'refusal', []):
+            with self.subTest(details=details):
+                message = {**_REFUSAL_ERROR['message'], 'stop_details': details}
+                state = _parse(_lines({**_REFUSAL_ERROR, 'message': message}))
+                self.assertIsNone(state.api_refusal_category)
+                self.assertIsNone(state.api_refusal_explanation)
+
+    def test_a_malformed_category_is_dropped_and_the_explanation_kept(self) -> None:
+        for category in ('<b>x</b>', 'Reasoning Extraction', '', 42, 'x' * 60, 'cyber\n'):
+            with self.subTest(category=category):
+                details = {**_REFUSAL_ERROR['message']['stop_details'], 'category': category}
+                state = _parse(_lines({**_REFUSAL_ERROR, 'message': {**_REFUSAL_ERROR['message'], 'stop_details': details}}))
+                self.assertIsNone(state.api_refusal_category)
+                self.assertIsNotNone(state.api_refusal_explanation)
+
+    def test_a_long_or_multiline_explanation_is_cut_to_its_first_line(self) -> None:
+        details = {**_REFUSAL_ERROR['message']['stop_details'], 'explanation': '\n  ' + 'y' * 500 + '\nsecond line'}
+        state = _parse(_lines({**_REFUSAL_ERROR, 'message': {**_REFUSAL_ERROR['message'], 'stop_details': details}}))
+        self.assertEqual(len(state.api_refusal_explanation), 320)
+        self.assertTrue(state.api_refusal_explanation.startswith('y'))
+        self.assertTrue(state.api_refusal_explanation.endswith('…'))
+
+    def test_a_refusal_is_cleared_by_a_later_turn(self) -> None:
+        for later in (
+            {'type': 'user', 'timestamp': '2026-07-11T10:01:00Z', 'message': {'content': 'try again'}},
+            {'type': 'assistant', 'timestamp': '2026-07-11T10:01:00Z',
+             'message': {'stop_reason': 'end_turn', 'model': 'claude-opus-4-8', 'usage': {}}},
+            {'type': 'system', 'subtype': 'local_command', 'timestamp': '2026-07-11T10:01:00Z'},
+        ):
+            with self.subTest(later=later['type']):
+                state = _parse(_lines(_REFUSAL_ERROR, later))
+                self.assertIsNone(state.api_refusal_category)
+                self.assertIsNone(state.api_refusal_explanation)
 
     def test_a_usage_limit_names_its_limit_and_reset(self) -> None:
         state = _parse(_lines({**_LIMIT_ERROR, 'quotaLimits': {'status': 'rejected', 'resetsAt': 1793613600, 'rateLimitType': 'seven_day'}}))

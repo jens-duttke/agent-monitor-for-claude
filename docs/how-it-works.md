@@ -28,7 +28,7 @@ The first matching rule wins:
 | the process has exited | **Finished** |
 | no transcript yet | **New** |
 | the interrupt marker `[Request interrupted by user]` | **Interrupted** |
-| an API error | **Error**, with the cause where known (*Usage limit reached*, *servers overloaded*, *authentication failed*, *HTTP nnn*). A usage limit counts down to its reset. |
+| an API error | **Error**, with the cause where known (*Usage limit reached*, *servers overloaded*, *authentication failed*, *HTTP nnn*). A usage limit counts down to its reset. If Claude's safeguards refused the request, the details show the refusal category and the API's explanation. |
 | the newest turn is older than the process holding the session (the session was reopened) | **Idle** |
 | a pending question or plan dialog | **Question for you** / **Plan review** |
 | a pending tool with a child process, subagent or workflow running | **Working** |

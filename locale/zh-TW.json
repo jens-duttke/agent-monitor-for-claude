@@ -11,6 +11,7 @@
     "error_invalid_request": "請求被拒絕",
     "error_auth": "驗證失敗",
     "error_http": "HTTP {status}",
+    "refusal_category": "拒絕類別：{category}",
     "status_awaiting_input": "閒置",
     "status_awaiting_permission": "需要授權",
     "status_needs_you": "等待您的操作",

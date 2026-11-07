@@ -323,6 +323,16 @@ _TITLE_MAX_CHARS = 80
 # raw JSON body from an edge proxy, say - is clipped rather than shown in full.
 _ERROR_DETAIL_MAX_CHARS = 160
 
+# A refusal's own explanation (``stop_details.explanation``), shown in the
+# details below the error line.  The API's wording runs to about 200 characters;
+# anything longer is clipped like the error line.
+_REFUSAL_EXPLANATION_MAX_CHARS = 320
+
+# A refusal category is the API's own short name for the policy that refused the
+# request (``reasoning_extraction``, ``cyber``); it is shown as written, so it has
+# to look like one.
+_REFUSAL_CATEGORY_PATTERN = re.compile(r'[a-z][a-z0-9_-]{0,47}')
+
 # The same cap for the error line of a request the CLI is still retrying - its
 # own short summary of the failure ("Connection dropped (ECONNRESET)").
 _RETRY_DETAIL_MAX_CHARS = _ERROR_DETAIL_MAX_CHARS
@@ -845,6 +855,11 @@ class TranscriptState:
     # is CLI text, not conversation, and it is shown verbatim in the status
     # tooltip alone - never parsed, and never for any other entry type.
     api_error_detail: str | None = None
+    # When the error turn is a refusal by the model's safeguards: the policy
+    # category and the API's own explanation of it (``message.stop_details``),
+    # both absent for every other error.  API text, not conversation.
+    api_refusal_category: str | None = None
+    api_refusal_explanation: str | None = None
     # A usage limit's own reset: which limit was hit (``five_hour``,
     # ``seven_day``, ...) and when it lifts, in POSIX seconds - both read from the
     # trailing error entry's ``quotaLimits``, both absent for any other error.
@@ -1759,6 +1774,8 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
     api_error_kind: str | None = None
     api_error_status: int | None = None
     api_error_detail: str | None = None
+    api_refusal_category: str | None = None
+    api_refusal_explanation: str | None = None
     model: str | None = None
     cli_version: str | None = None
     rate_limit_type: str | None = None
@@ -1841,6 +1858,7 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
                 api_error_kind = _api_error_kind(entry)
                 api_error_status = _api_error_status(entry)
                 api_error_detail = _api_error_detail(content)
+                api_refusal_category, api_refusal_explanation = _api_refusal(message)
                 rate_limit_type, rate_limit_resets_at = _rate_limit_reset(entry)
                 # The retries ran out: the request is no longer being retried.
                 api_retry = None
@@ -1853,6 +1871,7 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
                 api_error_kind = None
                 api_error_status = None
                 api_error_detail = None
+                api_refusal_category = api_refusal_explanation = None
                 rate_limit_type = rate_limit_resets_at = None
                 api_retry = None
                 last_stop_reason = message.get('stop_reason')
@@ -1898,6 +1917,7 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
             api_error_kind = None
             api_error_status = None
             api_error_detail = None
+            api_refusal_category = api_refusal_explanation = None
             rate_limit_type = rate_limit_resets_at = None
             api_retry = None
             if isinstance(content, list):
@@ -1926,6 +1946,7 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
             api_error_kind = None
             api_error_status = None
             api_error_detail = None
+            api_refusal_category = api_refusal_explanation = None
             rate_limit_type = rate_limit_resets_at = None
             api_retry = None
 
@@ -1949,6 +1970,8 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
         api_error_kind=api_error_kind,
         api_error_status=api_error_status,
         api_error_detail=api_error_detail,
+        api_refusal_category=api_refusal_category,
+        api_refusal_explanation=api_refusal_explanation,
         rate_limit_type=rate_limit_type,
         rate_limit_resets_at=rate_limit_resets_at,
         api_retry=api_retry,
@@ -2271,6 +2294,37 @@ def _api_error_detail(content: object) -> str | None:
             return _clip(stripped, _ERROR_DETAIL_MAX_CHARS)
 
     return None
+
+
+def _api_refusal(message: dict) -> tuple[str | None, str | None]:
+    """Return the policy category and explanation of a refused API-error turn.
+
+    When the model's safeguards refuse a request, Claude Code ends the turn with
+    an ``isApiErrorMessage`` entry whose ``message.stop_details`` carries the
+    API's own verdict: ``type: refusal``, the ``category`` of the policy that
+    applied and a one-sentence ``explanation``.  Only these two fields are read,
+    the category only when it looks like a token and the explanation as its
+    first non-empty line, clipped to ``_REFUSAL_EXPLANATION_MAX_CHARS``.  Any
+    other error - or a refusal without them - yields ``(None, None)``.
+    """
+    details = message.get('stop_details')
+    if not isinstance(details, _JSON_OBJECT) or details.get('type') != 'refusal':
+        return None, None
+
+    category = details.get('category')
+    if not isinstance(category, str) or not _REFUSAL_CATEGORY_PATTERN.fullmatch(category):
+        category = None
+
+    explanation = None
+    text = details.get('explanation')
+    if isinstance(text, str):
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped:
+                explanation = _clip(stripped, _REFUSAL_EXPLANATION_MAX_CHARS)
+                break
+
+    return category, explanation
 
 
 def _clip(text: str, limit: int) -> str:

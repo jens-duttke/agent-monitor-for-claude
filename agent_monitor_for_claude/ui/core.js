@@ -179,6 +179,7 @@ const DEFAULT_LABELS = {
     error_invalid_request: 'Request rejected',
     error_auth: 'Authentication failed',
     error_http: 'HTTP {status}',
+    refusal_category: 'Refusal category: {category}',
     status_awaiting_input: 'Idle',
     status_awaiting_permission: 'Permission needed',
     status_needs_you: 'Waiting for you',

@@ -11,6 +11,7 @@
     "error_invalid_request": "Anfrage abgelehnt",
     "error_auth": "Authentifizierung fehlgeschlagen",
     "error_http": "HTTP {status}",
+    "refusal_category": "Ablehnungskategorie: {category}",
     "status_awaiting_input": "Idle",
     "status_awaiting_permission": "Berechtigung nötig",
     "status_needs_you": "Wartet auf dich",

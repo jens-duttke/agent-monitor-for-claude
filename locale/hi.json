@@ -11,6 +11,7 @@
     "error_invalid_request": "अनुरोध अस्वीकृत",
     "error_auth": "प्रमाणीकरण विफल",
     "error_http": "HTTP {status}",
+    "refusal_category": "अस्वीकृति की श्रेणी: {category}",
     "status_awaiting_input": "निष्क्रिय",
     "status_awaiting_permission": "अनुमति चाहिए",
     "status_needs_you": "आपका इंतज़ार",

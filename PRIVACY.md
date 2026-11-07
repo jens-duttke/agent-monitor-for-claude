@@ -71,7 +71,7 @@ The transcripts contain your conversations. The app shows these parts of them:
 - what a session runs or waits on: a command, a file path, a question with its answers, or a plan
 - the beginning of its last answer
 - its plan steps, subagent task descriptions, background-task labels and artifact titles
-- the first line of an API error, a retried request's error summary, or a failed hook's error output
+- the first line of an API error, a refusal's category and explanation, a retried request's error summary, or a failed hook's error output
 - who sent messages to whom between sessions and subagents (not the message text)
 
 For the **selected** session or subagent, the details additionally show the full command and last

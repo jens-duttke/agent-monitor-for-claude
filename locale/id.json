@@ -11,6 +11,7 @@
     "error_invalid_request": "Permintaan ditolak",
     "error_auth": "Autentikasi gagal",
     "error_http": "HTTP {status}",
+    "refusal_category": "Kategori penolakan: {category}",
     "status_awaiting_input": "Diam",
     "status_awaiting_permission": "Perlu izin",
     "status_needs_you": "Menunggu Anda",

@@ -404,7 +404,9 @@ function detailHeadMarkup(session) {
         crumb += '<span>' + esc(session.project_origin_display) + '</span>';
     }
 
-    const lines = String(session.status_tip || '').split('\n').slice(1).filter(Boolean);
+    // The status tooltip's lines, plus what only the details carry: a refusal's
+    // category and explanation (see logic.refusalLines).
+    const lines = String(session.status_tip || '').split('\n').slice(1).filter(Boolean).concat(session.refusal_lines || []);
     const [beforeAge, afterAge] = String(labels.last_activity || '{age}').split('{age}');
     const age = session.age_seconds != null
         ? '<span class="status-age">' + esc(beforeAge) + '<b class="age"></b>' + esc(afterAge || '') + '</span>'

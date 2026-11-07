@@ -11,6 +11,7 @@
     "error_invalid_request": "요청 거부됨",
     "error_auth": "인증 실패",
     "error_http": "HTTP {status}",
+    "refusal_category": "거부 범주: {category}",
     "status_awaiting_input": "대기 중",
     "status_awaiting_permission": "권한 필요",
     "status_needs_you": "사용자 대기 중",

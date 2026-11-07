@@ -11,6 +11,7 @@
     "error_invalid_request": "Запит відхилено",
     "error_auth": "Автентифікація не вдалася",
     "error_http": "HTTP {status}",
+    "refusal_category": "Категорія відмови: {category}",
     "status_awaiting_input": "Очікує",
     "status_awaiting_permission": "Потрібен дозвіл",
     "status_needs_you": "Очікує на вас",

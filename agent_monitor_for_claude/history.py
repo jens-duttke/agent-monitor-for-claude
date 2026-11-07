@@ -363,6 +363,8 @@ def _build_history_record(path: Path) -> dict[str, Any] | None:
         'api_error_kind': None,
         'api_error_status': None,
         'api_error_detail': None,
+        'api_refusal_category': None,
+        'api_refusal_explanation': None,
         # Everything that refines the label of a running session - a retry, a
         # usage limit's reset, a scheduled wakeup, how the turn ended or began -
         # describes a process a past session no longer has.
