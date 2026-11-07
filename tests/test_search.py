@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_monitor_for_claude import search
+from agent_monitor_for_claude import background_scans, search
 from agent_monitor_for_claude.paths import SessionRoot, config_dir, transcript_path, local_root
 
 _CWD = 'c:\\Temp\\search-proj'
@@ -50,6 +52,12 @@ class SearchEnvTest(unittest.TestCase):
         roots_patcher = mock.patch.object(search, 'root_for_origin', side_effect=_windows_only_root)
         roots_patcher.start()
         self.addCleanup(roots_patcher.stop)
+
+        # Each case starts without a remembered scan, so one case's progress in a
+        # file can never answer for another's.
+        memo_patcher = mock.patch.object(search, '_memo', search._ScanMemo())
+        memo_patcher.start()
+        self.addCleanup(memo_patcher.stop)
 
     def tearDown(self) -> None:
         if self._previous is None:
@@ -395,6 +403,146 @@ class SearchReadableTextTest(SearchEnvTest):
         self._write('id-a', _CWD, line)
 
         self.assertEqual(self._matched_ids(self._run('Grüße', [self._ref('id-a')])), ['id-a'])
+
+    def test_the_fold_table_matches_the_regex_engine(self) -> None:
+        # The block search lowers bytes, which folds ASCII only. The table names
+        # the non-ASCII characters the regex engine still takes for an ASCII
+        # letter's other case; one missing from it would hide a hit.
+        every_char = ''.join(chr(code) for code in range(0x80, 0x110000) if not 0xD800 <= code < 0xE000)
+        for letter in 'abcdefghijklmnopqrstuvwxyz':
+            found = sorted(set(re.findall(letter, every_char, re.IGNORECASE)))
+            self.assertEqual(found, sorted(search._ASCII_FOLD_EXTRAS.get(letter, ())), letter)
+
+    def test_an_ascii_letter_written_as_its_unicode_other_case_is_found(self) -> None:
+        # The Kelvin sign counts as a K to the regex engine, in either spelling.
+        kelvin = chr(0x212A) + 'elvin'
+        for ensure_ascii in (False, True):
+            with self.subTest(ensure_ascii=ensure_ascii):
+                line = json.dumps({'type': 'user', 'message': {'content': f'zero {kelvin} here'}}, ensure_ascii=ensure_ascii) + '\n'
+                self._write('id-a', _CWD, line)
+                search._forget()
+
+                self.assertEqual(self._matched_ids(self._run('kelvin', [self._ref('id-a')])), ['id-a'])
+
+    def test_a_plain_regex_is_filtered_like_a_phrase(self) -> None:
+        # Without a metacharacter a pattern is a literal, so it gets the block
+        # search - and a quote in it is still found in its escaped spelling.
+        self._write('id-a', _CWD, self._entry('she said "hello there" twice'))
+        refs = [self._ref('id-a')]
+
+        self.assertIsNotNone(search._compile_query('"hello there"', {'use_regex': True})[0].literal)
+        self.assertEqual(self._matched_ids(self._run('"hello there"', refs, {'use_regex': True})), ['id-a'])
+        self.assertIsNone(search._compile_query('hel+o', {'use_regex': True})[0].literal)
+
+
+class SearchScanTest(SearchEnvTest):
+    """How a transcript is read: in blocks, resumed where the same query stopped."""
+
+    def _append(self, session_id: str, text: str) -> None:
+        with transcript_path(local_root(), session_id, _CWD).open('a', encoding='utf-8', newline='') as handle:
+            handle.write(text)
+
+    def test_a_line_across_a_block_boundary_is_counted_once(self) -> None:
+        lines = ''.join(self._entry(f'filler {index} needle') for index in range(40))
+        self._write('id-a', _CWD, lines)
+
+        with mock.patch.object(search, '_CHUNK_BYTES', 97):
+            match = self._matches(self._run('needle', [self._ref('id-a')]))[0]
+
+        self.assertEqual(match['count'], 40)
+
+    def test_a_repeat_reads_only_what_was_appended(self) -> None:
+        self._write('id-a', _CWD, self._entry('one needle'))
+        refs = [self._ref('id-a')]
+        self.assertEqual(self._matches(self._run('needle', refs))[0]['count'], 1)
+
+        self._append('id-a', self._entry('two needle'))
+        with mock.patch.object(search, '_line_hits', wraps=search._line_hits) as hits:
+            match = self._matches(self._run('needle', refs))[0]
+
+        self.assertEqual(match['count'], 2)
+        self.assertEqual(hits.call_count, 1, 'the line already counted must not be read again')
+
+    def test_a_line_still_being_written_is_not_counted_twice(self) -> None:
+        # A trailing line without its newline is searched, but resumed from its
+        # start once it is complete.
+        self._write('id-a', _CWD, self._entry('one needle'))
+        self._append('id-a', '{"type": "user", "message": {"content": "two needle')
+        refs = [self._ref('id-a')]
+        self.assertEqual(self._matches(self._run('needle', refs))[0]['count'], 2)
+
+        self._append('id-a', '"}}\n')
+
+        self.assertEqual(self._matches(self._run('needle', refs))[0]['count'], 2)
+
+    def test_a_rewritten_transcript_is_read_afresh(self) -> None:
+        self._write('id-a', _CWD, self._entry('one needle') + self._entry('two needle'))
+        refs = [self._ref('id-a')]
+        self.assertEqual(self._matches(self._run('needle', refs))[0]['count'], 2)
+
+        # Shorter, then the same length ending differently: neither may resume.
+        self._write('id-a', _CWD, self._entry('one needle'))
+        self.assertEqual(self._matches(self._run('needle', refs))[0]['count'], 1)
+        self._write('id-a', _CWD, self._entry('one needle') + self._entry('two thread'))
+        self._run('needle', refs)
+        self._write('id-a', _CWD, self._entry('one needle') + self._entry('two needle'))
+        self.assertEqual(self._matches(self._run('needle', refs))[0]['count'], 2)
+
+    def test_a_cleared_search_forgets_what_it_read(self) -> None:
+        self._write('id-a', _CWD, self._entry('one needle'))
+        self._run('needle', [self._ref('id-a')])
+        self.assertTrue(search._memo.files)
+
+        self._run('', [])
+
+        self.assertEqual(search._memo.files, {})
+        self.assertIsNone(search._memo.key)
+
+    def test_another_query_does_not_resume(self) -> None:
+        self._write('id-a', _CWD, self._entry('one needle and a thread'))
+        refs = [self._ref('id-a')]
+
+        self.assertEqual(self._matched_ids(self._run('needle', refs)), ['id-a'])
+        self.assertEqual(self._matched_ids(self._run('thread', refs)), ['id-a'])
+        self.assertEqual(self._matched_ids(self._run('needle', refs, {'match_case': True})), ['id-a'])
+
+    def test_the_background_scans_wait_while_a_search_runs(self) -> None:
+        self._write('id-a', _CWD, self._entry('needle'))
+        readers: list[int] = []
+
+        def scan(*_args: object) -> None:
+            readers.append(background_scans._deferred.readers)
+
+        with mock.patch.object(search, '_scan_file', side_effect=scan):
+            self._run('needle', [self._ref('id-a')])
+
+        self.assertEqual(len(readers), 1)
+        self.assertGreater(readers[0], 0)
+        self.assertEqual(background_scans._deferred.readers, 0)
+
+    def test_a_match_is_reported_before_a_slower_older_file_is_done(self) -> None:
+        # The newest file matches at once; the older one is still being read. The
+        # match must not wait for it.
+        self._write('newer', _CWD, self._entry('needle'), mtime=5000)
+        self._write('older', _CWD, self._entry('needle'), mtime=1000)
+        release = threading.Event()
+        seen_before_release: list[list[str]] = []
+        real_scan = search._scan_file
+
+        def scan(path: Path, session_id: str, *args: object) -> object:
+            if session_id == 'older':
+                self.assertTrue(release.wait(5))
+            return real_scan(path, session_id, *args)
+
+        def on_update(_processed: int, _total: int, matches: list[dict], done: bool, _error: bool) -> None:
+            if not release.is_set():
+                seen_before_release.append([match['session_id'] for match in matches])
+                release.set()
+
+        with mock.patch.object(search, '_scan_file', side_effect=scan):
+            search.run_search('needle', [self._ref('newer'), self._ref('older')], {}, on_update)
+
+        self.assertEqual(seen_before_release, [['newer']])
 
 
 class SearchBoundaryTest(SearchEnvTest):

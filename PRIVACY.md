@@ -419,9 +419,11 @@ feature that matches conversation text against something you supplied, so it is 
   short excerpts** per session. Each excerpt carries the hit plus at most 60 characters either side of
   it, cut at the hit's own line - enough to recognize the passage, and bounded so it can never grow
   into a dump of the conversation. Everything past those five excerpts stays in the file.
-- Excerpts are shown in the interface and held only for as long as the search results are. They are
-  never written to disk, and - there being no network anywhere in this application - they never leave
-  your machine.
+- Excerpts are shown in the interface and held only for as long as the search results are. To keep an
+  active search up to date without reading every transcript again, the application remembers in
+  memory how far it read each transcript for the current query, along with that transcript's excerpts;
+  a new query replaces this and clearing the search box drops it. They are never written to disk,
+  and - there being no network anywhere in this application - they never leave your machine.
 - Your query itself is not saved. The three search toggles (match case, whole word, regular
   expression) are remembered; the text you searched for is not.
 

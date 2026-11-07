@@ -30,7 +30,11 @@ what is in it instead of silently finding nothing.
 Parsing a line costs far more than testing one, so a cheap **prefilter** runs
 against the raw line first and only a line that could match is parsed (see
 :func:`_prefilter`).  The prefilter is built to allow for JSON's own escaping,
-so it never hides a hit that the readable text would have produced.
+so it never hides a hit that the readable text would have produced.  Ahead of
+it, a transcript is read in large blocks and each block is searched as bytes
+for the longest piece of the query JSON writes unchanged (see :func:`_literal`):
+only the lines around an occurrence are decoded at all, which is what lets a
+query that matches almost nothing get through gigabytes in a few seconds.
 
 The query supports the familiar editor options (mirroring VS Code): match case,
 whole word, and regular expression.  All three are compiled into one Python
@@ -51,10 +55,19 @@ per-second poll:
 - Transcripts are scanned **newest file first** (by modification time) across
   every root combined, so the most recently active sessions - the ones most
   likely wanted - surface first regardless of which root they live on.
-- Files are scanned concurrently on a thread pool, and matches are emitted
-  strictly in newest-first order.
-- ``should_cancel`` is polled throughout (per file and per line), so a superseded
-  search - the user typed another character - stops promptly.
+- Files are scanned concurrently on a small thread pool, and matches are
+  emitted strictly in newest-first order - each as soon as every newer file is
+  done, never held back for a batch while a large transcript is still read.
+- The background scans that fill in the figures on start-up are paused while a
+  search runs (``pause_background_scans``): both need the interpreter lock, and
+  someone is waiting for the search.
+- How far each transcript was read for the newest query is remembered in
+  memory (see :class:`_ScanMemo`).  An active search is repeated whenever the
+  snapshot changes, and since a transcript only grows, the repeat reads only
+  what was appended.
+- ``should_cancel`` is polled throughout (per file, per block and per tested
+  line), so a superseded search - the user typed another character - stops
+  promptly.
 
 Parsing degrades gracefully like every other reader here: an unreadable or
 missing transcript is skipped, never raised.  Every path is confined to its own
@@ -67,10 +80,14 @@ from __future__ import annotations
 import json
 import os
 import re
-from concurrent.futures import ThreadPoolExecutor
+import threading
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, BinaryIO, Callable, Iterator
 
+from .background_scans import pause_background_scans
 from .paths import SessionRoot, projects_dir, transcript_path
 from .roots import root_for_origin
 
@@ -81,17 +98,41 @@ __all__ = ['run_search']
 # a plain phrase, hence the generous bound.
 _MAX_QUERY_LEN = 500
 
-# I/O-bound work, so oversubscribe the cores; still capped so a huge in-view set
-# does not spawn an unbounded number of threads.
-_MAX_WORKERS = 32
+# The scan holds the interpreter lock for most of its work (searching a block of
+# bytes does not release it), so more threads only interleave the files: with 32
+# the newest file - the first one reported - finished near the end of the whole
+# scan. A few threads still overlap the reads, which matters over a WSL share.
+_MAX_WORKERS = 4
 
 # Matches are coalesced into small batches before being reported, so a query that
 # hits many sessions does not fire one update per match while still feeling live.
 _BATCH_SIZE = 8
 
-# How often to report progress even while no match is found, so the progress bar
-# still advances during a long stretch of non-matching files.
-_PROGRESS_EVERY = 25
+# The shortest gap between two progress-only updates, so the progress bar moves
+# while a long stretch of files matches nothing without one update per file.
+_PROGRESS_SECONDS = 0.1
+
+# How much of a transcript is read and tested at once. Testing a whole block for
+# the query's literal costs a fraction of testing each line on its own.
+_CHUNK_BYTES = 4 << 20
+
+# The shortest part of a query worth searching a block for when it is not the
+# whole query: a one- or two-letter run occurs on nearly every line.
+_MIN_LITERAL_CHARS = 3
+
+# How many bytes before a scan's resume point are compared on the next scan, so a
+# transcript rewritten in place is read afresh rather than resumed mid-line.
+_TAIL_BYTES = 64
+
+# The non-ASCII characters Python's case-insensitive matching treats as an ASCII
+# letter's other case. Lowering a block of bytes only folds ASCII, so a block
+# holding one of these is tested line by line instead (see _Literal). Pinned
+# against `re` itself by test_the_fold_table_matches_the_regex_engine.
+_ASCII_FOLD_EXTRAS = {'i': ('\u0130', '\u0131'), 'k': ('\u212a',), 's': ('\u017f',)}
+
+# Characters with a meaning of their own in a regular expression. A pattern
+# without any of them is a literal, and gets the same block search as a phrase.
+_REGEX_METACHARS = frozenset('.^$*+?{}[]\\|()')
 
 # How much text either side of a hit an excerpt carries. Enough to recognize the
 # passage, far too little to reconstruct it - and cut at the hit's own line, so
@@ -188,11 +229,13 @@ def run_search(
     """
     cancel = should_cancel if callable(should_cancel) else _never
 
-    matcher, prefilter, invalid = _compile_matcher(query, options)
+    compiled, invalid = _compile_query(query, options)
     if invalid:
         on_update(0, 0, [], True, True)
         return
-    if matcher is None:
+    if compiled is None:
+        # A cleared search box ends the search, and with it what was remembered.
+        _forget()
         on_update(0, 0, [], True, False)
         return
 
@@ -206,17 +249,32 @@ def run_search(
         path, session_id = item
         if cancel():
             return None
-        return _scan_file(path, session_id, matcher, prefilter, cancel)
+        return _scan_file(path, session_id, compiled, cancel)
 
-    workers = min(_MAX_WORKERS, max(1, (os.cpu_count() or 4) * 4), total)
+    workers = min(_MAX_WORKERS, total)
     processed = 0
+    reported = 0
+    last_report = time.monotonic()
     pending: list[dict[str, Any]] = []
     seen: set[str] = set()
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        # map yields in submission order, so matches are emitted strictly
+    # Someone is waiting for this answer, whereas the first full scans of the
+    # transcripts only fill in figures, and both compete for the interpreter lock.
+    with pause_background_scans(), ThreadPoolExecutor(max_workers=workers) as pool:
+        # Collected in submission order, so matches are emitted strictly
         # newest-file-first even though the scans run concurrently.
-        for result in pool.map(check, ordered):
+        futures: list[Future[dict[str, Any] | None]] = [pool.submit(check, item) for item in ordered]
+        for future in futures:
+            # About to wait for a file still being read: report what is already
+            # known first, so a match does not sit behind a large transcript.
+            waiting = not future.done()
+            if waiting and (pending or (processed > reported and time.monotonic() - last_report >= _PROGRESS_SECONDS)):
+                if cancel():
+                    return
+                on_update(processed, total, pending, False, False)
+                pending, reported, last_report = [], processed, time.monotonic()
+
+            result = future.result()
             if cancel():
                 return
 
@@ -225,9 +283,9 @@ def run_search(
                 seen.add(result['session_id'])
                 pending.append(result)
 
-            if len(pending) >= _BATCH_SIZE or processed % _PROGRESS_EVERY == 0:
+            if len(pending) >= _BATCH_SIZE:
                 on_update(processed, total, pending, False, False)
-                pending = []
+                pending, reported, last_report = [], processed, time.monotonic()
 
     if not cancel():
         on_update(processed, total, pending, True, False)
@@ -237,21 +295,59 @@ def _never() -> bool:
     return False
 
 
-def _compile_matcher(query: object, options: object) -> tuple[re.Pattern[str] | None, re.Pattern[str] | None, bool]:
-    """Compile the query + options into a matcher and its raw-line prefilter.
+@dataclass(frozen=True)
+class _Literal:
+    """A piece of the query that every matching line must hold as plain bytes.
 
-    Returns ``(matcher, prefilter, invalid)``: a compiled pattern when the query
-    is usable, ``(None, None, False)`` when it is blank or over-long (no filter,
-    not an error), or ``(None, None, True)`` when regular-expression mode was on
-    and the pattern would not compile (an error the UI flags).  The prefilter is
-    ``None`` when no sound one can be built, in which case every line is parsed.
+    ``needle`` is the piece as UTF-8, lowered when ``fold`` (case-insensitive)
+    is set; a block is then lowered too before it is searched.  ``extras`` are
+    the spellings - UTF-8 and lowercase ``\\u`` escape - of the non-ASCII
+    characters the regex engine would still accept as one of the piece's
+    letters (``_ASCII_FOLD_EXTRAS``): lowering bytes cannot see those, so a
+    block holding one is tested line by line.
+    """
+
+    needle: bytes
+    fold: bool
+    extras: tuple[bytes, ...]
+
+    def defeated_by(self, haystack: bytes) -> bool:
+        """Whether *haystack* (the block as searched) holds a character the byte search would miss."""
+        return any(extra in haystack for extra in self.extras)
+
+
+@dataclass(frozen=True)
+class _Query:
+    """A compiled query: the matcher, its raw-line prefilter and its byte literal.
+
+    ``key`` identifies what the query matches, so an incremental scan is only
+    ever resumed for the same query.  ``prefilter`` and ``literal`` are each
+    ``None`` when no sound one can be built.
+    """
+
+    matcher: re.Pattern[str]
+    prefilter: re.Pattern[str] | None
+    literal: _Literal | None
+
+    @property
+    def key(self) -> tuple[str, int]:
+        return self.matcher.pattern, self.matcher.flags
+
+
+def _compile_query(query: object, options: object) -> tuple[_Query | None, bool]:
+    """Compile the query + options into a :class:`_Query`.
+
+    Returns ``(query, invalid)``: a compiled query when the text is usable,
+    ``(None, False)`` when it is blank or over-long (no filter, not an error),
+    or ``(None, True)`` when regular-expression mode was on and the pattern
+    would not compile (an error the UI flags).
     """
     if not isinstance(query, str):
-        return None, None, False
+        return None, False
 
     text = query.strip()
     if not text or len(text) > _MAX_QUERY_LEN:
-        return None, None, False
+        return None, False
 
     opts = options if isinstance(options, dict) else {}
     use_regex = bool(opts.get('use_regex'))
@@ -266,9 +362,58 @@ def _compile_matcher(query: object, options: object) -> tuple[re.Pattern[str] | 
     try:
         matcher = re.compile(pattern, flags)
     except re.error:
-        return None, None, True
+        return None, True
 
-    return matcher, _prefilter(text, use_regex, match_case), False
+    # A regular expression without a single metacharacter matches exactly what
+    # the same text does as a phrase, so it is filtered like one.
+    plain = not use_regex or not any(char in _REGEX_METACHARS for char in text)
+
+    return _Query(matcher, _prefilter(text, not plain, match_case), _literal(text, plain, match_case)), False
+
+
+def _literal(text: str, plain: bool, match_case: bool) -> _Literal | None:
+    """Pick the longest piece of the query a matching raw line must hold verbatim, or ``None``.
+
+    Like the prefilter, this may only ever admit a superset.  A printable ASCII
+    character other than a quote or a backslash is written unchanged by JSON, so
+    a run of them found in the readable text is on the raw line as it stands -
+    up to case, which ``fold`` covers for ASCII and ``extras`` for the few
+    non-ASCII characters the regex engine counts as an ASCII letter's other case.
+    Whole-word mode is ignored here, as in the prefilter.  A regular expression
+    qualifies only when it is *plain*: without a single metacharacter.
+    """
+    if not plain:
+        return None
+
+    run = max(_literal_runs(text), key=len, default='')
+    if not run or (len(run) < _MIN_LITERAL_CHARS and run != text):
+        return None
+
+    if match_case:
+        return _Literal(run.encode('ascii'), False, ())
+
+    # Each such character in both spellings a line can carry: as UTF-8, and as
+    # the lowercase escape an ASCII-safe writer uses (the block is lowered too).
+    extras: list[bytes] = []
+    for letter in sorted(set(run.lower())):
+        for char in _ASCII_FOLD_EXTRAS.get(letter, ()):
+            extras.extend((char.encode('utf-8'), b'\\u%04x' % ord(char)))
+
+    return _Literal(run.lower().encode('ascii'), True, tuple(extras))
+
+
+def _literal_runs(text: str) -> Iterator[str]:
+    """Yield each maximal run of *text* that JSON writes unchanged (printable ASCII, no quote or backslash)."""
+    start = 0
+    for index, char in enumerate(text):
+        if ' ' <= char <= '~' and char not in '"\\':
+            continue
+        if index > start:
+            yield text[start:index]
+        start = index + 1
+
+    if start < len(text):
+        yield text[start:]
 
 
 def _prefilter(text: str, use_regex: bool, match_case: bool) -> re.Pattern[str] | None:
@@ -329,7 +474,12 @@ def _json_alternative(char: str, match_case: bool) -> str | None:
         return escaped
 
     if char.isascii():
-        return re.escape(char)
+        # The regex engine also takes a few non-ASCII characters for an ASCII
+        # letter's other case; written ASCII-safe, those are an escape.
+        extras = () if match_case else _ASCII_FOLD_EXTRAS.get(char.lower(), ())
+        if not extras:
+            return re.escape(char)
+        return '(?:' + '|'.join([re.escape(char)] + [r'\\u%04x' % ord(extra) for extra in extras]) + ')'
 
     if ord(char) > 0xFFFF:
         return None
@@ -463,54 +613,194 @@ def _confined_transcript(session_id: str, cwd: str, root: SessionRoot, projects_
     return path if path.is_file() else None
 
 
-def _scan_file(
-    path: Path,
-    session_id: str,
-    matcher: re.Pattern[str],
-    prefilter: re.Pattern[str] | None,
-    should_cancel: Callable[[], bool],
-) -> dict[str, Any] | None:
+@dataclass
+class _FileScan:
+    """How far one transcript has been searched for one query, and what was found.
+
+    ``offset`` is the end of the last complete line read; a transcript only ever
+    grows, so a later search for the same query resumes there.  ``tail`` holds
+    the bytes just before it, which tell a file that grew from one rewritten.
+    """
+
+    offset: int = 0
+    count: int = 0
+    entries: int = 0
+    partial: bool = False
+    snippets: list[dict[str, Any]] = field(default_factory=list)
+    tail: bytes = b''
+
+    def copy(self) -> _FileScan:
+        return _FileScan(self.offset, self.count, self.entries, self.partial, list(self.snippets), self.tail)
+
+    def continues(self, handle: BinaryIO) -> bool:
+        """Whether the file open in *handle* still holds, unchanged, what was read of it."""
+        size = handle.seek(0, os.SEEK_END)
+        if size < self.offset:
+            return False
+
+        handle.seek(self.offset - len(self.tail))
+        return handle.read(len(self.tail)) == self.tail
+
+    def result(self, session_id: str) -> dict[str, Any] | None:
+        """The match to report for this transcript, or ``None`` when it holds no hit."""
+        if self.count == 0:
+            return None
+
+        result: dict[str, Any] = {'session_id': session_id, 'count': self.count, 'snippets': list(self.snippets)}
+        if self.partial:
+            result['partial'] = True
+
+        return result
+
+
+@dataclass
+class _ScanMemo:
+    """The finished part of each transcript's scan for the newest query.
+
+    An active search is repeated whenever the snapshot changes, to catch a match
+    that has only just been written; without this every such repeat read each
+    live transcript from the start.  Only one query is kept: a new one replaces
+    it, and a cleared search drops it, so this holds at most one small record
+    per transcript in view.  Process memory only, never written anywhere.
+    """
+
+    key: tuple[str, int] | None = None
+    files: dict[Path, _FileScan] = field(default_factory=dict)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+
+_memo = _ScanMemo()
+
+
+def _resume_point(path: Path, key: tuple[str, int]) -> _FileScan:
+    """Return a private copy of the stored progress of *path* for *key*, or a fresh one."""
+    with _memo.lock:
+        if _memo.key != key:
+            _memo.key = key
+            _memo.files = {}
+        stored = _memo.files.get(path)
+
+    return stored.copy() if stored is not None else _FileScan()
+
+
+def _forget() -> None:
+    """Drop every remembered scan, excerpts included."""
+    with _memo.lock:
+        _memo.key = None
+        _memo.files = {}
+
+
+def _remember(path: Path, key: tuple[str, int], progress: _FileScan) -> None:
+    """Store *progress* of *path*, unless a newer query has taken over meanwhile."""
+    with _memo.lock:
+        if _memo.key == key:
+            _memo.files[path] = progress.copy()
+
+
+def _scan_file(path: Path, session_id: str, query: _Query, should_cancel: Callable[[], bool]) -> dict[str, Any] | None:
     """Count the hits in one transcript and excerpt the first few, or ``None`` for no hit.
 
-    Each line is tested against *prefilter* (when one could be built) before it
-    is parsed, so a line that cannot match costs one regex test and nothing more.  A parsed line contributes only its readable text (see
-    :func:`_entry_texts`); a line that does not parse is searched as-is.
+    The file is read in blocks of ``_CHUNK_BYTES``.  A block that does not hold
+    the query's literal (see :func:`_literal`) is passed over whole; otherwise
+    only the lines around each occurrence are decoded.  A line is then tested
+    against the prefilter (when one could be built) before it is parsed, and a
+    parsed line contributes only its readable text (see :func:`_entry_texts`);
+    a line that does not parse is searched as-is.
+
+    The scan resumes where the same query last stopped in this file, so a repeat
+    reads only what was appended since.  A file that has shrunk is read afresh.
+    A trailing line without its newline is still being written: it is searched,
+    but not stored, so it is read again once it is complete.
 
     Counting stops after ``_MAX_MATCH_ENTRIES`` matching entries, which sets
     ``partial`` on the result: the count is then a floor, not a total.  Any read
-    error yields ``None`` - a search never raises.
+    error or a cancellation yields ``None`` - a search never raises.
     """
-    count = 0
-    snippets: list[dict[str, Any]] = []
-    entries = 0
-    partial = False
+    progress = _resume_point(path, query.key)
+    if progress.partial:
+        return progress.result(session_id)
 
     try:
-        with path.open('r', encoding='utf-8', errors='ignore') as handle:
-            for line in handle:
+        with path.open('rb') as handle:
+            if not progress.continues(handle):
+                progress = _FileScan()
+            handle.seek(progress.offset)
+
+            carry = b''
+            while not progress.partial:
                 if should_cancel():
                     return None
-                if prefilter is not None and not prefilter.search(line):
-                    continue
-                if entries >= _MAX_MATCH_ENTRIES:
-                    partial = True
+                block = handle.read(_CHUNK_BYTES)
+                if not block:
                     break
 
-                hits = _line_hits(line, matcher, snippets)
-                if hits:
-                    count += hits
-                    entries += 1
+                data = carry + block
+                cut = data.rfind(b'\n') + 1
+                carry = data[cut:]
+                if cut and not _scan_lines(data[:cut], progress, query, should_cancel):
+                    return None
+                progress.offset += cut
+                progress.tail = (progress.tail + data[max(0, cut - _TAIL_BYTES):cut])[-_TAIL_BYTES:]
     except OSError:
         return None
 
-    if count == 0:
-        return None
+    _remember(path, query.key, progress)
 
-    result: dict[str, Any] = {'session_id': session_id, 'count': count, 'snippets': snippets}
-    if partial:
-        result['partial'] = True
+    if carry and not progress.partial:
+        progress = progress.copy()
+        if not _scan_lines(carry, progress, query, should_cancel):
+            return None
 
-    return result
+    return progress.result(session_id)
+
+
+def _scan_lines(data: bytes, progress: _FileScan, query: _Query, should_cancel: Callable[[], bool]) -> bool:
+    """Search a block of whole lines into *progress*; ``False`` when cancelled.
+
+    With a literal, only the lines holding it are decoded and tested.  Without
+    one - or in a block holding a character the literal's byte search would miss
+    - every line is.
+    """
+    literal = query.literal
+    haystack = data.lower() if literal is not None and literal.fold else data
+    if literal is None or literal.defeated_by(haystack):
+        for line in data.decode('utf-8', 'ignore').split('\n'):
+            if should_cancel():
+                return False
+            if line and not _take_line(line, progress, query):
+                break
+        return True
+
+    found = haystack.find(literal.needle)
+    while found >= 0:
+        if should_cancel():
+            return False
+
+        start = data.rfind(b'\n', 0, found) + 1
+        end = data.find(b'\n', found)
+        if end < 0:
+            end = len(data)
+        if not _take_line(data[start:end].decode('utf-8', 'ignore'), progress, query):
+            break
+        found = haystack.find(literal.needle, end + 1)
+
+    return True
+
+
+def _take_line(line: str, progress: _FileScan, query: _Query) -> bool:
+    """Count one line's hits into *progress*; ``False`` once the count has reached its cap."""
+    if query.prefilter is not None and not query.prefilter.search(line):
+        return True
+    if progress.entries >= _MAX_MATCH_ENTRIES:
+        progress.partial = True
+        return False
+
+    hits = _line_hits(line, query.matcher, progress.snippets)
+    if hits:
+        progress.count += hits
+        progress.entries += 1
+
+    return True
 
 
 def _line_hits(line: str, matcher: re.Pattern[str], snippets: list[dict[str, Any]]) -> int:

@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - In the graph, a subagent's report no longer draws a second line over the one that started it, and messages between two sessions share one line with an arrowhead at each receiver, so a one-way exchange is told apart from a conversation. Running work is drawn in the purple of its box, and a connection quiet for over an hour fades.
 
 ### Fixed
+- The content search shows its first results within a fraction of a second, even right after start-up, and a query that matches nothing finishes several times faster. While a search is active, keeping its results up to date no longer re-reads every transcript.
 - With a WSL distribution that has kept many ended sessions, the window no longer keeps a CPU core busy and reacts to changes within a second again.
 - The graph's scrollbars sit at the edges of its pane instead of directly under the drawing, and its button row stays in place while you scroll.
 - A click on one of the search options (match case, whole word, regular expression) no longer misses because the button moved as it was pressed.
