@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-07
+
 ### Added
 - A settings dialog, opened with the gear in the toolbar or *Ctrl+,*, changes the refresh interval, how long finished sessions stay, the language, WSL and the window size - no more editing a file by hand. Most changes apply on save; the window size at the next start.
 - A right-click on selected text, such as an agent's last reply, offers to copy it.
@@ -314,7 +316,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 13 languages, auto-detected from the system locale.
 - Optional settings file to tune the poll interval and window size.
 
-[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.13.0...v1.0.0
 [0.13.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.10.0...v0.11.0
