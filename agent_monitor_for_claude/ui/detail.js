@@ -40,11 +40,13 @@ const sessionTexts = { key: null, sig: null, result: null, pending: false };
 // once it wrote more - at most every SESSION_STEPS_REFRESH_MS, since a busy
 // session writes constantly and each answer can be large.
 const SESSION_STEPS_REFRESH_MS = 15000;
-const sessionSteps = { key: null, sig: null, steps: [], partial: false, pending: false, at: 0 };
+// `pendingKey` is the key of the call still out, `seq` numbers the calls so an
+// answer for a selection that moved on is dropped.
+const sessionSteps = { key: null, sig: null, steps: [], partial: false, pendingKey: null, seq: 0, at: 0 };
 
 // The task and the result of the selected subagent, whole; `sig` says which
 // state of a running agent's file they were read from.
-const agentTexts = { key: null, sig: null, task: '', result: '', steps: [], pending: false };
+const agentTexts = { key: null, sig: null, task: '', result: '', steps: [], pendingKey: null, seq: 0 };
 
 function selectedSession() {
     return state.selectedKey ? (state.sessionsByKey.get(state.selectedKey) || null) : null;
@@ -111,7 +113,7 @@ function renderDetail() {
 function requestSessionSteps(session) {
     const key = rowKey(session);
     const lastWrite = logic.lastWriteAt(session.exact_age_seconds, state.receivedAt);
-    if (sessionSteps.pending || (sessionSteps.key === key && logic.sameWrite(sessionSteps.sig, lastWrite))) {
+    if (sessionSteps.pendingKey === key || (sessionSteps.key === key && logic.sameWrite(sessionSteps.sig, lastWrite))) {
         return;
     }
     if (sessionSteps.key === key && Date.now() - sessionSteps.at < SESSION_STEPS_REFRESH_MS) {
@@ -136,15 +138,15 @@ function requestSessionSteps(session) {
     }
     sessionSteps.key = key;
     sessionSteps.sig = lastWrite;
-    sessionSteps.pending = true;
+    sessionSteps.pendingKey = key;
+    const seq = ++sessionSteps.seq;
     const call = () => bridge.get_session_activity(session.session_id, session.cwd, session.origin || 'local');
     Promise.resolve(logic.settleCall(call)).then((result) => {
-        sessionSteps.pending = false;
-        sessionSteps.at = Date.now();
-        if (sessionSteps.key !== key) {
-            renderDetail();
+        if (seq !== sessionSteps.seq) {
             return;
         }
+        sessionSteps.pendingKey = null;
+        sessionSteps.at = Date.now();
         sessionSteps.steps = logic.agentStepsOf(result ? result.steps : null);
         sessionSteps.partial = Boolean(result && result.partial);
         renderDetail();
@@ -1317,7 +1319,7 @@ function requestAgentTexts(session, agent) {
     // rounds away the latency.
     const lastWrite = Math.round(logic.lastWriteAt(agent.age_seconds, state.receivedAt));
     const sig = agent.running ? 'running:' + lastWrite : 'finished';
-    if ((agentTexts.key === key && agentTexts.sig === sig) || agentTexts.pending) {
+    if ((agentTexts.key === key && agentTexts.sig === sig) || agentTexts.pendingKey === key) {
         return;
     }
     if (agentTexts.key !== key) {
@@ -1339,14 +1341,14 @@ function requestAgentTexts(session, agent) {
     if (!bridge || typeof bridge.get_agent_texts !== 'function' || !session.session_id) {
         return;
     }
-    agentTexts.pending = true;
+    agentTexts.pendingKey = key;
+    const seq = ++agentTexts.seq;
     const call = () => bridge.get_agent_texts(session.session_id, agent.id, session.origin || 'local');
     Promise.resolve(logic.settleCall(call)).then((texts) => {
-        agentTexts.pending = false;
-        if (agentTexts.key !== key) {
-            renderDetail();
+        if (seq !== agentTexts.seq) {
             return;
         }
+        agentTexts.pendingKey = null;
         agentTexts.task = texts && typeof texts.task === 'string' ? texts.task : '';
         agentTexts.result = texts && typeof texts.result === 'string' ? texts.result : '';
         agentTexts.steps = logic.agentStepsOf(texts ? texts.steps : null);
