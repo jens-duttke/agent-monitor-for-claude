@@ -85,6 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - In a window narrower than 800 pixels the graph uses the full width, the splitter no longer catches presses on the list's scrollbar, and with reduced motion turned on the search bar no longer sweeps.
 - The details of a busy subagent no longer read up to 16 MB of its transcript on every refresh to find its latest reply.
 - When Claude makes several tool calls at once and one of them waits for your permission, the session reads "Permission needed" instead of "Working".
+- A transcript the WSL share refuses to read is skipped by the content search instead of failing it as an invalid expression.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07

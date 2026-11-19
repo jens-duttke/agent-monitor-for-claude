@@ -256,6 +256,24 @@ class SearchOptionsTest(SearchEnvTest):
         self.assertTrue(updates[-1][3])
         self.assertEqual(background_scans._deferred.readers, 0)
 
+    def test_a_transcript_the_share_refuses_is_skipped_not_an_error(self) -> None:
+        # Path.is_file() lets a permission error through; it failed the whole
+        # search, which the box then showed as an invalid regular expression.
+        self._write('id-a', _CWD, self._entry('needle'))
+        self._write('id-b', _CWD, self._entry('needle'))
+        real_stat = Path.stat
+
+        def failing_stat(path: Path, *args: object, **kwargs: object) -> object:
+            if path.name.startswith('id-a'):
+                raise PermissionError(13, 'denied')
+            return real_stat(path, *args, **kwargs)
+
+        with mock.patch.object(Path, 'stat', failing_stat):
+            updates = self._run('needle', [self._ref('id-a'), self._ref('id-b')])
+
+        self.assertFalse(self._errored(updates))
+        self.assertEqual(self._matched_ids(updates), ['id-b'])
+
     def test_invalid_regex_reports_error_and_no_matches(self) -> None:
         self._write('id-a', _CWD, 'anything')
         ref = [self._ref('id-a')]

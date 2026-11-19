@@ -753,13 +753,17 @@ def _confined_transcript(session_id: str, cwd: str, root: SessionRoot, projects_
     another root's tree, since each ref is always checked against its own
     root's *projects_root*.
     """
+    # is_file() inside the guard: it lets a permission or share error through,
+    # which is a transcript that cannot be read, not a failed search.
     try:
         path = transcript_path(root, session_id, cwd).resolve()
         path.relative_to(projects_root)
+        if not path.is_file():
+            return None
     except (OSError, ValueError):
         return None
 
-    return path if path.is_file() else None
+    return path
 
 
 @dataclass
