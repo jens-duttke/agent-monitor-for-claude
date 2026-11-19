@@ -75,6 +75,11 @@ const DIFF_LINE_CLASSES = new Map([['+', 'diff-add'], ['-', 'diff-del'], [' ', '
 // header up to the first hunk is left out (the block names the file), except
 // git's note on a binary file. Every line goes through `esc`; the only markup
 // is a fixed class per kind of line.
+const DIFF_META_PREFIXES = [
+    'Binary files', 'old mode', 'new mode', 'new file mode', 'deleted file mode',
+    'rename from', 'rename to', 'copy from', 'copy to', 'similarity index',
+];
+
 function diffToHtml(value) {
     const lines = String(value == null ? '' : value).split('\n');
     if (lines.length > 0 && lines[lines.length - 1] === '') {
@@ -87,7 +92,9 @@ function diffToHtml(value) {
             inHunk = true;
         }
         if (!inHunk) {
-            if (line.startsWith('Binary files')) {
+            // The header lines that say what changed when no hunk follows - a
+            // mode change, a pure rename, a new empty file, a binary file.
+            if (DIFF_META_PREFIXES.some((prefix) => line.startsWith(prefix))) {
                 html += '<div class="diff-line diff-meta">' + esc(line) + '</div>';
             }
             continue;

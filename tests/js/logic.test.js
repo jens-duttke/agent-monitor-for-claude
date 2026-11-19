@@ -2344,6 +2344,17 @@ test('diffToHtml: markup in a file stays text and never reaches a class', () => 
     }
 });
 
+test('diffToHtml: a change without a hunk still says what it is', () => {
+    const mode = logic.diffToHtml('diff --git a/run.sh b/run.sh\nold mode 100644\nnew mode 100755\n');
+    assert.ok(mode.includes('old mode 100644') && mode.includes('new mode 100755'), mode);
+    const empty = logic.diffToHtml('diff --git a/x b/x\nnew file mode 100644\nindex 0000000..e69de29\n');
+    assert.ok(empty.includes('new file mode 100644'), empty);
+    const moved = logic.diffToHtml('diff --git a/a b/b\nsimilarity index 100%\nrename from a\nrename to b\n');
+    assert.ok(moved.includes('rename from a') && moved.includes('rename to b'), moved);
+    // Only fixed classes, every line as text.
+    assert.ok(!logic.diffToHtml('diff --git a/x b/x\nrename from <img src=x>\n').includes('<img'));
+});
+
 test('ansiToHtml: hyperlinks, titles and other escapes leave no control text behind', () => {
     assert.equal(logic.ansiToHtml('\x1b]8;;https://example.org\x1b\\link\x1b]8;;\x1b\\ done'), 'link done');
     assert.equal(logic.ansiToHtml('\x1b]0;my title\x07text'), 'text');

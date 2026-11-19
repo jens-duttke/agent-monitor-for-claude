@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A branch in a fresh clone of an empty repository reads "only on this machine" instead of "deleted on the remote".
 - With *Older* reaching far back, sessions past the 200th folder get their git state too, instead of reading as no repository; the entries on screen are asked first.
 - With `diff.relative` set in your git configuration, a session in a subfolder shows its uncommitted line counts again.
+- A file whose diff has no lines - a mode change, a pure rename, a new empty file - shows what changed instead of an empty area.
 - The diff of a renamed file shows what changed, not its whole content as new.
 - A local branch whose changes were squash-merged reads as merged, as its tooltip already said, instead of "only on this machine".
 - The branch link of a repository whose forge answers on its own HTTPS port, such as `:8443`, keeps that port.
