@@ -22,6 +22,8 @@ Everything returned is JSON-serializable and free of conversation content.
 """
 from __future__ import annotations
 
+import os
+import threading
 import time
 from datetime import datetime
 from typing import Any
@@ -30,7 +32,7 @@ from .background_scans import completed_background_scans, pause_background_scans
 from .cli_install import installed_version
 from .last_seen import note_alive, prune_last_seen, seconds_since_alive
 from .model_catalog import context_window
-from .paths import SessionRoot, TranscriptIndex, transcript_path
+from .paths import SessionRoot, TranscriptIndex, sessions_dir, transcript_path
 from .process_probe import ProcessInfo, probe_all
 from .procinfo import ChildProcess
 from .roots import session_roots
@@ -57,6 +59,12 @@ _RECENT_WINDOW_SECONDS = 24 * 3600
 # The prefix a message names another session's messaging address with.
 _SOCKET_PEER_PREFIX = 'uds:'
 
+# How long a root missing from the polls keeps the records it listed last in the
+# prune (see _prune_caches); origin -> (monotonic time listed, its pairs).
+_ROOT_GRACE_SECONDS = 300.0
+_listed_roots: dict[str, tuple[float, list[tuple[SessionRoot, dict[str, Any]]]]] = {}
+_listed_roots_lock = threading.Lock()
+
 
 def build_snapshot(graph: bool = False) -> dict[str, Any]:
     """Return the raw session overview as a flat list of per-session records, across every session root.
@@ -75,7 +83,8 @@ def _build_snapshot(graph: bool) -> dict[str, Any]:
     sessions: list[dict[str, Any]] = []
 
     index = TranscriptIndex()
-    pairs = _collect_pairs(index)
+    listed: set[str] = set()
+    pairs = _collect_pairs(index, listed)
     probe_map = _probe_map(pairs)
     peers = _peer_index(pairs, probe_map)
 
@@ -91,7 +100,7 @@ def _build_snapshot(graph: bool) -> dict[str, Any]:
         if session is not None:
             sessions.append(session)
 
-    _prune_caches(pairs)
+    _prune_caches(pairs, listed)
 
     return {
         'generated_at': datetime.now().astimezone().isoformat(timespec='seconds'),
@@ -501,7 +510,7 @@ def registry_fingerprint() -> str:
     return '|'.join(parts)
 
 
-def _collect_pairs(index: TranscriptIndex) -> list[tuple[SessionRoot, dict[str, Any]]]:
+def _collect_pairs(index: TranscriptIndex, listed: set[str] | None = None) -> list[tuple[SessionRoot, dict[str, Any]]]:
     """Return (root, record) for every session across every currently available root.
 
     A root whose registry listing raises an unexpected error is skipped
@@ -513,6 +522,8 @@ def _collect_pairs(index: TranscriptIndex) -> list[tuple[SessionRoot, dict[str, 
     launched in here (see :mod:`worktrees`), so every caller - the snapshot,
     the change fingerprint, the history dedupe - finds its files alike.
     *index* is the caller's listing of the project folders for this poll.
+    *listed*, when given, receives the origin of every root whose registry was
+    read - an empty one included, an unreadable one not.
     """
     pairs: list[tuple[SessionRoot, dict[str, Any]]] = []
     for root in session_roots():
@@ -521,16 +532,50 @@ def _collect_pairs(index: TranscriptIndex) -> list[tuple[SessionRoot, dict[str, 
         except Exception:
             continue
 
+        # list_sessions answers an unreadable registry with no records too; only
+        # a readable one says its sessions are really gone.
+        if listed is not None and (records or os.path.isdir(sessions_dir(root))):
+            listed.add(root.origin)
         pairs.extend((root, _resolve_worktree_safely(root, record, index)) for record in records)
 
     return pairs
 
 
-def _prune_caches(pairs: list[tuple[SessionRoot, dict[str, Any]]]) -> None:
-    """Evict every per-session cache entry of sessions no longer in the registry, so none grows over a long-running monitor."""
+def _prune_caches(pairs: list[tuple[SessionRoot, dict[str, Any]]], listed: set[str]) -> None:
+    """Evict every per-session cache entry of sessions no longer in the registry, so none grows over a long-running monitor.
+
+    A root this poll did not list (*listed* names the ones it did) - a WSL
+    listing that failed once, a share that dropped for a second - keeps the
+    records it listed last for
+    ``_ROOT_GRACE_SECONDS``: otherwise one such poll threw away every scan of
+    it, and its large transcripts were read in full again on its return.
+    """
+    pairs = _with_recently_listed(pairs, listed)
     prune_worktree_cache((root.origin, record['session_id'], record.get('worktree_cwd') or record['cwd']) for root, record in pairs)
     prune_scan_cache(((root, record['session_id'], record['cwd']) for root, record in pairs), located_transcripts())
     prune_last_seen((record['origin'], record['session_id']) for _, record in pairs)
+
+
+def _with_recently_listed(pairs: list[tuple[SessionRoot, dict[str, Any]]], listed: set[str]) -> list[tuple[SessionRoot, dict[str, Any]]]:
+    """Return *pairs* plus the last listed records of every root this poll missed within ``_ROOT_GRACE_SECONDS``."""
+    now = time.monotonic()
+    by_origin: dict[str, list[tuple[SessionRoot, dict[str, Any]]]] = {origin: [] for origin in listed}
+    for root, record in pairs:
+        by_origin.setdefault(root.origin, []).append((root, record))
+
+    kept = list(pairs)
+    with _listed_roots_lock:
+        for origin, origin_pairs in by_origin.items():
+            _listed_roots[origin] = (now, origin_pairs)
+        for origin, (listed_at, origin_pairs) in list(_listed_roots.items()):
+            if origin in by_origin:
+                continue
+            if now - listed_at > _ROOT_GRACE_SECONDS:
+                del _listed_roots[origin]
+                continue
+            kept.extend(origin_pairs)
+
+    return kept
 
 
 def _resolve_worktree_safely(root: SessionRoot, record: dict[str, Any], index: TranscriptIndex) -> dict[str, Any]:

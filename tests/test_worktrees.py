@@ -172,7 +172,7 @@ class ResolveWorktreeTest(unittest.TestCase):
         record = self._record()
         with mock.patch.object(wmod.time, 'monotonic', return_value=1000.0):
             self.assertIs(resolve_worktree(self.root, record), record)
-        smod._prune_caches([(self.root, record)])
+        smod._prune_caches([(self.root, record)], {self.root.origin})
 
         with mock.patch.object(wmod.time, 'monotonic', return_value=1000.0 + wmod._RETRY_SECONDS + 1), \
                 mock.patch.object(tmod, '_absorb_line', wraps=tmod._absorb_line) as absorb:

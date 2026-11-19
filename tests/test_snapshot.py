@@ -282,6 +282,42 @@ class RawSnapshotTest(_RegistryFixture):
         self.assertEqual(session['last_entry_kind'], 'assistant')
 
 
+class TransientRootAbsenceTest(unittest.TestCase):
+    """A root missing from one poll - a WSL listing that failed once - keeps its caches for a while."""
+
+    def setUp(self) -> None:
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = SessionRoot(origin='wsl:Ubuntu', label='Ubuntu', config_dir=Path(temp.name), proc_dir=None, claude_temp_dir=Path(temp.name))
+        self.record = {'session_id': 'aaaa', 'cwd': '/home/u/proj', 'origin': 'wsl:Ubuntu'}
+        self.key = os.path.normcase(str(transcript_path(self.root, 'aaaa', '/home/u/proj')))
+        from agent_monitor_for_claude import transcript as tmod
+        self.tmod = tmod
+        tmod._scan_cache[self.key] = tmod._ScanState()
+        self.addCleanup(tmod._scan_cache.pop, self.key, None)
+        snapshot_mod._listed_roots.clear()
+        self.addCleanup(snapshot_mod._listed_roots.clear)
+
+    def test_one_poll_without_the_root_keeps_its_scans(self) -> None:
+        with mock.patch.object(snapshot_mod.time, 'monotonic', return_value=1000.0):
+            snapshot_mod._prune_caches([(self.root, self.record)], {'wsl:Ubuntu'})
+        with mock.patch.object(snapshot_mod.time, 'monotonic', return_value=1001.0):
+            snapshot_mod._prune_caches([], set())
+        self.assertIn(self.key, self.tmod._scan_cache)
+
+    def test_a_root_gone_for_longer_is_pruned(self) -> None:
+        with mock.patch.object(snapshot_mod.time, 'monotonic', return_value=1000.0):
+            snapshot_mod._prune_caches([(self.root, self.record)], {'wsl:Ubuntu'})
+        with mock.patch.object(snapshot_mod.time, 'monotonic', return_value=1000.0 + snapshot_mod._ROOT_GRACE_SECONDS + 1):
+            snapshot_mod._prune_caches([], set())
+        self.assertNotIn(self.key, self.tmod._scan_cache)
+
+    def test_a_root_that_listed_an_empty_registry_is_pruned_at_once(self) -> None:
+        snapshot_mod._prune_caches([(self.root, self.record)], {'wsl:Ubuntu'})
+        snapshot_mod._prune_caches([], {'wsl:Ubuntu'})
+        self.assertNotIn(self.key, self.tmod._scan_cache)
+
+
 class EndedRetentionTest(_RegistryFixture):
     """The window an ended session stays visible for is measured from when it ended.
 
