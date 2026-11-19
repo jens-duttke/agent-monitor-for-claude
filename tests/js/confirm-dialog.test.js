@@ -36,3 +36,23 @@ test('Escape that cancels the confirmation goes no further', () => {
     assert.strictEqual(event.stopped, true);
     assert.strictEqual(event.prevented, true);
 });
+
+test('Tab stays inside the confirmation', () => {
+    // Out of the dialog, Enter on a section header behind it changed the list.
+    const run = controller();
+    const focused = [];
+    const button = (name) => ({ name, disabled: false, hidden: false, offsetParent: {}, focus() { focused.push(name); } });
+    const cancel = button('cancel');
+    const remove = button('delete');
+    const overlay = { querySelectorAll: () => [remove, cancel], contains: (element) => element === cancel || element === remove };
+    run('globalThis.__overlay = null;');
+    const context = run('globalThis');
+    context.__overlay = overlay;
+    context.document = { getElementById: (id) => (id === 'confirm-overlay' ? overlay : null), removeEventListener() {}, activeElement: cancel };
+
+    let prevented = false;
+    run('onConfirmKey')({ key: 'Tab', shiftKey: false, preventDefault() { prevented = true; } });
+
+    assert.strictEqual(prevented, true);
+    assert.deepStrictEqual(focused, ['delete']);
+});

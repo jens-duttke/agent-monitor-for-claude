@@ -320,21 +320,8 @@ function onSettingsKey(event) {
         saveSettingsForm();
         return;
     }
-    if (event.key !== 'Tab') {
-        return;
-    }
-    const focusable = [...overlay.querySelectorAll('button, input, select')].filter((el) => !el.disabled && !el.hidden && el.offsetParent !== null);
-    if (focusable.length === 0) {
-        return;
-    }
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && (document.activeElement === first || !overlay.contains(document.activeElement))) {
-        event.preventDefault();
-        last.focus();
-    } else if (!event.shiftKey && (document.activeElement === last || !overlay.contains(document.activeElement))) {
-        event.preventDefault();
-        first.focus();
+    if (event.key === 'Tab') {
+        trapTab(event, overlay);
     }
 }
 

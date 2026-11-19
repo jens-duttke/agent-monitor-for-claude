@@ -139,12 +139,38 @@ function showConfirm(title, body, detail, okLabel, onConfirm) {
 }
 
 function onConfirmKey(event) {
+    if (event.key === 'Tab') {
+        trapTab(event, document.getElementById('confirm-overlay'));
+        return;
+    }
     if (event.key === 'Escape') {
         // Consumed, as in the settings dialog: the page's own Escape would
         // also close the details behind the dialog.
         event.preventDefault();
         event.stopPropagation();
         closeConfirm();
+    }
+}
+
+// Keep Tab inside a modal dialog: from its last control (or from anywhere
+// outside it) to its first, and Shift+Tab the other way round. The backdrop
+// stops the pointer only; out of the dialog, Enter reached the page behind it.
+function trapTab(event, overlay) {
+    if (!overlay) {
+        return;
+    }
+    const focusable = [...overlay.querySelectorAll('button, input, select')].filter((el) => !el.disabled && !el.hidden && el.offsetParent !== null);
+    if (focusable.length === 0) {
+        return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !overlay.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !overlay.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
     }
 }
 

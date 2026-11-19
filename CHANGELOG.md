@@ -65,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Opened hook failures stay open when the session details refresh, a reply row opened in one session no longer opens in another, and a session's opened rows survive looking at one of its subagents.
 - A background task whose output file is named like `constructor.output` no longer crashes the task panel.
 - Search results show their hit count and where each excerpt comes from even when the language file has not loaded yet.
+- Tab stays inside the delete confirmation instead of moving to the page behind it.
 - Escape in the delete confirmation only cancels it; it no longer also leaves the session's details.
 - Without a loadable language file, a running content search is no longer cancelled by every refresh, and a refresh interval received after start-up takes effect at once.
 - A second right-click on the same list entry opens its menu again at the pointer instead of closing it.
