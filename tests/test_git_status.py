@@ -122,6 +122,30 @@ class GitStatusTest(unittest.TestCase):
         # A renamed file keeps its line counts, and a non-ASCII name its own spelling.
         self.assertEqual((by_path['Übersicht.txt']['status'], by_path['Übersicht.txt']['added']), ('R', 1))
 
+    def test_a_file_edited_in_a_new_folder_is_uncommitted_and_has_a_diff(self) -> None:
+        # git folds a wholly untracked folder into one 'folder/' entry unless
+        # asked for every file - and neither the edited match nor a diff can
+        # use that entry.
+        with tempfile.TemporaryDirectory() as directory:
+            def git(*args: str) -> None:
+                subprocess.run(['git', '-C', directory, *args], check=True, capture_output=True,
+                               env=dict(os.environ, GIT_AUTHOR_NAME='t', GIT_AUTHOR_EMAIL='t@t', GIT_COMMITTER_NAME='t', GIT_COMMITTER_EMAIL='t@t'))
+
+            git('init', '-q')
+            (Path(directory) / 'tracked.txt').write_text('one\n', encoding='utf-8')
+            git('add', 'tracked.txt')
+            git('commit', '-q', '-m', 'first')
+            (Path(directory) / 'package').mkdir()
+            created = Path(directory) / 'package' / 'module.py'
+            created.write_text('print(1)\n', encoding='utf-8')
+
+            result = gmod.git_status(directory, [str(created)])
+            diff = gmod.git_diff(directory, 'package/module.py')
+
+        self.assertEqual((result['untracked'], result['edited_uncommitted']), (1, 1))
+        self.assertEqual([(record['path'], record['edited']) for record in result['files']], [('package/module.py', True)])
+        self.assertIn('+print(1)', diff['diff'])
+
     def test_a_directory_outside_any_repository_reports_none(self) -> None:
         with mock.patch.object(gmod, '_git', return_value=None):
             with tempfile.TemporaryDirectory() as directory:

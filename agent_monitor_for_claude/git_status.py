@@ -165,7 +165,9 @@ def _read_status(directory: str, edited: tuple[str, ...]) -> dict[str, Any] | No
     toplevel = _git(directory, 'rev-parse', '--show-toplevel')
     if not toplevel or not toplevel.strip():
         return None
-    status = _git(directory, 'status', '--porcelain=v1', '--branch', '-z', '--untracked-files=normal')
+    # Every untracked file on its own: a wholly new folder would otherwise be one
+    # 'folder/' entry that neither the edited match nor a diff can use.
+    status = _git(directory, 'status', '--porcelain=v1', '--branch', '-z', '--untracked-files=all')
     if status is None:
         return None
     # A repository without a commit has no HEAD to diff against; its files are all untracked or staged.

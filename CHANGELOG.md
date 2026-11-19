@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On Windows, the app no longer shares its local port with another app built on the same window toolkit that is already running, which could show one app's page in the other's window.
 - A session record that Claude Code was rewriting at that moment no longer makes every session of its system (or WSL distro) vanish from the list for a refresh.
 - A branch deleted on the remote without being merged no longer reads as merged when the session works in a subfolder of its repository.
+- Files a session created in a new folder now count as uncommitted, are marked as its own, and show their diff on click, instead of the folder being listed as one entry without a diff.
 
 ## [1.0.0] - 2026-11-07
 
