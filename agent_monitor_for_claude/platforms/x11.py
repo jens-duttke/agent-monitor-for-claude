@@ -26,7 +26,6 @@ so such a window is simply absent from the list rather than approximated.
 from __future__ import annotations
 
 import ctypes
-import ctypes.util
 import os
 import threading
 from collections.abc import Iterator
@@ -181,6 +180,9 @@ def activate_window(window_id: int) -> bool:
         return bool(sent)
 
 
+# libX11's soname, the same on every glibc distribution.
+_LIBRARY_NAME = 'libX11.so.6'
+
 _library_cache: ctypes.CDLL | None = None
 _library_loaded = False
 
@@ -194,9 +196,10 @@ def _library() -> ctypes.CDLL | None:
 
     _library_loaded = True
 
-    name = ctypes.util.find_library('X11') or 'libX11.so.6'
+    # Loaded by its soname, which the dynamic loader finds on its own:
+    # ctypes.util.find_library would run ldconfig, a C compiler and ld for it.
     try:
-        library = ctypes.CDLL(name)
+        library = ctypes.CDLL(_LIBRARY_NAME)
         _declare(library)
     except (OSError, AttributeError):
         # No library, or one missing an entry point this module needs: report it

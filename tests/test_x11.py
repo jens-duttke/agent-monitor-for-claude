@@ -69,6 +69,16 @@ class DegradationTest(unittest.TestCase):
 
         self.assertEqual(load.call_count, 1)
 
+    def test_loading_the_library_runs_no_program(self) -> None:
+        # ctypes.util.find_library runs ldconfig, then a C compiler and ld,
+        # where the application runs no program but git and wsl.exe.
+        import subprocess
+
+        self._forget_library()
+        with mock.patch.object(subprocess, 'Popen', side_effect=AssertionError('a program was run')) as popen:
+            x11._library()
+        popen.assert_not_called()
+
     def test_a_display_that_refuses_to_open_degrades(self) -> None:
         library = mock.Mock()
         library.XOpenDisplay.return_value = None
