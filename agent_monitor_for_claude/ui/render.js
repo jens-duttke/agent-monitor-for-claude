@@ -412,8 +412,27 @@ function tickMarkup(seconds, capturedAt) {
         return '';
     }
     const at = capturedAt != null ? capturedAt : Date.now();
-    const began = Math.round((at - elapsed * 1000) / 1000) * 1000;
+    const began = recentBegin(Math.round((at - elapsed * 1000) / 1000) * 1000);
     return '<span class="tick"' + attr('data-age', 0) + attr('data-age-at', began) + '></span>';
+}
+
+// The start already written for a moment within a second of *began*, else
+// *began*: the age arrives with a latency that differs from poll to poll, and
+// rounded near a half second the start flipped between two values - rewriting
+// the markup, and dropping a selection beside it, with nothing changed.
+const RECENT_BEGINS_KEPT = 64;
+const recentBegins = [];
+
+function recentBegin(began) {
+    const known = recentBegins.find((value) => Math.abs(value - began) <= 1000);
+    if (known !== undefined) {
+        return known;
+    }
+    recentBegins.push(began);
+    if (recentBegins.length > RECENT_BEGINS_KEPT) {
+        recentBegins.shift();
+    }
+    return began;
 }
 
 // Write the current text of every ticking age and duration inside *root*.

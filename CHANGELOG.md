@@ -94,6 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Closing the window ends the app at once, even while git information of slow WSL folders is still being read.
 - A system set to Chinese for Hong Kong, Macau or Singapore gets the Chinese interface instead of English.
 - The task list of a session that just entered a git worktree finds its tasks without re-selecting the session.
+- Text you selected in a running session's activity line is no longer dropped by a refresh that changed nothing.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07
