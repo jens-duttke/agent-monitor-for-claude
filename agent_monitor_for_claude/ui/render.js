@@ -351,11 +351,12 @@ function dropRedundantGraphTip(text) {
 // text's own measurement forces one on every call.
 function fitOneGraphText(text) {
     const measure = graphTextMeasurer(text);
-    const full = text.textContent.replace(/…$/, '');
-    if (measure(full) <= logic.GRAPH_TEXT_WIDTH) {
-        text.textContent = full;
+    // A label that fits stays as written, an ellipsis of its own included; one
+    // that does not loses the ellipsis clipLabel may have added before shrinking.
+    if (measure(text.textContent) <= logic.GRAPH_TEXT_WIDTH) {
         return;
     }
+    const full = text.textContent.replace(/…$/, '');
     let fits = 0;
     let tooLong = full.length;
     while (tooLong - fits > 1) {
