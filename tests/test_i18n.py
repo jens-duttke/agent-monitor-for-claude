@@ -36,6 +36,15 @@ class DetectLangTest(unittest.TestCase):
         self.assertEqual(detect_lang_code('xx_YY'), 'en')
 
 
+class ChineseRegionTest(unittest.TestCase):
+    def test_every_chinese_region_finds_its_script(self) -> None:
+        # Only the regions with a file of their own were found; Hong Kong,
+        # Macau and Singapore fell back to English.
+        for name, code in (('zh_HK.UTF-8', 'zh-TW'), ('zh_MO', 'zh-TW'), ('zh_SG', 'zh-CN'), ('zh_TW', 'zh-TW'), ('zh_CN', 'zh-CN')):
+            with self.subTest(name=name):
+                self.assertEqual(detect_lang_code(name), code)
+
+
 class LocaleKeysetTest(unittest.TestCase):
     def test_all_locales_share_the_english_keyset(self) -> None:
         english = json.loads((LOCALE_DIR / 'en.json').read_text(encoding='utf-8'))

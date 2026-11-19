@@ -36,6 +36,10 @@ _LEGACY_LANG_CODES = {
 
 # For the unqualified 'Chinese_<Country>' form the country decides the script,
 # and locale.normalize leaves the country word untranslated - so map it too.
+# The ISO regions of Chinese mapped to the script their locale file covers:
+# only Taiwan and the mainland have a file of their own.
+_CHINESE_ISO_REGIONS = {'cn': 'zh-CN', 'sg': 'zh-CN', 'tw': 'zh-TW', 'hk': 'zh-TW', 'mo': 'zh-TW'}
+
 _LEGACY_CHINESE_REGIONS = {
     'china': 'zh-CN',
     'singapore': 'zh-CN',
@@ -75,6 +79,8 @@ def detect_lang_code(lang: str) -> str:
     alias = _LEGACY_LANG_CODES.get(base)
     if alias is None and base == 'chinese':
         alias = _LEGACY_CHINESE_REGIONS.get(region_word)
+    if alias is None and base == 'zh':
+        alias = _CHINESE_ISO_REGIONS.get(region_word)
     if alias and (LOCALE_DIR / f'{alias}.json').exists():
         return alias
 
