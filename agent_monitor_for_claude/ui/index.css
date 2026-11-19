@@ -752,8 +752,17 @@ body.splitter-dragging {
         "line line"
         "meta meta"
         "hits hits";
-    gap: 3px 10px;
+    /* The rows below the first space themselves with a margin, which an empty,
+       hidden row takes with it - a row gap would stay for every named track. */
+    gap: 0 10px;
     padding: 9px 14px 10px;
+
+    .item-title,
+    .item-line,
+    .item-meta,
+    .row-hits {
+        margin-top: 3px;
+    }
     border-top: 1px solid var(--border);
     cursor: default;
 
@@ -866,6 +875,10 @@ body.splitter-dragging {
             "meta meta"
             "hits hits";
         padding: 7px 14px 8px;
+
+        .item-title {
+            margin-top: 0;
+        }
 
         .item-head,
         .item-line {
@@ -3492,6 +3505,10 @@ body.compact {
 
         .item-head {
             display: contents;
+        }
+
+        .item-title {
+            margin-top: 0;
         }
 
         .item-why,
