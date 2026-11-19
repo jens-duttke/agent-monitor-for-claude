@@ -150,7 +150,7 @@ _SHELL_HOSTS = _with_truncations({
 })
 
 
-def probe_all(requests: Iterable[tuple[int, int | None]]) -> dict[int, ProcessInfo]:
+def probe_all(requests: Iterable[tuple[int, int | None]], helper_commands: frozenset[str] = frozenset()) -> dict[int, ProcessInfo]:
     """Probe many sessions from one ``/proc`` scan.
 
     Parameters
@@ -158,6 +158,9 @@ def probe_all(requests: Iterable[tuple[int, int | None]]) -> dict[int, ProcessIn
     requests : iterable of (pid, proc_start_ticks)
         Process IDs from the session registry, each with the recorded process
         start time (``/proc/[pid]/stat`` field 22) or ``None``.
+    helper_commands : frozenset of str
+        The program names of the servers the installed plugins configure: a
+        direct child running one is a helper, not a tool, whenever it started.
 
     Returns
     -------
@@ -172,7 +175,7 @@ def probe_all(requests: Iterable[tuple[int, int | None]]) -> dict[int, ProcessIn
 
     result: dict[int, ProcessInfo] = {}
     for pid, proc_start_ticks in requests:
-        descendants = procfs.live_descendants(pid, proc_start_ticks, table, index, ticks_per_second)
+        descendants = procfs.live_descendants(pid, proc_start_ticks, table, index, ticks_per_second, helper_commands, _PROC_DIR)
         if descendants is None:
             result[pid] = ProcessInfo(alive=False, tool_running=False)
             continue
@@ -209,7 +212,7 @@ def vmmem_present() -> bool:
     return False
 
 
-def process_stats(pid: int, proc_start_ticks: int | None = None) -> list[ChildProcessStat]:
+def process_stats(pid: int, proc_start_ticks: int | None = None, helper_commands: frozenset[str] = frozenset()) -> list[ChildProcessStat]:
     """Return live CPU / memory / uptime for a session's descendant processes.
 
     The descendant set and the liveness gate are exactly :func:`probe_all`'s - both go through
@@ -239,7 +242,7 @@ def process_stats(pid: int, proc_start_ticks: int | None = None) -> list[ChildPr
     index = procfs.children_index(table)
     ticks_per_second = procfs.clk_tck()
 
-    descendants = procfs.live_descendants(pid, proc_start_ticks, table, index, ticks_per_second)
+    descendants = procfs.live_descendants(pid, proc_start_ticks, table, index, ticks_per_second, helper_commands, _PROC_DIR)
     if descendants is None:
         return []
 
@@ -266,7 +269,7 @@ def process_stats(pid: int, proc_start_ticks: int | None = None) -> list[ChildPr
     return stats
 
 
-def process_details(pid: int, proc_start_ticks: int | None, child_pid: int) -> ProcessDetails | None:
+def process_details(pid: int, proc_start_ticks: int | None, child_pid: int, helper_commands: frozenset[str] = frozenset()) -> ProcessDetails | None:
     """Return how one of a session's background processes was started, from where and when.
 
     Only a process the session's own process panel lists is read - the descendant set
@@ -290,7 +293,7 @@ def process_details(pid: int, proc_start_ticks: int | None, child_pid: int) -> P
     index = procfs.children_index(table)
     ticks_per_second = procfs.clk_tck()
 
-    descendants = procfs.live_descendants(pid, proc_start_ticks, table, index, ticks_per_second)
+    descendants = procfs.live_descendants(pid, proc_start_ticks, table, index, ticks_per_second, helper_commands, _PROC_DIR)
     entry = table.get(child_pid)
     if descendants is None or entry is None or child_pid not in {child for child, _name in descendants}:
         return None

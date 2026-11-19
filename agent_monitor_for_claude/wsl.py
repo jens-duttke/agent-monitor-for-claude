@@ -335,7 +335,7 @@ def _is_readable_dir(path: Path) -> bool:
         return False
 
 
-def probe_wsl_sessions(root: SessionRoot, requests: Iterable[tuple[int, int | None]]) -> dict[int, ProcessInfo]:
+def probe_wsl_sessions(root: SessionRoot, requests: Iterable[tuple[int, int | None]], helper_commands: frozenset[str] = frozenset()) -> dict[int, ProcessInfo]:
     """Probe WSL session liveness and running children from one procfs scan.
 
     Reads ``root.proc_dir`` - the distro's own ``/proc`` shared over the 9P/UNC mount - directly
@@ -374,7 +374,7 @@ def probe_wsl_sessions(root: SessionRoot, requests: Iterable[tuple[int, int | No
 
     result: dict[int, ProcessInfo] = {}
     for pid, proc_start_ticks in requests:
-        descendants = procfs.live_descendants(pid, proc_start_ticks, table, index)
+        descendants = procfs.live_descendants(pid, proc_start_ticks, table, index, procfs.DEFAULT_CLK_TCK, helper_commands, root.proc_dir)
         if descendants is None:
             result[pid] = ProcessInfo(alive=False, tool_running=False)
             continue
@@ -424,7 +424,7 @@ def _session_table(root: SessionRoot, sessions: list[tuple[int, int | None]], st
     return table
 
 
-def wsl_process_details(root: SessionRoot, pid: int, proc_start_ticks: int | None, child_pid: int) -> ProcessDetails | None:
+def wsl_process_details(root: SessionRoot, pid: int, proc_start_ticks: int | None, child_pid: int, helper_commands: frozenset[str] = frozenset()) -> ProcessDetails | None:
     """Return how one of a WSL session's background processes was started, from where and when.
 
     Only a process the session's own panel lists is read - the descendant set
@@ -451,7 +451,7 @@ def wsl_process_details(root: SessionRoot, pid: int, proc_start_ticks: int | Non
         return None
 
     table = _session_table(root, [(pid, proc_start_ticks)])
-    descendants = procfs.live_descendants(pid, proc_start_ticks, table, procfs.children_index(table))
+    descendants = procfs.live_descendants(pid, proc_start_ticks, table, procfs.children_index(table), procfs.DEFAULT_CLK_TCK, helper_commands, root.proc_dir)
     entry = table.get(child_pid)
     if descendants is None or entry is None or child_pid not in {child for child, _name in descendants}:
         return None
@@ -459,7 +459,7 @@ def wsl_process_details(root: SessionRoot, pid: int, proc_start_ticks: int | Non
     return procfs.read_process_details(root.proc_dir, child_pid, entry.starttime, procfs.read_btime(root.proc_dir), procfs.DEFAULT_CLK_TCK)
 
 
-def wsl_process_stats(root: SessionRoot, pid: int, proc_start_ticks: int | None) -> list[ChildProcessStat]:
+def wsl_process_stats(root: SessionRoot, pid: int, proc_start_ticks: int | None, helper_commands: frozenset[str] = frozenset()) -> list[ChildProcessStat]:
     """Return live CPU / memory / uptime for one WSL session's descendant processes.
 
     The descendant set and liveness gate are exactly :func:`probe_wsl_sessions`'s - both go through
@@ -498,7 +498,7 @@ def wsl_process_stats(root: SessionRoot, pid: int, proc_start_ticks: int | None)
     table = _session_table(root, [(pid, proc_start_ticks)])
     index = procfs.children_index(table)
 
-    descendants = procfs.live_descendants(pid, proc_start_ticks, table, index)
+    descendants = procfs.live_descendants(pid, proc_start_ticks, table, index, procfs.DEFAULT_CLK_TCK, helper_commands, root.proc_dir)
     if descendants is None:
         return []
 

@@ -300,7 +300,7 @@ class ProcessDetailsTest(unittest.TestCase):
 
     def _listing(self, children: list[tuple[int, str]] | None, start_offset: float = 0.0) -> Any:
         """A stand-in for the session walk that lists *children*, recording each one's start shifted by *start_offset*."""
-        def walk(_pid: int, _ticks: int | None, _table: dict, cache: dict) -> list[tuple[int, str]] | None:
+        def walk(_pid: int, _ticks: int | None, _table: dict, cache: dict, *_rest) -> list[tuple[int, str]] | None:
             for child_pid, _name in children or ():
                 cache[child_pid] = psutil.Process(child_pid).create_time() + start_offset
             return children
@@ -350,3 +350,23 @@ class UnreadableProcessTableTest(unittest.TestCase):
             kernel.CreateToolhelp32Snapshot.return_value = process_win32._INVALID_HANDLE_VALUE
             with self.assertRaises(OSError):
                 process_win32.probe_all([(os.getpid(), None)])
+
+
+@_WINDOWS_ONLY
+class LateHelperTest(unittest.TestCase):
+    """A language server Claude Code starts on first use lives as long as the session; it is no tool."""
+
+    def test_a_configured_server_and_its_subtree_are_helpers_whenever_they_started(self) -> None:
+        from agent_monitor_for_claude.platforms import process_win32
+
+        start = 1000.0
+        # 100 session -> 200 rust-analyzer (via the rustup proxy) -> 300 its proc-macro server
+        #             -> 400 cargo, a tool the session runs
+        table = {100: (1, 'claude.exe'), 200: (100, 'rustup.exe'), 300: (200, 'rust-analyzer-proc-macro-srv.exe'), 400: (100, 'cargo.exe')}
+        children = {1: [100], 100: [200, 400], 200: [300]}
+        starts = {100: start, 200: start + 600, 300: start + 1200, 400: start + 600}
+        commands = {200: ['C:/Users/u/.cargo/bin/rust-analyzer.exe'], 400: ['cargo', 'check']}
+        with mock.patch.object(process_win32, '_command_line', side_effect=lambda pid: commands.get(pid, [])):
+            found = process_win32._meaningful_children(100, table, children, dict(starts), frozenset({'rust-analyzer'}))
+
+        self.assertEqual(found, [(400, 'cargo.exe')])

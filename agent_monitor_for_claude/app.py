@@ -31,6 +31,7 @@ from .i18n import T, available_languages, reload_translations
 from .paths import SessionRoot, config_dir, host_path, local_root, projects_dir, scratchpad_dir
 from .paths import transcript_path as _transcript_path
 from .platforms import IS_WINDOWS, prepare_gui_environment, storage_dir
+from .plugin_servers import server_commands
 from .pricing import load_pricing
 from .process_probe import process_details, process_stats
 from .roots import root_for_origin
@@ -359,10 +360,10 @@ class _MonitorApi:
 
         if root.proc_dir is not None:
             proc_start_ticks = _proc_start_ticks_for(list_sessions(root), pid_value)
-            stats = wsl_process_stats(root, pid_value, proc_start_ticks)
+            stats = wsl_process_stats(root, pid_value, proc_start_ticks, server_commands(root))
         else:
             proc_start_ticks = _proc_start_ticks_for(list_sessions(local_root()), pid_value)
-            stats = process_stats(pid_value, proc_start_ticks)
+            stats = process_stats(pid_value, proc_start_ticks, server_commands(local_root()))
 
         return [
             {
@@ -399,9 +400,9 @@ class _MonitorApi:
 
         proc_start_ticks = _proc_start_ticks_for(records, pid_value)
         if root.proc_dir is not None:
-            details = wsl_process_details(root, pid_value, proc_start_ticks, child_value)
+            details = wsl_process_details(root, pid_value, proc_start_ticks, child_value, server_commands(root))
         else:
-            details = process_details(pid_value, proc_start_ticks, child_value)
+            details = process_details(pid_value, proc_start_ticks, child_value, server_commands(local_root()))
 
         if details is None:
             return None

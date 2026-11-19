@@ -26,7 +26,7 @@ from pathlib import Path
 from .platforms import IS_WINDOWS
 
 __all__ = [
-    'SessionRoot', 'TranscriptIndex', 'local_root', 'claude_temp_dir', 'config_dir', 'sessions_dir', 'projects_dir', 'model_catalog_dir',
+    'SessionRoot', 'TranscriptIndex', 'local_root', 'claude_temp_dir', 'config_dir', 'sessions_dir', 'plugins_dir', 'projects_dir', 'model_catalog_dir',
     'update_result_path', 'cwd_to_slug', 'transcript_path', 'find_transcript', 'task_output_dir', 'task_output_path', 'scratchpad_dir', 'host_path',
 ]
 
@@ -134,6 +134,11 @@ def config_dir() -> Path:
 def sessions_dir(root: SessionRoot) -> Path:
     """Return the directory holding the per-process session registry files."""
     return root.config_dir / 'sessions'
+
+
+def plugins_dir(root: SessionRoot) -> Path:
+    """Return the directory holding the installed plugins and their marketplaces."""
+    return root.config_dir / 'plugins'
 
 
 def projects_dir(root: SessionRoot) -> Path:

@@ -59,7 +59,8 @@ All reads are local and read-only. The paths below are under `~/.claude/` (or `C
 | `cache/model-catalog/*.json` | Each model's id and context window size. |
 | `.last-update-result.json` | Whether Claude Code's last self-update succeeded, and its version. |
 | `settings.json` | The default effort level. |
-| Process table (`/proc` on Linux) | Process ids, parent ids, names and start times, to tell live sessions from ended ones. CPU and memory for the selected session's processes. |
+| `plugins/` manifests | The program each installed plugin runs as a language or MCP server, to tell such a server from a tool the session runs. |
+| Process table (`/proc` on Linux) | Process ids, parent ids, names and start times, to tell live sessions from ended ones. The program a session's direct child runs (the first word of its command line), to recognise a plugin's server. CPU and memory for the selected session's processes. |
 | Window titles | Compared in memory to find the window to raise when you click a session. Not stored. |
 | `agent-monitor-settings.json` | The app's own settings (see [What it writes](#what-it-writes)). An older copy in `~/.claude/` is still read. |
 

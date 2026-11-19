@@ -33,6 +33,7 @@ from .cli_install import installed_version
 from .last_seen import note_alive, prune_last_seen, seconds_since_alive
 from .model_catalog import context_window
 from .paths import SessionRoot, TranscriptIndex, sessions_dir, transcript_path
+from .plugin_servers import server_commands
 from .process_probe import ProcessInfo, probe_all
 from .procinfo import ChildProcess
 from .roots import session_roots
@@ -622,7 +623,8 @@ def _probe_map(pairs: list[tuple[SessionRoot, dict[str, Any]]]) -> dict[tuple[st
     for root, requests in requests_by_root.items():
         now = time.monotonic()
         try:
-            info_by_pid = probe_all(requests) if root.proc_dir is None else probe_wsl_sessions(root, requests)
+            helpers = server_commands(root)
+            info_by_pid = probe_all(requests, helpers) if root.proc_dir is None else probe_wsl_sessions(root, requests, helpers)
         except Exception:
             with _last_probes_lock:
                 last = _last_probes.get(root.origin)

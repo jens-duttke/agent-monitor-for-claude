@@ -345,8 +345,15 @@ def live_descendants(
     table: dict[int, ProcEntry],
     index: dict[int, list[int]],
     ticks_per_second: int = DEFAULT_CLK_TCK,
+    helper_commands: frozenset[str] = frozenset(),
+    proc_dir: Path | None = None,
 ) -> list[tuple[int, str]] | None:
     """Return *pid*'s meaningful descendants, or ``None`` when the session is not alive.
+
+    A direct child whose command line (read from *proc_dir*) runs one of
+    *helper_commands* - a server a plugin configures, which Claude Code starts
+    on first use and keeps for the session - is a helper whenever it started,
+    and so is everything below a helper.
 
     A pid absent from *table*, or one whose recorded ``starttime`` does not match
     *proc_start_ticks* (the kernel recycled the pid for an unrelated process), is not alive.  The
@@ -373,11 +380,11 @@ def live_descendants(
 
     descendants: list[tuple[int, str]] = []
     visited = {pid}
-    pending = list(index.get(pid, []))
+    pending = [(child_pid, False) for child_pid in index.get(pid, [])]
     helper_window_ticks = SESSION_HELPER_WINDOW_SECONDS * ticks_per_second
 
     while pending:
-        child_pid = pending.pop()
+        child_pid, under_helper = pending.pop()
         if child_pid in visited:
             continue
         visited.add(child_pid)
@@ -386,14 +393,45 @@ def live_descendants(
         if child is None:
             continue
 
+        helper = (under_helper or child.starttime - entry.starttime <= helper_window_ticks
+                  or (child.ppid == pid and proc_dir is not None and _runs_helper_command(proc_dir, child_pid, child.starttime, helper_commands)))
         # An exited child whose parent has not waited for it yet is no running
         # tool; it has no children left either, so walking on loses nothing.
-        if child.starttime - entry.starttime > helper_window_ticks and child.state not in _EXITED_STATES:
+        if not helper and child.state not in _EXITED_STATES:
             descendants.append((child_pid, child.comm))
 
-        pending.extend(index.get(child_pid, []))
+        pending.extend((grandchild, helper) for grandchild in index.get(child_pid, []))
 
     return descendants
+
+
+def _runs_helper_command(proc_dir: Path, pid: int, starttime: int, helper_commands: frozenset[str]) -> bool:
+    """Whether *pid*'s program, as its command line names it, is one of *helper_commands* (lowercased stems).
+
+    Remembered per process (pid and start time), so the command line - a read
+    over the share for a WSL distro - is read once per child, not per poll.
+    """
+    if not helper_commands:
+        return False
+    key = (str(proc_dir), pid, starttime)
+    program = _programs.get(key)
+    if program is None:
+        try:
+            raw = (proc_dir / str(pid) / 'cmdline').read_bytes()
+        except OSError:
+            raw = b''
+        first = raw.split(b'\0', 1)[0].decode('utf-8', errors='replace')
+        program = first.rsplit('/', 1)[-1].lower()
+        if len(_programs) >= _MAX_PROGRAMS:
+            _programs.pop(next(iter(_programs)))
+        _programs[key] = program
+
+    return program in helper_commands
+
+
+# (proc dir, pid, start time) -> the program name a child's command line starts with.
+_programs: dict[tuple[str, int, int], str] = {}
+_MAX_PROGRAMS = 512
 
 
 def read_process_details(proc_dir: Path, pid: int, starttime: int, btime: int | None, ticks_per_second: int) -> ProcessDetails:

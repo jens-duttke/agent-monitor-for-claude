@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.wintypes
+import ntpath
 import threading
 import time
 from datetime import datetime, timedelta
@@ -110,7 +111,7 @@ _TICKS_PER_SECOND = 10_000_000
 _FILETIME_UNIX_OFFSET_SECONDS = 11_644_473_600
 
 
-def probe_all(requests: Iterable[tuple[int, int | None]]) -> dict[int, ProcessInfo]:
+def probe_all(requests: Iterable[tuple[int, int | None]], helper_commands: frozenset[str] = frozenset()) -> dict[int, ProcessInfo]:
     """Probe many sessions from one process-table scan.
 
     Parameters
@@ -118,6 +119,10 @@ def probe_all(requests: Iterable[tuple[int, int | None]]) -> dict[int, ProcessIn
     requests : iterable of (pid, proc_start_ticks)
         Process IDs from the session registry, each with the recorded process
         start time (.NET local-time ticks) or ``None``.
+    helper_commands : frozenset of str
+        The program names of the servers the installed plugins configure
+        (``plugin_servers.server_commands``): a direct child running one is a
+        session-lifetime helper, not a tool, whenever it started.
 
     Returns
     -------
@@ -156,7 +161,7 @@ def probe_all(requests: Iterable[tuple[int, int | None]]) -> dict[int, ProcessIn
 
         ancestor_names = [name for _pid, name in _ancestors(pid, table, create_time_cache)]
         host, via_cli = _classify_ancestry(ancestor_names)
-        children = _meaningful_children(pid, table, children_index, create_time_cache)
+        children = _meaningful_children(pid, table, children_index, create_time_cache, helper_commands)
         parent_of = {child_pid: table[child_pid][0] for child_pid, _name in children}
         parent_of.update(_listed_ancestry(children, table, pid))
         result[pid] = ProcessInfo(
@@ -195,7 +200,7 @@ def vmmem_present() -> bool:
     return any(name.startswith('vmmem') for _pid, (_ppid, name) in table.items())
 
 
-def process_stats(pid: int, proc_start_ticks: int | None = None) -> list[ChildProcessStat]:
+def process_stats(pid: int, proc_start_ticks: int | None = None, helper_commands: frozenset[str] = frozenset()) -> list[ChildProcessStat]:
     """Return live CPU / memory / uptime for a session's descendant processes.
 
     The descendant set is exactly the one the badge count is built from
@@ -233,7 +238,7 @@ def process_stats(pid: int, proc_start_ticks: int | None = None) -> list[ChildPr
     """
     table = _scan_processes()
     create_time_cache: dict[int, float | None] = {}
-    children = _session_children(pid, proc_start_ticks, table, create_time_cache)
+    children = _session_children(pid, proc_start_ticks, table, create_time_cache, helper_commands)
     if children is None:
         return []
 
@@ -260,7 +265,7 @@ def process_stats(pid: int, proc_start_ticks: int | None = None) -> list[ChildPr
     return stats
 
 
-def process_details(pid: int, proc_start_ticks: int | None, child_pid: int) -> ProcessDetails | None:
+def process_details(pid: int, proc_start_ticks: int | None, child_pid: int, helper_commands: frozenset[str] = frozenset()) -> ProcessDetails | None:
     """Return how one of a session's background processes was started, from where and when.
 
     Only a process the session's own process panel lists is read - the same
@@ -284,7 +289,7 @@ def process_details(pid: int, proc_start_ticks: int | None, child_pid: int) -> P
     """
     table = _scan_processes()
     create_time_cache: dict[int, float | None] = {}
-    children = _session_children(pid, proc_start_ticks, table, create_time_cache)
+    children = _session_children(pid, proc_start_ticks, table, create_time_cache, helper_commands)
     if children is None or child_pid not in {child for child, _name in children}:
         return None
 
@@ -318,6 +323,7 @@ def _psutil_value(getter: Any) -> Any:
 
 def _session_children(
     pid: int, proc_start_ticks: int | None, table: dict[int, tuple[int, str]], create_time_cache: dict[int, float | None],
+    helper_commands: frozenset[str] = frozenset(),
 ) -> list[tuple[int, str]] | None:
     """The session's counted descendants, or None when its process is gone or its PID was recycled."""
     if table.get(pid) is None:
@@ -334,7 +340,7 @@ def _session_children(
     for child_pid, (ppid, _name) in table.items():
         children_index.setdefault(ppid, []).append(child_pid)
 
-    return _meaningful_children(pid, table, children_index, create_time_cache)
+    return _meaningful_children(pid, table, children_index, create_time_cache, helper_commands)
 
 
 # Live psutil handles kept between calls so cpu_percent() can report the delta
@@ -582,6 +588,7 @@ def _meaningful_children(
     table: dict[int, tuple[int, str]],
     children_index: dict[int, list[int]],
     create_time_cache: dict[int, float | None],
+    helper_commands: frozenset[str] = frozenset(),
 ) -> list[tuple[int, str]]:
     """Return the genuine process tree below *pid* as ``(pid, name)``, excluding the console host.
 
@@ -597,15 +604,18 @@ def _meaningful_children(
 
     Descendants that started together with the session itself are session-
     lifetime helpers (stdio MCP servers, watchers) rather than tool executions,
-    and are skipped - see ``SESSION_HELPER_WINDOW_SECONDS``.
+    and are skipped - see ``SESSION_HELPER_WINDOW_SECONDS``.  So is a direct
+    child running one of the *helper_commands* - a language or MCP server a
+    plugin configures, which Claude Code starts on first use and keeps for the
+    session - whenever it started, and everything below a helper.
     """
     children: list[tuple[int, str]] = []
     visited = {pid}
     session_start = _create_time(pid, create_time_cache)
-    pending: list[tuple[int, int]] = [(pid, child_pid) for child_pid in children_index.get(pid, [])]
+    pending: list[tuple[int, int, bool]] = [(pid, child_pid, False) for child_pid in children_index.get(pid, [])]
 
     while pending:
-        parent_pid, child_pid = pending.pop()
+        parent_pid, child_pid, under_helper = pending.pop()
         if child_pid in visited:
             continue
         if not _is_child_link_real(parent_pid, child_pid, create_time_cache):
@@ -615,12 +625,47 @@ def _meaningful_children(
         entry = table.get(child_pid)
         if entry is None:
             continue
-        if entry[1] not in _IGNORED_CHILD_NAMES and not _is_session_helper(child_pid, session_start, create_time_cache):
+        helper = (under_helper or _is_session_helper(child_pid, session_start, create_time_cache)
+                  or (parent_pid == pid and _runs_helper_command(child_pid, helper_commands, create_time_cache.get(child_pid))))
+        if entry[1] not in _IGNORED_CHILD_NAMES and not helper:
             children.append((child_pid, entry[1]))
 
-        pending.extend((child_pid, grandchild) for grandchild in children_index.get(child_pid, []))
+        pending.extend((child_pid, grandchild, helper) for grandchild in children_index.get(child_pid, []))
 
     return children
+
+
+def _runs_helper_command(pid: int, helper_commands: frozenset[str], started: float | None = None) -> bool:
+    """Whether *pid*'s program, as its command line names it, is one of *helper_commands* (lowercased stems).
+
+    Only the program - the command line's first word - is kept, and remembered
+    per process (pid and start time), so it is read once per child, not per poll.
+    """
+    if not helper_commands:
+        return False
+    key = (pid, started)
+    program = _programs.get(key)
+    if program is None:
+        command = _command_line(pid)
+        program = ntpath.splitext(ntpath.basename(command[0]))[0].lower() if command else ''
+        if len(_programs) >= _MAX_PROGRAMS:
+            _programs.pop(next(iter(_programs)))
+        _programs[key] = program
+
+    return program in helper_commands
+
+
+# (pid, start time) -> the program a child's command line starts with.
+_programs: dict[tuple[int, float | None], str] = {}
+_MAX_PROGRAMS = 512
+
+
+def _command_line(pid: int) -> list[str]:
+    """*pid*'s command line, or an empty list when the system would not tell."""
+    try:
+        return psutil.Process(pid).cmdline()
+    except (psutil.Error, OSError):
+        return []
 
 
 def _is_session_helper(child_pid: int, session_start: float | None, create_time_cache: dict[int, float | None]) -> bool:

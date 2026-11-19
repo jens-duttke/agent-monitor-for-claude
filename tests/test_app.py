@@ -433,6 +433,12 @@ class UnknownOriginRefusalTest(unittest.TestCase):
 class ProcessDetailsBridgeTest(unittest.TestCase):
     """A process's command line is read only for a process listed below a session the registry names."""
 
+    def setUp(self) -> None:
+        # The installed plugins of this machine are not the test's business.
+        patcher = mock.patch.object(app, 'server_commands', return_value=frozenset())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _windows_root(self) -> SessionRoot:
         return SessionRoot(origin='local', label=None, config_dir=Path('cfg'), proc_dir=None, claude_temp_dir=Path('tmp'))
 
@@ -448,7 +454,7 @@ class ProcessDetailsBridgeTest(unittest.TestCase):
             'pid': 99, 'command_line': ['node', 'build.js'], 'command_line_clipped': False, 'executable': 'C:\\node.exe',
             'cwd': 'C:\\proj', 'started_at': 1.5, 'threads': 4,
         })
-        details_mock.assert_called_once_with(4242, 999, 99)
+        details_mock.assert_called_once_with(4242, 999, 99, frozenset())
 
     def test_a_pid_the_registry_does_not_name_is_never_probed(self) -> None:
         api = _MonitorApi()
@@ -477,7 +483,7 @@ class ProcessDetailsBridgeTest(unittest.TestCase):
              mock.patch.object(app, 'wsl_process_details', return_value=None) as wsl_mock:
             self.assertIsNone(api.get_process_details(4242, 99, origin='wsl:U'))
 
-        wsl_mock.assert_called_once_with(wsl_root, 4242, 5000, 99)
+        wsl_mock.assert_called_once_with(wsl_root, 4242, 5000, 99, frozenset())
 
 
 class GitOverviewBridgeTest(unittest.TestCase):
@@ -577,6 +583,12 @@ class WslOriginTasksTest(unittest.TestCase):
 class WslOriginProcessStatsTest(unittest.TestCase):
     """As of Task 13, a WSL origin's get_process_stats routes to wsl_process_stats instead of degrading."""
 
+    def setUp(self) -> None:
+        # The installed plugins of this machine are not the test's business.
+        patcher = mock.patch.object(app, 'server_commands', return_value=frozenset())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _wsl_root(self) -> SessionRoot:
         return SessionRoot(origin='wsl:U', label='U', config_dir=Path('cfg'), proc_dir=Path('proc'), claude_temp_dir=Path('tmp'))
 
@@ -591,7 +603,7 @@ class WslOriginProcessStatsTest(unittest.TestCase):
 
         self.assertEqual(result, [{'pid': 99, 'name': 'node', 'cpu': 1.0, 'rss': 2048, 'uptime': 5.0, 'kind': 'process'}])
         list_sessions_mock.assert_called_once_with(wsl_root)
-        wsl_stats_mock.assert_called_once_with(wsl_root, 4242, 5000)
+        wsl_stats_mock.assert_called_once_with(wsl_root, 4242, 5000, frozenset())
 
     def test_get_process_stats_ignores_a_registry_record_for_a_different_pid(self) -> None:
         api = _MonitorApi()
@@ -601,11 +613,17 @@ class WslOriginProcessStatsTest(unittest.TestCase):
              mock.patch.object(app, 'wsl_process_stats', return_value=[]) as wsl_stats_mock:
             api.get_process_stats(4242, origin='wsl:U')
 
-        wsl_stats_mock.assert_called_once_with(wsl_root, 4242, None)
+        wsl_stats_mock.assert_called_once_with(wsl_root, 4242, None, frozenset())
 
 
 class WindowsOriginPassthroughTest(unittest.TestCase):
     """The default 'local' origin must still resolve and call through, exactly as before Task 10."""
+
+    def setUp(self) -> None:
+        # The installed plugins of this machine are not the test's business.
+        patcher = mock.patch.object(app, 'server_commands', return_value=frozenset())
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     _SESSION = '6e22e66f-6298-442a-9762-2a5b65052389'
     _CWD = r'D:\proj'
@@ -646,7 +664,7 @@ class WindowsOriginPassthroughTest(unittest.TestCase):
         # The registry lookup always uses the standalone local_root(), independent of the
         # resolved origin root object - its .origin must be the real 'local' constant.
         self.assertEqual(list_sessions_mock.call_args[0][0].origin, 'local')
-        process_stats_mock.assert_called_once_with(4242, 999)
+        process_stats_mock.assert_called_once_with(4242, 999, frozenset())
 
 
 class StartSearchSeqTest(unittest.TestCase):
