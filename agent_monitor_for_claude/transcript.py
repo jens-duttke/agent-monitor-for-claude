@@ -2,8 +2,8 @@
 Transcript Metadata
 ===================
 
-Reads a session transcript and extracts **only** control-flow metadata:
-entry type, the last assistant turn's ``stop_reason``, tool-request/result
+Reads a session transcript and extracts, for the per-poll snapshot, mostly
+control-flow metadata: entry type, the last assistant turn's ``stop_reason``, tool-request/result
 IDs (to detect an unanswered request), the last tool's name, whether the newest
 user turn is Claude Code's interrupt marker, whether a trailing turn is an API
 error (and whether that error is a usage/session limit), timestamps, the model
@@ -25,14 +25,21 @@ under (``attributionSkill``) and a web search's count of searches made
 (``toolUseResult.searchCount``); the same usage scan also sums the transcripts
 of a session's subagents (:func:`usage_scan`).
 
-This module is the privacy boundary of the application.  It must never read,
-return, store, or expose conversation content - message ``text``, ``thinking``
-blocks, tool ``input``, or tool-result ``content`` are never accessed.  The
-narrow exceptions yield only metadata, never the surrounding content: the
-sanctioned title read above, matching the fixed interrupt-marker string to a
-boolean entry kind, the first line of the CLI's own wording of an API error
-or of a request it is retrying, and the file path of a file-writing tool call,
-which is only counted.  A dedicated test enforces this.
+This module is the privacy boundary of the application.  The snapshot path
+(:func:`state_for`, :func:`history_state_for` and the full scan behind them)
+carries no conversation content beyond named, length-capped display fields:
+the title, the call a session runs or waits on (``current_tool``), the newest
+reply's text (``last_reply``), the plan's steps, a failing hook's first error
+line, the peers of a message, and the first line of the CLI's own wording of
+an API error, a retry or a refusal.  A file-writing call's path is only
+counted.  The on-request reads for the one session or agent the details show -
+:func:`full_texts`, :func:`agent_steps`, :func:`session_steps`,
+:func:`final_reply`, :func:`hook_failures`, :func:`media_index` and
+:func:`media_image` - deliberately return tool inputs, results, reply text, a
+hook's command and output, and images, and never run on the poll.  Thinking
+blocks stay unread throughout.  ``tests/test_transcript_privacy.py`` guards the
+snapshot against accidental broad reads, with those display fields exempted by
+name.
 """
 from __future__ import annotations
 
