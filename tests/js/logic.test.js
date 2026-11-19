@@ -3077,6 +3077,12 @@ test('worked time: intervals of the last day, the open turn counted up to now', 
     // A turn an earlier process left open counts only from this process's start.
     const reopened = logic.workSummary(Object.assign({}, LIVE, { work_intervals: [], turn_open_seconds: 72000, age_seconds: 2 }), 'working');
     assert.equal(reopened.work_seconds, 600);
+    // A turn open for longer than two days keeps counting its last day: the
+    // figure must not depend on the clock alone.
+    for (const opened of [47 * 3600, 49 * 3600]) {
+        const long = logic.workSummary(Object.assign({}, LIVE, { work_intervals: [], turn_open_seconds: opened, process_age_seconds: 200000 }), 'working');
+        assert.equal(long.work_seconds, 86400, String(opened));
+    }
 });
 
 test('project group order: most urgent status first, then newest activity, a missing age last', () => {

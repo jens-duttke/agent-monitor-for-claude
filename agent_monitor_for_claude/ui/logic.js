@@ -3022,7 +3022,7 @@ function workSummary(raw, status) {
     const opened = alive && !turnStopped(raw) ? finiteOrNull(raw.turn_open_seconds) : null;
     const processAge = finiteOrNull(raw.process_age_seconds);
     const open = opened !== null && processAge !== null ? Math.min(opened, processAge) : opened;
-    if (open !== null && open < WORK_WINDOW_SECONDS * 2) {
+    if (open !== null) {
         const idle = finiteOrNull(raw.age_seconds);
         if (ACTIVITY_RUNNING.has(status)) {
             spans.push([Math.min(open, WORK_WINDOW_SECONDS), 0]);
