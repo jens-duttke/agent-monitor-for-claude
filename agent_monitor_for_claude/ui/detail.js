@@ -192,12 +192,15 @@ function requestDetailPaths(session) {
     }
     detailPaths.key = key;
     detailPaths.isNew = isNew;
+    // Two requests for one key can land in either order; only the newest counts.
+    const seq = (detailPaths.seq || 0) + 1;
+    detailPaths.seq = seq;
     const origin = session.origin || 'local';
     Promise.all([
         transcriptPath(session.session_id || '', session.cwd || '', origin),
         scratchpadPath(session.session_id || '', session.cwd || '', origin),
     ]).then(([transcript, scratchpad]) => {
-        if (detailPaths.key !== key) {
+        if (detailPaths.key !== key || detailPaths.seq !== seq) {
             return;
         }
         detailPaths.transcript = transcript;
