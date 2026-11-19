@@ -105,6 +105,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Selecting another session or subagent while the previous one's activity is still loading shows the new one's activity at once, instead of only after the old answer arrived.
 - A collapsed project group no longer draws a second line between its name and its path.
 - List entries no longer carry extra space at the bottom for lines they do not show.
+- In the graph, the selected session keeps its highlight under the pointer, and its fold arrow no longer squares off the box's corner.
 
 ## [1.0.0] - 2026-11-07
 

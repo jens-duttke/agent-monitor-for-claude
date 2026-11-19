@@ -2358,7 +2358,8 @@ body.group-graph .content {
         &.gnode-session {
             cursor: pointer;
 
-            &:hover rect {
+            /* The box only: a selected node keeps its fill, the fold toggle its own. */
+            &:hover:not(.selected) > rect {
                 fill: var(--surface-hover);
             }
         }
