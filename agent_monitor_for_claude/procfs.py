@@ -82,6 +82,9 @@ class ProcEntry:
     cpu_ticks : int or None
         Cumulative ``utime + stime`` (fields 14 and 15), or ``None`` when either
         did not parse.
+    state : str
+        The one-letter state (field 3); ``Z`` (zombie) and ``X`` (dead) mean the
+        process has exited and only its entry remains.
     """
 
     comm: str
@@ -89,6 +92,11 @@ class ProcEntry:
     starttime: int
     rss_pages: int | None
     cpu_ticks: int | None
+    state: str = ''
+
+
+# A process in one of these states has exited; only its /proc entry is left.
+_EXITED_STATES = frozenset({'Z', 'X'})
 
 
 def clk_tck() -> int:
@@ -227,7 +235,7 @@ def _read_entry(pid_dir: Path) -> ProcEntry | None:
     stime = _optional_int(fields, 12)
     cpu_ticks = None if utime is None or stime is None else utime + stime
 
-    return ProcEntry(comm, ppid, starttime, rss_pages, cpu_ticks)
+    return ProcEntry(comm, ppid, starttime, rss_pages, cpu_ticks, fields[0] if fields else '')
 
 
 def _list_tasks(pid_dir: Path) -> list[Path] | None:
@@ -351,7 +359,7 @@ def live_descendants(
     started before the session is excluded by the same comparison.
     """
     entry = table.get(pid)
-    if entry is None:
+    if entry is None or entry.state in _EXITED_STATES:
         return None
 
     if proc_start_ticks is not None and proc_start_ticks != entry.starttime:
@@ -372,7 +380,9 @@ def live_descendants(
         if child is None:
             continue
 
-        if child.starttime - entry.starttime > helper_window_ticks:
+        # An exited child whose parent has not waited for it yet is no running
+        # tool; it has no children left either, so walking on loses nothing.
+        if child.starttime - entry.starttime > helper_window_ticks and child.state not in _EXITED_STATES:
             descendants.append((child_pid, child.comm))
 
         pending.extend(index.get(child_pid, []))

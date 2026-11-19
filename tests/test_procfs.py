@@ -17,11 +17,11 @@ from agent_monitor_for_claude import procfs
 
 
 def _write_stat(proc_dir: Path, pid: int, comm: str, ppid: int, starttime: int,
-                utime: int = 50, stime: int = 10, rss_pages: int = 500) -> None:
+                utime: int = 50, stime: int = 10, rss_pages: int = 500, state: str = 'S') -> None:
     """Write one fabricated ``/proc/<pid>/stat`` entry."""
     entry = proc_dir / str(pid)
     entry.mkdir(parents=True, exist_ok=True)
-    fields = ['S', str(ppid), '1', '1', '0', '-1', '4194304', '0', '0', '0', '0',
+    fields = [state, str(ppid), '1', '1', '0', '-1', '4194304', '0', '0', '0', '0',
               str(utime), str(stime), '0', '0', '20', '0', '4', '0', str(starttime), '1000000', str(rss_pages)]
     (entry / 'stat').write_text(f'{pid} ({comm}) ' + ' '.join(fields), encoding='utf-8')
 
@@ -314,6 +314,17 @@ class ReadProcSubtreeTests(unittest.TestCase):
                 table = procfs.read_proc_subtree(proc_dir, [(100, 5000)])
 
         self.assertEqual(sorted(table), [100, 101])
+
+    def test_a_child_that_exited_but_was_not_reaped_is_no_running_tool(self) -> None:
+        # A zombie keeps its /proc entry until its parent waits for it; an MCP
+        # server that never does left the session on "Background" for good.
+        with tempfile.TemporaryDirectory() as base:
+            proc_dir = Path(base)
+            self._tree(proc_dir)
+            _write_stat(proc_dir, 102, 'make', 101, 106000, state='Z')
+            table = procfs.read_proc_subtree(proc_dir, [(100, 5000)])
+
+        self.assertEqual(procfs.live_descendants(100, 5000, table, procfs.children_index(table)), [(101, 'node')])
 
     def test_an_unreachable_tree_reads_as_empty(self) -> None:
         self.assertEqual(procfs.read_proc_subtree(Path('/does/not/exist'), [(100, None)]), {})

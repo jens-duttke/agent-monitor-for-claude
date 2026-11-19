@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A regular expression valid in Python but not in JavaScript, such as `(?P<name>...)` or `(?i)`, is now searched instead of being marked invalid.
 - After the page reloads (a language change), a content search started before it can no longer add its old results to a new search.
 - A WSL process the share refuses to report on no longer makes every session of that distro vanish from the list for a refresh.
+- On Linux and in WSL, a background process that has exited but was not yet collected by its parent no longer keeps a session on "Background".
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07
