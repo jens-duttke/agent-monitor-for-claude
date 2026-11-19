@@ -75,6 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A settings save takes effect even if you close the dialog before it finishes, and a value the app refuses stays marked until you change it.
 - "Use current size" in the settings takes the window's size at the moment you press it, not the size it had when the dialog opened.
 - The copy menu for text selected in the settings dialog now shows above the dialog instead of opening invisibly beneath it.
+- Tooltips appear on figures that refresh while you hover them, and an open task console that follows its output no longer hides every tooltip in the window.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07

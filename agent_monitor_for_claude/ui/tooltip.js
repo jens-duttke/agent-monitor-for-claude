@@ -76,12 +76,16 @@ function initTooltips() {
         clearTimeout(tooltipTimer);
         tooltipTarget = target;
         tooltipTimer = setTimeout(() => {
-            if (tooltipTarget !== target || !target.isConnected || !target.dataset.tip) {
+            // The target as it is now: a render during the delay may have
+            // swapped it for an equal node (see syncTooltip), and another
+            // hovered trigger clears this timer itself.
+            const current = tooltipTarget;
+            if (!current || !current.isConnected || !current.dataset.tip) {
                 return;
             }
             const tip = ensureTooltip();
-            tip.textContent = target.dataset.tip;   // .tooltip has white-space: pre-line
-            positionTooltip(target);
+            tip.textContent = current.dataset.tip;   // .tooltip has white-space: pre-line
+            positionTooltip(current);
             tip.classList.add('show');
         }, TOOLTIP_DELAY);
     });
@@ -108,8 +112,16 @@ function initTooltips() {
         tooltipSilenced = tooltipTarget;
         hideTooltip();
     }, true);
-    // A moved/scrolled target leaves a stale tooltip behind - drop it.
-    document.addEventListener('scroll', hideTooltip, true);
+    // A moved/scrolled target leaves a stale tooltip behind - drop it. Only a
+    // scroll of the page or of a container holding the target can move it: the
+    // task console follows its own output every second.
+    document.addEventListener('scroll', (event) => {
+        const scroller = event.target;
+        if (!tooltipTarget || scroller === document || scroller === document.documentElement
+            || (scroller && scroller.contains && scroller.contains(tooltipTarget))) {
+            hideTooltip();
+        }
+    }, true);
     window.addEventListener('resize', hideTooltip);
 }
 
