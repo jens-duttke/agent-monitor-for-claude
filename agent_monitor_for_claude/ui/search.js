@@ -93,9 +93,10 @@ function searchOptions() {
     return { match_case: state.searchMatchCase, whole_word: state.searchWholeWord, use_regex: state.searchRegex };
 }
 
-// Front-end regex validity check for instant red-box feedback. The backend
-// (Python `re`) is authoritative and can still flag an error via its push, but
-// this catches the common case without a round-trip.
+// Front-end regex validity check for instant red-box feedback. It is only a
+// hint: the backend (Python's engine) decides, so a refused pattern is still
+// sent, and the backend's first answer clears the red box again when it
+// accepts what JavaScript does not - a named group, an inline flag.
 function isValidRegex(pattern) {
     try {
         new RegExp(pattern);
@@ -182,28 +183,9 @@ function runSearch() {
     const seq = ++state.searchSeq;
     const bridge = apiBridge();
 
-    // Regex mode with an invalid pattern: flag the box red at once and do not
-    // scan. (The backend re-validates too and can flag it via its push.)
-    if (active && state.searchRegex && !isValidRegex(query)) {
-        state.searchError = true;
-        state.searchMatches = null;
-        state.searchLoading = false;
-        state.searchProcessed = 0;
-        state.searchTotal = 0;
-        // Cancel any in-flight backend scan (a prior valid pattern still running):
-        // the local seq bump is invisible to Python, so without a fresh
-        // start_search the earlier scan reads every remaining transcript to the end.
-        if (bridge && typeof bridge.start_search === 'function') {
-            logic.settleCall(() => bridge.start_search('', [], searchOptions(), seq));
-        }
-        updateSearchProgress();
-        updateSearchBox();
-        if (state.last) {
-            render(state.last);
-        }
-        return;
-    }
-    state.searchError = false;
+    // Regex mode with a pattern JavaScript refuses: flag the box red at once,
+    // but still ask the backend, whose engine decides (see isValidRegex).
+    state.searchError = active && state.searchRegex && !isValidRegex(query);
     updateSearchBox();
 
     if (!active) {
@@ -371,6 +353,12 @@ function onSearchPush(payload) {
             render(state.last);
         }
         return;
+    }
+
+    // The backend accepted the pattern: a red box from the front-end check goes.
+    if (state.searchError) {
+        state.searchError = false;
+        updateSearchBox();
     }
 
     state.searchProcessed = payload.processed || 0;
