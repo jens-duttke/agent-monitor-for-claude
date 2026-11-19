@@ -77,6 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The copy menu for text selected in the settings dialog now shows above the dialog instead of opening invisibly beneath it.
 - Tooltips appear on figures that refresh while you hover them, and an open task console that follows its output no longer hides every tooltip in the window.
 - Leaving the compact view into the graph shows its subagents, messages and tools at once rather than after the next refresh.
+- On Linux, the launcher always starts its own checkout, even from a folder that holds another copy of the app.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07
