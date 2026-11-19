@@ -35,7 +35,7 @@ function applyBootstrap(bootstrap) {
         searchInput.placeholder = state.labels.search_placeholder;
         searchInput.setAttribute('aria-label', state.labels.search_placeholder);
         // The shortcut that jumps here, on hover rather than in the box.
-        searchInput.dataset.tip = (state.labels.key_ctrl || 'Ctrl') + ' K';
+        searchInput.dataset.tip = searchShortcutTip();
     }
     refreshSearchOptButtons();
     refreshCompactButton();

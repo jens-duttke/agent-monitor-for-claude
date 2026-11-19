@@ -120,9 +120,14 @@ function updateSearchBox() {
             input.dataset.tip = state.labels.search_regex_invalid || '';
         } else {
             input.removeAttribute('aria-invalid');
-            delete input.dataset.tip;
+            input.dataset.tip = searchShortcutTip();
         }
     }
+}
+
+// The box's resting tooltip: the shortcut that jumps here.
+function searchShortcutTip() {
+    return (state.labels.key_ctrl || 'Ctrl') + ' K';
 }
 
 // The one place the query text changes. A widened scope answers exactly one
