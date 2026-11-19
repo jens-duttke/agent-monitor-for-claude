@@ -80,8 +80,9 @@ function renderDetail() {
     requestPriority(session);
     requestSessionTexts(session);
 
-    setMarkup(pane.querySelector('.detail-head'), detailHeadMarkup(session));
-    updateDetailAge(pane.querySelector('.detail-head .age'), session);
+    const head = pane.querySelector('.detail-head');
+    updateDetailHead(head, session);
+    updateDetailAge(head.querySelector('.detail-status').querySelector('.age'), session);
     requestGit(session);
     setMarkup(pane.querySelector('.detail-kpis'), detailKpisMarkup(session));
     const now = nowBlockContent(session);
@@ -393,6 +394,25 @@ function wholeTexts(session) {
 
 /* --- head: where, what, status, facts, actions --- */
 
+// The head in parts, each rewritten only when its own markup changes: a status
+// line that ticks ("for 2m", "wakes in 4m") would otherwise rewrite the whole
+// head on most polls, dropping a selection in it and the focus of an action
+// button - Enter then raised the session's window instead.
+const DETAIL_HEAD_PARTS = ['detail-crumb', 'detail-title', 'detail-status', 'detail-facts', 'detail-actions'];
+
+function updateDetailHead(head, session) {
+    const parts = head.__parts;
+    if (!parts || parts.some((part) => part.parentNode !== head)) {
+        head.innerHTML = '<div class="detail-crumb"></div><h2 class="detail-title"></h2><div class="detail-status"></div>'
+            + '<div class="detail-facts"></div><div class="detail-actions"></div>';
+        // The agent and process heads write this element too; their markup cache no longer describes it.
+        head.__markup = null;
+        head.__parts = DETAIL_HEAD_PARTS.map((name) => head.querySelector('.' + name));
+    }
+    const markup = detailHeadMarkup(session);
+    DETAIL_HEAD_PARTS.forEach((name, index) => setMarkup(head.__parts[index], markup[name]));
+}
+
 function detailHeadMarkup(session) {
     const labels = state.labels;
     let crumb = '';
@@ -412,15 +432,15 @@ function detailHeadMarkup(session) {
         ? '<span class="status-age">' + esc(beforeAge) + '<b class="age"></b>' + esc(afterAge || '') + '</span>'
         : '<span class="status-age">' + esc(labels.no_activity || '') + '</span>';
 
-    return '<div class="detail-crumb">' + crumb + '</div>'
-        + '<h2 class="detail-title">' + esc(session.name || '') + '</h2>'
-        + '<div class="detail-status">'
-        +     '<span' + attr('class', 'chip status-' + session.status) + '><i></i><span class="chip-label">' + esc(session.status_label || '') + '</span></span>'
-        +     (lines.length > 0 ? '<span class="status-lines">' + lines.map((line) => '<span>' + esc(line) + '</span>').join('') + '</span>' : '')
-        +     age
-        + '</div>'
-        + '<div class="detail-facts">' + factsMarkup(session) + '</div>'
-        + '<div class="detail-actions">' + actionsMarkup(session) + '</div>';
+    return {
+        'detail-crumb': crumb,
+        'detail-title': esc(session.name || ''),
+        'detail-status': '<span' + attr('class', 'chip status-' + session.status) + '><i></i><span class="chip-label">' + esc(session.status_label || '') + '</span></span>'
+            + (lines.length > 0 ? '<span class="status-lines">' + lines.map((line) => '<span>' + esc(line) + '</span>').join('') + '</span>' : '')
+            + age,
+        'detail-facts': factsMarkup(session),
+        'detail-actions': actionsMarkup(session),
+    };
 }
 
 // The age is ticked by tickAges, so it is set outside the markup - otherwise
