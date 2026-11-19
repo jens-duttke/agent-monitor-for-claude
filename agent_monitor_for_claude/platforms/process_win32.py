@@ -122,9 +122,11 @@ def probe_all(requests: Iterable[tuple[int, int | None]]) -> dict[int, ProcessIn
     Returns
     -------
     dict[int, ProcessInfo]
-        One entry per requested PID.
+        One entry per requested PID.  A process table that cannot be read raises
+        ``OSError``: read as empty, every session would be ended, and the
+        deletion guard would delete a running one.
     """
-    table = _scan_processes()
+    table = _scan_processes(strict=True)
 
     children_index: dict[int, list[int]] = {}
     for pid, (ppid, _name) in table.items():
@@ -465,15 +467,19 @@ _kernel32.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
 _kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
 
 
-def _scan_processes() -> dict[int, tuple[int, str]]:
+def _scan_processes(strict: bool = False) -> dict[int, tuple[int, str]]:
     """Return the current process table as ``pid -> (ppid, name_lower)``.
 
     Uses one Toolhelp snapshot (a single kernel call) instead of opening a
     handle per process - enumerating names via per-process handles takes
-    seconds under antivirus scrutiny, the snapshot takes milliseconds.
+    seconds under antivirus scrutiny, the snapshot takes milliseconds.  A
+    snapshot that fails is an empty table, or with *strict* an ``OSError`` -
+    for the liveness probe, where an empty table would end every session.
     """
     snapshot = _kernel32.CreateToolhelp32Snapshot(_TH32CS_SNAPPROCESS, 0)
     if snapshot == _INVALID_HANDLE_VALUE or not snapshot:
+        if strict:
+            raise OSError(ctypes.get_last_error(), 'The process table could not be read.')
         return {}
 
     table: dict[int, tuple[int, str]] = {}

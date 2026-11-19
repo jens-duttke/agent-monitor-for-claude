@@ -276,11 +276,14 @@ class ProbeWslSessionsTests(unittest.TestCase):
             self.assertTrue(info.tool_running)
             self.assertIsNone(info.host)
 
-    def test_unreadable_proc_dir(self) -> None:
+    def test_an_unreadable_proc_dir_is_an_error_not_every_process_gone(self) -> None:
+        # Read as "no process alive", it let the deletion guard delete a
+        # session whose process ran, and ended every session for a poll.
         root = _wsl_root(tempfile.mkdtemp())
         root = wsl.SessionRoot(origin='wsl:U', label='U', config_dir=root.config_dir,
                                proc_dir=root.proc_dir / 'missing', claude_temp_dir=root.claude_temp_dir)
-        self.assertFalse(wsl.probe_wsl_sessions(root, [(1, None)])[1].alive)
+        with self.assertRaises(OSError):
+            wsl.probe_wsl_sessions(root, [(1, None)])
 
 
 class WslProcessStatsTests(unittest.TestCase):

@@ -65,6 +65,12 @@ _ROOT_GRACE_SECONDS = 300.0
 _listed_roots: dict[str, tuple[float, list[tuple[SessionRoot, dict[str, Any]]]]] = {}
 _listed_roots_lock = threading.Lock()
 
+# How long a root's last good liveness reading stands in for a probe that failed
+# (see _probe_map); origin -> (monotonic time read, pid -> ProcessInfo).
+_PROBE_REUSE_SECONDS = 10.0
+_last_probes: dict[str, tuple[float, dict[int, ProcessInfo]]] = {}
+_last_probes_lock = threading.Lock()
+
 
 def build_snapshot(graph: bool = False) -> dict[str, Any]:
     """Return the raw session overview as a flat list of per-session records, across every session root.
@@ -602,9 +608,11 @@ def _probe_map(pairs: list[tuple[SessionRoot, dict[str, Any]]]) -> dict[tuple[st
     keyed by ``(root.origin, pid)``, so two roots that happen to report the same
     raw pid number - a local process and an unrelated one inside a WSL distro -
     can never collide or read each other's liveness. A root whose
-    probe itself raises an unexpected error is skipped entirely: none of its
-    sessions get an entry here, so the per-record lookup drops them rather
-    than blanking every other root's sessions.
+    probe raises - its process table could not be read - keeps its last good
+    reading for ``_PROBE_REUSE_SECONDS``, so one failed read neither ends nor
+    drops its sessions; past that it is skipped entirely: none of its sessions
+    get an entry here, so the per-record lookup drops them rather than
+    blanking every other root's sessions.
     """
     requests_by_root: dict[SessionRoot, list[tuple[int, int | None]]] = {}
     for root, record in pairs:
@@ -612,10 +620,18 @@ def _probe_map(pairs: list[tuple[SessionRoot, dict[str, Any]]]) -> dict[tuple[st
 
     probe_map: dict[tuple[str, int], ProcessInfo] = {}
     for root, requests in requests_by_root.items():
+        now = time.monotonic()
         try:
             info_by_pid = probe_all(requests) if root.proc_dir is None else probe_wsl_sessions(root, requests)
         except Exception:
-            continue
+            with _last_probes_lock:
+                last = _last_probes.get(root.origin)
+            if last is None or now - last[0] > _PROBE_REUSE_SECONDS:
+                continue
+            info_by_pid = last[1]
+        else:
+            with _last_probes_lock:
+                _last_probes[root.origin] = (now, info_by_pid)
 
         for pid, info in info_by_pid.items():
             probe_map[(root.origin, pid)] = info

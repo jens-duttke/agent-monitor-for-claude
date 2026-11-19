@@ -364,10 +364,11 @@ def probe_wsl_sessions(root: SessionRoot, requests: Iterable[tuple[int, int | No
     -------
     dict[int, ProcessInfo]
         One entry per requested pid. An unreachable *root.proc_dir* (the distro gone, the mount
-        dropped) degrades every request to not alive, rather than raising.
+        dropped) raises ``OSError``: read as empty it would end every session of the distro, and
+        the deletion guard would delete a running one.
     """
     requests = list(requests)
-    table = _session_table(root, requests)
+    table = _session_table(root, requests, strict=True)
     index = procfs.children_index(table)
     started_at = procfs.start_times(table, _boot_time(root), procfs.DEFAULT_CLK_TCK) if table else {}
 
@@ -406,7 +407,7 @@ def _boot_time(root: SessionRoot) -> int | None:
     return btime
 
 
-def _session_table(root: SessionRoot, sessions: list[tuple[int, int | None]]) -> dict[int, procfs.ProcEntry]:
+def _session_table(root: SessionRoot, sessions: list[tuple[int, int | None]], strict: bool = False) -> dict[int, procfs.ProcEntry]:
     """Read the process trees below the *sessions* (pid, start time) from *root*'s ``/proc``; the whole table only as a fallback.
 
     The walk down from the session pids reads a few dozen files where the whole table reads every
@@ -416,9 +417,9 @@ def _session_table(root: SessionRoot, sessions: list[tuple[int, int | None]]) ->
     if root.proc_dir is None:
         return {}
 
-    table = procfs.read_proc_subtree(root.proc_dir, sessions)
+    table = procfs.read_proc_subtree(root.proc_dir, sessions, strict)
     if table is None:
-        table = procfs.read_proc_table(root.proc_dir)
+        table = procfs.read_proc_table(root.proc_dir, strict)
 
     return table
 

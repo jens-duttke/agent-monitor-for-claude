@@ -114,6 +114,14 @@ class DeleteSessionTest(DeleteEnvTest):
         self.assertTrue(transcript.is_file())
         self.assertTrue(session_dir.is_dir())
 
+    def test_a_process_table_that_cannot_be_read_refuses_the_deletion(self) -> None:
+        transcript, _session_dir = self._write_session_files(_CWD, _UUID)
+        self._write_registry(_CWD, _UUID, os.getpid())
+
+        with mock.patch.object(session_delete, 'probe_all', side_effect=OSError(5, 'snapshot failed')):
+            self.assertFalse(delete_session(_UUID, _CWD))
+        self.assertTrue(transcript.is_file())
+
     def test_deletes_transcript_and_subagent_folder(self) -> None:
         transcript, session_dir = self._write_session_files(_CWD, _UUID)
 

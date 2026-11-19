@@ -282,6 +282,29 @@ class RawSnapshotTest(_RegistryFixture):
         self.assertEqual(session['last_entry_kind'], 'assistant')
 
 
+class FailedProbeTest(unittest.TestCase):
+    """A process table that could not be read once keeps the last reading for a moment."""
+
+    def setUp(self) -> None:
+        snapshot_mod._last_probes.clear()
+        self.addCleanup(snapshot_mod._last_probes.clear)
+        self.pairs = [(local_root(), {'pid': 42, 'proc_start_ticks': None})]
+
+    def test_a_failed_probe_reuses_the_last_good_one(self) -> None:
+        alive = ProcessInfo(alive=True, tool_running=False)
+        with mock.patch.object(snapshot_mod.time, 'monotonic', return_value=100.0),                 mock.patch.object(snapshot_mod, 'probe_all', return_value={42: alive}):
+            snapshot_mod._probe_map(self.pairs)
+        with mock.patch.object(snapshot_mod.time, 'monotonic', return_value=101.0),                 mock.patch.object(snapshot_mod, 'probe_all', side_effect=OSError(5, 'snapshot failed')):
+            self.assertEqual(snapshot_mod._probe_map(self.pairs), {('local', 42): alive})
+
+    def test_an_old_reading_is_not_reused(self) -> None:
+        alive = ProcessInfo(alive=True, tool_running=False)
+        with mock.patch.object(snapshot_mod.time, 'monotonic', return_value=100.0),                 mock.patch.object(snapshot_mod, 'probe_all', return_value={42: alive}):
+            snapshot_mod._probe_map(self.pairs)
+        with mock.patch.object(snapshot_mod.time, 'monotonic', return_value=100.0 + snapshot_mod._PROBE_REUSE_SECONDS + 1),                 mock.patch.object(snapshot_mod, 'probe_all', side_effect=OSError(5, 'snapshot failed')):
+            self.assertEqual(snapshot_mod._probe_map(self.pairs), {})
+
+
 class TransientRootAbsenceTest(unittest.TestCase):
     """A root missing from one poll - a WSL listing that failed once - keeps its caches for a while."""
 

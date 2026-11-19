@@ -165,7 +165,7 @@ def probe_all(requests: Iterable[tuple[int, int | None]]) -> dict[int, ProcessIn
         One entry per requested PID.  An unreadable ``/proc`` degrades every
         request to not alive rather than raising.
     """
-    table = procfs.read_proc_table(_PROC_DIR)
+    table = procfs.read_proc_table(_PROC_DIR, strict=True)
     index = procfs.children_index(table)
     ticks_per_second = procfs.clk_tck()
     started_at = procfs.start_times(table, procfs.read_btime(_PROC_DIR), ticks_per_second)

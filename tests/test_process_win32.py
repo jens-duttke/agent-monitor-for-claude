@@ -337,3 +337,16 @@ class ProcessDetailsTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+@_WINDOWS_ONLY
+class UnreadableProcessTableTest(unittest.TestCase):
+    def test_a_failed_snapshot_is_an_error_not_every_process_gone(self) -> None:
+        # Read as an empty table, every session read as ended for a poll, and
+        # the deletion guard let a running session's files be deleted.
+        from agent_monitor_for_claude.platforms import process_win32
+
+        with mock.patch.object(process_win32, '_kernel32') as kernel:
+            kernel.CreateToolhelp32Snapshot.return_value = process_win32._INVALID_HANDLE_VALUE
+            with self.assertRaises(OSError):
+                process_win32.probe_all([(os.getpid(), None)])

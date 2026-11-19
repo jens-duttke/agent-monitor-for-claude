@@ -119,7 +119,7 @@ def page_size() -> int:
     return int(value) if value and value > 0 else DEFAULT_PAGE_SIZE
 
 
-def read_proc_table(proc_dir: Path) -> dict[int, ProcEntry]:
+def read_proc_table(proc_dir: Path, strict: bool = False) -> dict[int, ProcEntry]:
     """Return one :class:`ProcEntry` per numeric entry under *proc_dir*.
 
     Any ``OSError`` while listing *proc_dir* (the tree unreachable, a share gone) yields an empty
@@ -133,6 +133,9 @@ def read_proc_table(proc_dir: Path) -> dict[int, ProcEntry]:
     try:
         entries = list(proc_dir.iterdir())
     except OSError:
+        # With *strict*, an unreadable tree is an error, not "no process alive".
+        if strict:
+            raise
         return table
 
     for entry in entries:
@@ -146,7 +149,7 @@ def read_proc_table(proc_dir: Path) -> dict[int, ProcEntry]:
     return table
 
 
-def read_proc_subtree(proc_dir: Path, roots: Iterable[tuple[int, int | None]]) -> dict[int, ProcEntry] | None:
+def read_proc_subtree(proc_dir: Path, roots: Iterable[tuple[int, int | None]], strict: bool = False) -> dict[int, ProcEntry] | None:
     """Return the entries of the *roots* and all their descendants, or None when the kernel lists no children.
 
     Walks down from each pid through ``task/[tid]/children`` instead of reading every process's
@@ -168,6 +171,9 @@ def read_proc_subtree(proc_dir: Path, roots: Iterable[tuple[int, int | None]]) -
     try:
         existing = {name for name in os.listdir(proc_dir) if name.isdigit()}
     except OSError:
+        # With *strict*, an unreadable tree is an error, not "no process alive".
+        if strict:
+            raise
         return table
 
     candidates = [(pid, starttime) for pid, starttime in roots if str(pid) in existing]
