@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - When Claude's safeguards refuse a request, the session details show the refusal category and the explanation the API gave, for example `reasoning_extraction`. Quote the category when you report a false refusal.
 
+### Fixed
+- *Switch to window* now raises Claude Desktop for a Desktop chat that runs inside WSL; before, nothing happened.
+
 ## [1.0.0] - 2026-11-07
 
 ### Added

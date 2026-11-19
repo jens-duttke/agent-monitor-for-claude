@@ -2544,6 +2544,9 @@ function buildSession(raw, labels, prices) {
         wsl: wsl,
         origin_label: originLabel,
         host: wsl ? wslHostLabel(originLabel) : hostLabel(raw.host, raw.entrypoint),
+        // The registry's entrypoint, passed to focus_session: a WSL session's
+        // window is found by the application it names.
+        entrypoint: typeof raw.entrypoint === 'string' ? raw.entrypoint : '',
         // `claude --bg` starts the session from a terminal that then goes away,
         // so the entrypoint says `cli` while no terminal is attached. Marking it
         // "CLI" would promise a terminal window to raise; the kind says what it

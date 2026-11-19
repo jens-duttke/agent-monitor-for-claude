@@ -38,7 +38,8 @@ function focusSession(session) {
             session.session_id || '',
             Boolean(session.vscode_deeplink),
             session.title || '',
-            session.origin || 'local'
+            session.origin || 'local',
+            session.entrypoint || ''
         ));
     }
 }

@@ -50,7 +50,7 @@ from .transcript import edited_files
 from .transcript import prioritize_session as _prioritize_session
 from .verbose import print_runtime_diagnostics
 from .window_background import apply_native_background, window_background_color
-from .window_focus import focus_session_window, focus_terminal_window, open_directory, open_vscode_session, reveal_in_file_manager
+from .window_focus import focus_entrypoint_window, focus_session_window, focus_terminal_window, open_directory, open_vscode_session, reveal_in_file_manager
 from .window_layout import NORMAL_MIN_SIZE, enter_compact, keep_on_top, leave_compact, show_attention
 from .wsl import wsl_process_details, wsl_process_stats
 
@@ -864,7 +864,7 @@ class _MonitorApi:
             return ''
 
     def focus_session(self, pid: object, project_name: object = '', session_id: object = '', vscode_deeplink: object = False,
-                      session_title: object = '', origin: object = 'local') -> bool:
+                      session_title: object = '', origin: object = 'local', entrypoint: object = '') -> bool:
         """Jump to a session: raise its hosting window, then focus its tab if possible.
 
         For sessions of the VS Code extension the official deep link
@@ -878,12 +878,17 @@ class _MonitorApi:
         found purely by *session_title* (``focus_terminal_window``), never
         through the pid-based search - a pid from inside a distro must never
         reach the host's process API, which could have reused that same number
-        for an unrelated process.
+        for an unrelated process.  A WSL session of an application with a window
+        of its own on this side (*entrypoint* ``claude-desktop``) is found by
+        that window's owner instead (``focus_entrypoint_window``), falling back
+        to the title route.
         """
         title = session_title if isinstance(session_title, str) else ''
+        name = project_name if isinstance(project_name, str) else ''
 
         if isinstance(origin, str) and origin.startswith('wsl:'):
-            focused = focus_terminal_window(title)
+            host = entrypoint if isinstance(entrypoint, str) else ''
+            focused = focus_entrypoint_window(host, name) or focus_terminal_window(title)
         else:
             if isinstance(pid, bool) or not isinstance(pid, (int, float, str)):
                 return False
@@ -895,7 +900,6 @@ class _MonitorApi:
                 # a ValueError. Either way, degrade to a graceful refusal.
                 return False
 
-            name = project_name if isinstance(project_name, str) else ''
             focused = focus_session_window(pid_value, name, title)
 
         if vscode_deeplink is True and isinstance(session_id, str) and session_id:

@@ -30,10 +30,10 @@ from typing import Any, Iterable
 
 import psutil
 
-from ..procinfo import ChildProcessStat, ProcessDetails, ProcessInfo, SESSION_HELPER_WINDOW_SECONDS, child_processes, clip_arguments
+from ..procinfo import ChildProcessStat, EntrypointWindow, ProcessDetails, ProcessInfo, SESSION_HELPER_WINDOW_SECONDS, child_processes, clip_arguments
 
 __all__ = [
-    'IGNORED_ANCESTOR_NAMES', 'TERMINAL_WINDOW_OWNERS',
+    'ENTRYPOINT_WINDOW_OWNERS', 'IGNORED_ANCESTOR_NAMES', 'TERMINAL_WINDOW_OWNERS',
     'ancestry', 'probe_all', 'process_details', 'process_names', 'process_stats', 'vmmem_present',
 ]
 
@@ -88,6 +88,15 @@ _GUI_HOSTS = {**_EDITOR_HOSTS, **_TERMINAL_HOSTS}
 # focusing it relies on matching the session title against these owners.
 _CONSOLE_HOST_NAMES = frozenset({'conhost.exe', 'openconsole.exe'})
 TERMINAL_WINDOW_OWNERS = frozenset(_TERMINAL_HOSTS) | _CONSOLE_HOST_NAMES
+
+# Host windows of a session that runs inside a WSL distribution, by its registry
+# entrypoint.  Such a session has no process on this side, so its window can only
+# be found by its owner.  Claude Desktop's main window belongs to ``claude.exe``,
+# which is also the native CLI's name - the CLI owns no window of its own, but its
+# title keeps any other ``claude.exe`` window out.
+ENTRYPOINT_WINDOW_OWNERS = {
+    'claude-desktop': EntrypointWindow(owners=frozenset({'claude.exe'}), title='Claude'),
+}
 
 # Ancestors that own windows for the whole desktop, never for one session; the
 # window search skips them so it never raises the shell instead of the editor.
