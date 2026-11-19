@@ -147,7 +147,7 @@ def _read_json(path: Path) -> Any:
     """Read and parse a JSON file, or return None on any error."""
     try:
         text = path.read_text(encoding='utf-8')
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
 
     try:

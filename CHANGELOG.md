@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On Linux, clicking a session whose window has just closed no longer ends the app with an X `BadWindow` error.
 - On Linux, the window asks for attention again each time another session starts waiting, not only for the first one after none was. On a Wayland session, where GTK cannot ask, the app no longer reports that it did.
 - On Windows, the app no longer shares its local port with another app built on the same window toolkit that is already running, which could show one app's page in the other's window.
+- A session record that Claude Code was rewriting at that moment no longer makes every session of its system (or WSL distro) vanish from the list for a refresh.
 
 ## [1.0.0] - 2026-11-07
 

@@ -48,6 +48,16 @@ class SessionsTest(unittest.TestCase):
         self.assertEqual(records[0]['origin'], 'local')
         self.assertIsNone(records[0]['origin_label'])
 
+    def test_a_record_cut_inside_a_character_drops_only_itself(self) -> None:
+        # A read racing Claude Code's rewrite can end inside a multi-byte name;
+        # that one record is unreadable, never the whole root.
+        self._write('1234.json', {'pid': 1234, 'sessionId': 'abc-def', 'cwd': 'd:\\Dev\\proj'})
+        (self._sessions / '5678.json').write_bytes(b'{"pid": 5678, "sessionId": "x", "name": "caf\xc3')
+
+        records = list_sessions(self.root)
+
+        self.assertEqual([record['session_id'] for record in records], ['abc-def'])
+
     def test_parses_native_status_and_waiting_for(self) -> None:
         self._write('5.json', {
             'pid': 5, 'sessionId': 's', 'cwd': 'd:\\x',
