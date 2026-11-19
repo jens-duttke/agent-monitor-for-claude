@@ -45,7 +45,7 @@ The *Graph* grouping draws each session with its subagents, workflows, backgroun
 
   <img src="docs/images/compact.png" width="320" alt="The compact view: a narrow strip with one line per agent under the sections Needs you, Stopped, Running and Recent, each with its status and time">
 
-- **Taskbar** - on Windows the taskbar button shows how many sessions wait for you. On Linux the window asks for attention.
+- **Taskbar** - on Windows the taskbar button shows how many sessions wait for you. On Linux the window asks for attention, except on a Wayland session, where GTK cannot.
 - **WSL** - on Windows, sessions running inside WSL distributions are listed too.
 - **13 languages** - English, German, Spanish, French, Hindi, Indonesian, Italian, Japanese, Korean, Brazilian Portuguese, Ukrainian, Simplified and Traditional Chinese, detected from your system locale or chosen in the settings.
 - **Settings** - refresh interval, how long finished sessions stay, language, WSL and window size, changed in a settings dialog (gear in the toolbar).

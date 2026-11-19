@@ -141,6 +141,60 @@ class LaunchSurfaceTest(unittest.TestCase):
             self.assertFalse(linux.reveal_file('/tmp/x.jsonl'))
 
 
+class GdkX11Display:
+    """Stands in for the display class GTK reports on an X11 session."""
+
+
+class GdkWaylandDisplay:
+    """Stands in for the display class GTK reports on a native Wayland session."""
+
+
+@_LINUX_ONLY
+class TaskbarAttentionTest(unittest.TestCase):
+    def _native(self, display: object) -> mock.Mock:
+        native = mock.Mock()
+        native.is_active.return_value = False
+        native.get_display.return_value = display
+        return native
+
+    def _attend(self, native: mock.Mock, badge: str, flash: bool) -> bool:
+        glib = mock.Mock()
+        glib.idle_add.side_effect = lambda function: function()
+        with mock.patch.object(linux, '_import_gi', return_value=object()), \
+             mock.patch.dict(sys.modules, {'gi.repository': mock.Mock(GLib=glib)}):
+            return linux.set_taskbar_attention(native, badge, flash)
+
+    def test_the_hint_is_withdrawn_once_the_window_is_active_so_the_next_flash_shows(self) -> None:
+        # GTK ignores a hint set to the value it already holds, and nothing
+        # clears it when the user activates the window - so without this the
+        # second session to wait while the first still does never shows.
+        native = self._native(GdkX11Display())
+        self.assertTrue(self._attend(native, '1', True))
+        native.set_urgency_hint.assert_called_once_with(True)
+
+        handlers = [call.args[1] for call in native.connect.call_args_list if call.args[0] == 'notify::is-active']
+        self.assertEqual(len(handlers), 1)
+        native.is_active.return_value = True
+        handlers[0](native, None)
+        native.set_urgency_hint.assert_called_with(False)
+
+        native.is_active.return_value = False
+        self._attend(native, '2', True)
+        native.set_urgency_hint.assert_called_with(True)
+        self.assertEqual(sum(1 for call in native.connect.call_args_list if call.args[0] == 'notify::is-active'), 1)
+
+    def test_a_wayland_window_reports_that_it_cannot_ask_for_attention(self) -> None:
+        # GTK 3's Wayland backend has no urgency hint; claiming success would hide that.
+        native = self._native(GdkWaylandDisplay())
+        self.assertFalse(self._attend(native, '1', True))
+        native.set_urgency_hint.assert_not_called()
+
+    def test_with_nothing_left_waiting_the_hint_is_cleared(self) -> None:
+        native = self._native(GdkX11Display())
+        self.assertTrue(self._attend(native, '', False))
+        native.set_urgency_hint.assert_called_once_with(False)
+
+
 @_LINUX_ONLY
 class ClipboardTest(unittest.TestCase):
     def test_reports_false_without_pygobject(self) -> None:

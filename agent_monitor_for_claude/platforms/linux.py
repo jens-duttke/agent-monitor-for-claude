@@ -28,6 +28,7 @@ import os
 import platform
 import sys
 import threading
+import weakref
 from pathlib import Path
 from typing import Any
 
@@ -551,8 +552,15 @@ def set_taskbar_attention(native: object, badge: str, flash: bool) -> bool:
     over a desktop-specific D-Bus API this application does not speak - so
     *badge* only decides when the request is withdrawn: with nothing left to
     show, the urgency hint is cleared.  A *flash* sets it while the window is not
-    the active one, which the window manager shows as its own highlight.
-    Marshalled onto the GTK main loop like every other window call.
+    the active one, which the window manager shows as its own highlight.  The
+    hint is withdrawn again as soon as the window becomes active: GTK ignores
+    setting the value it already holds, so a hint left standing would swallow
+    every later flash while sessions still wait.  Marshalled onto the GTK main
+    loop like every other window call.
+
+    On a native Wayland session the window cannot ask for attention at all -
+    GTK 3 passes no urgency hint to a Wayland compositor - so the call reports
+    False there instead of a success nobody sees.
 
     Parameters
     ----------
@@ -567,7 +575,8 @@ def set_taskbar_attention(native: object, badge: str, flash: bool) -> bool:
     -------
     bool
         True if the hint was set or cleared.  Best-effort otherwise: any failure
-        (no GTK, no running main loop) is swallowed and reported as False.
+        (no GTK, no running main loop, a Wayland window) is swallowed and reported
+        as False.
     """
     gi = _import_gi()
     if native is None or gi is None or not isinstance(badge, str):
@@ -584,11 +593,16 @@ def set_taskbar_attention(native: object, badge: str, flash: bool) -> bool:
     def _assign() -> bool:
         nonlocal applied
         try:
-            if flash and not native.is_active():
+            if _on_wayland(native):
+                applied = False
+            elif flash and not native.is_active():
+                _withdraw_hint_when_active(native)
                 native.set_urgency_hint(True)
-            elif not badge:
-                native.set_urgency_hint(False)
-            applied = True
+                applied = True
+            else:
+                if not badge:
+                    native.set_urgency_hint(False)
+                applied = True
         except Exception:  # noqa: BLE001  # a toolkit failure must not raise into the bridge
             applied = False
         finally:
@@ -600,6 +614,28 @@ def set_taskbar_attention(native: object, badge: str, flash: bool) -> bool:
     done.wait(_MAIN_LOOP_TIMEOUT)
 
     return applied
+
+
+def _on_wayland(native: Any) -> bool:
+    """Whether *native* is a window on a native Wayland display, where GTK 3 has no urgency hint."""
+    return type(native.get_display()).__name__ == 'GdkWaylandDisplay'
+
+
+def _withdraw_hint_when_active(native: Any) -> None:
+    """Clear *native*'s urgency hint whenever it becomes the active window; connected once per window."""
+    if native in _attention_windows:
+        return
+
+    def _on_active_changed(window: Any, _param: object) -> None:
+        if window.is_active():
+            window.set_urgency_hint(False)
+
+    native.connect('notify::is-active', _on_active_changed)
+    _attention_windows.add(native)
+
+
+# The windows whose urgency hint is withdrawn on activation (see set_taskbar_attention).
+_attention_windows: weakref.WeakSet[Any] = weakref.WeakSet()
 
 
 def setup_console() -> None:

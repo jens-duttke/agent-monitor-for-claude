@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A regular expression that would take practically forever, such as `(a|aa)+$`, no longer freezes the app and stalls the cost figures until a restart: the search stops after a second on such a text and marks the expression as unusable. Running from source now needs the `regex` package (`pip install -r requirements.txt`).
 - On Linux, a settings file with an invalid entry no longer crashes the app on start from a terminal of the Snap-packaged VS Code; the dialog naming the error appears instead.
 - On Linux, clicking a session whose window has just closed no longer ends the app with an X `BadWindow` error.
+- On Linux, the window asks for attention again each time another session starts waiting, not only for the first one after none was. On a Wayland session, where GTK cannot ask, the app no longer reports that it did.
 
 ## [1.0.0] - 2026-11-07
 
