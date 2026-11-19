@@ -193,10 +193,12 @@ function renderTaskList(panel, result) {
         emptyNote.hidden = true;
     }
 
-    const existing = {};
+    // A Map, not an object: a task id is a file name, and an object lookup
+    // answers "constructor" or "__proto__" with a value of its own.
+    const existing = new Map();
     Array.from(listEl.children).forEach((node) => {
         if (node.dataset.taskId) {
-            existing[node.dataset.taskId] = node;
+            existing.set(node.dataset.taskId, node);
         }
     });
 
@@ -204,7 +206,7 @@ function renderTaskList(panel, result) {
     let prev = null;
     for (const task of tasks) {
         seen.add(task.id);
-        let node = existing[task.id];
+        let node = existing.get(task.id);
         if (!node) {
             node = createTaskRow(panel, task);
         }
