@@ -1242,7 +1242,7 @@ def _calls_by_id(handle: BinaryIO, wanted: set[str]) -> dict[str, ToolCall]:
         message = entry.get('message') if isinstance(entry, dict) else None
         content = message.get('content') if isinstance(message, dict) else None
         for block in content if isinstance(content, list) else []:
-            if isinstance(block, dict) and block.get('type') == 'tool_use' and block.get('id') in wanted:
+            if isinstance(block, dict) and block.get('type') == 'tool_use' and _text(block.get('id')) in wanted:
                 call = _tool_call(block)
                 if call is not None:
                     calls[block['id']] = call
@@ -1477,7 +1477,7 @@ def _note_results(entry: dict, content: list, at: float | None, calls: dict[str,
     tool_result = entry.get('toolUseResult')
     interrupted = isinstance(tool_result, dict) and tool_result.get('interrupted') is True
     for block in content:
-        if not isinstance(block, dict) or block.get('type') != 'tool_result' or block.get('tool_use_id') not in calls:
+        if not isinstance(block, dict) or block.get('type') != 'tool_result' or _text(block.get('tool_use_id')) not in calls:
             continue
         step = calls[block['tool_use_id']]
         text = _result_text(block.get('content'))
@@ -1952,7 +1952,7 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
                         # documented precedence).
                         if not is_interrupt and not is_local_command:
                             last_entry_kind = 'tool_result'
-                        tool_use_id = block.get('tool_use_id')
+                        tool_use_id = _text(block.get('tool_use_id'))
                         if tool_use_id:
                             resolved_tool_ids.add(tool_use_id)
 
@@ -2381,6 +2381,11 @@ def _opens_injected_turn(entry: Any, content: object) -> bool:
         kind = entry.get('turnOrigin')
 
     return kind in _INJECTED_TURN_ORIGINS
+
+
+def _text(value: object) -> str | None:
+    """*value* when it is a string, else None - a tool name or id looked up in a dict or a set must be hashable."""
+    return value if isinstance(value, str) else None
 
 
 def _turn_origin(entry: dict) -> str | None:
@@ -3083,7 +3088,7 @@ def _note_tool_failures(entry: dict, state: _ScanState) -> None:
     for block in content if isinstance(content, list) else ():
         if not isinstance(block, _JSON_OBJECT) or block.get('type') != 'tool_result' or block.get('is_error') is not True:
             continue
-        name = state.tool_names_by_id.get(block.get('tool_use_id'))
+        name = state.tool_names_by_id.get(_text(block.get('tool_use_id')))
         if name in state.tool_uses and _declined_outcome(_leading_result_text(block.get('content'))) is None:
             state.tool_uses[name][2] += 1
 
@@ -3225,7 +3230,7 @@ def _note_assistant_entry(entry: dict, message: dict, state: _ScanState) -> None
     at = _timestamp_epoch(entry.get('timestamp'))
     content = message.get('content')
     for block in content if isinstance(content, list) else ():
-        if isinstance(block, _JSON_OBJECT) and block.get('type') == 'tool_use' and block.get('name') in _AGENT_TOOLS:
+        if isinstance(block, _JSON_OBJECT) and block.get('type') == 'tool_use' and _text(block.get('name')) in _AGENT_TOOLS:
             _note_agent_call(block, state)
         if not isinstance(block, _JSON_OBJECT) or block.get('type') != 'tool_use' or block.get('name') != _SEND_MESSAGE_TOOL or at is None:
             continue
@@ -3381,7 +3386,7 @@ def _note_edited_files(content: object, edited_files: set[str]) -> None:
     for block in content:
         if not isinstance(block, _JSON_OBJECT) or block.get('type') != 'tool_use':
             continue
-        path_key = _FILE_EDIT_TOOLS.get(block.get('name'))
+        path_key = _FILE_EDIT_TOOLS.get(_text(block.get('name')))
         tool_input = block.get('input')
         if path_key is None or not isinstance(tool_input, _JSON_OBJECT):
             continue

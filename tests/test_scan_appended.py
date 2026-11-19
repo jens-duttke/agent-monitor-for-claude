@@ -14,6 +14,36 @@ from agent_monitor_for_claude.paths import SessionRoot, cwd_to_slug, transcript_
 _TURN = '{"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":100,"output_tokens":0}}}\n'
 
 
+class MistypedIdentifierTest(unittest.TestCase):
+    """A tool name or id that is not a string is skipped, never a crash that drops the session."""
+
+    def setUp(self) -> None:
+        transcript._scan_cache.clear()
+        self.addCleanup(transcript._scan_cache.clear)
+
+    def test_a_list_name_or_an_object_id_is_skipped(self) -> None:
+        lines = [
+            '{"type":"assistant","timestamp":"2026-07-11T10:00:00Z","message":{"model":"claude-opus-4-8",'
+            '"usage":{"input_tokens":100,"output_tokens":0},'
+            '"content":[{"type":"tool_use","id":"t1","name":["Edit"],"input":{"file_path":"/x"}},'
+            '{"type":"tool_use","id":"t2","name":{"n":"Agent"},"input":{}}]}}',
+            '{"type":"user","timestamp":"2026-07-11T10:00:01Z","message":{"content":'
+            '[{"type":"tool_result","tool_use_id":{"id":"t1"},"is_error":true,"content":"boom"},'
+            '{"type":"tool_result","tool_use_id":["t2"],"content":"ok"}]}}',
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session.jsonl'
+            path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+
+            result = transcript._scan_appended(path)
+            self.assertEqual(result.usage['input_tokens'], 100)
+            # Read again: nothing of the file may be folded in twice.
+            self.assertEqual(transcript._scan_appended(path).usage['input_tokens'], 100)
+
+        # The tail parse reads the same lines for the status.
+        self.assertEqual(transcript._parse(lines).last_entry_kind, 'tool_result')
+
+
 class ScanAppendedConcurrencyTest(unittest.TestCase):
     """Two overlapping snapshot builds must not sum an appended turn twice.
 
