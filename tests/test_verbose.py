@@ -75,6 +75,22 @@ class SetupConsoleTest(unittest.TestCase):
             attach.assert_called_once_with()
             self.assertEqual(os.environ['PYWEBVIEW_LOG'], 'DEBUG')
 
+    def test_pywebviews_logger_logs_debug_although_it_was_set_up_at_import(self) -> None:
+        # pywebview reads PYWEBVIEW_LOG once, when it is imported - which the
+        # package does long before --verbose is acted on.
+        import logging
+
+        import webview  # noqa: F401  # imported first, as the app does
+
+        logger = logging.getLogger('pywebview')
+        previous = logger.level
+        self.addCleanup(logger.setLevel, previous)
+        logger.setLevel(logging.INFO)
+        with mock.patch.object(verbose, '_platform_setup_console'), mock.patch.dict(os.environ, {}, clear=False):
+            verbose.setup_console()
+
+        self.assertTrue(logger.isEnabledFor(logging.DEBUG))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import locale
+import logging
 import os
 import sys
 from pathlib import Path
@@ -38,7 +39,10 @@ def setup_console() -> None:
     """
     _platform_setup_console()
 
+    # pywebview reads the variable once, when it is imported - which happens
+    # before this runs - so its logger's level is set directly as well.
     os.environ['PYWEBVIEW_LOG'] = 'DEBUG'
+    logging.getLogger('pywebview').setLevel(logging.DEBUG)
 
 
 def print_startup_diagnostics() -> None:
