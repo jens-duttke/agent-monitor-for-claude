@@ -91,6 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Leftover records of ended sessions that never wrote a transcript no longer make the app search every project folder every ten seconds.
 - A model catalog file that cannot be read for a moment no longer hides the context share of every session for a minute.
 - A git call whose helper process keeps running no longer hangs the git information of a session for good.
+- Closing the window ends the app at once, even while git information of slow WSL folders is still being read.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07

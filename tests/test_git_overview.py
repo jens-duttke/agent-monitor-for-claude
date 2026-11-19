@@ -186,13 +186,25 @@ class CacheTest(unittest.TestCase):
         git_overview._entries.clear()
         self.addCleanup(git_overview._entries.clear)
 
+    def test_pending_reads_never_hold_the_process_at_exit(self) -> None:
+        # A backlog of slow WSL directories kept the closed app running, where
+        # a second start met "already running".
+        release = threading.Event()
+        with mock.patch.object(git_overview, 'read_directory', side_effect=lambda _directory: release.wait(5) and None):
+            git_overview.git_overview(['C:\slow-repo'])
+            workers = [thread for thread in threading.enumerate() if thread.name.startswith('git-overview')]
+            release.set()
+
+        self.assertTrue(workers)
+        self.assertTrue(all(thread.daemon for thread in workers))
+
     def test_every_ref_the_bridge_accepts_gets_an_answer(self) -> None:
         # The bridge took up to 400 refs but the overview answered 200; the rest
         # read as "no repository" on every round.
         from agent_monitor_for_claude import app
 
         refs = [{'session_id': f's{index}', 'cwd': f'C:\\repo{index}', 'origin': 'local'} for index in range(300)]
-        with mock.patch.object(git_overview._pool, 'submit'), mock.patch.object(app, '_git_overview_directory', side_effect=lambda ref: ref['cwd']):
+        with mock.patch.object(git_overview, '_submit'), mock.patch.object(app, '_git_overview_directory', side_effect=lambda ref: ref['cwd']):
             answers = app._MonitorApi().get_git_overview(refs)
 
         self.assertEqual(answers.count(git_overview.PENDING), 300)
@@ -224,7 +236,7 @@ class CacheTest(unittest.TestCase):
     def test_an_outdated_record_is_shown_while_it_refreshes(self) -> None:
         key = os.path.normcase(os.path.normpath('C:\\repo'))
         git_overview._entries[key] = git_overview._Entry(read_at=-1e9, record={'branch': 'old'})
-        with mock.patch.object(git_overview._pool, 'submit') as submit:
+        with mock.patch.object(git_overview, '_submit') as submit:
             self.assertEqual(git_overview.git_overview(['C:\\repo']), [{'branch': 'old'}])
 
         submit.assert_called_once()

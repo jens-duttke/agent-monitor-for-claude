@@ -23,10 +23,10 @@ an existing directory, a timeout, no window, no index write.
 from __future__ import annotations
 
 import os
+import queue
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -68,7 +68,11 @@ class _Entry:
 
 _entries: dict[str, _Entry] = {}
 _lock = threading.Lock()
-_pool = ThreadPoolExecutor(max_workers=_WORKERS, thread_name_prefix='git-overview')
+# Reads waiting for a worker, and the workers: daemon threads, so a backlog of
+# slow directories never holds the process once the window is closed - a git
+# left running finishes on its own, the reads being read-only.
+_queue: queue.Queue[tuple[str, str]] = queue.Queue()
+_workers: list[threading.Thread] = []
 
 
 def git_overview(directories: list[str]) -> list[dict[str, Any] | str | None]:
@@ -96,12 +100,31 @@ def git_overview(directories: list[str]) -> list[dict[str, Any] | str | None]:
             outdated = entry.read_at is None or now - entry.read_at >= _FRESH_SECONDS
             if outdated and not entry.running:
                 entry.running = True
-                _pool.submit(_refresh, key, directory)
+                _submit(key, directory)
             answers.append(PENDING if entry.read_at is None else entry.record)
         for stale in [key for key, entry in _entries.items() if now - entry.asked_at > _FORGET_SECONDS and not entry.running]:
             del _entries[stale]
 
     return answers
+
+
+def _submit(key: str, directory: str) -> None:
+    """Queue a read of *directory*, starting the workers on first use; the caller holds ``_lock``."""
+    _queue.put((key, directory))
+    while len(_workers) < _WORKERS:
+        worker = threading.Thread(target=_drain, name='git-overview', daemon=True)
+        _workers.append(worker)
+        worker.start()
+
+
+def _drain() -> None:
+    """Worker body: read the queued directories, one at a time, for the life of the process."""
+    while True:
+        key, directory = _queue.get()
+        try:
+            _refresh(key, directory)
+        except Exception:  # noqa: BLE001  # one failed read must not end the worker
+            pass
 
 
 def _refresh(key: str, directory: str) -> None:
