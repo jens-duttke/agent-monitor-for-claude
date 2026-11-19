@@ -559,6 +559,9 @@ def _workflow_activity(subagents_dir: Path, now: float) -> tuple[WorkflowActivit
 # without limit.
 _journal_cache: dict[str, tuple[int, int, tuple[int, int]]] = {}
 _JOURNAL_CACHE_MAX = 64
+# Overlapping snapshots run on their own threads; two evicting at once popped
+# the same key twice, and the KeyError dropped the session from the poll.
+_journal_lock = threading.Lock()
 
 
 def _journal_counts(journal_path: Path) -> tuple[int, int]:
@@ -579,7 +582,8 @@ def _journal_counts(journal_path: Path) -> tuple[int, int]:
         return 0, 0
 
     key = str(journal_path)
-    cached = _journal_cache.get(key)
+    with _journal_lock:
+        cached = _journal_cache.get(key)
     if cached is not None and cached[0] == stat_result.st_mtime_ns and cached[1] == stat_result.st_size:
         return cached[2]
 
@@ -611,9 +615,10 @@ def _journal_counts(journal_path: Path) -> tuple[int, int]:
         return 0, 0
 
     counts = (len(started), len(done))
-    while len(_journal_cache) >= _JOURNAL_CACHE_MAX:
-        _journal_cache.pop(next(iter(_journal_cache)))
-    _journal_cache[key] = (stat_result.st_mtime_ns, stat_result.st_size, counts)
+    with _journal_lock:
+        while len(_journal_cache) >= _JOURNAL_CACHE_MAX:
+            _journal_cache.pop(next(iter(_journal_cache)))
+        _journal_cache[key] = (stat_result.st_mtime_ns, stat_result.st_size, counts)
     return counts
 
 
