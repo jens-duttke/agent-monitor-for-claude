@@ -456,6 +456,19 @@ class MirroredTranscriptTest(HistoryEnvTest):
              mock.patch.object(history, 'live_or_recent_ids', return_value=set()):
             return history.list_history()
 
+    def test_a_copy_without_a_cwd_does_not_count_as_in_its_own_folder(self) -> None:
+        # The folder name stands in for a missing cwd, and a slug of the folder
+        # name is the folder name - so the fallback vouched for any folder.
+        project = self.local_root.config_dir / 'projects' / 'ssh-0123456789abcdef'
+        project.mkdir(parents=True, exist_ok=True)
+        (project / f'{self._ID}.jsonl').write_text(
+            json.dumps({'type': 'user', 'timestamp': '2026-07-01T10:00:00Z', 'message': {'content': 'x'}}) + '\n', encoding='utf-8')
+        self._write(self.wsl_root, '-home-dev-proj')
+
+        records = self._list()
+
+        self.assertEqual([record['origin'] for record in records], ['wsl:U'])
+
     def test_the_original_wins_over_a_copy_in_a_foreign_folder(self) -> None:
         # The host copy comes from the root scanned first, so only its folder can make it lose.
         self._write(self.local_root, 'ssh-0123456789abcdef')

@@ -224,12 +224,16 @@ def _list_root_history(root: SessionRoot, live_ids: set[str], window: float | No
         # the window drops any of them: a sibling the prefilter admitted but the
         # exact age filter rejects can still be the only one carrying the
         # folder's real path.
-        canonical_cwd = _resolve_folder_cwd(project_dir.name, folder_records, slug_to_cwd)
+        canonical_cwd, from_slug = _resolve_folder_cwd(project_dir.name, folder_records, slug_to_cwd)
+        # The raw slug standing in for a missing cwd names its own folder by
+        # construction, so it cannot vouch for the folder being the session's.
         for record in folder_records:
-            if not record['cwd']:
+            borrowed = not record['cwd']
+            if borrowed:
                 record['cwd'] = canonical_cwd
             if _within_window(record['age_seconds'], window):
-                records.append((record, cwd_to_slug(record['cwd']).lower() == project_dir.name.lower()))
+                own_folder = not (borrowed and from_slug) and cwd_to_slug(record['cwd']).lower() == project_dir.name.lower()
+                records.append((record, own_folder))
 
     return records
 
@@ -305,21 +309,21 @@ def _valid_window(max_age_seconds: float | None) -> float | None:
     return window
 
 
-def _resolve_folder_cwd(slug: str, folder_records: list[dict[str, Any]], slug_to_cwd: dict[str, str]) -> str:
-    """Return the project cwd shared by every session in one project folder.
+def _resolve_folder_cwd(slug: str, folder_records: list[dict[str, Any]], slug_to_cwd: dict[str, str]) -> tuple[str, bool]:
+    """Return the project cwd shared by every session in one project folder, and whether it is only the raw slug.
 
     Prefers the live registry's exact cwd for the slug (so history merges into
     the live panel), then any sibling transcript's own cwd, and only if neither
     exists falls back to the raw slug.
     """
     if slug.lower() in slug_to_cwd:
-        return slug_to_cwd[slug.lower()]
+        return slug_to_cwd[slug.lower()], False
 
     for record in folder_records:
         if record['cwd']:
-            return record['cwd']
+            return record['cwd'], False
 
-    return _cwd_from_slug(slug)
+    return _cwd_from_slug(slug), True
 
 
 def _build_history_record(path: Path) -> dict[str, Any] | None:
