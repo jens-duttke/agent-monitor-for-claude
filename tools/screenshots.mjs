@@ -11,7 +11,7 @@
 // SCREENSHOT_BROWSER names the browser executable when none is found, or to use
 // another one. The browser runs on a throw-away profile that is deleted after.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -19,7 +19,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PAGE = pathToFileURL(join(REPO, 'agent_monitor_for_claude', 'ui', 'index.html')).href + '?mock';
 const OUT_DIR = join(REPO, 'docs', 'images');
-const PORT = 9333;
 const SCALE = 2;
 
 const BROWSERS = [
@@ -118,10 +117,14 @@ function findBrowser() {
     return found;
 }
 
-async function debuggerUrl() {
+// The page target of the browser this run started: its DevToolsActivePort file
+// names the port it bound (asked for as 0, so another browser already serving
+// DevTools can never be the one driven).
+async function debuggerUrl(profile) {
     for (let attempt = 0; attempt < 50; attempt++) {
         try {
-            const targets = await (await fetch(`http://127.0.0.1:${PORT}/json`)).json();
+            const port = readFileSync(join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0].trim();
+            const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
             const target = targets.find((entry) => entry.type === 'page');
             if (target) {
                 return target.webSocketDebuggerUrl;
@@ -132,24 +135,43 @@ async function debuggerUrl() {
     throw new Error('The browser did not open its DevTools port.');
 }
 
-// One page, driven over the DevTools protocol.
-async function connect() {
-    const socket = new WebSocket(await debuggerUrl());
+// One page, driven over the DevTools protocol. A protocol error fails the
+// step, and a browser that goes away fails every step still waiting.
+async function connect(profile) {
+    const socket = new WebSocket(await debuggerUrl(profile));
     await new Promise((done) => socket.addEventListener('open', done));
 
     let seq = 0;
+    let closed = false;
     const pending = new Map();
     socket.addEventListener('message', (event) => {
         const message = JSON.parse(event.data);
         if (message.id && pending.has(message.id)) {
-            pending.get(message.id)(message);
+            const { method, done, fail } = pending.get(message.id);
             pending.delete(message.id);
+            if (message.error) {
+                fail(new Error(method + ': ' + message.error.message));
+            } else {
+                done(message);
+            }
         }
     });
+    const closeAll = () => {
+        closed = true;
+        for (const { fail } of pending.values()) {
+            fail(new Error('The browser closed the DevTools connection.'));
+        }
+        pending.clear();
+    };
+    socket.addEventListener('close', closeAll);
+    socket.addEventListener('error', closeAll);
     const send = (method, params = {}) => {
+        if (closed) {
+            return Promise.reject(new Error('The browser closed the DevTools connection.'));
+        }
         const id = ++seq;
         socket.send(JSON.stringify({ id, method, params }));
-        return new Promise((done) => pending.set(id, done));
+        return new Promise((done, fail) => pending.set(id, { method, done, fail }));
     };
 
     const run = async (expression) => {
@@ -163,8 +185,12 @@ async function connect() {
 
     const waitFor = async (expression) => {
         for (let attempt = 0; attempt < 50; attempt++) {
-            if (await run(`(() => { try { return !!(${expression}); } catch (e) { return false; } })()`)) {
-                return;
+            try {
+                if (await run(`(() => { try { return !!(${expression}); } catch (e) { return false; } })()`)) {
+                    return;
+                }
+            } catch (err) {
+                // The page is between two documents; ask again.
             }
             await sleep(100);
         }
@@ -180,10 +206,10 @@ async function connect() {
             await send('Page.navigate', { url: PAGE });
             await waitFor('document.readyState === "complete"');
             const writes = Object.entries(storage).map(([key, value]) => `localStorage.setItem(${JSON.stringify(key)}, ${JSON.stringify(value)});`);
-            await run('localStorage.clear();' + writes.join(''));
+            // Marked, so the wait below can only be met by the reloaded document.
+            await run('localStorage.clear();' + writes.join('') + 'window.__amcStale = true;');
             await send('Page.reload');
-            await sleep(300);
-            await waitFor('state.last && state.last.sessions.length > 0');
+            await waitFor('!window.__amcStale && state.last && state.last.sessions.length > 0');
         },
         // Lets the last render, the details' requests and any animation settle first.
         async shot(name) {
@@ -197,7 +223,7 @@ async function connect() {
 
 async function main() {
     const wanted = process.argv.slice(2);
-    const unknown = wanted.filter((name) => !(name in SCENES));
+    const unknown = wanted.filter((name) => !Object.hasOwn(SCENES, name));
     if (unknown.length) {
         throw new Error('Unknown scene: ' + unknown.join(', ') + ' (known: ' + Object.keys(SCENES).join(', ') + ')');
     }
@@ -205,7 +231,7 @@ async function main() {
 
     const profile = mkdtempSync(join(tmpdir(), 'amc-screenshots-'));
     const browser = spawn(findBrowser(), [
-        '--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
+        '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
         '--hide-scrollbars', '--force-color-profile=srgb', '--no-first-run', 'about:blank',
     ], { stdio: 'ignore' });
     // A browser that cannot be started reports 'error' and never 'exit'.
@@ -218,7 +244,7 @@ async function main() {
         const gone = exited.then(() => {
             throw new Error('The browser exited before it opened its DevTools port.');
         });
-        const page = await Promise.race([connect(), gone]);
+        const page = await Promise.race([connect(profile), gone]);
         try {
             for (const [name, scene] of Object.entries(SCENES)) {
                 if (wanted.length === 0 || wanted.includes(name)) {
