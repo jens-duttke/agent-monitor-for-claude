@@ -39,6 +39,12 @@ class RedactWindowsHomeTest(unittest.TestCase):
         # NTFS - otherwise the full home path (and the username) is printed.
         self.assertEqual(_redact('c:\\users\\jens\\.claude', self._HOME), '~\\.claude')
 
+    def test_a_path_that_normalizes_to_the_home_is_redacted_whole(self) -> None:
+        # The remainder must be cut from the normalized path: cut from the typed
+        # one, a doubled separator garbled it and a '..' segment printed the name.
+        self.assertEqual(_redact('C:\\Users\\\\jens\\.claude', self._HOME), '~\\.claude')
+        self.assertEqual(_redact('C:\\Users\\Jens\\..\\Jens\\.claude', self._HOME), '~\\.claude')
+
     def test_does_not_over_match_a_sibling_directory(self) -> None:
         # 'jens2' merely starts with 'jens'; it must not be redacted to '~2'.
         self.assertEqual(_redact('C:\\Users\\jens2\\project', self._HOME), 'C:\\Users\\jens2\\project')
@@ -56,6 +62,10 @@ class RedactPosixHomeTest(unittest.TestCase):
     def test_redacts_exact_home_and_a_prefix(self) -> None:
         self.assertEqual(_redact('/home/dev', self._HOME), '~')
         self.assertEqual(_redact('/home/dev/.claude', self._HOME), '~/.claude')
+
+    def test_a_path_that_normalizes_to_the_home_is_redacted_whole(self) -> None:
+        self.assertEqual(_redact('/home//dev/.claude', self._HOME), '~/.claude')
+        self.assertEqual(_redact('/home/dev/../dev/.claude', self._HOME), '~/.claude')
 
     def test_does_not_over_match_a_sibling_directory(self) -> None:
         self.assertEqual(_redact('/home/dev2/project', self._HOME), '/home/dev2/project')

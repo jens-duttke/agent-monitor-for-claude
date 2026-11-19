@@ -136,10 +136,13 @@ def _redact_home(path_str: str) -> str:
     over-match a sibling (``.../jens2`` against home ``.../jens``).
     """
     home_n = os.path.normcase(os.path.normpath(str(Path.home())))
-    norm = os.path.normcase(os.path.normpath(path_str))
+    normed = os.path.normpath(path_str)
+    norm = os.path.normcase(normed)
 
     if norm == home_n:
         return '~'
+    # Cut from the normalized path, which lines up with the compared one: the
+    # typed one does not when normalizing changed its length.
     if norm.startswith(home_n + os.sep):
-        return '~' + path_str[len(home_n):]
+        return '~' + normed[len(home_n):]
     return path_str
