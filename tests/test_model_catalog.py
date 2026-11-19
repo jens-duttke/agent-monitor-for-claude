@@ -51,6 +51,27 @@ class ContextWindowTest(unittest.TestCase):
         self.assertEqual(context_window(local_root(), 'claude-opus-5-5'), 1000000)
         self.assertEqual(context_window(local_root(), 'claude-haiku-4-5-20251001'), 200000)
 
+    def test_one_entry_that_cannot_be_read_costs_only_itself(self) -> None:
+        # A file replaced at the moment of the listing blanked the whole table
+        # for a minute.
+        good = self._write('a-cc.json', _catalog(_model('claude-opus-5-5', 1000000)))
+
+        class Entry:
+            def __init__(self, path: Path, fails: bool) -> None:
+                self.path, self.name, self._fails = str(path), path.name, fails
+
+            def is_file(self) -> bool:
+                return True
+
+            def stat(self) -> os.stat_result:
+                if self._fails:
+                    raise PermissionError(13, 'denied')
+                return os.stat(self.path)
+
+        entries = [Entry(good, False), Entry(good.with_name('b-cc.json'), True)]
+        with mock.patch.object(model_catalog.os, 'scandir', return_value=entries):
+            self.assertEqual(context_window(local_root(), 'claude-opus-5-5'), 1000000)
+
     def test_a_tier_suffix_falls_back_to_the_base_id(self) -> None:
         self._write('a-cc.json', _catalog(_model('claude-opus-5-5', 1000000)))
 

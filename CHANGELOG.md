@@ -89,6 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - If the process list cannot be read for a moment, sessions no longer all read as ended, and deleting a past session is refused rather than allowed for one whose process may still run.
 - A language or MCP server an installed plugin starts later in a session, such as `rust-analyzer`, no longer counts as a background process that keeps an idle session on "Background".
 - Leftover records of ended sessions that never wrote a transcript no longer make the app search every project folder every ten seconds.
+- A model catalog file that cannot be read for a moment no longer hides the context share of every session for a minute.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07

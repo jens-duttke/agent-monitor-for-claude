@@ -81,15 +81,27 @@ def _table(root: SessionRoot) -> dict[str, int]:
 def _read_catalogs(directory: Path) -> dict[str, int]:
     """Merge every catalog file in *directory* into one table, a newer file overriding an older one."""
     try:
-        files = sorted((entry for entry in os.scandir(directory) if entry.name.endswith('.json') and entry.is_file()),
-                       key=lambda entry: entry.stat().st_mtime)
+        entries = list(os.scandir(directory))
     except OSError:
         return {}
 
-    table: dict[str, int] = {}
-    for entry in files:
+    # One entry that cannot be read - a file being replaced right now - costs
+    # only itself, not the whole table.
+    dated: list[tuple[float, str]] = []
+    for entry in entries:
+        if not entry.name.endswith('.json'):
+            continue
         try:
-            with open(entry.path, encoding='utf-8') as handle:
+            if entry.is_file():
+                dated.append((entry.stat().st_mtime, entry.path))
+        except OSError:
+            continue
+    dated.sort()
+
+    table: dict[str, int] = {}
+    for _mtime, path in dated:
+        try:
+            with open(path, encoding='utf-8') as handle:
                 data = json.load(handle)
         except (OSError, ValueError):
             continue
