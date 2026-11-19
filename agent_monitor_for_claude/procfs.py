@@ -189,7 +189,7 @@ def read_proc_subtree(proc_dir: Path, roots: Iterable[tuple[int, int | None]]) -
             for pid, task_list in zip(level, task_lists):
                 lists = [children_by_task[task] for task in task_list]
                 if task_list and all(children is None for children in lists):
-                    if (proc_dir / str(pid)).exists():
+                    if _exists(proc_dir / str(pid)):
                         return None
                     continue
                 next_level.extend(child for children in lists if children for child in children if child not in seen)
@@ -240,7 +240,17 @@ def _list_tasks(pid_dir: Path) -> list[Path] | None:
     try:
         return [task for task in (pid_dir / 'task').iterdir() if task.name.isdigit()]
     except OSError:
-        return None if pid_dir.exists() else []
+        return None if _exists(pid_dir) else []
+
+
+def _exists(path: Path) -> bool:
+    """Whether *path* exists; False on any error - ``Path.exists`` lets a permission or share error through."""
+    try:
+        path.stat()
+    except OSError:
+        return False
+
+    return True
 
 
 def _read_task_children(task: Path) -> list[int] | None:

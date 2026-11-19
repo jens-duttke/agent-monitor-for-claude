@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from agent_monitor_for_claude import procfs
@@ -289,6 +290,30 @@ class ReadProcSubtreeTests(unittest.TestCase):
             self.assertIsNone(procfs.read_proc_subtree(proc_dir, [(100, 5000)]))
             (proc_dir / '100' / 'task' / '100').mkdir(parents=True)
             self.assertIsNone(procfs.read_proc_subtree(proc_dir, [(100, 5000)]))
+
+    def test_a_share_error_on_one_pid_reads_as_that_process_gone(self) -> None:
+        # Path.exists() swallows only not-found errors; over the WSL share a
+        # permission or I/O error raised out of the "never raises" probe and
+        # dropped the whole distro from the poll.
+        with tempfile.TemporaryDirectory() as base:
+            proc_dir = Path(base)
+            self._tree(proc_dir)
+            real_stat, real_iterdir = Path.stat, Path.iterdir
+
+            def failing_stat(path: Path, *args: object, **kwargs: object) -> object:
+                if path.name == '101':
+                    raise PermissionError(13, 'denied')
+                return real_stat(path, *args, **kwargs)
+
+            def failing_iterdir(path: Path) -> object:
+                if path.parent.name == '101':
+                    raise OSError(5, 'io')
+                return real_iterdir(path)
+
+            with mock.patch.object(Path, 'stat', failing_stat), mock.patch.object(Path, 'iterdir', failing_iterdir):
+                table = procfs.read_proc_subtree(proc_dir, [(100, 5000)])
+
+        self.assertEqual(sorted(table), [100, 101])
 
     def test_an_unreachable_tree_reads_as_empty(self) -> None:
         self.assertEqual(procfs.read_proc_subtree(Path('/does/not/exist'), [(100, None)]), {})

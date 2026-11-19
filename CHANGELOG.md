@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A search hit count of exactly 50 no longer reads "50+" when the transcript goes on without another hit.
 - A regular expression valid in Python but not in JavaScript, such as `(?P<name>...)` or `(?i)`, is now searched instead of being marked invalid.
 - After the page reloads (a language change), a content search started before it can no longer add its old results to a new search.
+- A WSL process the share refuses to report on no longer makes every session of that distro vanish from the list for a refresh.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07
