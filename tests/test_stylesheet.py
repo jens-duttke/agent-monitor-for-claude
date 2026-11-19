@@ -34,5 +34,21 @@ class UserSelectTest(unittest.TestCase):
         self.assertEqual(unpaired, [])
 
 
+def _z_index(selector: str) -> int:
+    """The z-index of the top-level rule for *selector*."""
+    text = _STYLESHEET.read_text(encoding='utf-8')
+    match = re.search(r'(?m)^' + re.escape(selector) + r' \{[^}]*?z-index:\s*(\d+)', text)
+    assert match, selector
+    return int(match.group(1))
+
+
+class FloatingLayerTest(unittest.TestCase):
+    def test_a_menu_opened_in_a_dialog_shows_above_it_and_below_the_tooltip(self) -> None:
+        # The copy menu over the settings dialog's selectable path was painted
+        # under the modal overlay - open, invisible, and closed by the next click.
+        self.assertGreater(_z_index('.menu'), _z_index('.modal-overlay'))
+        self.assertLess(_z_index('.menu'), _z_index('.tooltip'))
+
+
 if __name__ == '__main__':
     unittest.main()

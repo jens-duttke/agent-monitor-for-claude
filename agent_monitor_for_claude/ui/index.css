@@ -2772,11 +2772,13 @@ body.group-graph .content {
     font-size: 12px;
 }
 
-/* --- Floating layers: menu, tooltip, toast, modal (all fixed, never in the flow) --- */
+/* --- Floating layers: menu, tooltip, toast, modal (all fixed, never in the flow) ---
+   From the bottom: toast, modal, menu (a context menu can open over a dialog),
+   tooltip on top. */
 
 .menu {
     position: fixed;
-    z-index: 1000;
+    z-index: 1250;
     min-width: 200px;
     padding: 4px;
     background: var(--menu-bg);
