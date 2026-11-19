@@ -33,6 +33,7 @@ function initCompactToggle() {
 }
 
 function toggleCompact(force) {
+    const graphWasShown = state.group === 'graph' && !state.compact;
     state.compact = typeof force === 'boolean' ? force : !state.compact;
     try {
         localStorage.setItem('amc-compact', state.compact ? '1' : '0');
@@ -40,6 +41,11 @@ function toggleCompact(force) {
     applyCompact();
     if (state.last) {
         render(state.last);
+    }
+    // The graph's subagents, messages and tools come with the snapshot only
+    // while it is shown (see setGroup).
+    if (!graphWasShown && state.group === 'graph' && !state.compact) {
+        tick();
     }
 }
 
