@@ -2437,6 +2437,11 @@ function cliUpdateFor(raw, newest) {
 
 // The pending tool the status label may name, or null when it may not.
 function namedPendingTool(raw) {
+    // A call of a stopped turn, or one an earlier process left behind before a
+    // reopen, waits on nobody - the same gate that drops it from the activity line.
+    if (turnStopped(raw)) {
+        return null;
+    }
     const reason = pendingBlockReason(raw);
 
     return (reason === 'dialog' || reason === 'prompt') ? raw.last_tool_name : null;

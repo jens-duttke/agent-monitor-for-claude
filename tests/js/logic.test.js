@@ -727,6 +727,19 @@ function refinedSession(overrides) {
     }, REFINED_LABELS, {});
 }
 
+test('buildSession: a reopened session never names a call an earlier process left dangling', () => {
+    // The call died with the process that made it; the activity line already
+    // drops it, so the label must not claim a prompt or a dialog for it.
+    const reopened = {
+        last_entry_kind: 'assistant', last_stop_reason: 'tool_use', pending_tool: true, permission_mode: 'default',
+        age_seconds: 400000, process_age_seconds: 60000, native_status: 'waiting',
+    };
+    for (const tool of ['Bash', 'ExitPlanMode']) {
+        assert.equal(refinedSession({ ...reopened, last_tool_name: tool, waiting_for: 'input needed' }).status_label, 'Question for you');
+        assert.equal(refinedSession({ ...reopened, last_tool_name: tool, waiting_for: 'permission prompt' }).status_label, 'Waiting for you');
+    }
+});
+
 test('classify: a turn that ended blocked waits for you like an open dialog', () => {
     const ended = raw({ last_entry_kind: 'assistant', last_stop_reason: 'end_turn' });
     assert.equal(logic.classify({ ...ended, turn_end_blocked: true }), 'awaiting_permission');
