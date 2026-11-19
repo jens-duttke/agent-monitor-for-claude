@@ -54,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--verbose` no longer prints a garbled path, or your user name, for a `CLAUDE_CONFIG_DIR` typed with a doubled separator or a `..` segment.
 - The settings dialog no longer accepts a window size below 480 x 360, which the window could not take anyway.
 - When a WSL distro briefly fails to list its sessions, its sessions no longer come back with their costs on `…` while every transcript is read again.
+- Deleting a past session whose subagent folder holds a file in use no longer leaves a half-deleted session; it stays in *Older* so you can try again.
 - *Older* lists a Claude Desktop chat run in WSL under its distro rather than under the host's copy when the copy names no project folder, so deleting it removes the original.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 

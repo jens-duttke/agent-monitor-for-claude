@@ -102,11 +102,14 @@ def delete_session(session_id: str, cwd: str, origin: str = 'local') -> bool:
     if not _within(root_dir, transcript) or not _within(root_dir, session_dir):
         return False
 
+    # The folder goes first: the transcript is what lists the session in
+    # History, so a folder that cannot be removed (a file in it held open)
+    # leaves the row in place for another try rather than a half-deleted session.
     try:
-        if transcript.is_file():
-            transcript.unlink()
         if session_dir.is_dir():
             shutil.rmtree(session_dir)
+        if transcript.is_file():
+            transcript.unlink()
     except OSError:
         return False
 

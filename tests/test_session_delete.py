@@ -121,6 +121,15 @@ class DeleteSessionTest(DeleteEnvTest):
         self.assertFalse(transcript.exists())
         self.assertFalse(session_dir.exists())
 
+    def test_a_folder_that_cannot_be_removed_leaves_the_transcript(self) -> None:
+        # The History row is the transcript: removed first, a failing folder
+        # left a session that read as there but was gone, and no way to retry.
+        transcript, _session_dir = self._write_session_files(_CWD, _UUID)
+
+        with mock.patch.object(session_delete.shutil, 'rmtree', side_effect=OSError(32, 'in use')):
+            self.assertFalse(delete_session(_UUID, _CWD))
+        self.assertTrue(transcript.exists())
+
     def test_is_idempotent_when_nothing_is_on_disk(self) -> None:
         # A valid, non-live session with no files left (already deleted) is a
         # success, not an error.
