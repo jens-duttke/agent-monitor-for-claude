@@ -103,6 +103,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A double-click on a folder path or a "show in file manager" button opens it once instead of twice.
 - A session whose transcript had "50+" search hits no longer keeps matching after the transcript was rewritten without them.
 - Selecting another session or subagent while the previous one's activity is still loading shows the new one's activity at once, instead of only after the old answer arrived.
+- A collapsed project group no longer draws a second line between its name and its path.
 
 ## [1.0.0] - 2026-11-07
 

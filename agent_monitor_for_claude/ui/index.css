@@ -663,7 +663,7 @@ body.splitter-dragging {
     background: var(--sunken);
     cursor: pointer;
 
-    .list-group.closed &,
+    /* A path line below closes the band with its own border, open or closed. */
     &:has(+ .group-path:empty) {
         border-bottom: 1px solid var(--border);
     }
