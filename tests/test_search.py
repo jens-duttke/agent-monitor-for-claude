@@ -564,6 +564,29 @@ class SearchScanTest(SearchEnvTest):
         self.assertEqual(search._memo.files, {})
         self.assertIsNone(search._memo.key)
 
+    def test_a_superseded_scan_cannot_take_the_memo_from_the_newer_query(self) -> None:
+        # A worker of the old query that passed its cancel check just before
+        # the new query started reset the memo to its own key, so the new
+        # query's records were thrown away.
+        newer, older = ('b', 0), ('a', 0)
+        first, second = Path('one.jsonl'), Path('two.jsonl')
+        search._resume_point(first, newer, lambda: False)
+        search._resume_point(second, older, lambda: True)
+        search._remember(first, newer, search._FileScan(offset=5))
+
+        self.assertEqual(search._memo.key, newer)
+        self.assertEqual(search._memo.files[first].offset, 5)
+
+    def test_a_superseded_cleared_search_keeps_the_newer_query_s_memo(self) -> None:
+        # The bridge may deliver calls out of order: a stale clear arriving
+        # after the next query started must not drop that query's records.
+        self._write('id-a', _CWD, self._entry('one needle'))
+        self._run('needle', [self._ref('id-a')])
+
+        search.run_search('', [], {}, lambda *args: None, should_cancel=lambda: True)
+
+        self.assertTrue(search._memo.files)
+
     def test_another_query_does_not_resume(self) -> None:
         self._write('id-a', _CWD, self._entry('one needle and a thread'))
         refs = [self._ref('id-a')]

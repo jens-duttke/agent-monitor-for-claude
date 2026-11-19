@@ -255,8 +255,10 @@ def run_search(
         on_update(0, 0, [], True, True)
         return
     if compiled is None:
-        # A cleared search box ends the search, and with it what was remembered.
-        _forget()
+        # A cleared search box ends the search, and with it what was remembered -
+        # unless a newer query has started since, whose records these now are.
+        if not cancel():
+            _forget()
         on_update(0, 0, [], True, False)
         return
 
@@ -825,10 +827,16 @@ class _ScanMemo:
 _memo = _ScanMemo()
 
 
-def _resume_point(path: Path, key: tuple[str, int]) -> _FileScan:
-    """Return a private copy of the stored progress of *path* for *key*, or a fresh one."""
+def _resume_point(path: Path, key: tuple[str, int], should_cancel: Callable[[], bool]) -> _FileScan:
+    """Return a private copy of the stored progress of *path* for *key*, or a fresh one.
+
+    A superseded search never claims the memo: the check runs under the lock,
+    and the newer search's sequence number is in place before it starts.
+    """
     with _memo.lock:
         if _memo.key != key:
+            if should_cancel():
+                return _FileScan()
             _memo.key = key
             _memo.files = {}
         stored = _memo.files.get(path)
@@ -869,7 +877,7 @@ def _scan_file(path: Path, session_id: str, query: _Query, should_cancel: Callab
     ``partial`` on the result: the count is then a floor, not a total.  Any read
     error or a cancellation yields ``None`` - a search never raises.
     """
-    progress = _resume_point(path, query.key)
+    progress = _resume_point(path, query.key, should_cancel)
     if progress.partial:
         return progress.result(session_id)
 
