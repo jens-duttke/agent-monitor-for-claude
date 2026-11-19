@@ -98,7 +98,9 @@ def list_tasks(
 
     File metadata (name, size, last-write age) comes from the task directory;
     each task's label (the description or command from its ``run_in_background``
-    call) is read from the session transcript.
+    call) is read from the session transcript.  The tail of each listed output
+    file is read for a test summary, cached by mtime and size; only its counts
+    are returned.
 
     Parameters
     ----------

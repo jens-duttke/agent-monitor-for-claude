@@ -416,8 +416,9 @@ class _MonitorApi:
     def get_tasks(self, session_id: object, cwd: object, max_age: object = None, origin: object = 'local') -> dict[str, Any]:
         """Return the session's recent background tasks (metadata, plus labels).
 
-        Enumeration reads no output content - only each file's name, size, and
-        last-write age, plus the task's label from the transcript.  The output
+        Enumeration returns metadata only - each file's name, size, and
+        last-write age, the task's label from the transcript, and the test
+        counts found in the last 16 KB of its output (only the counts).  The output
         text is fetched separately, and only when the user expands a task
         (``read_task_output``).  ``max_age`` (seconds, from the UI) drops tasks
         last written before the oldest running process started - those belong to
