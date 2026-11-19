@@ -433,6 +433,25 @@ class SearchReadableTextTest(SearchEnvTest):
 
         self.assertEqual(self._matched_ids(self._run('Grüße', [self._ref('id-a')])), ['id-a'])
 
+    def test_every_spelling_the_matcher_accepts_passes_the_prefilter(self) -> None:
+        # A control character pasted from a terminal is \u001b on the line, and
+        # the regex engine takes more code points for a letter than its own
+        # lower() and upper() name - an ASCII-safe writer spells those \uXXXX.
+        cases = {'esc': ('a\x1bb', 'a\x1bb'), 'sharp-s': ('Straße', 'STRAẞE'), 'sigma': ('σx', 'ςx')}
+        for session_id, (query, written) in cases.items():
+            with self.subTest(session_id=session_id):
+                line = json.dumps({'type': 'user', 'message': {'content': f'say {written} now'}}, ensure_ascii=True) + '\n'
+                self._write(session_id, _CWD, line)
+                self.assertTrue(search._compile_query(query, {})[0].matcher.search(f'say {written} now'))
+                self.assertEqual(self._matched_ids(self._run(query, [self._ref(session_id)])), [session_id])
+
+    def test_the_case_partners_are_every_code_point_the_regex_engine_accepts(self) -> None:
+        every_char = [chr(code) for code in range(0x80, 0x10000) if not 0xD800 <= code < 0xE000]
+        for char in ('ß', 'σ', 'µ', 'ǅ', 'İ', 'Ω', 'ϑ', 'ﬅ'):
+            with self.subTest(char=char):
+                accepted = {other for other in every_char if re.fullmatch(re.escape(char), other, re.IGNORECASE)}
+                self.assertLessEqual(accepted, search._case_partners(char))
+
     def test_the_fold_table_matches_the_regex_engine(self) -> None:
         # The block search lowers bytes, which folds ASCII only. The table names
         # the non-ASCII characters the regex engine still takes for an ASCII

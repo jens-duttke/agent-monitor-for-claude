@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The task console no longer colours output wrongly - red, bold or reset - when a tool uses 256-colour or true-colour codes.
 - In a formatted reply, a sentence containing `|` right above a `---` line is no longer shown as a table.
 - The worked time of a turn running for more than two days no longer drops to nothing; it keeps counting its last day.
+- The content search no longer misses a control character pasted into the query, or `ß`/`ẞ` and `σ`/`ς` in other case, in a transcript written with escaped characters.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07

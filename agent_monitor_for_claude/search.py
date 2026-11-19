@@ -77,6 +77,7 @@ and never at another root's tree either.
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -92,6 +93,13 @@ import regex
 from .background_scans import pause_background_scans
 from .paths import SessionRoot, projects_dir, transcript_path
 from .roots import root_for_origin
+
+# The case pairs re.IGNORECASE matches beyond lowering (code point -> partners);
+# the regex engine keeps them in a module whose name changed with Python 3.11.
+try:
+    from re._casefix import _EXTRA_CASES
+except ImportError:  # Python 3.10
+    from sre_compile import _ignorecase_fixes as _EXTRA_CASES  # type: ignore[attr-defined, no-redef]  # private table
 
 __all__ = ['run_search']
 
@@ -564,6 +572,10 @@ def _json_alternative(char: str, match_case: bool) -> str | None:
     if escaped is not None:
         return escaped
 
+    # Every other control character is written as a lowercase \u escape.
+    if ord(char) < 0x20:
+        return '(?:' + re.escape(char) + '|' + r'\\u%04x' % ord(char) + ')'
+
     if char.isascii():
         # The regex engine also takes a few non-ASCII characters for an ASCII
         # letter's other case; written ASCII-safe, those are an escape.
@@ -576,15 +588,60 @@ def _json_alternative(char: str, match_case: bool) -> str | None:
         return None
 
     # A non-ASCII character survives JSON.stringify unescaped, but a writer using
-    # ASCII-safe output would spell it \uXXXX - allow both. Without match case the
-    # other case's escape is a distinct code point, so it is listed too.
-    variants = {char} if match_case else {char.lower(), char.upper()}
+    # ASCII-safe output would spell it \uXXXX - allow both. Without match case
+    # every code point the regex engine takes for it is a distinct escape, so
+    # each is listed too.
+    variants = {char} if match_case else _case_partners(char)
     spellings = [re.escape(char)]
     for variant in sorted(variants):
         if len(variant) == 1 and ord(variant) <= 0xFFFF:
             spellings.append(r'\\u%04x' % ord(variant))
 
     return '(?:' + '|'.join(spellings) + ')'
+
+
+def _case_partners(char: str) -> set[str]:
+    """Every code point ``re.IGNORECASE`` takes for *char* - *char* included.
+
+    The engine compares lowered characters, plus a few pairs whose lowered
+    forms differ (``σ`` and ``ς``), which it keeps in ``re._casefix``.  So the
+    partners are every character that lowers to the same one, and those pairs,
+    followed until nothing new turns up - ``char.upper()`` alone misses ``ẞ``
+    for ``ß``, whose upper case is ``SS``.
+    """
+    lowered_from = _lowered_from()
+    partners = {char}
+    pending = [char]
+    while pending:
+        current = pending.pop()
+        lower = current.lower()
+        found = set(lowered_from.get(lower, ()))
+        if len(lower) == 1:
+            found.add(lower)
+            found.update(chr(code) for code in _EXTRA_CASES.get(ord(lower), ()))
+        upper = current.upper()
+        if len(upper) == 1:
+            found.add(upper)
+        for partner in found - partners:
+            partners.add(partner)
+            pending.append(partner)
+
+    return partners
+
+
+@functools.lru_cache(maxsize=1)
+def _lowered_from() -> dict[str, tuple[str, ...]]:
+    """Map each lowered character to the characters of the basic multilingual plane that lower to it."""
+    table: dict[str, list[str]] = {}
+    for code in range(0x80, 0x10000):
+        if 0xD800 <= code < 0xE000:
+            continue
+        char = chr(code)
+        lower = char.lower()
+        if len(lower) == 1:
+            table.setdefault(lower, []).append(char)
+
+    return {lower: tuple(chars) for lower, chars in table.items()}
 
 
 def _ordered_transcripts(sessions: object) -> list[tuple[Path, str]]:
