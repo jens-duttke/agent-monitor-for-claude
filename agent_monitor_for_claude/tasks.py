@@ -32,9 +32,11 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import BinaryIO
 
 from .paths import SessionRoot, host_path, scratchpad_dir, task_output_dir, task_output_path, transcript_path
 from .test_results import TestSummary, test_summary
@@ -333,8 +335,27 @@ def _valid_session(session_id: str) -> bool:
 # {transcript path: (mtime_ns, size, {task_id: {'label', 'command'}})} - so the
 # panel's repeated refresh re-parses the transcript only when it actually grew.
 # Bounded so a long-lived monitor visiting many sessions cannot grow it forever.
-_meta_cache: dict[str, tuple[int, int, dict[str, dict[str, str]]]] = {}
+_meta_cache: dict[str, _MetaScan] = {}
+# Bridge threads call in concurrently, and a scan is advanced in place.
+_meta_lock = threading.Lock()
 _META_CACHE_MAX = 32
+# How many bytes before the resume offset must be unchanged for a transcript to
+# count as appended to rather than rewritten.
+_META_TAIL_BYTES = 256
+# Raw-line markers of the two entries the labels come from.
+_META_MARKERS = (b'run_in_background', b'Output is being written to')
+
+
+@dataclass
+class _MetaScan:
+    """How far one transcript was read for its task labels, and what it held."""
+
+    offset: int = 0
+    tail: bytes = b''
+    mtime_ns: int = -1
+    size: int = -1
+    uses: dict[str, dict[str, str]] = field(default_factory=dict)     # tool_use id -> {'label', 'command'}
+    task_to_use: dict[str, str] = field(default_factory=dict)         # task id -> tool_use id
 
 
 def _task_meta(root: SessionRoot, session_id: str, cwd: str) -> dict[str, dict[str, str]]:
@@ -344,7 +365,9 @@ def _task_meta(root: SessionRoot, session_id: str, cwd: str) -> dict[str, dict[s
     agent passed to the ``run_in_background`` Bash call; the command is kept so a
     redirected output file can be found.  Both are joined to the task id via the
     registration line Claude Code writes as that call's result.  Only lines that
-    could carry either are JSON-parsed, so even a large transcript is cheap.
+    could carry either are JSON-parsed, and a transcript that only grew since the
+    last call is read from where that call stopped, so the per-second refresh of
+    an open task console costs the appended bytes only.
     """
     path = transcript_path(root, session_id, cwd)
     try:
@@ -353,35 +376,58 @@ def _task_meta(root: SessionRoot, session_id: str, cwd: str) -> dict[str, dict[s
         return {}
 
     key = str(path)
-    cached = _meta_cache.get(key)
-    if cached is not None and cached[0] == stat_result.st_mtime_ns and cached[1] == stat_result.st_size:
-        return cached[2]
+    with _meta_lock:
+        scan = _meta_cache.get(key)
+        unchanged = scan is not None and scan.mtime_ns == stat_result.st_mtime_ns and scan.size == stat_result.st_size
+        if not unchanged:
+            try:
+                scan = _advance_meta_scan(path, scan, stat_result.st_size)
+            except OSError:
+                return {}
+            scan.mtime_ns, scan.size = stat_result.st_mtime_ns, stat_result.st_size
+            _meta_cache.pop(key, None)
+            while len(_meta_cache) >= _META_CACHE_MAX:
+                _meta_cache.pop(next(iter(_meta_cache)))
+            _meta_cache[key] = scan
 
-    uses: dict[str, dict[str, str]] = {}   # tool_use id -> {'label', 'command'}
-    task_to_use: dict[str, str] = {}       # task id -> tool_use id
-    try:
-        with open(path, encoding='utf-8', errors='replace') as handle:
-            for line in handle:
-                if 'run_in_background' not in line and 'Output is being written to' not in line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except (ValueError, TypeError):
-                    continue
-                _scan_meta_entry(entry, uses, task_to_use)
-    except OSError:
-        return {}
+        meta = {}
+        for task_id, use_id in scan.task_to_use.items():
+            info = scan.uses.get(use_id)
+            if info:
+                meta[task_id] = dict(info)
 
-    meta = {}
-    for task_id, use_id in task_to_use.items():
-        info = uses.get(use_id)
-        if info:
-            meta[task_id] = info
-
-    while len(_meta_cache) >= _META_CACHE_MAX:
-        _meta_cache.pop(next(iter(_meta_cache)))
-    _meta_cache[key] = (stat_result.st_mtime_ns, stat_result.st_size, meta)
     return meta
+
+
+def _advance_meta_scan(path: Path, scan: _MetaScan | None, size: int) -> _MetaScan:
+    """Read *path*'s complete lines past *scan*'s offset into it, or into a fresh scan when the file was rewritten."""
+    with open(path, 'rb') as handle:
+        if scan is None or size < scan.offset or not _meta_tail_matches(handle, scan):
+            scan = _MetaScan()
+        handle.seek(scan.offset)
+        appended = handle.read()
+
+    complete = appended.rfind(b'\n') + 1
+    for line in appended[:complete].split(b'\n'):
+        if not any(marker in line for marker in _META_MARKERS):
+            continue
+        try:
+            entry = json.loads(line.decode('utf-8', errors='replace'))
+        except (ValueError, TypeError):
+            continue
+        _scan_meta_entry(entry, scan.uses, scan.task_to_use)
+
+    scan.offset += complete
+    scan.tail = (scan.tail + appended[:complete])[-_META_TAIL_BYTES:]
+
+    return scan
+
+
+def _meta_tail_matches(handle: BinaryIO, scan: _MetaScan) -> bool:
+    """Whether the bytes just before *scan*'s offset are still the ones it last read."""
+    handle.seek(scan.offset - len(scan.tail))
+
+    return handle.read(len(scan.tail)) == scan.tail
 
 
 def _scan_meta_entry(entry: object, uses: dict[str, dict[str, str]], task_to_use: dict[str, str]) -> None:

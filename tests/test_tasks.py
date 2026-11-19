@@ -14,8 +14,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from agent_monitor_for_claude import tasks as tasks_mod
 from agent_monitor_for_claude.paths import SessionRoot, cwd_to_slug, local_root, task_output_dir, transcript_path
-from agent_monitor_for_claude.tasks import list_tasks, read_task_output, _parse_redirect_target
+from agent_monitor_for_claude.tasks import _parse_redirect_target, _task_meta, list_tasks, read_task_output
 
 _SESSION = '6e22e66f-6298-442a-9762-2a5b65052389'
 _CWD = r'D:\WebDev\vs-edge264'
@@ -107,6 +108,54 @@ class TasksTest(unittest.TestCase):
         tasks, _total = list_tasks(self._root, _SESSION, _CWD)
         self.assertEqual(tasks[0].task_id, 'mytask1')
         self.assertEqual(tasks[0].label, 'Run the big regression')
+
+    def _append(self, text: str) -> None:
+        with open(self._transcript, 'a', encoding='utf-8', newline='') as handle:
+            handle.write(text)
+
+    def _background_call(self, use_id: str, task_id: str, description: str) -> str:
+        use = {'type': 'assistant', 'message': {'content': [{
+            'type': 'tool_use', 'name': 'Bash', 'id': use_id,
+            'input': {'command': 'run it', 'description': description, 'run_in_background': True},
+        }]}}
+        result = {'type': 'user', 'message': {'content': [{
+            'type': 'tool_result', 'tool_use_id': use_id,
+            'content': f'Command running in background with ID: {task_id}. Output is being written to: x.output.',
+        }]}}
+        return json.dumps(use) + '\n' + json.dumps(result) + '\n'
+
+    def test_an_appended_transcript_is_read_from_where_the_last_read_stopped(self) -> None:
+        self._write_transcript('mytask1', 'First run')
+        self._append(self._background_call('toolu_2', 'mytask2', 'Second run'))
+        self.assertEqual(set(_task_meta(self._root, _SESSION, _CWD)), {'mytask1', 'mytask2'})
+
+        self._append(self._background_call('toolu_3', 'mytask3', 'Third run'))
+        with mock.patch.object(tasks_mod, '_scan_meta_entry', wraps=tasks_mod._scan_meta_entry) as scan:
+            meta = _task_meta(self._root, _SESSION, _CWD)
+        self.assertEqual(scan.call_count, 2)
+        self.assertEqual({task: info['label'] for task, info in meta.items()},
+                         {'mytask1': 'First run', 'mytask2': 'Second run', 'mytask3': 'Third run'})
+
+    def test_a_trailing_partial_line_is_read_once_it_is_complete(self) -> None:
+        self._write_transcript('mytask1', 'First run')
+        call = self._background_call('toolu_2', 'mytask2', 'Second run')
+        self._append(call[:-20])
+        self.assertEqual(set(_task_meta(self._root, _SESSION, _CWD)), {'mytask1'})
+        self._append(call[-20:])
+        self.assertEqual(set(_task_meta(self._root, _SESSION, _CWD)), {'mytask1', 'mytask2'})
+
+    def test_a_rewritten_transcript_is_read_afresh(self) -> None:
+        self._write_transcript('mytask1', 'First run')
+        self._append(self._background_call('toolu_2', 'mytask2', 'Second run'))
+        self.assertEqual(set(_task_meta(self._root, _SESSION, _CWD)), {'mytask1', 'mytask2'})
+
+        self._transcript.write_text(self._background_call('toolu_9', 'other9', 'Only run'), encoding='utf-8', newline='')
+        self.assertEqual(set(_task_meta(self._root, _SESSION, _CWD)), {'other9'})
+
+    def test_a_caller_cannot_change_the_cached_labels(self) -> None:
+        self._write_transcript('mytask1', 'First run')
+        _task_meta(self._root, _SESSION, _CWD)['mytask1']['label'] = 'changed'
+        self.assertEqual(_task_meta(self._root, _SESSION, _CWD)['mytask1']['label'], 'First run')
 
     def test_label_empty_without_transcript_entry(self) -> None:
         self._write('orphan9.output', 'x', age_seconds=3)

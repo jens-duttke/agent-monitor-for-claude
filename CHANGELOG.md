@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Reading git information no longer runs an fsmonitor program configured in a repository, and git's ownership check is skipped only for repositories inside WSL, so a repository another user prepared can no longer run a program as you.
+- An expanded background-task console no longer makes the app sluggish in a long session: the task labels are read from the transcript's new lines only, not from the whole file every second.
 
 ## [1.0.0] - 2026-11-07
 
