@@ -80,6 +80,23 @@ const DIFF_META_PREFIXES = [
     'rename from', 'rename to', 'copy from', 'copy to', 'similarity index',
 ];
 
+// When a session's or agent's transcript was last written, in epoch seconds,
+// from its age as of the snapshot received at *receivedAtMs*; 0 when unknown.
+// Two readings of the same write differ by the latency between the backend
+// measuring the age and the page receiving it - well under a second - so they
+// are the same write within one second (see sameWrite).
+function lastWriteAt(ageSeconds, receivedAtMs) {
+    const age = Number(ageSeconds);
+    if (ageSeconds == null || !Number.isFinite(age) || receivedAtMs == null) {
+        return 0;
+    }
+    return receivedAtMs / 1000 - age;
+}
+
+function sameWrite(first, second) {
+    return Number.isFinite(first) && Number.isFinite(second) && Math.abs(first - second) <= 1;
+}
+
 function diffToHtml(value) {
     const lines = String(value == null ? '' : value).split('\n');
     if (lines.length > 0 && lines[lines.length - 1] === '') {
@@ -2642,6 +2659,8 @@ function buildSession(raw, labels, prices) {
         artifacts: positiveInteger(raw.artifact_count) || 0,
         artifact_links: artifactsOf(raw),
         age_seconds: raw.age_seconds == null ? null : Math.floor(raw.age_seconds),
+        // Unfloored, for telling a new write from the same one (see lastWriteAt).
+        exact_age_seconds: finiteOrNull(raw.age_seconds),
         // How long the process holding the session has run - the stable order of
         // the running sessions, whose activity ages change every few seconds.
         process_age_seconds: finiteOrNull(raw.process_age_seconds),
@@ -4934,6 +4953,8 @@ const AMC_LOGIC = {
     attr,
     ansiToHtml,
     diffToHtml,
+    lastWriteAt,
+    sameWrite,
     classify,
     deriveStatus,
     refineWithNative,

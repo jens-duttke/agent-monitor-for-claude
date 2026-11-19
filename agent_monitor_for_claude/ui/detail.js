@@ -110,8 +110,8 @@ function renderDetail() {
 // last answer.
 function requestSessionSteps(session) {
     const key = rowKey(session);
-    const lastWrite = session.age_seconds !== null && state.receivedAt !== null ? Math.round(state.receivedAt / 1000 - session.age_seconds) : 0;
-    if (sessionSteps.pending || (sessionSteps.key === key && sessionSteps.sig === lastWrite)) {
+    const lastWrite = logic.lastWriteAt(session.exact_age_seconds, state.receivedAt);
+    if (sessionSteps.pending || (sessionSteps.key === key && logic.sameWrite(sessionSteps.sig, lastWrite))) {
         return;
     }
     if (sessionSteps.key === key && Date.now() - sessionSteps.at < SESSION_STEPS_REFRESH_MS) {
@@ -1035,11 +1035,11 @@ function mediaKey(session, agent) {
 // Asked on selection and again once the transcript was written to.
 function requestMedia(session, agent) {
     const key = mediaKey(session, agent);
-    const age = agent ? agent.age_seconds : session.age_seconds;
+    const age = agent ? agent.age_seconds : session.exact_age_seconds;
     // A history session's age is frozen at its own fetch, so it is measured from that moment.
     const ageAt = session.is_history ? state.historyReceivedAt : state.receivedAt;
-    const sig = age !== null && age !== undefined && ageAt !== null ? Math.round(ageAt / 1000 - age) : 0;
-    if (mediaState.pending || (mediaState.key === key && mediaState.sig === sig)) {
+    const sig = logic.lastWriteAt(age, ageAt);
+    if (mediaState.pending || (mediaState.key === key && logic.sameWrite(mediaState.sig, sig))) {
         return;
     }
     if (mediaState.key !== key) {
@@ -1312,7 +1312,10 @@ function agentTextsKey(session, agent) {
 // newest reply moves on; a finished agent's texts never change.
 function requestAgentTexts(session, agent) {
     const key = agentTextsKey(session, agent);
-    const lastWrite = agent.age_seconds !== null && state.receivedAt !== null ? Math.round(state.receivedAt / 1000 - agent.age_seconds) : 0;
+    // Whole seconds of the last write: a string signature cannot allow for
+    // the second either side, and an agent's age is not floored, so this only
+    // rounds away the latency.
+    const lastWrite = Math.round(logic.lastWriteAt(agent.age_seconds, state.receivedAt));
     const sig = agent.running ? 'running:' + lastWrite : 'finished';
     if ((agentTexts.key === key && agentTexts.sig === sig) || agentTexts.pending) {
         return;
