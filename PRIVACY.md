@@ -4,25 +4,32 @@
 reads Claude Code's local files, including your conversation transcripts. This page lists what it
 reads, shows, runs and writes. It applies to Windows and Linux; differences are noted.
 
-Last reviewed: 2026-11-07
+Last reviewed: 2026-11-19
 
 ## Summary
 
 | | |
 | --- | --- |
-| Internet connections | None. Links (changelog, pull requests, branches, artifacts) open in your browser, only when you click them. |
+| Internet connections | None, unless you turn on the update check: then one request to GitHub a few times a day. Links (changelog, releases, pull requests, branches, artifacts) open in your browser, only when you click them. |
 | Credentials | Never read. |
 | Telemetry, analytics, crash reports | None. |
-| Data sent anywhere | Nothing. |
+| Data sent anywhere | Nothing. The optional update check sends only the request itself. |
 | Programs it runs | `git` (read-only) and, on Windows, `wsl.exe --list --running --quiet`. |
 | Writes to disk | Its own interface preferences and settings, a session deletion you confirm, and a temp folder (Windows) or lock file (Linux). |
 | Changes to your Claude Code data | Only the session deletion you confirm. |
 
 ## Network
 
-The application has no HTTP client and opens no connections. Its only socket is the local server
-(`127.0.0.1`) that delivers the interface to its own window. Before starting it, the app binds a port
-briefly to check that it is free.
+The application opens no connections unless you turn on the update check. Its only other socket is
+the local server (`127.0.0.1`) that delivers the interface to its own window. Before starting it, the
+app binds a port briefly to check that it is free.
+
+**Update check** - off by default; turn it on with *Check for new versions* in the settings. The app
+then asks `https://api.github.com/repos/jens-duttke/agent-monitor-for-claude/releases/latest` at
+start and every six hours (after a failure, every 15 minutes). The request is an anonymous `GET` with a
+generic user agent; it carries no data about you or your sessions. GitHub sees your IP address, as with
+any request. Only the release's version number is read from the answer. Nothing is downloaded or
+installed, and nothing is written to disk.
 
 The page declares a Content-Security-Policy with `connect-src 'none'`, so the browser engine refuses
 any network request from the interface. Images are allowed only from the app itself or as `data:`
@@ -30,6 +37,7 @@ addresses, which is how screenshots from a transcript are shown.
 
 Links in the window are opened by your default browser, never by the app:
 
+- **Releases** - with the update check on, a newer version links to its release page on GitHub.
 - **Changelog** - the Claude Code version links to its section of Claude Code's public changelog.
   The version is part of the `#` fragment, which your browser does not send to the server.
 - **Pull requests and artifacts** - addresses Claude Code recorded in the transcript. They are links
@@ -167,7 +175,7 @@ Only when you click or press a key:
 
 ## Third-party services
 
-None. Prices come from the local `pricing.json`. Dependencies: `pywebview`, `psutil`, `msgspec` and `regex`,
+None, apart from GitHub for the optional update check. Prices come from the local `pricing.json`. Dependencies: `pywebview`, `psutil`, `msgspec` and `regex`,
 plus the browser engine (WebView2 or WebKitGTK) and, on Linux, PyGObject.
 
 ## Verify it yourself
@@ -175,11 +183,13 @@ plus the browser engine (WebView2 or WebKitGTK) and, on Linux, PyGObject.
 In a clone of the repository:
 
 ```sh
-# Network clients - one hit: app.py: import socket (the free-port check)
+# Network clients - two hits: app.py: import socket (the free-port check) and
+# update_check.py: import urllib.request (the optional update check)
 grep -rnE "^\s*(import|from)\s+(requests|urllib|http|socket|ssl)\b" agent_monitor_for_claude/
 
-# Remote addresses - three hits: the changelog link in ui/logic.js, the https:// check for
-# artifact addresses in transcript.py, and the branch link built in git_overview.py
+# Remote addresses - six hits: the changelog and release links in ui/logic.js, the https:// check
+# for artifact addresses in transcript.py, the branch link built in git_overview.py and a docstring
+# beside it, and the GitHub release address in update_check.py
 grep -rn "https\?://" agent_monitor_for_claude/ --include=*.py --include=*.js --include=*.html --include=*.css
 
 # Credentials - one hit: a docstring saying none are read

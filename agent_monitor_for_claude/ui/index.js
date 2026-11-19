@@ -288,6 +288,7 @@ async function boot() {
     setInterval(checkForChanges, FINGERPRINT_INTERVAL);
     setInterval(tickAges, 1000);
     gitOverviewLoop();
+    updateStatusLoop();
 }
 
 // (Re)start the full poll at the interval in force; a saved setting restarts it.

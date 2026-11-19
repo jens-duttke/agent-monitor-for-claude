@@ -66,6 +66,7 @@ class Settings:
     window_height: int = 760
     language: str = ''
     wsl: bool = True
+    update_check: bool = False
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,7 @@ class SettingSpec:
 # In the order the settings dialog lists them, grouped by ``group``.
 SPECS: tuple[SettingSpec, ...] = (
     SettingSpec('language', 'language', 'general', applies='reload'),
+    SettingSpec('update_check', 'bool', 'general'),
     SettingSpec('poll_interval', 'int', 'refresh', minimum=1, maximum=3600, unit='seconds'),
     SettingSpec('ended_max_age', 'int', 'sessions', minimum=0, unit='seconds'),
     SettingSpec('include_completed', 'bool', 'sessions'),

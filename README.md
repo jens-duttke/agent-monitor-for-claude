@@ -49,7 +49,7 @@ The *Graph* grouping draws each session with its subagents, workflows, backgroun
 - **Taskbar** - on Windows the taskbar button shows how many sessions wait for you. On Linux the window asks for attention, except on a Wayland session, where GTK cannot.
 - **WSL** - on Windows, sessions running inside WSL distributions are listed too.
 - **13 languages** - English, German, Spanish, French, Hindi, Indonesian, Italian, Japanese, Korean, Brazilian Portuguese, Ukrainian, Simplified and Traditional Chinese, detected from your system locale or chosen in the settings.
-- **Settings** - refresh interval, how long finished sessions stay, language, WSL and window size, changed in a settings dialog (gear in the toolbar).
+- **Settings** - refresh interval, how long finished sessions stay, language, WSL, window size and an optional check for new versions, changed in a settings dialog (gear in the toolbar). The dialog also shows the installed version.
 - **No setup** - a single executable on Windows. It finds your Claude config directory on its own (honors `CLAUDE_CONFIG_DIR`).
 
 ## Requirements
@@ -122,7 +122,7 @@ Agent Monitor reads the session files Claude Code writes locally and the process
 
 ## Privacy
 
-No network connections, no credentials, no telemetry. Apart from a session deletion you confirm, it writes only its own files. See [PRIVACY.md](PRIVACY.md).
+No network connections unless you turn on the update check, no credentials, no telemetry. Apart from a session deletion you confirm, it writes only its own files. See [PRIVACY.md](PRIVACY.md).
 
 ## Building
 

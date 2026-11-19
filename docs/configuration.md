@@ -34,6 +34,7 @@ You can edit the file by hand; the app reads it at start. Only values that diffe
 | `window_width` | integer (480 - 10000) | `1180` | Window width at start, in logical pixels. |
 | `window_height` | integer (360 - 10000) | `760` | Window height at start, in logical pixels. |
 | `language` | string | `""` | Force a language by locale code (see below). Empty means auto-detect from the system locale. |
+| `update_check` | boolean | `false` | Ask GitHub for the latest release of Agent Monitor a few times a day. A newer version shows as a link in the toolbar. See [PRIVACY.md](../PRIVACY.md#network). |
 
 ## Example
 

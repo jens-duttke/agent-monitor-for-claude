@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - When Claude's safeguards refuse a request, the session details show the refusal category and the explanation the API gave, for example `reasoning_extraction`. Quote the category when you report a false refusal.
 - [Prompt cache on the list](https://github.com/jens-duttke/agent-monitor-for-claude/issues/12) - a session waiting for you shows on its list entry how long its prompt cache stays warm, with a bar that runs down and turns amber shortly before it expires, and once it has expired, what your next prompt pays to write the context again. The toolbar adds up what all warm caches hold. (thanks to [@jeroenbu](https://github.com/jeroenbu) for the suggestion)
 - A new setting, *Show context use in the list* (`list_context`, off by default), adds how full each session's context is to its list entry. (thanks to [@jeroenbu](https://github.com/jeroenbu) for the suggestion)
+- [Update check](https://github.com/jens-duttke/agent-monitor-for-claude/issues/15) - the settings dialog shows the installed version, and a new setting, *Check for new versions* (off by default), asks GitHub for the latest release a few times a day and shows a newer version as a link in the toolbar.
 
 ### Changed
 - An expired prompt cache is marked in the session details whatever writing it again costs, and the amounts are shown in cents, since small ones add up across sessions.

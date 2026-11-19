@@ -16,8 +16,8 @@ What it hands back is bounded rather than open:
 - At most ``_MAX_SNIPPETS`` excerpts per session cross the bridge, each clipped
   to ``_CONTEXT_CHARS`` characters either side of the hit and cut at the hit's
   own line, so no excerpt can grow into a transcript dump.
-- Everything stays on this machine; there is no network anywhere in this
-  application.
+- Everything stays on this machine; the search sends nothing over the
+  network.
 
 Matching runs on the **readable text** of each entry, not on the raw JSONL line.
 Each line is parsed and a whitelist of fields is searched - message text,
