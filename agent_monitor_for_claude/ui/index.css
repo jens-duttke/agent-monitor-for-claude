@@ -36,11 +36,10 @@
     --c-errored: #ff6b6b;
     --c-history: #8a877e;
 
-    /* The cost split: main conversation, subagents, skills. Categorical, so
+    /* The cost split: main conversation and subagents. Categorical, so
        deliberately none of the status colours. */
     --c-part-main: #a6a39b;
     --c-part-agents: #4cc3c3;
-    --c-part-skills: #e0b341;
 
     /* Terminal (ANSI) palette for the task-output console. */
     --ansi-black: #6b6b6b;
@@ -1358,9 +1357,7 @@ body.splitter-dragging {
     }
 
     &.warn span { background: var(--c-awaiting_permission); }
-    &.work span { background: var(--c-working); }
     &.background span { background: var(--c-processing); }
-    &.ok span { background: var(--c-awaiting_input); }
 }
 
 /* The cost split as one stacked bar; each part's flex share is set like a meter's width. */
@@ -1379,7 +1376,6 @@ body.splitter-dragging {
 
     .part-main { background: var(--c-part-main); }
     .part-agents { background: var(--c-part-agents); }
-    .part-skills { background: var(--c-part-skills); }
 }
 
 /* Plan steps: done, current, still to come. */
@@ -1661,11 +1657,6 @@ body.splitter-dragging {
         overflow-wrap: anywhere;
         -webkit-user-select: text;
         user-select: text;
-    }
-
-    .num {
-        text-align: right;
-        font-variant-numeric: tabular-nums;
     }
 
     a {
