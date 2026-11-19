@@ -31,6 +31,8 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
+import psutil
+
 from . import platforms
 
 __all__ = ['git_diff', 'git_status']
@@ -313,17 +315,55 @@ def _git(directory: str, *args: str, ok_codes: tuple[int, ...] = (0,)) -> str | 
     # *directory* where status keeps them relative to the top level.
     command = [executable, *trust, '-c', 'core.fsmonitor=', '-c', 'core.quotepath=off', '-c', 'diff.relative=false', '-C', directory, *args]
     environment = dict(os.environ, GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0', LC_ALL='C')
-    try:
-        result = subprocess.run(
-            command, capture_output=True, timeout=_TIMEOUT_SECONDS, env=environment, stdin=subprocess.DEVNULL,
-            **platforms.no_window_kwargs(),
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode not in ok_codes:
+    result = _run_bounded(command, environment, _TIMEOUT_SECONDS)
+    if result is None or result[0] not in ok_codes:
         return None
 
-    return result.stdout.decode('utf-8', errors='replace')
+    return result[1].decode('utf-8', errors='replace')
+
+
+def _run_bounded(command: list[str], environment: dict[str, str], timeout: float) -> tuple[int, bytes] | None:
+    """Run *command* and return its exit code and output, or None when it fails or outlasts *timeout*.
+
+    ``subprocess.run`` kills the process on a timeout and then waits for its
+    output pipe to close - which a detached grandchild holding it (a credential
+    helper, an fsmonitor daemon) may never do.  So the whole tree is killed,
+    and a pipe still open a moment later is given up on.
+    """
+    try:
+        process = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, env=environment,
+            **platforms.no_window_kwargs(),
+        )
+    except OSError:
+        return None
+    try:
+        output, _errors = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(process)
+        try:
+            process.communicate(timeout=1)
+        except subprocess.TimeoutExpired:
+            # Left to the daemon threads reading it: closing a pipe a read is
+            # still pending on blocks on Windows until that read returns.
+            pass
+        return None
+
+    return process.returncode, output
+
+
+def _kill_tree(process: subprocess.Popen[bytes]) -> None:
+    """Kill *process* and every process below it."""
+    try:
+        descendants = psutil.Process(process.pid).children(recursive=True)
+    except psutil.Error:
+        descendants = []
+    for descendant in descendants:
+        try:
+            descendant.kill()
+        except psutil.Error:
+            pass
+    process.kill()
 
 
 def _on_wsl_share(directory: str) -> bool:

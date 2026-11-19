@@ -60,10 +60,9 @@ class GitCommandLineTest(unittest.TestCase):
     """The trust a git call extends to the repository it runs in."""
 
     def _command(self, directory: str, windows: bool) -> list[str]:
-        completed = subprocess.CompletedProcess([], 0, stdout=b'', stderr=b'')
         with mock.patch.object(gmod, '_git_executable', return_value='git'), \
                 mock.patch.object(gmod.platforms, 'IS_WINDOWS', windows), \
-                mock.patch.object(gmod.subprocess, 'run', return_value=completed) as run:
+                mock.patch.object(gmod, '_run_bounded', return_value=(0, b'')) as run:
             gmod._git(directory, 'status')
 
         return run.call_args.args[0]
@@ -84,6 +83,21 @@ class GitCommandLineTest(unittest.TestCase):
             command = self._command(directory, windows)
             self.assertIn('core.fsmonitor=', command)
             self.assertEqual(command[command.index('core.fsmonitor=') - 1], '-c')
+
+
+class BoundedRunTest(unittest.TestCase):
+    def test_a_grandchild_holding_the_output_open_does_not_outlast_the_timeout(self) -> None:
+        # The timeout waited for the pipe to close, which a detached grandchild
+        # (a credential helper, an fsmonitor daemon) may never do.
+        import sys
+        import time
+
+        child = "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); print('done')"
+        started = time.monotonic()
+        result = gmod._run_bounded([sys.executable, '-c', child], dict(os.environ), 1.0)
+
+        self.assertLess(time.monotonic() - started, 8)
+        self.assertIsNone(result)
 
 
 class GitStatusTest(unittest.TestCase):
