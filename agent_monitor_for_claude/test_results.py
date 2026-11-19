@@ -26,6 +26,8 @@ _JEST_PATTERN = re.compile(r'^Tests:\s+(?P<body>.*?\d+ total)$')
 _VITEST_PATTERN = re.compile(r'^Tests\s+(?P<body>(?:\d+ \w+(?: \| )?)+)\s*\((?P<total>\d+)\)$')
 _TAP_PATTERN = re.compile(r'^(?:ℹ|#) (?P<kind>tests|pass|fail|skipped|skip|todo) (?P<count>\d+)$')
 _CARGO_PATTERN = re.compile(r'^test result: (?P<verdict>ok|FAILED)\. (?P<passed>\d+) passed; (?P<failed>\d+) failed; (?P<ignored>\d+) ignored')
+# The lines that open a cargo run: its build, before the first result.
+_CARGO_RUN_OPENERS = ('Finished ', 'Compiling ')
 # Go's package line is tab-separated - ``ok  \t<package>\t0.1s`` - which keeps
 # an ordinary line opening with "ok" from counting.
 _GO_PACKAGE_PATTERN = re.compile(r'^(?P<verdict>ok|FAIL) *\t\S+\t')
@@ -61,11 +63,25 @@ def test_summary(text: str) -> TestSummary | None:
     lines = [_ANSI_PATTERN.sub('', line).strip() for line in text.splitlines()]
     tap: dict[str, int] = {}
     go_ok = go_failed = 0
+    # Cargo writes one result line per test target (unit tests, each
+    # integration binary, the doc-tests last), so the run's lines are summed
+    # back to the build line that opened it.
+    cargo: list[int] | None = None
     for index in range(len(lines) - 1, -1, -1):
         line = lines[index]
+        cargo_match = _CARGO_PATTERN.match(line)
+        if cargo_match:
+            counts = [int(cargo_match.group(name)) for name in ('passed', 'failed', 'ignored')]
+            cargo = counts if cargo is None else [total + count for total, count in zip(cargo, counts)]
+            continue
+        if cargo is not None and line.startswith(_CARGO_RUN_OPENERS):
+            break
+
         previous = next((lines[earlier] for earlier in range(index - 1, -1, -1) if lines[earlier]), '')
         summary = _line_summary(line, previous)
         if summary is not None:
+            if cargo is not None:
+                break
             return summary
 
         tap_match = _TAP_PATTERN.match(line)
@@ -82,6 +98,8 @@ def test_summary(text: str) -> TestSummary | None:
             else:
                 go_failed += 1
 
+    if cargo is not None:
+        return TestSummary('cargo', *cargo)
     if go_ok or go_failed:
         return TestSummary('go', go_ok, go_failed, 0)
 

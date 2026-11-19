@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *Older* keeps a selected past session selected when a live session ends, shows the wider window you picked while it was still loading, and lists every session that ended meanwhile - also after it was closed and opened again.
 - A session woken by its `/loop` or by a message from another session now reads as working while the model thinks, instead of "Idle" until the first reply, and that turn counts as worked time.
 - The app now starts on a system whose locale name Python cannot read, such as `en-IL`, instead of failing silently on every start.
+- The test counts on a task row add up every target of a `cargo test` run, instead of showing the doc-tests' usual "0 passed".
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07

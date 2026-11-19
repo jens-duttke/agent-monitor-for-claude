@@ -38,6 +38,20 @@ class TestSummaryTest(unittest.TestCase):
         # A line that merely opens with "ok" is no package line, tabs elsewhere or not.
         self.assertIsNone(test_summary('ok done, moving on\nname\tvalue\n'))
 
+    def test_cargo_adds_up_every_target_of_the_newest_run(self) -> None:
+        # One summary line per target - unit tests, each integration binary,
+        # then the doc-tests, which are usually empty.
+        run = (
+            '   Compiling demo v0.1.0\n    Finished `test` profile [unoptimized] target(s) in 1.2s\n'
+            '     Running unittests src/lib.rs\n\ntest result: ok. 12 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out\n\n'
+            '     Running tests/api.rs\n\ntest result: FAILED. 3 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out\n\n'
+            '   Doc-tests demo\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n'
+        )
+        self.assertEqual(test_summary(run), TestSummary('cargo', 15, 2, 1))
+        # In watch mode an earlier run above the newest one's build line is not counted.
+        earlier = '    Finished `test` profile in 0.4s\ntest result: ok. 99 passed; 0 failed; 0 ignored; 0 measured\n'
+        self.assertEqual(test_summary(earlier + run), TestSummary('cargo', 15, 2, 1))
+
     def test_the_newest_run_wins(self) -> None:
         text = '=== 3 failed, 1 passed in 1.0s ===\nwatching...\n=== 4 passed in 0.9s ===\n'
         summary = test_summary(text)
