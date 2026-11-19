@@ -23,6 +23,7 @@ diff or text-conversion program a repository may configure.
 
 from __future__ import annotations
 
+import ntpath
 import os
 import subprocess
 import threading
@@ -140,7 +141,8 @@ def _valid_relative_path(path: object) -> bool:
     """Whether *path* is a relative path below its top level: no drive, no root, no ``..`` part, no NUL."""
     if not isinstance(path, str) or not path or len(path) > _MAX_PATH_CHARS or '\0' in path:
         return False
-    if os.path.isabs(path) or path.startswith(('/', '\\')) or os.path.splitdrive(path)[0]:
+    # ntpath on every system, so a drive spelling is refused on Linux too.
+    if os.path.isabs(path) or path.startswith(('/', '\\')) or ntpath.splitdrive(path)[0]:
         return False
     parts = path.replace('\\', '/').split('/')
 
