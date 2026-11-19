@@ -77,6 +77,7 @@ and never at another root's tree either.
 """
 from __future__ import annotations
 
+import _sre  # the regex engine's simple case mapping (see _simple_lower)
 import functools
 import json
 import os
@@ -603,7 +604,8 @@ def _json_alternative(char: str, match_case: bool) -> str | None:
 def _case_partners(char: str) -> set[str]:
     """Every code point ``re.IGNORECASE`` takes for *char* - *char* included.
 
-    The engine compares lowered characters, plus a few pairs whose lowered
+    The engine compares characters by their simple lower case (``İ`` lowers
+    to ``i`` there, not to two characters), plus a few pairs whose lowered
     forms differ (``σ`` and ``ς``), which it keeps in ``re._casefix``.  So the
     partners are every character that lowers to the same one, and those pairs,
     followed until nothing new turns up - ``char.upper()`` alone misses ``ẞ``
@@ -614,19 +616,20 @@ def _case_partners(char: str) -> set[str]:
     pending = [char]
     while pending:
         current = pending.pop()
-        lower = current.lower()
+        lower = _simple_lower(current)
         found = set(lowered_from.get(lower, ()))
-        if len(lower) == 1:
-            found.add(lower)
-            found.update(chr(code) for code in _EXTRA_CASES.get(ord(lower), ()))
-        upper = current.upper()
-        if len(upper) == 1:
-            found.add(upper)
+        found.add(lower)
+        found.update(chr(code) for code in _EXTRA_CASES.get(ord(lower), ()))
         for partner in found - partners:
             partners.add(partner)
             pending.append(partner)
 
     return partners
+
+
+def _simple_lower(char: str) -> str:
+    """*char*'s simple lower case - the one-character mapping the regex engine compares by."""
+    return chr(_sre.unicode_tolower(ord(char)))
 
 
 @functools.lru_cache(maxsize=1)
@@ -637,9 +640,7 @@ def _lowered_from() -> dict[str, tuple[str, ...]]:
         if 0xD800 <= code < 0xE000:
             continue
         char = chr(code)
-        lower = char.lower()
-        if len(lower) == 1:
-            table.setdefault(lower, []).append(char)
+        table.setdefault(_simple_lower(char), []).append(char)
 
     return {lower: tuple(chars) for lower, chars in table.items()}
 
