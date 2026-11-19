@@ -65,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Opened hook failures stay open when the session details refresh, a reply row opened in one session no longer opens in another, and a session's opened rows survive looking at one of its subagents.
 - A background task whose output file is named like `constructor.output` no longer crashes the task panel.
 - Search results show their hit count and where each excerpt comes from even when the language file has not loaded yet.
+- Escape in the delete confirmation only cancels it; it no longer also leaves the session's details.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07

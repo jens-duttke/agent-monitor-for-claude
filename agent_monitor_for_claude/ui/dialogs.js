@@ -140,6 +140,10 @@ function showConfirm(title, body, detail, okLabel, onConfirm) {
 
 function onConfirmKey(event) {
     if (event.key === 'Escape') {
+        // Consumed, as in the settings dialog: the page's own Escape would
+        // also close the details behind the dialog.
+        event.preventDefault();
+        event.stopPropagation();
         closeConfirm();
     }
 }
