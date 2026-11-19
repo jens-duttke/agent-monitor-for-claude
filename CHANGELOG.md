@@ -71,6 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The search box keeps its "Ctrl K" hint after you have searched.
 - In the narrow layout, moving the selection right after clicking a row no longer jumps back to the clicked row.
 - After panning the graph, the next Enter or Space on a section header or button is no longer ignored.
+- A settings save takes effect even if you close the dialog before it finishes, and a value the app refuses stays marked until you change it.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07

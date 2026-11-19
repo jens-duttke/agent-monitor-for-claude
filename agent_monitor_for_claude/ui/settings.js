@@ -11,6 +11,8 @@
 // The bridge's description while the dialog is open: specs, the values in
 // force, defaults, load errors, languages, window size and the file's path.
 let settingsView = null;
+// The fields a save was refused for, by key, until each is edited (see refreshSettingsForm).
+const settingsSaveErrors = new Map();
 
 function initSettingsButton() {
     const button = document.getElementById('settings-toggle');
@@ -129,6 +131,7 @@ function closeSettings() {
     }
     document.removeEventListener('keydown', onSettingsKey, true);
     settingsView = null;
+    settingsSaveErrors.clear();
 }
 
 // Every field's value as the dialog holds it, and the error of each field that
@@ -165,6 +168,12 @@ function refreshSettingsForm() {
     }
     const labels = state.labels;
     const { values, errors } = readSettingsForm();
+    // A field the backend refused speaks for itself until it is edited.
+    for (const [key, error] of settingsSaveErrors) {
+        if (!errors.has(key)) {
+            errors.set(key, error);
+        }
+    }
     for (const spec of settingsView.specs) {
         const key = CSS.escape(String(spec.key));
         const field = overlay.querySelector('[data-setting="' + key + '"]');
@@ -207,6 +216,7 @@ function onSettingsInput(event) {
     if (errorLine) {
         errorLine.dataset.edited = '1';
     }
+    settingsSaveErrors.delete(input.dataset.key);
     document.querySelector('#settings-overlay .settings-message').textContent = '';
     refreshSettingsForm();
 }
@@ -319,17 +329,18 @@ async function saveSettingsForm() {
     } catch (err) {
         result = null;
     }
+    // A save that went through is applied even if the dialog was closed
+    // meanwhile: the file is written and the settings are in force.
+    if (result && result.ok) {
+        closeSettings();
+        applySavedSettings(result);
+        return;
+    }
     if (!settingsOpen()) {
         return;
     }
-    if (!result || !result.ok) {
-        showSettingsErrors(result && Array.isArray(result.errors) ? result.errors : [{ key: '', code: 'write', detail: '' }]);
-        refreshSettingsForm();
-        return;
-    }
-
-    closeSettings();
-    applySavedSettings(result);
+    showSettingsErrors(Array.isArray(result && result.errors) ? result.errors : [{ key: '', code: 'write', detail: '' }]);
+    refreshSettingsForm();
 }
 
 // Put a refused save's errors at their fields; one without a field (a write
@@ -345,8 +356,7 @@ function showSettingsErrors(errors) {
         const key = typeof error.key === 'string' ? error.key : '';
         const field = key ? overlay.querySelector('[data-setting="' + CSS.escape(key) + '"]') : null;
         if (field) {
-            field.classList.add('invalid');
-            field.querySelector('.setting-error').textContent = logic.settingErrorText(error, labels);
+            settingsSaveErrors.set(key, error);
         } else {
             general.push(logic.settingErrorText(error, labels));
         }
