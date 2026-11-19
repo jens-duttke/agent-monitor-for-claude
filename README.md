@@ -141,7 +141,7 @@ To work on the UI in a browser, open `agent_monitor_for_claude/ui/index.html?moc
 
 To refresh the screenshots in `docs/images/`, run `node tools/screenshots.mjs` (optionally with scene names: `overview`, `graph`, `search`, `compact`). It needs Edge or Chrome; set `SCREENSHOT_BROWSER` if it finds neither.
 
-Run the tests with `python -m unittest discover -s tests` and `node --test tests/js/`.
+Run the tests with `python -m unittest discover -s tests` and `node --test "tests/js/*.test.js"`.
 
 ## License
 
