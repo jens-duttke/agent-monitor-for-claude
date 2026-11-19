@@ -921,6 +921,9 @@ function gitSignal(git, labels) {
             const merged = gitMerged(git);
             parts.push(merged ? strings.git_merged : strings.git_gone);
             unfinished = unfinished || !merged;
+        } else if (count(git.unmerged) > 0 && git.changes_in_default === true) {
+            // Pushed without an upstream and squash-merged: as finished as a gone one.
+            parts.push(strings.git_merged);
         } else if (count(git.unmerged) > 0) {
             parts.push(fmt(strings.git_local_only, { count: git.unmerged }));
             unfinished = true;

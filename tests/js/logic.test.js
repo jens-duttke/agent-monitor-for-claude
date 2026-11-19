@@ -3652,6 +3652,15 @@ test('gitSignal: what is not finished, in one signal ranked first', () => {
     assert.equal(logic.gitDirKey({ cwd: '' }), '');
 });
 
+test('gitSignal: a local branch squashed into the default branch reads as merged', () => {
+    // The tooltip already said so, while the signal warned "only local".
+    const labels = { git_local_only: 'Only local: {count}', git_merged: 'Merged', git_tip_branch: 'Branch: {branch}', git_tip_squashed: 'In {branch} (squash)' };
+    const signal = logic.gitSignal({ branch: 'feature', detached: false, upstream: '', upstream_gone: false, ahead: null, behind: 0,
+        on_remote: false, default_branch: 'main', unmerged: 3, changes_in_default: true, changed: 0, untracked: 0 }, labels);
+    assert.strictEqual(signal.text, 'Merged');
+    assert.strictEqual(signal.tone, 'plain');
+});
+
 test('gitSignal: html safety - a branch name stays text in the tooltip attribute', () => {
     const labels = { git_uncommitted: 'Uncommitted: {count}', git_tip_branch: 'Branch: {branch}', git_tip_never_fetched: 'Never fetched' };
     const hostile = logic.gitSignal({ branch: '"><img src=x onerror=alert(1)>', changed: 1, untracked: 0, on_remote: true }, labels);
