@@ -245,9 +245,11 @@ def _read_holder_info() -> tuple[int | None, str | None]:
 def _terminate_pid(pid: int) -> None:
     """Ask a process to exit and wait until it is gone.
 
-    Sends ``SIGTERM`` so the holder can close its window in an orderly way, then
-    escalates to ``SIGKILL`` if it is still alive when the timeout expires.
-    Returning does not guarantee the process died - the caller proves that by
+    Sends ``SIGTERM``.  The application installs no handler for it, so the
+    holder ends at once, like ``TerminateProcess`` on Windows - no cleanup of
+    its own runs - and the kernel drops its lock with its descriptors.  A holder
+    still alive when the timeout expires (one that blocks or handles the signal)
+    gets ``SIGKILL``.  Returning does not guarantee the process died - the caller proves that by
     retaking the lock.
     """
     try:
