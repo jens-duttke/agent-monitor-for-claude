@@ -153,6 +153,28 @@ class GitStatusTest(unittest.TestCase):
         self.assertEqual([(record['path'], record['edited']) for record in result['files']], [('package/module.py', True)])
         self.assertIn('+print(1)', diff['diff'])
 
+    def test_a_user_diff_relative_setting_does_not_strip_the_line_counts(self) -> None:
+        # With diff.relative the numstat paths become relative to the session's
+        # subfolder while status keeps them relative to the top level.
+        with tempfile.TemporaryDirectory() as directory:
+            def git(*args: str) -> None:
+                subprocess.run(['git', '-C', directory, *args], check=True, capture_output=True,
+                               env=dict(os.environ, GIT_AUTHOR_NAME='t', GIT_AUTHOR_EMAIL='t@t', GIT_COMMITTER_NAME='t', GIT_COMMITTER_EMAIL='t@t'))
+
+            git('init', '-q')
+            (Path(directory) / 'sub').mkdir()
+            tracked = Path(directory) / 'sub' / 'a.txt'
+            tracked.write_text('one\n', encoding='utf-8')
+            git('add', '.')
+            git('commit', '-q', '-m', 'first')
+            tracked.write_text('one\ntwo\n', encoding='utf-8')
+
+            with mock.patch.dict(os.environ, {'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'diff.relative', 'GIT_CONFIG_VALUE_0': 'true'}):
+                gmod._cache.clear()
+                result = gmod.git_status(str(Path(directory) / 'sub'), [])
+
+        self.assertEqual([(record['path'], record['added']) for record in result['files']], [('sub/a.txt', 1)])
+
     def test_a_directory_outside_any_repository_reports_none(self) -> None:
         with mock.patch.object(gmod, '_git', return_value=None):
             with tempfile.TemporaryDirectory() as directory:

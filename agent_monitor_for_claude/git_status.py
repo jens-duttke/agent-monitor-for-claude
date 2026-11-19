@@ -288,7 +288,9 @@ def _git(directory: str, *args: str, ok_codes: tuple[int, ...] = (0,)) -> str | 
     if executable is None:
         return None
     trust = ['-c', 'safe.directory=*'] if _on_wsl_share(directory) else []
-    command = [executable, *trust, '-c', 'core.fsmonitor=', '-c', 'core.quotepath=off', '-C', directory, *args]
+    # diff.relative from the user's config would make diff paths relative to
+    # *directory* where status keeps them relative to the top level.
+    command = [executable, *trust, '-c', 'core.fsmonitor=', '-c', 'core.quotepath=off', '-c', 'diff.relative=false', '-C', directory, *args]
     environment = dict(os.environ, GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0', LC_ALL='C')
     try:
         result = subprocess.run(
