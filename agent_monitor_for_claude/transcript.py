@@ -716,6 +716,9 @@ def prune_scan_cache(active: Iterable[tuple[SessionRoot, str, str]], located: It
         for key in list(_scan_cache):
             if key not in keep:
                 del _scan_cache[key]
+        for key in list(_pending_memo):
+            if key not in keep:
+                del _pending_memo[key]
 
     # A queued scan of a session that has left the registry would only produce
     # an entry this function drops on its next call.
@@ -2661,6 +2664,7 @@ def _first_scan(cache_key: str, path: Path, fresh: Callable[[], _ScanState] = _S
         if cache_key in _scan_cache:
             return False
         _scan_cache[cache_key] = state
+        _pending_memo.pop(cache_key, None)
 
     return True
 
@@ -2677,12 +2681,64 @@ def _recent_title_and_mode(path: Path) -> tuple[str | None, str | None]:
     scan completes, and the first prompt - the window's oldest prompt is not the
     session's first - so a session named only by its prompt shows its short
     name until then.
+
+    Asked on every poll until the scan lands, so the answer is remembered
+    (``_pending_memo``): an unchanged file is not read again, and a grown one
+    only from a little before where the last read ended - the fields are
+    last-wins, so anything newer found there replaces what was remembered.
     """
+    try:
+        status = path.stat()
+    except OSError:
+        return None, None
+
+    key = os.path.normcase(str(path))
+    with _scan_lock:
+        memo = _pending_memo.get(key)
+    if memo is not None and (memo.size, memo.mtime_ns) == (status.st_size, status.st_mtime_ns):
+        return memo.custom_title or memo.ai_title, memo.permission_mode
+
+    grown = memo is not None and status.st_size > memo.size
+    window = min(_PENDING_LOOKBACK_BYTES, status.st_size - memo.size + _PENDING_OVERLAP_BYTES) if grown else _PENDING_LOOKBACK_BYTES
+    custom_title, ai_title, permission_mode = _newest_title_and_mode(path, window)
+    if grown:
+        custom_title = custom_title or memo.custom_title
+        ai_title = ai_title or memo.ai_title
+        permission_mode = permission_mode or memo.permission_mode
+
+    with _scan_lock:
+        _pending_memo[key] = _PendingMemo(status.st_size, status.st_mtime_ns, custom_title, ai_title, permission_mode)
+
+    return custom_title or ai_title, permission_mode
+
+
+@dataclass(frozen=True)
+class _PendingMemo:
+    """What :func:`_recent_title_and_mode` found in a transcript of this size and modification time."""
+
+    size: int
+    mtime_ns: int
+    custom_title: str | None
+    ai_title: str | None
+    permission_mode: str | None
+
+
+# Transcript cache key -> the stand-in's last answer; dropped when the full
+# scan lands and with the scan cache (see prune_scan_cache).
+_pending_memo: dict[str, _PendingMemo] = {}
+
+# How far before the end of the last read a grown transcript is read again: a
+# line still being written then was skipped, and is complete now.
+_PENDING_OVERLAP_BYTES = 1024 * 1024
+
+
+def _newest_title_and_mode(path: Path, window: int) -> tuple[str | None, str | None, str | None]:
+    """Return the newest custom title, generated title and permission mode within the last *window* bytes of *path*."""
     custom_title: str | None = None
     ai_title: str | None = None
     permission_mode: str | None = None
     try:
-        for raw_line in _lines_newest_first(path, _PENDING_LOOKBACK_BYTES):
+        for raw_line in _lines_newest_first(path, window):
             if not (_PERMISSION_MODE_MARKER in raw_line or _AI_TITLE_MARKER in raw_line or _CUSTOM_TITLE_MARKER in raw_line):
                 continue
 
@@ -2700,7 +2756,7 @@ def _recent_title_and_mode(path: Path) -> tuple[str | None, str | None]:
     except OSError:
         pass
 
-    return custom_title or ai_title, permission_mode
+    return custom_title, ai_title, permission_mode
 
 
 def _recent_worktree(path: Path) -> WorktreeState | None:

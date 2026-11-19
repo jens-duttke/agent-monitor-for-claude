@@ -73,6 +73,41 @@ class DeferredScanEnvTest(unittest.TestCase):
         return mock.patch.object(transcript, '_SYNC_SCAN_BYTES', 0)
 
 
+class PendingStandInTest(DeferredScanEnvTest):
+    """The title and mode shown while a first scan is pending are read once, then only what was appended."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        transcript._pending_memo.clear()
+        self.addCleanup(transcript._pending_memo.clear)
+
+    def test_an_unchanged_transcript_is_not_read_again(self) -> None:
+        path = self._write_transcript([_prompt('First', mode='default'), json.dumps({'type': 'custom-title', 'customTitle': 'Named'})])
+        self.assertEqual(transcript._recent_title_and_mode(path), ('Named', 'default'))
+
+        with mock.patch.object(transcript, '_lines_newest_first', wraps=transcript._lines_newest_first) as read:
+            self.assertEqual(transcript._recent_title_and_mode(path), ('Named', 'default'))
+        read.assert_not_called()
+
+    def test_a_grown_transcript_is_read_from_where_it_was_left(self) -> None:
+        path = self._write_transcript([_prompt('First', mode='default'), json.dumps({'type': 'custom-title', 'customTitle': 'Named'})])
+        transcript._recent_title_and_mode(path)
+        with path.open('ab') as handle:
+            handle.write((_prompt('Next', mode='acceptEdits') + '\n' + json.dumps({'type': 'ai-title', 'aiTitle': 'Generated'}) + '\n').encode('utf-8'))
+
+        with mock.patch.object(transcript, '_lines_newest_first', wraps=transcript._lines_newest_first) as read:
+            # A rename outranks a newer generated title, as in the full scan.
+            self.assertEqual(transcript._recent_title_and_mode(path), ('Named', 'acceptEdits'))
+        self.assertLess(read.call_args.args[1], transcript._PENDING_LOOKBACK_BYTES)
+
+    def test_a_rewritten_transcript_is_read_afresh(self) -> None:
+        path = self._write_transcript([_prompt('First', mode='default'), json.dumps({'type': 'custom-title', 'customTitle': 'Named'})])
+        transcript._recent_title_and_mode(path)
+        self._write_transcript([_prompt('Other', mode='plan')])
+
+        self.assertEqual(transcript._recent_title_and_mode(path), (None, 'plan'))
+
+
 class DeferredStateTest(DeferredScanEnvTest):
     def test_small_transcript_is_scanned_on_the_spot(self) -> None:
         self._write_transcript([_assistant(100)])
