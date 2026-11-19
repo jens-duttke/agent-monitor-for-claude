@@ -76,10 +76,17 @@ class MediaIndexTest(unittest.TestCase):
     def test_other_formats_and_broken_data_are_left_out(self) -> None:
         self._write(_pasted('image/svg+xml', base64.b64encode(b'<svg onload=alert(1)>').decode()), _pasted('image/png', '"><script>'))
 
-        self.assertEqual(media_index(self.path)[0]['media_type'], 'image/png')
-        broken = media_index(self.path)[0]
-        self.assertIsNone(media_image(self.path, broken['id']))
-        self.assertEqual(len(media_index(self.path)), 1)
+        # Broken data is left out of the index too: a tile for it could never
+        # load, and the page asked for it again on every render.
+        self.assertEqual(media_index(self.path), [])
+
+    def test_an_image_too_large_to_hand_over_is_not_listed(self) -> None:
+        self._write(_pasted('image/png', _PNG), _pasted('image/jpeg', _JPEG))
+        self.assertGreater(len(_PNG), len(_JPEG))
+        with mock.patch.object(transcript, '_MAX_IMAGE_BYTES', len(_JPEG) * 3 // 4):
+            listed = media_index(self.path)
+
+        self.assertEqual([item['media_type'] for item in listed], ['image/jpeg'])
 
     def test_an_appended_image_is_found_and_a_half_written_line_waits(self) -> None:
         self._write(_pasted('image/png', _PNG))

@@ -1407,7 +1407,11 @@ def _note_media_line(line: bytes, offset: int, cache: _MediaCache) -> None:
     for index, (source, tool_use_id) in enumerate(_entry_images(entry)):
         media_type = source.get('media_type')
         data = source.get('data')
-        if media_type not in _IMAGE_MEDIA_TYPES or not isinstance(data, str):
+        # The checks media_image applies: an image it would refuse is not listed,
+        # or its tile could never load and would be asked for on every render.
+        if media_type not in _IMAGE_MEDIA_TYPES or not isinstance(data, str) or len(data) * 3 // 4 > _MAX_IMAGE_BYTES:
+            continue
+        if not _BASE64_PATTERN.fullmatch(data):
             continue
         tool, file_path = cache.calls.get(tool_use_id, ('', '')) if tool_use_id else ('', '')
         cache.images.append({
