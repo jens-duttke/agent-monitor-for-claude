@@ -52,6 +52,14 @@ class TestSummaryTest(unittest.TestCase):
         earlier = '    Finished `test` profile in 0.4s\ntest result: ok. 99 passed; 0 failed; 0 ignored; 0 measured\n'
         self.assertEqual(test_summary(earlier + run), TestSummary('cargo', 15, 2, 1))
 
+    def test_a_tail_of_blank_lines_is_read_in_linear_time(self) -> None:
+        # Each line looked back over every blank line before it.
+        import time
+
+        started = time.monotonic()
+        self.assertIsNone(test_summary('\n' * 16384))
+        self.assertLess(time.monotonic() - started, 0.2)
+
     def test_the_newest_run_wins(self) -> None:
         text = '=== 3 failed, 1 passed in 1.0s ===\nwatching...\n=== 4 passed in 0.9s ===\n'
         summary = test_summary(text)

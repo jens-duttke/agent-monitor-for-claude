@@ -61,6 +61,14 @@ def test_summary(text: str) -> TestSummary | None:
         return None
 
     lines = [_ANSI_PATTERN.sub('', line).strip() for line in text.splitlines()]
+    # The nearest non-empty line above each one, found in one pass: looking it
+    # up per line was quadratic in a run of blank lines.
+    previous_lines: list[str] = []
+    last_nonempty = ''
+    for line in lines:
+        previous_lines.append(last_nonempty)
+        if line:
+            last_nonempty = line
     tap: dict[str, int] = {}
     go_ok = go_failed = 0
     # Cargo writes one result line per test target (unit tests, each
@@ -77,8 +85,7 @@ def test_summary(text: str) -> TestSummary | None:
         if cargo is not None and line.startswith(_CARGO_RUN_OPENERS):
             break
 
-        previous = next((lines[earlier] for earlier in range(index - 1, -1, -1) if lines[earlier]), '')
-        summary = _line_summary(line, previous)
+        summary = _line_summary(line, previous_lines[index])
         if summary is not None:
             if cargo is not None:
                 break
