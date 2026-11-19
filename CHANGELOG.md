@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *Older* keeps a selected past session selected when a live session ends, shows the wider window you picked while it was still loading, and lists every session that ended meanwhile - also after it was closed and opened again.
 - A session woken by its `/loop` or by a message from another session now reads as working while the model thinks, instead of "Idle" until the first reply, and that turn counts as worked time.
 - The app now starts on a system whose locale name Python cannot read, such as `en-IL`, instead of failing silently on every start.
+- A task row shows the test counts of `pytest -q`, whose summary has no separator lines.
 - The test counts on a task row add up every target of a `cargo test` run, instead of showing the doc-tests' usual "0 passed".
 - While the cost of a long session is still being counted after start, the list no longer re-reads the end of its transcript every second.
 - A transcript with a line the app cannot read no longer leaves its session's cost on `…` forever while one processor core re-reads the file.

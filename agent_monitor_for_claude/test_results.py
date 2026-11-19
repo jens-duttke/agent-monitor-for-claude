@@ -20,6 +20,10 @@ _ANSI_PATTERN = re.compile(r'\x1b\[[0-9;?]*[ -/]*[@-~]')
 _COUNT_PATTERN = re.compile(r'(\d+) (passed|failed|errors?|skipped|xfailed|xpassed|deselected)')
 
 _PYTEST_PATTERN = re.compile(r'^=+ (?P<body>.*\b(?:passed|failed|errors?|skipped|no tests ran)\b.*?) in [\d.]+s(?: \([^)]*\))? =+$')
+# ``pytest -q`` drops the separators; the line must then hold the counts and
+# nothing else, so an ordinary log line ending in a duration cannot match.
+_PYTEST_COUNT = r'\d+ (?:passed|failed|errors?|skipped|xfailed|xpassed|deselected|warnings?|rerun)'
+_PYTEST_QUIET_PATTERN = re.compile(rf'^(?P<body>(?:no tests ran|{_PYTEST_COUNT})(?:, {_PYTEST_COUNT})*) in \d+(?:\.\d+)?s(?: \([^)]*\))?$')
 _UNITTEST_RAN_PATTERN = re.compile(r'^Ran (?P<total>\d+) tests? in [\d.]+s$')
 _UNITTEST_RESULT_PATTERN = re.compile(r'^(?P<verdict>OK|FAILED)(?: \((?P<body>[^)]*)\))?$')
 _JEST_PATTERN = re.compile(r'^Tests:\s+(?P<body>.*?\d+ total)$')
@@ -115,7 +119,7 @@ def test_summary(text: str) -> TestSummary | None:
 
 def _line_summary(line: str, previous: str) -> TestSummary | None:
     """The summary *line* states on its own (with the non-empty line before it, for unittest), or None."""
-    match = _PYTEST_PATTERN.match(line)
+    match = _PYTEST_PATTERN.match(line) or _PYTEST_QUIET_PATTERN.match(line)
     if match:
         counts = _counts(match.group('body'))
         passed = counts.get('passed', 0) + counts.get('xpassed', 0)

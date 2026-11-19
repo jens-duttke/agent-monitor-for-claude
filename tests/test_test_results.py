@@ -52,6 +52,13 @@ class TestSummaryTest(unittest.TestCase):
         earlier = '    Finished `test` profile in 0.4s\ntest result: ok. 99 passed; 0 failed; 0 ignored; 0 measured\n'
         self.assertEqual(test_summary(earlier + run), TestSummary('cargo', 15, 2, 1))
 
+    def test_pytest_quiet_mode_writes_its_summary_without_separators(self) -> None:
+        self.assertEqual(test_summary('..F.\n1 failed, 5 passed in 0.12s\n'), TestSummary('pytest', 5, 1, 0))
+        self.assertEqual(test_summary('3 passed, 1 skipped, 2 warnings in 1.50s (0:00:01)\n'), TestSummary('pytest', 3, 0, 1))
+        # An ordinary log line ending in a duration is no summary.
+        self.assertIsNone(test_summary('Downloaded 3 files in 2.0s\n'))
+        self.assertIsNone(test_summary('build: 2 passed checks in 3s\n'))
+
     def test_a_tail_of_blank_lines_is_read_in_linear_time(self) -> None:
         # Each line looked back over every blank line before it.
         import time
