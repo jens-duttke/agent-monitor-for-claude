@@ -168,6 +168,7 @@ def probe_all(requests: Iterable[tuple[int, int | None]]) -> dict[int, ProcessIn
     table = procfs.read_proc_table(_PROC_DIR)
     index = procfs.children_index(table)
     ticks_per_second = procfs.clk_tck()
+    started_at = procfs.start_times(table, procfs.read_btime(_PROC_DIR), ticks_per_second)
 
     result: dict[int, ProcessInfo] = {}
     for pid, proc_start_ticks in requests:
@@ -183,7 +184,7 @@ def probe_all(requests: Iterable[tuple[int, int | None]]) -> dict[int, ProcessIn
             host=host,
             via_cli=via_cli,
             child_count=len(descendants),
-            children=child_processes(pid, descendants, {child: entry.ppid for child, entry in table.items()}),
+            children=child_processes(pid, descendants, {child: entry.ppid for child, entry in table.items()}, started_at),
         )
 
     return result

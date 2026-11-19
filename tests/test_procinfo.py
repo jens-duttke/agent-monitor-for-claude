@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from agent_monitor_for_claude import procinfo
 from agent_monitor_for_claude.procinfo import ChildProcess, child_processes, clip_arguments
@@ -33,6 +34,43 @@ class ChildProcessTreeTest(unittest.TestCase):
 
     def test_no_descendants_is_an_empty_tree(self) -> None:
         self.assertEqual(child_processes(_SESSION, [], {}), ())
+
+    def test_each_process_carries_its_start_time_where_known(self) -> None:
+        # What lets the status tell a process the pending call started from one
+        # an earlier call left running.
+        tree = child_processes(_SESSION, [(300, 'a'), (400, 'b')], {300: _SESSION, 400: _SESSION}, {300: 1700000000.5})
+
+        self.assertEqual([(child.pid, child.started_at) for child in tree], [(300, 1700000000.5), (400, None)])
+
+
+class ChildStartOnTheRunningSystemTest(unittest.TestCase):
+    def test_a_child_just_started_reads_as_just_started(self) -> None:
+        import os
+        import subprocess
+        import sys
+        import time
+
+        from agent_monitor_for_claude.process_probe import probe_all
+
+        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        time.sleep(0.5)
+
+        # This test process is itself seconds old, so its child would read as a
+        # helper started with the session and not be listed at all.
+        from agent_monitor_for_claude import procfs
+        from agent_monitor_for_claude.platforms import IS_WINDOWS
+        if IS_WINDOWS:
+            from agent_monitor_for_claude.platforms import process_win32 as backend
+        else:
+            backend = procfs
+        with mock.patch.object(backend, 'SESSION_HELPER_WINDOW_SECONDS', -1):
+            info = probe_all([(os.getpid(), None)])[os.getpid()]
+        started = {process.pid: process.started_at for process in info.children}
+
+        self.assertIn(child.pid, started)
+        self.assertLess(abs(time.time() - started[child.pid]), 15)
 
 
 if __name__ == '__main__':

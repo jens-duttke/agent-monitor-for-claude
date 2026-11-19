@@ -33,6 +33,16 @@ def _write_children(proc_dir: Path, pid: int, children: list[int], tasks: tuple[
         (task / 'children').write_text(' '.join(str(child) for child in children) + ' ' if index == 0 else '', encoding='ascii')
 
 
+class StartTimesTests(unittest.TestCase):
+    def test_a_start_is_the_boot_time_plus_its_ticks(self) -> None:
+        table = {7: procfs.ProcEntry(comm='bash', ppid=1, starttime=250, rss_pages=0, cpu_ticks=0)}
+        self.assertEqual(procfs.start_times(table, 1000, 100), {7: 1002.5})
+
+    def test_without_a_boot_time_no_start_is_known(self) -> None:
+        table = {7: procfs.ProcEntry(comm='bash', ppid=1, starttime=250, rss_pages=0, cpu_ticks=0)}
+        self.assertEqual(procfs.start_times(table, None, 100), {})
+
+
 class ParseStatTests(unittest.TestCase):
     def test_comm_with_spaces_and_parens(self) -> None:
         # comm is process-settable and may contain both, so it cannot be

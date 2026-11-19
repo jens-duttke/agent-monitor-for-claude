@@ -84,6 +84,12 @@ _DISCOVERY_TTL = 10.0
 # so a cache hit on one thread never blocks behind a slow refresh on another.
 _cache_lock = threading.Lock()
 _vmmem_cache: tuple[float, bool] | None = None
+
+# How long a distro's boot time is trusted before /proc/stat is read again (see _boot_time).
+_BOOT_TIME_SECONDS = 60.0
+# origin -> (monotonic time read, boot time or None).
+_boot_times: dict[str, tuple[float, int | None]] = {}
+_boot_time_lock = threading.Lock()
 _discovery_cache: tuple[float, list[SessionRoot]] | None = None
 
 
@@ -363,6 +369,7 @@ def probe_wsl_sessions(root: SessionRoot, requests: Iterable[tuple[int, int | No
     requests = list(requests)
     table = _session_table(root, requests)
     index = procfs.children_index(table)
+    started_at = procfs.start_times(table, _boot_time(root), procfs.DEFAULT_CLK_TCK) if table else {}
 
     result: dict[int, ProcessInfo] = {}
     for pid, proc_start_ticks in requests:
@@ -371,10 +378,32 @@ def probe_wsl_sessions(root: SessionRoot, requests: Iterable[tuple[int, int | No
             result[pid] = ProcessInfo(alive=False, tool_running=False)
             continue
 
-        children = child_processes(pid, descendants, {child: entry.ppid for child, entry in table.items()})
+        children = child_processes(pid, descendants, {child: entry.ppid for child, entry in table.items()}, started_at)
         result[pid] = ProcessInfo(alive=True, tool_running=bool(descendants), host=None, via_cli=False, child_count=len(descendants), children=children)
 
     return result
+
+
+def _boot_time(root: SessionRoot) -> int | None:
+    """Return *root*'s boot time (POSIX seconds), read over the share at most every ``_BOOT_TIME_SECONDS``.
+
+    It is fixed for the distro's lifetime, and the probe runs every second; the
+    short memory still notices a distro that was restarted.
+    """
+    if root.proc_dir is None:
+        return None
+
+    now = time.monotonic()
+    with _boot_time_lock:
+        cached = _boot_times.get(root.origin)
+        if cached is not None and now - cached[0] < _BOOT_TIME_SECONDS:
+            return cached[1]
+
+    btime = procfs.read_btime(root.proc_dir)
+    with _boot_time_lock:
+        _boot_times[root.origin] = (now, btime)
+
+    return btime
 
 
 def _session_table(root: SessionRoot, sessions: list[tuple[int, int | None]]) -> dict[int, procfs.ProcEntry]:

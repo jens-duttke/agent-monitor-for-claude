@@ -163,7 +163,7 @@ def probe_all(requests: Iterable[tuple[int, int | None]]) -> dict[int, ProcessIn
             host=host,
             via_cli=via_cli,
             child_count=len(children),
-            children=child_processes(pid, children, parent_of),
+            children=child_processes(pid, children, parent_of, create_time_cache),
         )
 
     return result

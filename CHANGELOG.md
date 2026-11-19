@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A session record that Claude Code was rewriting at that moment no longer makes every session of its system (or WSL distro) vanish from the list for a refresh.
 - A branch deleted on the remote without being merged no longer reads as merged when the session works in a subfolder of its repository.
 - Files a session created in a new folder now count as uncommitted, are marked as its own, and show their diff on click, instead of the folder being listed as one entry without a diff.
+- A permission prompt now reads as "Permission needed" even while a dev server or another process from an earlier background task, or a background subagent, is still running; before, the session read "Working" for as long as that lasted.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07

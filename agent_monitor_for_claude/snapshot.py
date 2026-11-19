@@ -32,6 +32,7 @@ from .last_seen import note_alive, prune_last_seen, seconds_since_alive
 from .model_catalog import context_window
 from .paths import SessionRoot, TranscriptIndex, transcript_path
 from .process_probe import ProcessInfo, probe_all
+from .procinfo import ChildProcess
 from .roots import session_roots
 from .sessions import list_sessions
 from .settings import current_settings
@@ -162,7 +163,7 @@ def _build_session_record(
         'origin_label': record['origin_label'],
         'alive': info.alive,
         'child_count': info.child_count,
-        'child_processes': [{'pid': child.pid, 'parent': child.parent, 'name': child.name} for child in info.children],
+        'child_processes': [_child_record(child) for child in info.children],
         'host': info.host,
         'via_cli': info.via_cli,
         'has_transcript': transcript_state.has_transcript,
@@ -351,6 +352,11 @@ def _launch_record(launch: AgentLaunch | None) -> dict[str, str]:
         return {'launch': '', 'effort': ''}
 
     return {'launch': launch.mode, 'effort': launch.effort}
+
+
+def _child_record(child: ChildProcess) -> dict[str, Any]:
+    """One background process as the UI reads it; ``age_seconds`` is None when its start is unknown."""
+    return {'pid': child.pid, 'parent': child.parent, 'name': child.name, 'age_seconds': _seconds_since(child.started_at)}
 
 
 def _seconds_since(moment: float | None) -> float | None:

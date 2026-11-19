@@ -510,6 +510,38 @@ test('pendingBlockReason names why the pending tool blocks', () => {
     assert.equal(logic.pendingBlockReason(raw({ pending_tool: false, age_seconds: STALE })), null);
 });
 
+test('pendingBlockReason: only work the pending call started speaks for it', () => {
+    // A dev server started in the background an hour ago is a live child for
+    // the rest of the session, and a background subagent runs beside the main
+    // conversation - neither says anything about the call now waiting, which
+    // is an open permission prompt in a prompting mode.
+    const at = (overrides) => logic.pendingBlockReason(raw(Object.assign({
+        pending_tool: true, last_tool_name: 'Bash', permission_mode: 'default', child_count: 0,
+        current_tool_age_seconds: 30, age_seconds: 30,
+    }, overrides)));
+
+    assert.equal(at({ child_count: 1, child_processes: [{ pid: 7, parent: 0, name: 'node', age_seconds: 3600 }] }), 'prompt');
+    // A child the call started (younger than the call) means it is executing.
+    assert.equal(at({ child_count: 1, child_processes: [{ pid: 7, parent: 0, name: 'bash', age_seconds: 20 }] }), null);
+    assert.equal(at({
+        child_count: 2,
+        child_processes: [{ pid: 7, parent: 0, name: 'node', age_seconds: 3600 }, { pid: 8, parent: 0, name: 'bash', age_seconds: 28 }],
+    }), null);
+    // A child of unknown age keeps the cautious reading: it may be the call's own.
+    assert.equal(at({ child_count: 1, child_processes: [{ pid: 7, parent: 0, name: 'node' }] }), null);
+    assert.equal(at({ child_count: 1 }), null);
+    // A subagent or a workflow speaks only for the call that launches one.
+    assert.equal(at({ subagents_running: 1 }), 'prompt');
+    assert.equal(at({ workflows: [{ run_id: 'w', total: 2, done: 0, active: true }] }), 'prompt');
+    assert.equal(at({ last_tool_name: 'Task', subagents_running: 1 }), null);
+    assert.equal(at({ last_tool_name: 'Agent', subagents_running: 1 }), null);
+    // An old child no longer keeps an abandoned call from reading stalled.
+    assert.equal(at({
+        permission_mode: 'auto', current_tool_age_seconds: AUTO_STALE, age_seconds: AUTO_STALE,
+        child_count: 1, child_processes: [{ pid: 7, parent: 0, name: 'node', age_seconds: AUTO_STALE * 10 }],
+    }), 'stalled');
+});
+
 test('pendingBlockReason: auto mode gives a standing-still call a shorter window', () => {
     // Auto mode hands the approval to a classifier that answers in seconds, and
     // it still prompts in cases no mode table predicts (an ask rule, an MCP tool
@@ -532,7 +564,8 @@ test('pendingBlockReason: auto mode gives a standing-still call a shorter window
     // Both guards survive the shorter window: a live child process means a tool
     // is genuinely running, and an unusable age is no evidence at all.
     assert.equal(at({ permission_mode: 'auto', age_seconds: AUTO_STALE, child_count: 1 }), null);
-    assert.equal(at({ permission_mode: 'auto', age_seconds: AUTO_STALE, subagents_running: 1 }), null);
+    // A subagent beside a pending generic call is not that call's work (see above).
+    assert.equal(at({ permission_mode: 'auto', age_seconds: AUTO_STALE, subagents_running: 1 }), 'stalled');
     assert.equal(at({ permission_mode: 'auto', age_seconds: NaN }), null);
     assert.equal(at({ permission_mode: 'auto', age_seconds: Infinity }), null);
 });

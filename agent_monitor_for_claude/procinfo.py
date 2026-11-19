@@ -12,6 +12,7 @@ Nothing in this module touches the operating system - it is data shapes only.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 __all__ = [
@@ -40,11 +41,17 @@ SESSION_HELPER_WINDOW_SECONDS = 10.0
 
 @dataclass(frozen=True)
 class ChildProcess:
-    """One background process of a session: its pid, its name, and the nearest listed process above it (0: the session itself)."""
+    """One background process of a session: its pid, its name, and the nearest listed process above it (0: the session itself).
+
+    ``started_at`` is when it started (POSIX seconds), or None when the probe
+    could not tell - what lets the status tell a process the pending tool call
+    started from one an earlier call left running.
+    """
 
     pid: int
     parent: int
     name: str
+    started_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -59,14 +66,18 @@ class ProcessInfo:
     children: tuple[ChildProcess, ...] = ()
 
 
-def child_processes(session_pid: int, descendants: list[tuple[int, str]], parent_of: dict[int, int]) -> tuple[ChildProcess, ...]:
+def child_processes(
+    session_pid: int, descendants: list[tuple[int, str]], parent_of: dict[int, int], started_at: Mapping[int, float | None] | None = None,
+) -> tuple[ChildProcess, ...]:
     """The session's counted descendants as a tree: each under the nearest of them above it, else under the session.
 
     *descendants* is the walk's ``(pid, name)`` list and *parent_of* each
     process's parent pid from the same table.  A process whose parent is not
     listed - a console host, a helper started with the session - hangs off the
-    first listed process further up, so the tree keeps its shape.
+    first listed process further up, so the tree keeps its shape.  *started_at*
+    gives each pid's start time (POSIX seconds) where the probe knows it.
     """
+    started = started_at or {}
     listed = {pid for pid, _name in descendants}
     result: list[ChildProcess] = []
     for pid, name in descendants[:_MAX_CHILD_PROCESSES]:
@@ -75,7 +86,7 @@ def child_processes(session_pid: int, descendants: list[tuple[int, str]], parent
             if parent in listed or parent == session_pid or parent not in parent_of:
                 break
             parent = parent_of[parent]
-        result.append(ChildProcess(pid, parent if parent in listed else 0, name))
+        result.append(ChildProcess(pid, parent if parent in listed else 0, name, started.get(pid)))
 
     return tuple(sorted(result, key=lambda child: child.pid))
 

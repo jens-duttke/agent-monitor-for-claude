@@ -36,7 +36,7 @@ from .procinfo import SESSION_HELPER_WINDOW_SECONDS, ProcessDetails, clip_argume
 __all__ = [
     'DEFAULT_CLK_TCK', 'DEFAULT_PAGE_SIZE', 'ProcEntry', 'ancestors', 'children_index', 'clk_tck',
     'live_descendants', 'page_size', 'parse_stat', 'prune_sample_cache', 'read_btime', 'read_process_details',
-    'read_proc_subtree', 'read_proc_table', 'sample_cpu',
+    'read_proc_subtree', 'read_proc_table', 'sample_cpu', 'start_times',
 ]
 
 # Linux clock ticks per second, used to interpret /proc/[pid]/stat's tick-based fields (starttime,
@@ -428,6 +428,14 @@ def _read_threads(pid_dir: Path) -> int | None:
             return _optional_int(line.split(), 1)
 
     return None
+
+
+def start_times(table: dict[int, ProcEntry], btime: int | None, ticks_per_second: int) -> dict[int, float | None]:
+    """Each process's start time in POSIX seconds - the boot time plus its ``starttime`` ticks; all None without a boot time."""
+    if btime is None or ticks_per_second <= 0:
+        return {}
+
+    return {pid: btime + entry.starttime / ticks_per_second for pid, entry in table.items()}
 
 
 def read_btime(proc_dir: Path) -> int | None:

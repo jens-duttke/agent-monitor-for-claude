@@ -1315,6 +1315,35 @@ function childRunning(raw) {
     return (raw.child_count || 0) > 0;
 }
 
+// Whether a child process may belong to the pending call: one that started no
+// earlier than the call (PROCESS_START_SLACK_SECONDS before it, for the moments
+// between writing the call and starting its command). A dev server or watcher a
+// background task left running is a child for the rest of the session, and an
+// open permission prompt beside it would otherwise read as executing - for as
+// long as that process lives, and past the stalled window too. A child whose age
+// is unknown (an older snapshot, a process the probe could not time) may be the
+// call's own, so it keeps the cautious reading.
+function pendingChildRunning(raw) {
+    if (!childRunning(raw)) {
+        return false;
+    }
+    const children = Array.isArray(raw.child_processes) ? raw.child_processes : [];
+    const callAge = Number(raw.current_tool_age_seconds ?? raw.age_seconds);
+    if (children.length === 0 || !Number.isFinite(callAge)) {
+        return true;
+    }
+
+    return children.some((child) => {
+        const age = child && child.age_seconds != null ? Number(child.age_seconds) : NaN;
+        return !Number.isFinite(age) || age <= callAge + PROCESS_START_SLACK_SECONDS;
+    });
+}
+
+// The calls whose work runs inside the session's own process: a subagent's or a
+// workflow's. In-process work speaks for a pending call only when it is one of
+// these - a background subagent beside a pending command is not that command.
+const LAUNCHING_TOOLS = new Set(['Agent', 'Task', 'Workflow']);
+
 // Whether work is running inside the session's own process - a subagent, or a
 // workflow bridging the pause between two fan-out phases. Neither spawns an OS
 // child, so the child gate cannot speak for them, yet the call they hang off (a
@@ -1342,10 +1371,10 @@ function pendingBlockReason(raw) {
     if (DIALOG_TOOLS.has(raw.last_tool_name)) {
         return 'dialog';
     }
-    // A running child means a generic tool is executing, never prompting - and so
-    // does a subagent or workflow working under a pending Task call, which shows
-    // no child to prove it.
-    if (childRunning(raw) || inProcessWorkRunning(raw)) {
+    // A child the pending call started means a generic tool is executing, never
+    // prompting - and so does a subagent or workflow working under a pending
+    // call that launches one, which shows no child to prove it.
+    if (pendingChildRunning(raw) || (LAUNCHING_TOOLS.has(raw.last_tool_name) && inProcessWorkRunning(raw))) {
         return null;
     }
     if (pendingIsBlocking(raw.last_tool_name, raw.permission_mode)) {
