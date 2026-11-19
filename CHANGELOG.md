@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An expired prompt cache is marked in the session details whatever writing it again costs, and the amounts are shown in cents, since small ones add up across sessions.
 
 ### Fixed
-- A list entry no longer cuts a figure off mid-word when its line is full. What does not fit is left out whole and stays in the details.
+- A list entry no longer cuts a figure off mid-word when its line is full. What does not fit moves to a second line.
 - Reading git information no longer runs an fsmonitor program configured in a repository, and git's ownership check is skipped only for repositories inside WSL, so a repository another user prepared can no longer run a program as you.
 - An expanded background-task console no longer makes the app sluggish in a long session: the task labels are read from the transcript's new lines only, not from the whole file every second.
 - A session that switched into a git worktree no longer freezes the list while its long transcript is read, and one whose worktree cannot be matched is no longer re-read in full every ten seconds.

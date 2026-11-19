@@ -812,16 +812,14 @@ body.splitter-dragging {
         text-overflow: ellipsis;
     }
 
-    /* One line: a figure that does not fit wraps onto a second line that is
-       clipped away, so it goes whole instead of being cut mid-word. */
+    /* A figure that does not fit moves whole onto the next line, never cut
+       mid-word nor left out. */
     .item-meta {
         grid-area: meta;
         display: flex;
         flex-wrap: wrap;
         align-items: center;
-        gap: 0 10px;
-        height: 1.4em;
-        overflow: hidden;
+        gap: 2px 10px;
         min-width: 0;
         color: var(--fg-dim);
         font-size: 12px;
@@ -928,10 +926,8 @@ body.splitter-dragging {
 
 .meta-project {
     flex: 0 1 auto;
-    /* Squeezed by the figures beside it, but never to nothing, and never so
-       wide that it pushes them off the line. */
+    /* Squeezed only when it alone is wider than the line. */
     min-width: 4em;
-    max-width: 40%;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
