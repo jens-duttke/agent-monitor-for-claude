@@ -554,6 +554,18 @@ class SearchScanTest(SearchEnvTest):
         self._write('id-a', _CWD, self._entry('one needle') + self._entry('two needle'))
         self.assertEqual(self._matches(self._run('needle', refs))[0]['count'], 2)
 
+    def test_a_rewritten_transcript_is_read_afresh_after_a_capped_count(self) -> None:
+        # A record that reached the cap was returned before the file was even
+        # opened, so a transcript rewritten without the text still matched.
+        hits = ''.join(self._entry(f'needle {n}') for n in range(search._MAX_MATCH_ENTRIES + 5))
+        self._write('id-a', _CWD, hits)
+        refs = [self._ref('id-a')]
+        self.assertTrue(self._matches(self._run('needle', refs))[0]['partial'])
+
+        self._write('id-a', _CWD, self._entry('nothing here'))
+
+        self.assertEqual(self._matches(self._run('needle', refs)), [])
+
     def test_a_cleared_search_forgets_what_it_read(self) -> None:
         self._write('id-a', _CWD, self._entry('one needle'))
         self._run('needle', [self._ref('id-a')])

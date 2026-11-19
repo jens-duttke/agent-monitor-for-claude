@@ -878,13 +878,12 @@ def _scan_file(path: Path, session_id: str, query: _Query, should_cancel: Callab
     error or a cancellation yields ``None`` - a search never raises.
     """
     progress = _resume_point(path, query.key, should_cancel)
-    if progress.partial:
-        return progress.result(session_id)
-
     try:
         with path.open('rb') as handle:
             if not progress.continues(handle):
                 progress = _FileScan()
+            elif progress.partial:
+                return progress.result(session_id)
             handle.seek(progress.offset)
 
             carry = b''
