@@ -136,9 +136,15 @@ function ansiToHtml(value) {
         }
         const body = seq.slice(2, -1);
         const params = body === '' ? ['0'] : body.split(';');
-        for (const param of params) {
-            const code = parseInt(param, 10);
-            if (code === 0) {
+        for (let i = 0; i < params.length; i++) {
+            const code = parseInt(params[i], 10);
+            if (code === 38 || code === 48) {
+                // An extended colour (38/48;5;N or 38/48;2;R;G;B) is not mapped,
+                // and its arguments are no codes of their own: 31 as a palette
+                // index is not red, and 0 in an RGB triple no reset.
+                const form = parseInt(params[i + 1], 10);
+                i += form === 5 ? 2 : form === 2 ? 4 : 0;
+            } else if (code === 0) {
                 fg = null;
                 bold = false;
             } else if (code === 1) {

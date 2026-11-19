@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A transcript with a line the app cannot read no longer leaves its session's cost on `…` forever while one processor core re-reads the file.
 - After a long reply the prompt cache no longer reads as alive for as long as the reply streamed past its real end.
 - A reopened session no longer names the tool call its earlier process left open in the status, such as "Permission needed" while Claude Code reports a question.
+- The task console no longer colours output wrongly - red, bold or reset - when a tool uses 256-colour or true-colour codes.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07

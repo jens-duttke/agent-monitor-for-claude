@@ -2344,6 +2344,14 @@ test('diffToHtml: markup in a file stays text and never reaches a class', () => 
     }
 });
 
+test('ansiToHtml: the arguments of an extended colour are not read as codes of their own', () => {
+    // 38;5;31 is a palette index, not "red"; 38;2;0;1;30 is an RGB colour, not reset-bold-black.
+    assert.equal(logic.ansiToHtml('\x1b[38;5;31mt'), 't');
+    assert.equal(logic.ansiToHtml('\x1b[1m\x1b[38;2;0;1;30mt'), '<span class="ansi-bold">t</span>');
+    assert.equal(logic.ansiToHtml('\x1b[48;5;90mt'), 't');
+    assert.equal(logic.ansiToHtml('\x1b[38;5;1;31mt'), '<span class="ansi-red">t</span>');
+});
+
 test('ansiToHtml: markup in process output stays text', () => {
     const html = logic.ansiToHtml('<script>alert(1)</script> & "quoted" \'single\'');
     assert.equal(html, '&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;quoted&quot; &#39;single&#39;');
