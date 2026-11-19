@@ -2,6 +2,12 @@
 
 /* --- actions: select, open, reveal, focus, the session menu, click routing --- */
 
+// The second click of a double-click: a launch it repeats would open the
+// folder or the file manager twice. A keyboard activation has detail 0.
+function isRepeatClick(event) {
+    return event.detail > 1;
+}
+
 function openPath(cwd, origin) {
     if (!cwd) {
         return;
@@ -460,7 +466,9 @@ function onContentClick(event) {
     // The path opens the folder; checked before the group head it sits under.
     const pathOpen = event.target.closest('.path-open');
     if (pathOpen) {
-        openPath(pathOpen.dataset.cwd, pathOpen.dataset.origin);
+        if (!isRepeatClick(event)) {
+            openPath(pathOpen.dataset.cwd, pathOpen.dataset.origin);
+        }
         return;
     }
 
@@ -646,12 +654,16 @@ function onDetailClick(event) {
     }
     const revealButton = event.target.closest('[data-reveal-path]');
     if (revealButton) {
-        revealPath(revealButton.dataset.revealPath, revealButton.dataset.origin);
+        if (!isRepeatClick(event)) {
+            revealPath(revealButton.dataset.revealPath, revealButton.dataset.origin);
+        }
         return;
     }
     const pathOpen = event.target.closest('.path-open');
     if (pathOpen) {
-        openPath(pathOpen.dataset.cwd, pathOpen.dataset.origin);
+        if (!isRepeatClick(event)) {
+            openPath(pathOpen.dataset.cwd, pathOpen.dataset.origin);
+        }
         return;
     }
     // A file of the git block opens its diff - unless the click ended a text selection.
