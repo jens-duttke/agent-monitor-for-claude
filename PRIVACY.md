@@ -114,7 +114,10 @@ which files are uncommitted:
   `ls-files`, `remote get-url`), run in the session's directory
 - never contacts a remote; remote state is as of your last `git fetch`
 - found on `PATH` only, never in the current directory
-- does not write the index (`GIT_OPTIONAL_LOCKS=0`), never prompts, and runs no external diff tool
+- does not write the index (`GIT_OPTIONAL_LOCKS=0`), never prompts, and runs no external diff tool or
+  fsmonitor program
+- skips git's ownership check only for a repository inside a WSL distro, whose files belong to the
+  distro's user; a repository someone else owns on Windows or Linux is not read
 - If git is missing or the folder is not a repository, the git information is not shown.
 
 **`wsl.exe --list --running --quiet`** (Windows only), to find running WSL distributions. It is called

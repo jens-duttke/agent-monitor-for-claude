@@ -49,6 +49,36 @@ class GitExecutableTest(unittest.TestCase):
                 self.assertEqual(gmod._git_executable(), str(Path(directory) / name))
 
 
+class GitCommandLineTest(unittest.TestCase):
+    """The trust a git call extends to the repository it runs in."""
+
+    def _command(self, directory: str, windows: bool) -> list[str]:
+        completed = subprocess.CompletedProcess([], 0, stdout=b'', stderr=b'')
+        with mock.patch.object(gmod, '_git_executable', return_value='git'), \
+                mock.patch.object(gmod.platforms, 'IS_WINDOWS', windows), \
+                mock.patch.object(gmod.subprocess, 'run', return_value=completed) as run:
+            gmod._git(directory, 'status')
+
+        return run.call_args.args[0]
+
+    def test_a_local_repository_keeps_the_ownership_check(self) -> None:
+        for windows in (True, False):
+            command = self._command('C:\\work\\project' if windows else '/home/user/project', windows)
+            self.assertNotIn('safe.directory=*', command)
+
+    def test_only_a_wsl_share_is_trusted_whoever_owns_it(self) -> None:
+        for directory in ('\\\\wsl.localhost\\Ubuntu\\home\\user\\project', '//wsl.localhost/Ubuntu/home/user/project',
+                          '\\\\wsl$\\Ubuntu\\home\\user\\project', '\\\\WSL.LOCALHOST\\Ubuntu\\home'):
+            self.assertIn('safe.directory=*', self._command(directory, True), directory)
+        self.assertNotIn('safe.directory=*', self._command('//wsl.localhost/Ubuntu/home', False))
+
+    def test_no_repository_configured_fsmonitor_program_ever_runs(self) -> None:
+        for windows, directory in ((True, 'C:\\work'), (True, '\\\\wsl.localhost\\Ubuntu\\home'), (False, '/home/user')):
+            command = self._command(directory, windows)
+            self.assertIn('core.fsmonitor=', command)
+            self.assertEqual(command[command.index('core.fsmonitor=') - 1], '-c')
+
+
 class GitStatusTest(unittest.TestCase):
     def setUp(self) -> None:
         gmod._cache.clear()

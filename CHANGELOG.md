@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - When Claude's safeguards refuse a request, the session details show the refusal category and the explanation the API gave, for example `reasoning_extraction`. Quote the category when you report a false refusal.
 
+### Fixed
+- Reading git information no longer runs an fsmonitor program configured in a repository, and git's ownership check is skipped only for repositories inside WSL, so a repository another user prepared can no longer run a program as you.
+
 ## [1.0.0] - 2026-11-07
 
 ### Added

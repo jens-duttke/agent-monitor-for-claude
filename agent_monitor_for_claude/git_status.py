@@ -12,9 +12,11 @@ This module runs the ``git`` executable - with fixed arguments, a working
 directory that must be an existing directory, a timeout and no window - and
 only when the UI asks for the selected session.  Nothing is written: the
 optional index refresh ``git status`` may perform is switched off through
-``GIT_OPTIONAL_LOCKS=0``, and ``safe.directory`` is overridden for this one
-call only, so a repository owned by another user (a WSL distro's, reached over
-``\\\\wsl.localhost``) can still be read.  The executable is looked up on
+``GIT_OPTIONAL_LOCKS=0``.  ``safe.directory`` is overridden for this one call
+only, and only for a repository on a WSL distro's share (reached over
+``\\\\wsl.localhost``), whose files belong to the distro's user - anywhere else
+git's own ownership check stands.  No call runs a ``core.fsmonitor`` program a
+repository may configure.  The executable is looked up on
 ``PATH`` alone, never in the current directory.  A diff never runs an external
 diff or text-conversion program a repository may configure.
 """
@@ -46,6 +48,9 @@ _MAX_PATH_CHARS = 4096
 # Options every diff carries: no colour, and no program the repository's
 # configuration names for diffing or converting a file.
 _DIFF_OPTIONS = ('--no-color', '--no-ext-diff', '--no-textconv')
+
+# How a directory on a WSL distro's share starts (casefolded, backslashes).
+_WSL_SHARE_PREFIXES = ('\\\\wsl.localhost\\', '\\\\wsl$\\')
 
 _cache: dict[tuple[str, tuple[str, ...]], tuple[float, dict[str, Any] | None]] = {}
 _cache_lock = threading.Lock()
@@ -277,7 +282,8 @@ def _git(directory: str, *args: str, ok_codes: tuple[int, ...] = (0,)) -> str | 
     executable = _git_executable()
     if executable is None:
         return None
-    command = [executable, '-c', 'safe.directory=*', '-c', 'core.quotepath=off', '-C', directory, *args]
+    trust = ['-c', 'safe.directory=*'] if _on_wsl_share(directory) else []
+    command = [executable, *trust, '-c', 'core.fsmonitor=', '-c', 'core.quotepath=off', '-C', directory, *args]
     environment = dict(os.environ, GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0', LC_ALL='C')
     try:
         result = subprocess.run(
@@ -290,6 +296,15 @@ def _git(directory: str, *args: str, ok_codes: tuple[int, ...] = (0,)) -> str | 
         return None
 
     return result.stdout.decode('utf-8', errors='replace')
+
+
+def _on_wsl_share(directory: str) -> bool:
+    """Whether *directory* lies on a WSL distro's share, whose files another (Linux) user owns."""
+    if not platforms.IS_WINDOWS:
+        return False
+    spelled = directory.replace('/', '\\').casefold()
+
+    return spelled.startswith(_WSL_SHARE_PREFIXES)
 
 
 def _git_executable() -> str | None:
