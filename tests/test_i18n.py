@@ -71,5 +71,28 @@ class LanguageSettingTest(unittest.TestCase):
             reload_translations()
 
 
+class UnparsableLocaleTest(unittest.TestCase):
+    def test_a_locale_name_python_cannot_parse_still_loads_a_language(self) -> None:
+        # A C-library locale name without a codeset that Python's alias table
+        # lacks makes getlocale() raise - at import of i18n, i.e. on every start.
+        from agent_monitor_for_claude import i18n
+
+        english = json.loads((LOCALE_DIR / 'en.json').read_text(encoding='utf-8'))
+        with mock.patch.object(i18n.locale, 'getlocale', side_effect=ValueError('unknown locale: en-IL')),                 mock.patch.object(i18n.locale, 'setlocale', return_value='en-IL'),                 mock.patch('agent_monitor_for_claude.settings.current_settings', return_value=Settings(language='')):
+            self.assertEqual(i18n.system_locale_name(), 'en-IL')
+            self.assertEqual(i18n.load_translations()['cancel'], english['cancel'])
+
+    def test_the_diagnostics_name_such_a_locale_instead_of_raising(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+
+        from agent_monitor_for_claude import verbose
+
+        output = io.StringIO()
+        with mock.patch.object(verbose.locale, 'getlocale', side_effect=ValueError('unknown locale: en-IL')), redirect_stdout(output):
+            verbose.print_startup_diagnostics()
+        self.assertIn('System locale', output.getvalue())
+
+
 if __name__ == '__main__':
     unittest.main()

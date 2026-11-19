@@ -60,8 +60,11 @@ def print_startup_diagnostics() -> None:
         _row('Bundle dir', _redact_home(getattr(sys, '_MEIPASS', 'unknown')))
 
     _section('Locale')
-    sys_locale = locale.getlocale()
-    _row('System locale', f'{sys_locale[0]}, {sys_locale[1]}' if sys_locale[0] else 'not set')
+    try:
+        sys_locale = locale.getlocale()
+        _row('System locale', f'{sys_locale[0]}, {sys_locale[1]}' if sys_locale[0] else 'not set')
+    except ValueError:
+        _row('System locale', f'{locale.setlocale(locale.LC_CTYPE)} (not a name Python can parse)')
     _row('CLAUDE_CONFIG_DIR', _redact_home(os.environ.get('CLAUDE_CONFIG_DIR', '')) or '(not set)')
 
     _section('Display')

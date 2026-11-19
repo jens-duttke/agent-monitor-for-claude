@@ -18,7 +18,7 @@ import locale
 from pathlib import Path
 from typing import Any
 
-__all__ = ['LOCALE_DIR', 'available_languages', 'detect_lang_code', 'load_translations', 'reload_translations', 'T']
+__all__ = ['LOCALE_DIR', 'available_languages', 'detect_lang_code', 'load_translations', 'reload_translations', 'system_locale_name', 'T']
 
 LOCALE_DIR = Path(__file__).parent.parent / 'locale'
 
@@ -102,6 +102,20 @@ def _read_locale(code: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def system_locale_name() -> str:
+    """Return the process locale's language name, e.g. ``de_DE``; empty when there is none.
+
+    ``locale.getlocale`` raises for a C-library name it cannot parse - one
+    without a codeset that its alias table lacks, such as ``en-IL`` - which here
+    runs at import, on every start.  The raw C-library name stands in for it
+    then; :func:`detect_lang_code` copes with whatever it is.
+    """
+    try:
+        return locale.getlocale()[0] or ''
+    except ValueError:
+        return locale.setlocale(locale.LC_CTYPE) or ''
+
+
 def load_translations() -> dict[str, Any]:
     """Load translations for the configured or detected language, English fallback.
 
@@ -112,7 +126,7 @@ def load_translations() -> dict[str, Any]:
     """
     from .settings import current_settings
 
-    lang = locale.getlocale()[0] or ''
+    lang = system_locale_name()
     for code in (current_settings().language, detect_lang_code(lang), 'en'):
         if not code:
             continue

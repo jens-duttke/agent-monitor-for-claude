@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A permission prompt now reads as "Permission needed" even while a dev server or another process from an earlier background task, or a background subagent, is still running; before, the session read "Working" for as long as that lasted.
 - *Older* keeps a selected past session selected when a live session ends, shows the wider window you picked while it was still loading, and lists every session that ended meanwhile - also after it was closed and opened again.
 - A session woken by its `/loop` or by a message from another session now reads as working while the model thinks, instead of "Idle" until the first reply, and that turn counts as worked time.
+- The app now starts on a system whose locale name Python cannot read, such as `en-IL`, instead of failing silently on every start.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07
