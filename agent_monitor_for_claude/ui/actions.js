@@ -275,7 +275,9 @@ function onGraphPointerUp(event) {
     graphDrag = null;
     if (drag.moved) {
         drag.slot.classList.remove('dragging');
-        graphDragClick = true;
+        // Only a pan that ends in a real release is followed by a click; a
+        // cancelled one is not, and the flag would swallow a later click instead.
+        graphDragClick = event.type === 'pointerup';
     }
 }
 
@@ -399,10 +401,13 @@ function initSplitter() {
 /* --- click routing: one delegated handler per pane --- */
 
 function onContentClick(event) {
-    // The click that ends a drag of the graph selects nothing.
+    // The click that ends a drag of the graph selects nothing - a keyboard
+    // activation (detail 0) is never that click.
     if (graphDragClick) {
         graphDragClick = false;
-        return;
+        if (event.detail !== 0) {
+            return;
+        }
     }
     // The widened search's offer and its way back sit in slots of their own.
     const widen = event.target.closest('.empty-action');
