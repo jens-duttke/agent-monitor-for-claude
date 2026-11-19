@@ -342,7 +342,7 @@ def _find_agent_file(projects: Path, session_id: str, agent_id: str) -> Path | N
     name = f'agent-{agent_id}.jsonl'
     for folder in folders:
         directory = folder / session_id / 'subagents'
-        if not directory.is_dir():
+        if not _is_dir(directory):
             continue
         for path in _agent_paths(directory) or ():
             if path.name == name and _inside(path, projects):
@@ -398,7 +398,7 @@ def past_subagent_usage(transcript: Path, worktree_cwds: Iterable[str] = ()) -> 
     directories: list[Path] = []
     for directory in (transcript.parent / transcript.stem / 'subagents',
                       *(projects / cwd_to_slug(cwd) / transcript.stem / 'subagents' for cwd in worktree_cwds if cwd)):
-        if directory not in directories and directory.is_dir():
+        if directory not in directories and _is_dir(directory):
             directories.append(directory)
 
     agent_paths: list[Path] = []
@@ -626,10 +626,18 @@ def _subagents_dirs(root: SessionRoot, session_id: str, cwd: str, worktree_cwds:
         if not directory_cwd:
             continue
         directory = projects_dir(root) / cwd_to_slug(directory_cwd) / session_id / 'subagents'
-        if directory not in directories and directory.is_dir():
+        if directory not in directories and _is_dir(directory):
             directories.append(directory)
 
     return directories
+
+
+def _is_dir(path: Path) -> bool:
+    """Whether *path* is a directory; False on any error - ``Path.is_dir`` lets a permission or share error through."""
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
 
 
 def _label(agent_path: Path) -> str:

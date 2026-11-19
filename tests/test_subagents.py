@@ -76,6 +76,21 @@ class SubagentsTest(unittest.TestCase):
         mtime = time.time() - age_seconds
         os.utime(agent, (mtime, mtime))
 
+    def test_a_subagents_folder_the_share_refuses_reads_as_none(self) -> None:
+        # Path.is_dir() lets a permission error through; it dropped the whole
+        # session from the poll instead of showing it without subagents.
+        real_stat = Path.stat
+
+        def failing_stat(path: Path, *args: object, **kwargs: object) -> object:
+            if path.name == 'subagents':
+                raise PermissionError(13, 'denied')
+            return real_stat(path, *args, **kwargs)
+
+        with mock.patch.object(Path, 'stat', failing_stat):
+            info = count_subagents(local_root(), _SESSION_ID, _CWD)
+
+        self.assertEqual(info.running, 0)
+
     def test_an_agents_whole_task_is_read_from_its_first_line(self) -> None:
         task = 'Map the input handling.\n' + 'x' * 5000
         first = json.dumps({'type': 'user', 'isSidechain': True, 'message': {'content': task}})

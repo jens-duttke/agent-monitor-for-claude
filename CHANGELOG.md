@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A search hit count of exactly 50 no longer reads "50+" when the transcript goes on without another hit.
 - A regular expression valid in Python but not in JavaScript, such as `(?P<name>...)` or `(?i)`, is now searched instead of being marked invalid.
 - After the page reloads (a language change), a content search started before it can no longer add its old results to a new search.
+- A session whose subagent folder the WSL share refuses to read no longer vanishes from the list for a refresh.
 - A WSL process the share refuses to report on no longer makes every session of that distro vanish from the list for a refresh.
 - On Linux and in WSL, a background process that has exited but was not yet collected by its parent no longer keeps a session on "Background".
 - On Linux, raising a session's window no longer runs `ldconfig`, a C compiler or `ld` to find the X11 library; the app runs no program besides `git` and, on Windows, `wsl.exe`.
