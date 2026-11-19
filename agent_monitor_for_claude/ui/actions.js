@@ -529,7 +529,11 @@ function selectEntry(key) {
     selectSession(key, false);
     pendingDrill = setTimeout(() => {
         pendingDrill = null;
-        selectSession(key, true);
+        // Only into a row still selected and listed: an arrow key or a poll may
+        // have moved the selection on meanwhile.
+        if (state.selectedKey === key && state.listKeys.includes(key)) {
+            selectSession(key, true);
+        }
     }, DRILL_DELAY_MS);
 }
 
