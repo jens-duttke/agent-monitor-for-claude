@@ -7,6 +7,7 @@ entry point that does not exist elsewhere.  The counterparts live in
 """
 from __future__ import annotations
 
+import ctypes
 import os
 import sys
 import unittest
@@ -127,6 +128,26 @@ class ClassBrushTest(unittest.TestCase):
                 win32._paint_class(handle, 0x202020)
 
         self.assertEqual(gdi.CreateSolidBrush.call_count, 1)
+
+
+@_WINDOWS_ONLY
+class DisplayDiagnosticsTest(unittest.TestCase):
+    def test_a_per_monitor_v1_context_is_not_named_v2(self) -> None:
+        # Awareness 2 is per-monitor, V1 and V2 alike; only comparing the
+        # context itself tells them apart.
+        with mock.patch.object(win32, '_user32') as user32:
+            user32.GetThreadDpiAwarenessContext.return_value = 0x12
+            user32.GetAwarenessFromDpiAwarenessContext.return_value = 2
+            user32.AreDpiAwarenessContextsEqual.return_value = 0
+            user32.GetDpiForSystem.return_value = 96
+            rows = dict(win32.diagnostic_display_rows())
+
+        self.assertEqual(rows['DPI awareness'], 'Per-Monitor (V1)')
+
+    def test_the_context_handle_is_read_at_pointer_width(self) -> None:
+        # Read back as the default C int, a handle would lose its upper half.
+        self.assertIs(win32._user32.GetThreadDpiAwarenessContext.restype, ctypes.c_void_p)
+        self.assertEqual(win32._user32.GetAwarenessFromDpiAwarenessContext.argtypes, [ctypes.c_void_p])
 
 
 @_WINDOWS_ONLY

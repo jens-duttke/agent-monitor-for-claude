@@ -168,6 +168,12 @@ _user32.FlashWindowEx.restype = ctypes.wintypes.BOOL
 _user32.GetForegroundWindow.restype = ctypes.wintypes.HWND
 _user32.DestroyIcon.argtypes = [ctypes.c_void_p]
 _user32.DestroyIcon.restype = ctypes.wintypes.BOOL
+# A DPI awareness context is a pointer-sized handle.
+_user32.GetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+_user32.GetAwarenessFromDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+_user32.AreDpiAwarenessContextsEqual.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+_user32.AreDpiAwarenessContextsEqual.restype = ctypes.wintypes.BOOL
+_DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = ctypes.c_void_p(-4)
 
 
 def show_error_box(message: str, title: str) -> None:
@@ -718,8 +724,12 @@ def diagnostic_display_rows() -> list[tuple[str, str]]:
     try:
         ctx = _user32.GetThreadDpiAwarenessContext()
         awareness = _user32.GetAwarenessFromDpiAwarenessContext(ctx)
-        awareness_names = {0: 'Unaware', 1: 'System', 2: 'Per-Monitor V2'}
+        awareness_names = {0: 'Unaware', 1: 'System', 2: 'Per-Monitor'}
         awareness_str = awareness_names.get(awareness, f'Unknown ({awareness})')
+        if awareness == 2:
+            # Both per-monitor versions report awareness 2; the context says which.
+            is_v2 = _user32.AreDpiAwarenessContextsEqual(ctx, _DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
+            awareness_str += ' V2' if is_v2 else ' (V1)'
     except Exception:  # noqa: BLE001  # any Win32 failure degrades to "unavailable"
         awareness_str = 'unavailable'
 
