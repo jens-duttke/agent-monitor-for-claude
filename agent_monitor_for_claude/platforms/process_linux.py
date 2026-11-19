@@ -27,7 +27,8 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Iterable
+from types import MappingProxyType
+from typing import Iterable, Mapping
 
 from .. import procfs
 from ..procinfo import ChildProcessStat, EntrypointWindow, ProcessDetails, ProcessInfo, child_processes
@@ -126,7 +127,7 @@ TERMINAL_WINDOW_OWNERS = frozenset(_TERMINAL_HOSTS)
 
 # Empty on purpose: the table names the host window of a session running inside
 # a WSL distribution, and WSL sessions are only discovered on a Windows host.
-ENTRYPOINT_WINDOW_OWNERS: dict[str, EntrypointWindow] = {}
+ENTRYPOINT_WINDOW_OWNERS: Mapping[str, EntrypointWindow] = MappingProxyType({})
 
 # Ancestors that own windows for the whole desktop, never for one session; the
 # window search skips them so it never raises the shell instead of the editor.

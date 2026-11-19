@@ -52,8 +52,8 @@ else:
     )
 
 __all__ = [
-    'ChildProcessStat', 'ENTRYPOINT_WINDOW_OWNERS', 'EntrypointWindow', 'IGNORED_ANCESTOR_NAMES', 'ProcessDetails', 'ProcessInfo', 'SESSION_HELPER_WINDOW_SECONDS',
-    'TERMINAL_WINDOW_OWNERS', 'ancestry', 'probe', 'probe_all', 'process_details', 'process_names', 'process_stats',
+    'ChildProcessStat', 'ENTRYPOINT_WINDOW_OWNERS', 'EntrypointWindow', 'IGNORED_ANCESTOR_NAMES', 'ProcessDetails', 'ProcessInfo',
+    'SESSION_HELPER_WINDOW_SECONDS', 'TERMINAL_WINDOW_OWNERS', 'ancestry', 'probe', 'probe_all', 'process_details', 'process_names', 'process_stats',
     'vmmem_present',
 ]
 

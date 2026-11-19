@@ -3923,3 +3923,15 @@ test('settings dialog: html safety - values, names, paths and errors from the br
     const tags = new Set([...html.matchAll(/<([a-z0-9]+)/g)].map((match) => match[1]));
     assert.deepEqual([...tags].sort(), ['button', 'div', 'h3', 'input', 'label', 'li', 'option', 'path', 'section', 'select', 'span', 'svg', 'ul']);
 });
+
+test('buildSession: the entrypoint passed to focus_session is the registry string or nothing', () => {
+    const build = (entrypoint) => logic.buildSession({
+        session_id: 's', pid: 1, cwd: '/home/x', short_name: 's', alive: true, has_transcript: false,
+        native_status: null, usage: {}, child_count: 0, origin: 'wsl:Ubuntu', entrypoint,
+    }, {}, {});
+
+    assert.equal(build('claude-desktop').entrypoint, 'claude-desktop');
+    for (const value of [undefined, null, 42, ['claude-desktop'], { toString: () => 'claude-desktop' }]) {
+        assert.equal(build(value).entrypoint, '');
+    }
+});

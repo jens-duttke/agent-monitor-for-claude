@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import os
 import re
+from typing import Mapping
 
 from .platforms import activate_window, enum_windows, open_path, open_uri, reveal_file
 from .process_probe import ENTRYPOINT_WINDOW_OWNERS, IGNORED_ANCESTOR_NAMES, TERMINAL_WINDOW_OWNERS, EntrypointWindow, ancestry, process_names
@@ -280,8 +281,9 @@ def select_terminal_window(windows: list[tuple[int, int, str]], owner_names: dic
     return None
 
 
-def select_entrypoint_window(windows: list[tuple[int, int, str]], owner_names: dict[int, str], entrypoint: str, project_name: str,
-                             rules: dict[str, EntrypointWindow]) -> int | None:
+def select_entrypoint_window(
+    windows: list[tuple[int, int, str]], owner_names: dict[int, str], entrypoint: str, project_name: str, rules: Mapping[str, EntrypointWindow],
+) -> int | None:
     """Pick the host window for a session of *entrypoint* by the window's owner (pure decision logic).
 
     Parameters

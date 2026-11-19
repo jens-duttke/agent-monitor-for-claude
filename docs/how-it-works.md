@@ -60,7 +60,7 @@ Subagents run inside the Claude Code process, not as separate processes. Agent M
 
 A click raises the window the session runs in, found through its process's parent chain. For editors with several windows in one process (VS Code, JetBrains), the window whose title names the project folder is chosen. For the VS Code extension, the exact session tab is then focused through the extension's deep link `vscode://anthropic.claude-code/open?session=<id>`.
 
-On Windows, sessions in a terminal are matched to a terminal window by title. Individual terminal tabs cannot be selected.
+On Windows, sessions in a terminal are matched to a terminal window by title. Individual terminal tabs cannot be selected. A Claude Desktop chat that runs inside WSL raises the Claude Desktop window.
 
 On Linux the window list comes from the X server. Windows of native Wayland apps cannot be raised.
 

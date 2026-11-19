@@ -27,7 +27,8 @@ import ntpath
 import threading
 import time
 from datetime import datetime, timedelta
-from typing import Any, Iterable
+from types import MappingProxyType
+from typing import Any, Iterable, Mapping
 
 import psutil
 
@@ -95,9 +96,9 @@ TERMINAL_WINDOW_OWNERS = frozenset(_TERMINAL_HOSTS) | _CONSOLE_HOST_NAMES
 # be found by its owner.  Claude Desktop's main window belongs to ``claude.exe``,
 # which is also the native CLI's name - the CLI owns no window of its own, but its
 # title keeps any other ``claude.exe`` window out.
-ENTRYPOINT_WINDOW_OWNERS = {
+ENTRYPOINT_WINDOW_OWNERS: Mapping[str, EntrypointWindow] = MappingProxyType({
     'claude-desktop': EntrypointWindow(owners=frozenset({'claude.exe'}), title='Claude'),
-}
+})
 
 # Ancestors that own windows for the whole desktop, never for one session; the
 # window search skips them so it never raises the shell instead of the editor.
