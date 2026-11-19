@@ -77,8 +77,11 @@ async function gitOverviewLoop() {
 }
 
 async function refreshGitOverview() {
+    // The listed entries first: the backend answers at most a few hundred
+    // directories, and those are the ones on screen.
     const refs = new Map();
-    for (const session of state.sessionsByKey.values()) {
+    const listed = (state.listKeys || []).map((key) => state.sessionsByKey.get(key)).filter(Boolean);
+    for (const session of [...listed, ...state.sessionsByKey.values()]) {
         const key = logic.gitDirKey(session);
         if (key && !refs.has(key)) {
             refs.set(key, { session_id: session.session_id || '', cwd: session.cwd || '', worktree_cwd: session.worktree_cwd || '',

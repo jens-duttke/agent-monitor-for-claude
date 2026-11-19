@@ -24,7 +24,7 @@ import webview  # type: ignore[import-untyped]  # no type stubs available
 
 from . import __version__
 from .clipboard import copy_text as _copy_text
-from .git_overview import git_overview
+from .git_overview import MAX_DIRECTORIES, git_overview
 from .git_status import git_diff, git_status
 from .history import list_history
 from .i18n import T, available_languages, reload_translations
@@ -61,9 +61,6 @@ _LOG_MAX_LEN = 2000
 
 # Session ids are UUIDs; validated before a session id is built into a path.
 _SESSION_UUID = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
-
-# The most sessions one git overview request may name.
-_MAX_GIT_OVERVIEW_REFS = 400
 
 # Ports offered to pywebview's own asset server, in order.  The first is the one it would
 # pick by itself; the rest sit far apart because Windows reserves whole contiguous blocks
@@ -801,7 +798,7 @@ class _MonitorApi:
         answers: list[dict[str, Any] | str | None] = [None] * len(refs)
         directories: list[str] = []
         slots: list[int] = []
-        for index, ref in enumerate(refs[:_MAX_GIT_OVERVIEW_REFS]):
+        for index, ref in enumerate(refs[:MAX_DIRECTORIES]):
             directory = _git_overview_directory(ref)
             if directory:
                 directories.append(directory)

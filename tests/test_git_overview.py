@@ -183,6 +183,17 @@ class CacheTest(unittest.TestCase):
         git_overview._entries.clear()
         self.addCleanup(git_overview._entries.clear)
 
+    def test_every_ref_the_bridge_accepts_gets_an_answer(self) -> None:
+        # The bridge took up to 400 refs but the overview answered 200; the rest
+        # read as "no repository" on every round.
+        from agent_monitor_for_claude import app
+
+        refs = [{'session_id': f's{index}', 'cwd': f'C:\\repo{index}', 'origin': 'local'} for index in range(300)]
+        with mock.patch.object(git_overview._pool, 'submit'), mock.patch.object(app, '_git_overview_directory', side_effect=lambda ref: ref['cwd']):
+            answers = app._MonitorApi().get_git_overview(refs)
+
+        self.assertEqual(answers.count(git_overview.PENDING), 300)
+
     def test_the_first_answer_is_pending_and_a_later_one_the_record(self) -> None:
         release = threading.Event()
         done = threading.Event()

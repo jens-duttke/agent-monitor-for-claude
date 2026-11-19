@@ -32,7 +32,7 @@ from typing import Any
 
 from .git_status import _git as run_git
 
-__all__ = ['PENDING', 'git_overview', 'remote_web_address']
+__all__ = ['MAX_DIRECTORIES', 'PENDING', 'git_overview', 'remote_web_address']
 
 # The answer for a directory git has not reported on yet.
 PENDING = 'pending'
@@ -43,7 +43,7 @@ _FORGET_SECONDS = 600.0
 # Directories read at once; each runs up to four short git calls.
 _WORKERS = 6
 # The most directories one request may name.
-_MAX_DIRECTORIES = 200
+MAX_DIRECTORIES = 400
 # The names a remote's default branch is looked for under when its HEAD is not set.
 _DEFAULT_BRANCH_NAMES = ('main', 'master')
 # A branch that changed more files than this is not checked for a squash merge (its paths would not fit one command line).
@@ -78,7 +78,7 @@ def git_overview(directories: list[str]) -> list[dict[str, Any] | str | None]:
     ----------
     directories : list[str]
         Directories this host can open (a WSL path already translated); only
-        the first ``_MAX_DIRECTORIES`` are considered.
+        the first ``MAX_DIRECTORIES`` are considered.
 
     Returns
     -------
@@ -89,7 +89,7 @@ def git_overview(directories: list[str]) -> list[dict[str, Any] | str | None]:
     now = time.monotonic()
     answers: list[dict[str, Any] | str | None] = []
     with _lock:
-        for directory in directories[:_MAX_DIRECTORIES]:
+        for directory in directories[:MAX_DIRECTORIES]:
             key = os.path.normcase(os.path.normpath(directory))
             entry = _entries.setdefault(key, _Entry())
             entry.asked_at = now

@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A branch deleted on the remote without being merged no longer reads as merged when the session works in a subfolder of its repository.
 - A file moved in the working tree no longer adds a bogus entry, named after its old path, to the uncommitted files.
 - A branch in a fresh clone of an empty repository reads "only on this machine" instead of "deleted on the remote".
+- With *Older* reaching far back, sessions past the 200th folder get their git state too, instead of reading as no repository; the entries on screen are asked first.
 - Files a session created in a new folder now count as uncommitted, are marked as its own, and show their diff on click, instead of the folder being listed as one entry without a diff.
 - A permission prompt now reads as "Permission needed" even while a dev server or another process from an earlier background task, or a background subagent, is still running; before, the session read "Working" for as long as that lasted.
 - *Older* keeps a selected past session selected when a live session ends, shows the wider window you picked while it was still loading, and lists every session that ended meanwhile - also after it was closed and opened again.
