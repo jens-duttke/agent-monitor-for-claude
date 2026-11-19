@@ -37,7 +37,7 @@ from .roots import root_for_origin
 from .search import run_search
 from .session_delete import delete_session as _delete_session
 from .sessions import list_sessions
-from .settings import current_settings, describe_settings, settings_path
+from .settings import current_settings, describe_settings, report_load_errors, settings_path
 from .settings import save_settings as _save_settings
 from .snapshot import (
     build_snapshot, registry_fingerprint, session_activity, session_hook_failures, session_media, session_media_image, session_texts,
@@ -940,6 +940,7 @@ def run(verbose: bool = False) -> None:
         after the CLR/WebView2 has loaded, so they run as the post-start hook.
     """
     prepare_gui_environment()
+    report_load_errors()
 
     # The window and its web view take a moment to come up; spending it on the
     # first snapshot means the page's own first request finds the small

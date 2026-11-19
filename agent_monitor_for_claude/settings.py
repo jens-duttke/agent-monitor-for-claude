@@ -42,7 +42,7 @@ from .platforms import IS_WINDOWS, show_error_box, user_config_dir
 
 __all__ = [
     'SETTINGS_FILENAME', 'SPECS', 'SettingSpec', 'Settings',
-    'current_settings', 'describe_settings', 'save_settings', 'settings_path',
+    'current_settings', 'describe_settings', 'report_load_errors', 'save_settings', 'settings_path',
 ]
 
 SETTINGS_FILENAME = 'agent-monitor-settings.json'
@@ -124,6 +124,25 @@ class _Store:
     def __init__(self, loaded: _Loaded) -> None:
         self.loaded = loaded
         self.lock = threading.Lock()
+        # Whether the read at start has had its errors shown (see report_load_errors).
+        self.reported = False
+
+
+def report_load_errors() -> None:
+    """Show the errors of the read at start in a dialog naming the file, once per process.
+
+    Called at start-up once the GUI environment is prepared - never at import,
+    which on Linux comes before it, where a dialog is the first touch of the
+    toolkit (see ``platforms.prepare_gui_environment``).  A later call does
+    nothing, and so does one after a save, which leaves no load errors.
+    """
+    with _store.lock:
+        if _store.reported:
+            return
+        _store.reported = True
+        loaded = _store.loaded
+
+    _report(loaded)
 
 
 def current_settings() -> Settings:
@@ -426,4 +445,3 @@ def _report(loaded: _Loaded) -> None:
 
 
 _store = _Store(_load())
-_report(_store.loaded)

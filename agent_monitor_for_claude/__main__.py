@@ -23,6 +23,7 @@ if sys.version_info < MIN_PYTHON:
 
 from agent_monitor_for_claude.app import run  # noqa: E402  # the version guard above has to run first
 from agent_monitor_for_claude.platforms import prepare_gui_environment
+from agent_monitor_for_claude.settings import report_load_errors
 from agent_monitor_for_claude.single_instance import ensure_single_instance, release_instance_lock
 from agent_monitor_for_claude.verbose import print_startup_diagnostics, setup_console
 
@@ -31,12 +32,13 @@ def main() -> None:
     """Guard against a second instance, then run the window.
 
     The environment is prepared first, before anything else can touch the GUI
-    toolkit: both the diagnostics and the instance guard's replace dialog reach
-    it, and on Linux one of the environments this application is most often
+    toolkit: the settings-error dialog, the diagnostics and the instance guard's
+    replace dialog all reach it, and on Linux one of the environments this application is most often
     started from would make that first touch kill the process outright (see
     ``platforms.linux.prepare_gui_environment``).
     """
     prepare_gui_environment()
+    report_load_errors()
 
     verbose = '--verbose' in sys.argv
     if verbose:

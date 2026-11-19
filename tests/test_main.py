@@ -41,6 +41,7 @@ class StartupOrderTest(unittest.TestCase):
 
         with mock.patch.object(__main__.sys, 'argv', argv), \
              mock.patch.object(__main__, 'prepare_gui_environment', record('prepare')), \
+             mock.patch.object(__main__, 'report_load_errors', record('settings')), \
              mock.patch.object(__main__, 'setup_console', record('console')), \
              mock.patch.object(__main__, 'print_startup_diagnostics', record('diagnostics')), \
              mock.patch.object(__main__, 'ensure_single_instance', record('guard', True)), \
@@ -51,13 +52,13 @@ class StartupOrderTest(unittest.TestCase):
         return calls
 
     def test_the_environment_is_prepared_before_anything_reaches_the_toolkit(self) -> None:
-        self.assertEqual(self._run_main(['prog']), ['prepare', 'guard', 'run', 'release'])
+        self.assertEqual(self._run_main(['prog']), ['prepare', 'settings', 'guard', 'run', 'release'])
 
     def test_that_holds_with_verbose_diagnostics_too(self) -> None:
         # The diagnostics read the toolkit's version, so they must not come first.
         self.assertEqual(
             self._run_main(['prog', '--verbose']),
-            ['prepare', 'console', 'diagnostics', 'guard', 'run', 'release'],
+            ['prepare', 'settings', 'console', 'diagnostics', 'guard', 'run', 'release'],
         )
 
     def test_a_refused_second_instance_still_prepared_the_environment(self) -> None:
@@ -65,6 +66,7 @@ class StartupOrderTest(unittest.TestCase):
         calls: list[str] = []
         with mock.patch.object(__main__.sys, 'argv', ['prog']), \
              mock.patch.object(__main__, 'prepare_gui_environment', lambda: calls.append('prepare')), \
+             mock.patch.object(__main__, 'report_load_errors'), \
              mock.patch.object(__main__, 'ensure_single_instance', lambda: calls.append('guard') or False), \
              mock.patch.object(__main__, 'run') as run:
             __main__.main()
@@ -75,6 +77,7 @@ class StartupOrderTest(unittest.TestCase):
     def test_the_lock_is_released_even_when_the_window_fails(self) -> None:
         with mock.patch.object(__main__.sys, 'argv', ['prog']), \
              mock.patch.object(__main__, 'prepare_gui_environment'), \
+             mock.patch.object(__main__, 'report_load_errors'), \
              mock.patch.object(__main__, 'ensure_single_instance', return_value=True), \
              mock.patch.object(__main__, 'run', side_effect=RuntimeError('boom')), \
              mock.patch.object(__main__, 'release_instance_lock') as release:
@@ -82,6 +85,32 @@ class StartupOrderTest(unittest.TestCase):
                 __main__.main()
 
         release.assert_called_once_with()
+
+
+class SettingsDialogAtImportTest(unittest.TestCase):
+    def test_importing_the_settings_shows_no_dialog(self) -> None:
+        # The settings load at import, which on Linux comes before the GUI
+        # environment is prepared - a dialog there is a GTK touch that a Snap
+        # launcher's environment turns into a crash.
+        tree = ast.parse((_PACKAGE_DIR / 'settings.py').read_text(encoding='utf-8'))
+        top_level_calls = set()
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name):
+                    top_level_calls.add(inner.func.id)
+
+        self.assertFalse(top_level_calls & {'_report', 'show_error_box', 'report_load_errors'})
+
+    def test_the_errors_are_shown_once_though_main_and_run_both_ask(self) -> None:
+        from agent_monitor_for_claude import settings
+
+        with mock.patch.object(settings._store, 'reported', False), mock.patch.object(settings, '_report') as report:
+            settings.report_load_errors()
+            settings.report_load_errors()
+
+        report.assert_called_once_with(settings._store.loaded)
 
 
 class VersionGuardTest(unittest.TestCase):
