@@ -1219,6 +1219,17 @@ class SessionDetailsTest(unittest.TestCase):
         self.assertEqual(state.cache_ttl_seconds, 3600)
         self.assertEqual(state.cache_expires_at, _timestamp_epoch('2026-07-11T10:20:00Z') + 3600)
 
+    def test_the_cache_clock_starts_with_the_request_not_the_end_of_a_long_reply(self) -> None:
+        # The API refreshes the entry when it processes the request; a reply
+        # that streamed for minutes is written at its end.
+        request = {'type': 'user', 'timestamp': '2026-07-11T10:17:00Z', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't1'}]}}
+        state = _parse(_lines(
+            _reply(usage={'cache_creation_input_tokens': 500, 'cache_creation': {'ephemeral_5m_input_tokens': 500}}),
+            request,
+            _reply(timestamp='2026-07-11T10:20:00Z', usage={'input_tokens': 3, 'cache_read_input_tokens': 500}),
+        ))
+        self.assertEqual(state.cache_expires_at, _timestamp_epoch('2026-07-11T10:17:00Z') + 300)
+
     def test_the_lifetime_that_wrote_more_tokens_decides(self) -> None:
         state = _parse(_lines(_reply(usage={
             'cache_creation_input_tokens': 900,

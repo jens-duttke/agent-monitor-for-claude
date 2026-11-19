@@ -1793,6 +1793,8 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
     last_tool_name: str | None = None
     last_stop_reason: str | None = None
     last_timestamp: str | None = None
+    # When the newest request was sent: the user entry (prompt or tool result) a reply answers.
+    request_at: str | None = None
     last_entry_kind: str | None = None
     api_error_kind: str | None = None
     api_error_status: int | None = None
@@ -1905,7 +1907,7 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
                 # (locally-generated turns) is not a model and must not be displayed.
                 if isinstance(entry_model, str) and entry_model and entry_model != _SYNTHETIC_MODEL:
                     model = entry_model
-                details.absorb_reply(entry, message)
+                details.absorb_reply(entry, message, request_at)
                 reply = _reply_text(content, full)
                 if reply:
                     last_reply = reply
@@ -1925,6 +1927,8 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
                                 details.absorb_plan_call(block.get('input'))
 
         elif entry_type == 'user':
+            if isinstance(timestamp, str):
+                request_at = timestamp
             # A user entry is a fresh prompt, a tool_result answering a request,
             # the fixed marker Claude Code writes when the user interrupts a
             # running turn, or a local command's captured output.  Both markers
@@ -2063,7 +2067,7 @@ class _TailDetails:
             if _is_count(count):
                 self.artifact_count = count
 
-    def absorb_reply(self, entry: dict, message: dict) -> None:
+    def absorb_reply(self, entry: dict, message: dict, request_at: str | None = None) -> None:
         """Fold a real (not error, not synthetic) assistant reply: its effort, speed, and context size."""
         effort = entry.get('effort')
         if isinstance(effort, str) and _LABEL_TOKEN_PATTERN.match(effort):
@@ -2095,7 +2099,13 @@ class _TailDetails:
         if ttl is not None:
             self.cache_ttl_seconds = ttl
         cached = (usage.get('cache_read_input_tokens'), usage.get('cache_creation_input_tokens'))
+        # The API refreshes the entry when it processes the request, so the clock
+        # starts at the request the reply answers (*request_at*); the reply's own
+        # time, written as it ends, is late by however long it streamed.
         touched = _timestamp_epoch(entry.get('timestamp'))
+        requested = _timestamp_epoch(request_at)
+        if touched is not None and requested is not None and requested <= touched:
+            touched = requested
         if touched is not None and any(_is_count(value) and value > 0 for value in cached):
             self.cache_touched_at = touched
 
