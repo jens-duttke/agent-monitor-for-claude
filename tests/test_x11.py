@@ -81,6 +81,41 @@ class DegradationTest(unittest.TestCase):
 
 
 @_LINUX_ONLY
+class ErrorHandlerTest(unittest.TestCase):
+    """A window can close between being listed and being read; Xlib's default handler would then exit the process."""
+
+    def _library(self, events: list[str]) -> mock.Mock:
+        library = mock.Mock()
+        library.XOpenDisplay.return_value = 7
+        library.XSetErrorHandler.side_effect = lambda handler: events.append('handler') or None
+        library.XSync.side_effect = lambda *_args: events.append('sync')
+        library.XCloseDisplay.side_effect = lambda *_args: events.append('close')
+        library.XRaiseWindow.side_effect = lambda *_args: events.append('raise')
+        library.XInternAtom.return_value = 5
+        library.XSendEvent.return_value = 1
+        return library
+
+    def _run(self, call) -> list[str]:
+        events: list[str] = []
+        library = self._library(events)
+        with mock.patch.object(x11, '_library', return_value=library), mock.patch.dict(os.environ, {'DISPLAY': ':0'}), \
+                mock.patch.object(x11, '_client_list', side_effect=lambda *_args: events.append('read') or [100]), \
+                mock.patch.object(x11, '_window_pid', return_value=None), mock.patch.object(x11, '_window_title', return_value=''):
+            call()
+
+        return events
+
+    def test_enumerating_reads_with_a_non_fatal_handler_in_force(self) -> None:
+        self.assertEqual(self._run(x11.enum_windows), ['handler', 'read', 'sync', 'close', 'handler'])
+
+    def test_activating_raises_with_a_non_fatal_handler_in_force(self) -> None:
+        self.assertEqual(self._run(lambda: x11.activate_window(100)), ['handler', 'raise', 'sync', 'close', 'handler'])
+
+    def test_the_handler_ignores_an_error_on_its_own_display(self) -> None:
+        self.assertEqual(x11._on_x_error(None, None), 0)
+
+
+@_LINUX_ONLY
 class ClientListTest(unittest.TestCase):
     """Order is the contract: the caller's "first window this process owns" must mean the topmost one."""
 

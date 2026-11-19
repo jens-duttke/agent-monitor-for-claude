@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A regular-expression search such as `foo.bar` now also finds text where the `.` stands for a quote, a backslash, a tab or another control character.
 - A regular expression that would take practically forever, such as `(a|aa)+$`, no longer freezes the app and stalls the cost figures until a restart: the search stops after a second on such a text and marks the expression as unusable. Running from source now needs the `regex` package (`pip install -r requirements.txt`).
 - On Linux, a settings file with an invalid entry no longer crashes the app on start from a terminal of the Snap-packaged VS Code; the dialog naming the error appears instead.
+- On Linux, clicking a session whose window has just closed no longer ends the app with an X `BadWindow` error.
 
 ## [1.0.0] - 2026-11-07
 

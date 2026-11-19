@@ -12,7 +12,10 @@ manager to raise one of them, on an explicit user click.
 ``libX11`` is loaded through ``ctypes`` rather than a binding, so no dependency
 is added for it, and every entry point degrades: without a reachable display
 (no ``DISPLAY``, no X server, a library that will not load) the enumeration
-returns an empty list and activation returns ``False``.
+returns an empty list and activation returns ``False``.  A window that closes
+between being listed and being read is an ordinary race, so every connection
+runs with a non-fatal error handler in force (:func:`_connection`) - Xlib's
+default one would end the process on the ``BadWindow`` it causes.
 
 A Wayland session reaches this through XWayland, which is where the editors and
 terminals that matter here usually live.  A window drawn by a *native* Wayland
@@ -25,6 +28,9 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import os
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 __all__ = ['activate_window', 'enum_windows']
 
@@ -49,6 +55,29 @@ _XEVENT_LONGS = 24
 # Source indication in _NET_ACTIVE_WINDOW: 1 = a normal application, 2 = a pager.
 # An application asking on behalf of a user click is exactly case 1.
 _SOURCE_APPLICATION = 1
+
+
+# int (*handler)(Display *, XErrorEvent *), as XSetErrorHandler takes and returns it.
+_ERROR_HANDLER = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
+
+# The handler is process-wide; one connection at a time installs it.
+_handler_lock = threading.Lock()
+# What the handler in force needs to know: the display this module opened, and
+# the handler it replaced, which keeps answering for every other display.
+_handler_state: dict[str, object] = {'display': None, 'previous': None}
+
+
+def _on_x_error(display: int | None, event: int | None) -> int:
+    """Ignore an error on this module's own display; hand any other to the handler this one replaced."""
+    previous = _handler_state['previous']
+    if display != _handler_state['display'] and previous:
+        return previous(display, event)  # type: ignore[operator]  # a CFUNCTYPE pointer is callable
+
+    return 0
+
+
+# Kept for the process lifetime: ctypes must not free a callback Xlib holds.
+_X_ERROR_CALLBACK = _ERROR_HANDLER(_on_x_error)
 
 
 class _XClientMessageEvent(ctypes.Structure):
@@ -89,11 +118,10 @@ def enum_windows() -> list[tuple[int, int, str]]:
     if library is None:
         return []
 
-    display = _open_display(library)
-    if display is None:
-        return []
+    with _connection(library) as display:
+        if display is None:
+            return []
 
-    try:
         windows: list[tuple[int, int, str]] = []
         for window in _client_list(library, display):
             pid = _window_pid(library, display, window)
@@ -104,8 +132,6 @@ def enum_windows() -> list[tuple[int, int, str]]:
             windows.append((window, pid, title))
 
         return windows
-    finally:
-        library.XCloseDisplay(display)
 
 
 def activate_window(window_id: int) -> bool:
@@ -128,11 +154,10 @@ def activate_window(window_id: int) -> bool:
     if library is None:
         return False
 
-    display = _open_display(library)
-    if display is None:
-        return False
+    with _connection(library) as display:
+        if display is None:
+            return False
 
-    try:
         active_window = library.XInternAtom(display, b'_NET_ACTIVE_WINDOW', True)
         if not active_window:
             return False
@@ -154,8 +179,6 @@ def activate_window(window_id: int) -> bool:
         library.XFlush(display)
 
         return bool(sent)
-    finally:
-        library.XCloseDisplay(display)
 
 
 _library_cache: ctypes.CDLL | None = None
@@ -204,6 +227,10 @@ def _declare(library: ctypes.CDLL) -> None:
     library.XRaiseWindow.restype = ctypes.c_int
     library.XFlush.argtypes = [ctypes.c_void_p]
     library.XFlush.restype = ctypes.c_int
+    library.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    library.XSync.restype = ctypes.c_int
+    library.XSetErrorHandler.argtypes = [_ERROR_HANDLER]
+    library.XSetErrorHandler.restype = _ERROR_HANDLER
     library.XSendEvent.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_long, ctypes.c_void_p]
     library.XSendEvent.restype = ctypes.c_int
     library.XGetWindowProperty.argtypes = [
@@ -229,6 +256,32 @@ def _client_list(library: ctypes.CDLL, display: int) -> list[int]:
         return []
 
     return _read_longs(library, display, root, mapping_order, _XA_WINDOW)
+
+
+@contextmanager
+def _connection(library: ctypes.CDLL) -> Iterator[int | None]:
+    """Open the display with a non-fatal error handler in force; yield it, or None when there is none to open.
+
+    The handler stays in force until the display is closed: ``XSync`` first
+    collects the error a request still in flight may cause (an ``XRaiseWindow``
+    for a window that is gone), and the one it replaced is put back last.
+    """
+    display = _open_display(library)
+    if display is None:
+        yield None
+        return
+
+    with _handler_lock:
+        _handler_state['display'] = display
+        _handler_state['previous'] = library.XSetErrorHandler(_X_ERROR_CALLBACK)
+        try:
+            yield display
+        finally:
+            library.XSync(display, False)
+            library.XCloseDisplay(display)
+            library.XSetErrorHandler(_handler_state['previous'])
+            _handler_state['display'] = None
+            _handler_state['previous'] = None
 
 
 def _open_display(library: ctypes.CDLL) -> int | None:
