@@ -131,7 +131,7 @@ window.__MOCK_SNAPSHOT__ = {
             session_id: 'h1a', short_name: 'helios-renderer-b0', pid: 24880, entrypoint: 'claude-vscode', host: 'VS Code',
             // Reachable from claude.ai through Remote Control - the pointer badge.
             remote_control: true,
-            title: 'Add spectral upsampling to the BRDF sampler', permission_mode: 'default',
+            title: 'Add spectral upsampling to the BRDF sampler', context_tokens: 620000, permission_mode: 'default',
             last_stop_reason: 'tool_use', pending_tool: true, last_tool_name: 'AskUserQuestion',
             current_tool: { tool: 'AskUserQuestion', text: '', detail: '', questions: [
                 { text: 'Which upsampling basis should the sampler use?', options: ['Jakob-Hanika sigmoid', 'Smits RGB', 'Measured spectra'] },
@@ -156,7 +156,7 @@ window.__MOCK_SNAPSHOT__ = {
         // paused badge next to the mode chip says why.
         rawSession({
             session_id: 'h2p', short_name: 'helios-shader-cache', pid: 27140, entrypoint: 'claude-vscode', host: 'VS Code',
-            title: 'Warm the pipeline cache on first frame', permission_mode: 'auto',
+            title: 'Warm the pipeline cache on first frame', context_tokens: 410000, permission_mode: 'auto',
             last_stop_reason: 'tool_use', pending_tool: true, last_tool_name: 'Bash',
             current_tool: { tool: 'Bash', text: 'cmake --build build --target shader-cache --parallel 16', detail: 'Rebuild the shader cache', questions: [] },
             current_tool_age_seconds: 3100,
@@ -291,7 +291,7 @@ window.__MOCK_SNAPSHOT__ = {
         // the still-active workflow keeps it reading as "Background".
         rawSession({
             session_id: 'h3f', short_name: 'helios-shader-audit', pid: 30980, entrypoint: 'claude-vscode', host: 'VS Code',
-            title: 'Deep-research the shader hot-reload regression', permission_mode: 'auto',
+            title: 'Deep-research the shader hot-reload regression', context_tokens: 270000, permission_mode: 'auto',
             subagents_running: 6,
             subagents_labels: [
                 'workflow-subagent', 'workflow-subagent', 'workflow-subagent',
@@ -371,7 +371,7 @@ window.__MOCK_SNAPSHOT__ = {
         // suppressed (never shown next to an interrupted session).
         rawSession({
             session_id: 'h5e', short_name: 'helios-renderer-9a', pid: 26744, entrypoint: 'claude-vscode', host: 'VS Code',
-            title: 'Refactor the BVH builder for wide nodes', permission_mode: 'default',
+            title: 'Refactor the BVH builder for wide nodes', context_tokens: 830000, permission_mode: 'default',
             last_entry_kind: 'user_interrupt', last_stop_reason: null,
             subagents_running: 2, subagents_labels: ['Benchmark the 8-wide traversal kernel', 'Port the SAH split to SoA'],
             age_seconds: 320,
@@ -388,7 +388,7 @@ window.__MOCK_SNAPSHOT__ = {
         // for a still-"Working" session. The last real model is still shown.
         rawSession({
             session_id: 'h6f', short_name: 'helios-renderer-d4', pid: 28190, entrypoint: 'claude-vscode', host: 'VS Code',
-            title: 'Vectorize the tone-mapping pass', permission_mode: 'default',
+            title: 'Vectorize the tone-mapping pass', context_tokens: 350000, permission_mode: 'default',
             last_entry_kind: 'api_error', last_stop_reason: 'stop_sequence', api_error_kind: 'rate_limit', api_error_status: 429,
             api_error_detail: "You've hit your session limit - resets 11:30pm (Europe/Berlin)",
             age_seconds: 5400,
@@ -403,7 +403,7 @@ window.__MOCK_SNAPSHOT__ = {
         rawSession({
             session_id: 'a1d', short_name: 'aurora-realtime-34', pid: 18204, cwd: 'D:\\Projects\\aurora-realtime',
             entrypoint: 'claude-vscode', host: 'VS Code',
-            title: 'Redesign the presence protocol as binary frames', permission_mode: 'plan',
+            title: 'Redesign the presence protocol as binary frames', context_tokens: 95000, permission_mode: 'plan',
             last_stop_reason: 'tool_use', pending_tool: true, last_tool_name: 'ExitPlanMode',
             artifact_count: 3,
             age_seconds: 22,
@@ -459,7 +459,7 @@ window.__MOCK_SNAPSHOT__ = {
         rawSession({
             session_id: 'n2h', short_name: 'nimbus-gateway-8a', pid: 20132, cwd: 'D:\\Projects\\nimbus-gateway',
             entrypoint: 'cli', host: 'Windows Terminal', via_cli: true,
-            title: 'Wire mTLS between edge nodes', permission_mode: 'default',
+            title: 'Wire mTLS between edge nodes', context_tokens: 240000, permission_mode: 'default',
             last_entry_kind: 'user_text', last_stop_reason: 'end_turn',
             native_status: 'waiting', waiting_for: 'permission prompt',
             age_seconds: 11,
