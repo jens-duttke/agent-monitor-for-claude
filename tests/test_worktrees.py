@@ -136,6 +136,50 @@ class ResolveWorktreeTest(unittest.TestCase):
         with mock.patch.object(wmod.time, 'monotonic', return_value=1000.0 + wmod._RETRY_SECONDS + 1):
             self.assertEqual(resolve_worktree(self.root, record)['cwd'], _LAUNCH_CWD)
 
+    def test_a_large_transcript_is_never_scanned_in_full_on_the_poll(self) -> None:
+        # The lookup runs inside the per-second fingerprint; a full read of a
+        # transcript of hundreds of megabytes there stalls every snapshot.
+        filler = {'type': 'user', 'message': {'content': 'x' * 200}}
+        self._write_transcript(_LAUNCH_CWD, _worktree_entry(path='D:\\WebDev\\app-worktrees\\old'), *[filler] * 20, _worktree_entry())
+
+        with mock.patch.object(tmod, '_SYNC_SCAN_BYTES', 1000), mock.patch.object(tmod, 'queue_scan') as queue, \
+                mock.patch.object(tmod, '_absorb_file', wraps=tmod._absorb_file) as absorb:
+            record = resolve_worktree(self.root, self._record())
+
+        self.assertEqual(record['cwd'], _LAUNCH_CWD)
+        absorb.assert_not_called()
+        queue.assert_called_once()
+
+    def test_a_large_transcript_that_left_its_worktree_is_a_miss_without_a_full_scan(self) -> None:
+        filler = {'type': 'user', 'message': {'content': 'x' * 200}}
+        left = {'type': 'worktree-state', 'sessionId': _SESSION_ID, 'worktreeSession': None}
+        self._write_transcript(_LAUNCH_CWD, _worktree_entry(), *[filler] * 20, left)
+        record = self._record()
+
+        with mock.patch.object(tmod, '_SYNC_SCAN_BYTES', 1000), mock.patch.object(tmod, 'queue_scan'), \
+                mock.patch.object(tmod, '_absorb_file', wraps=tmod._absorb_file) as absorb:
+            self.assertIs(resolve_worktree(self.root, record), record)
+
+        absorb.assert_not_called()
+
+    def test_a_refused_lookup_does_not_read_its_transcript_again_after_the_poll_prunes(self) -> None:
+        # Found under another project but without a worktree-state: a miss that
+        # is retried. The scan it paid for must survive the poll's pruning, or
+        # every retry reads the whole file again.
+        from agent_monitor_for_claude import snapshot as smod
+
+        self._write_transcript(_LAUNCH_CWD, *[{'type': 'user', 'message': {'content': 'x'}}] * 5)
+        record = self._record()
+        with mock.patch.object(wmod.time, 'monotonic', return_value=1000.0):
+            self.assertIs(resolve_worktree(self.root, record), record)
+        smod._prune_caches([(self.root, record)])
+
+        with mock.patch.object(wmod.time, 'monotonic', return_value=1000.0 + wmod._RETRY_SECONDS + 1), \
+                mock.patch.object(tmod, '_absorb_line', wraps=tmod._absorb_line) as absorb:
+            self.assertIs(resolve_worktree(self.root, record), record)
+
+        absorb.assert_not_called()
+
     def test_prune_drops_lookups_of_records_that_are_gone(self) -> None:
         self._write_transcript(_LAUNCH_CWD, _worktree_entry())
         resolve_worktree(self.root, self._record())

@@ -40,12 +40,13 @@ import threading
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from .paths import SessionRoot, TranscriptIndex, cwd_to_slug, find_transcript, transcript_path
 from .transcript import worktree_for
 
-__all__ = ['resolve_worktree', 'prune_worktree_cache']
+__all__ = ['located_transcripts', 'resolve_worktree', 'prune_worktree_cache']
 
 # How long a failed lookup is trusted before the project folders are searched
 # again for the same registry record.
@@ -54,11 +55,12 @@ _RETRY_SECONDS = 10.0
 
 @dataclass(frozen=True)
 class _Resolution:
-    """The outcome of one lookup; ``project_cwd`` is None for a miss."""
+    """The outcome of one lookup; ``project_cwd`` is None for a miss, ``transcript`` the file it found, if any."""
 
     project_cwd: str | None
     branch: str | None
     checked_at: float
+    transcript: Path | None = None
 
 
 # (origin, session_id, registry cwd) -> the lookup's outcome.
@@ -128,6 +130,18 @@ def prune_worktree_cache(active: Iterable[tuple[str, str, str]]) -> None:
             del _resolutions[key]
 
 
+def located_transcripts() -> list[Path]:
+    """The transcripts the remembered lookups found, so the poll keeps their scans for the next lookup.
+
+    A lookup found by session id under another project folder than its record's
+    ``cwd`` names, and a refused one keeps its record where the registry put
+    it - nothing else would keep that file's scan, and every retry would read
+    it from the start again.
+    """
+    with _lock:
+        return [resolution.transcript for resolution in _resolutions.values() if resolution.transcript is not None]
+
+
 def _still_valid(root: SessionRoot, session_id: str, resolution: _Resolution, index: TranscriptIndex) -> bool:
     """Return True if a remembered lookup can be reused without searching again."""
     if resolution.project_cwd is None:
@@ -145,16 +159,17 @@ def _locate(root: SessionRoot, session_id: str, cwd: str) -> _Resolution:
     if path is None:
         return miss
 
+    refused = _Resolution(project_cwd=None, branch=None, checked_at=now, transcript=path)
     worktree = worktree_for(path)
     if worktree is None:
-        return miss
+        return refused
 
     project_cwd = _launch_cwd_for(root, session_id, worktree.launch_cwds, path.parent.name)
     if project_cwd is None:
-        return miss
+        return refused
 
     branch = worktree.branch if os.path.normcase(worktree.path) == os.path.normcase(cwd) else None
-    return _Resolution(project_cwd=project_cwd, branch=branch, checked_at=now)
+    return _Resolution(project_cwd=project_cwd, branch=branch, checked_at=now, transcript=path)
 
 
 def _launch_cwd_for(root: SessionRoot, session_id: str, launch_cwds: tuple[str, ...], folder_name: str) -> str | None:

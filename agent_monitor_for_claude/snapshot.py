@@ -41,7 +41,7 @@ from .transcript import (
     session_steps, state_for,
 )
 from .usage_parts import UsageScan, session_usage
-from .worktrees import prune_worktree_cache, resolve_worktree
+from .worktrees import located_transcripts, prune_worktree_cache, resolve_worktree
 from .wsl import probe_wsl_sessions
 
 __all__ = [
@@ -90,11 +90,7 @@ def _build_snapshot(graph: bool) -> dict[str, Any]:
         if session is not None:
             sessions.append(session)
 
-    # Evict scan-cache entries for sessions no longer in the registry so the
-    # cache does not grow unbounded over a long-running monitor.
-    prune_scan_cache((root, record['session_id'], record['cwd']) for root, record in pairs)
-    prune_last_seen((record['origin'], record['session_id']) for _, record in pairs)
-    prune_worktree_cache((root.origin, record['session_id'], record.get('worktree_cwd') or record['cwd']) for root, record in pairs)
+    _prune_caches(pairs)
 
     return {
         'generated_at': datetime.now().astimezone().isoformat(timespec='seconds'),
@@ -522,6 +518,13 @@ def _collect_pairs(index: TranscriptIndex) -> list[tuple[SessionRoot, dict[str, 
         pairs.extend((root, _resolve_worktree_safely(root, record, index)) for record in records)
 
     return pairs
+
+
+def _prune_caches(pairs: list[tuple[SessionRoot, dict[str, Any]]]) -> None:
+    """Evict every per-session cache entry of sessions no longer in the registry, so none grows over a long-running monitor."""
+    prune_worktree_cache((root.origin, record['session_id'], record.get('worktree_cwd') or record['cwd']) for root, record in pairs)
+    prune_scan_cache(((root, record['session_id'], record['cwd']) for root, record in pairs), located_transcripts())
+    prune_last_seen((record['origin'], record['session_id']) for _, record in pairs)
 
 
 def _resolve_worktree_safely(root: SessionRoot, record: dict[str, Any], index: TranscriptIndex) -> dict[str, Any]:

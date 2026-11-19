@@ -291,6 +291,7 @@ _AI_TITLE_MARKER = b'ai-title'
 _CUSTOM_TITLE_MARKER = b'custom-title'
 _PERMISSION_MODE_MARKER = b'permissionMode'
 _CWD_MARKER = b'"cwd"'
+_WORKTREE_STATE_MARKER = b'worktree-state'
 
 # Claude Code records a switch into a git worktree (and back out, as a null
 # ``worktreeSession``) as an entry of this type.  The session keeps writing its
@@ -672,7 +673,7 @@ _scan_cache: dict[str, _ScanState] = {}
 _scan_lock = threading.Lock()
 
 
-def prune_scan_cache(active: Iterable[tuple[SessionRoot, str, str]]) -> None:
+def prune_scan_cache(active: Iterable[tuple[SessionRoot, str, str]], located: Iterable[Path] = ()) -> None:
     """Drop scan-cache entries for sessions no longer in the registry.
 
     The cache holds one ``_ScanState`` per transcript ever scanned - per-model
@@ -693,11 +694,18 @@ def prune_scan_cache(active: Iterable[tuple[SessionRoot, str, str]]) -> None:
         transcripts (see :func:`usage_scan`) are kept with it: they lie in a
         folder named after the session - the transcript's, or that of a
         worktree the session switched into, under another project folder.
+    located : iterable of Path
+        Further transcripts to keep: those a current registry record's worktree
+        lookup found under another project folder than its ``cwd`` names (see
+        :mod:`~agent_monitor_for_claude.worktrees`), whose scan the lookup
+        reads again.
     """
     keep = _ScanKeys()
     for root, session_id, cwd in active:
         if session_id and cwd:
             keep.add(os.path.normcase(str(transcript_path(root, session_id, cwd))), os.path.normcase(session_id))
+    for path in located:
+        keep.add(os.path.normcase(str(path)), os.path.normcase(path.stem))
 
     with _scan_lock:
         for key in list(_scan_cache):
@@ -1515,11 +1523,18 @@ def _handed_back(content: object) -> str | None:
 def worktree_for(path: Path) -> WorktreeState | None:
     """Return the worktree the session behind transcript *path* currently works in, or None.
 
-    Runs the same incremental scan :func:`state_for` uses, so the file is read
-    in full once and the scan cache it leaves behind serves the next
-    :func:`state_for` call for the same file.
+    Runs the same incremental scan :func:`state_for` uses, so the scan cache it
+    leaves behind serves the next :func:`state_for` call for the same file.  A
+    large file not scanned yet is not read in full here - the lookup runs on the
+    poll - but queued for the background scan, and answered meanwhile from its
+    newest ``worktree-state`` entry within the last ``_PENDING_LOOKBACK_BYTES``
+    (see :func:`_recent_worktree`).
     """
-    return _scan_appended(path).worktree
+    result = _scan_or_defer(path)
+    if result is not None:
+        return result.worktree
+
+    return _recent_worktree(path)
 
 
 def history_state_for(path: Path) -> HistoryState:
@@ -2599,7 +2614,7 @@ def _first_scan(cache_key: str, path: Path, fresh: Callable[[], _ScanState] = _S
     The read runs outside ``_scan_lock`` - it can take seconds, and holding the
     lock would stall every snapshot behind it - which is safe because the state
     being filled is private until it is stored.  A key some other caller has
-    filled in the meantime (``worktree_for`` scans synchronously) is left as it
+    filled in the meantime (a synchronous :func:`_scan_appended`) is left as it
     is: that state has already moved on from where this one would start.
     """
     with _scan_lock:
@@ -2656,6 +2671,34 @@ def _recent_title_and_mode(path: Path) -> tuple[str | None, str | None]:
         pass
 
     return custom_title or ai_title, permission_mode
+
+
+def _recent_worktree(path: Path) -> WorktreeState | None:
+    """Return the worktree the newest ``worktree-state`` entry within the last ``_PENDING_LOOKBACK_BYTES`` of *path* names.
+
+    The stand-in for a first full scan still running in the background.  The
+    worktree is a last-wins field of that scan, so the newest entry that says
+    anything is its exact value, and each candidate goes through
+    ``_absorb_line`` on a throwaway state, so it is read by the scan's own
+    rules.  None when the session left its worktree, or when no entry lies
+    inside the window - a lookup the full scan settles once it has finished.
+    """
+    unset = WorktreeState(path='', branch=None, launch_cwds=())
+    try:
+        for raw_line in _lines_newest_first(path, _PENDING_LOOKBACK_BYTES):
+            if _WORKTREE_STATE_MARKER not in raw_line:
+                continue
+            probe = _ScanState(first_prompt='')
+            probe.worktree = unset
+            _absorb_line(raw_line, probe)
+            # An entry of an unexpected shape leaves the field as it was and
+            # says nothing; an older one may.
+            if probe.worktree is not unset:
+                return probe.worktree
+    except OSError:
+        pass
+
+    return None
 
 
 def _lines_newest_first(path: Path, max_bytes: int) -> Iterator[bytes]:
