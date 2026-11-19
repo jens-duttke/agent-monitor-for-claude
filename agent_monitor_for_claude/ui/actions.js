@@ -142,7 +142,9 @@ async function runSessionAction(action, session) {
         openPath(await scratchpadPath(session.session_id || '', session.cwd || '', origin), origin);
     } else if (action === 'delete') {
         if (session.is_history) {
-            const age = session.age_seconds == null ? '' : logic.formatAge(session.age_seconds, state.labels);
+            // As the row shows it now: the fetched age, counted on since the fetch.
+            const fetchedAt = state.historyReceivedAt != null ? state.historyReceivedAt : NaN;
+            const age = logic.formatAgeSince(session.age_seconds, fetchedAt, Date.now(), state.labels);
             confirmDeleteSession(session.session_id, session.cwd || '', session.name || '', age, origin);
         }
     } else if (action === 'details') {
