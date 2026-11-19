@@ -965,12 +965,13 @@ function findItem(key) {
 }
 
 // The count of active sessions and their cost, at the right of the toolbar.
+// An ended session the snapshot still lists for a while is neither.
 function updateToolbarSummary(snapshot, prices) {
     const el = document.getElementById('toolbar-summary');
     if (!el) {
         return;
     }
-    const live = snapshot.sessions || [];
+    const live = (snapshot.sessions || []).filter((raw) => raw.alive);
     let total = 0;
     let priced = live.length > 0;
     for (const raw of live) {
