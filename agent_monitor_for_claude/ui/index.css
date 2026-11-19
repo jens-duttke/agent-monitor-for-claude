@@ -41,6 +41,10 @@
     --c-part-main: #a6a39b;
     --c-part-agents: #4cc3c3;
 
+    /* A prompt cache in the last part of its lifetime: amber, apart from the
+       yellow of an interrupted session. */
+    --c-cache-expiring: #e3a03a;
+
     /* Terminal (ANSI) palette for the task-output console. */
     --ansi-black: #6b6b6b;
     --ansi-red: #e5726a;
@@ -754,6 +758,7 @@ body.splitter-dragging {
     /* The rows below the first space themselves with a margin, which an empty,
        hidden row takes with it - a row gap would stay for every named track. */
     gap: 0 10px;
+    position: relative;
     padding: 9px 14px 10px;
 
     .item-title,
@@ -918,7 +923,8 @@ body.splitter-dragging {
 
 .meta-project {
     flex: 0 1 auto;
-    min-width: 0;
+    /* Squeezed by the figures beside it, but never to nothing. */
+    min-width: 4em;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -927,6 +933,71 @@ body.splitter-dragging {
 .meta-cost {
     flex: none;
     font-variant-numeric: tabular-nums;
+}
+
+.meta-context {
+    flex: none;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+
+    &.warn { color: var(--c-awaiting_permission); font-weight: 600; }
+}
+
+/* The prompt cache's countdown (logic.cacheMetaMarkup); fillCacheTicks writes
+   its text and phase every second. */
+.meta-cache {
+    flex: none;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    cursor: help;
+
+    &.cache-expiring { color: var(--c-cache-expiring); font-weight: 600; }
+    &.cache-cold { color: var(--c-errored); font-weight: 600; }
+}
+
+/* The share of its lifetime the prompt cache has left: a meter inside the
+   entry's foot, in line with its text and clear of the line to the next entry,
+   so it reads as this entry's. The track is the whole lifetime, the fill what
+   is left. A lapsed cache keeps an empty track, faintly tinted: nothing can
+   be saved any more, so it says what happened without calling for action. */
+.item-cache {
+    position: absolute;
+    left: 14px;
+    right: 14px;
+    bottom: 5px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--border);
+    pointer-events: none;
+
+    i {
+        display: block;
+        height: 100%;
+        width: 0;
+        border-radius: inherit;
+        background: var(--fg-dim);
+    }
+
+    &[data-moving] i {
+        transition: width 1s linear;
+    }
+
+    &.cache-expiring i {
+        background: var(--c-cache-expiring);
+    }
+
+    &.cache-cold {
+        background: color-mix(in srgb, var(--c-errored) 22%, transparent);
+    }
+
+    &:not([data-cache-until]) {
+        display: none;
+    }
+}
+
+/* Room for the meter below the entry's last line. */
+.item.has-cache {
+    padding-bottom: 15px;
 }
 
 .sig {
@@ -3486,6 +3557,18 @@ body.compact {
         gap: 9px;
         padding: 0 12px 0 10px;
         height: 32px;
+
+        &.has-cache {
+            padding-bottom: 0;
+        }
+
+        /* Under the title, from where the title starts. */
+        .item-cache {
+            left: 22px;
+            right: 12px;
+            bottom: 3px;
+            height: 2px;
+        }
 
         &::before {
             content: '';

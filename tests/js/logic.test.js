@@ -1620,6 +1620,16 @@ test('formatCost is whole dollars, <$1 below a dollar, null passes through', () 
     assert.equal(logic.formatCost(null), null);
 });
 
+test('formatCostCents: cents below ten dollars, whole dollars from there', () => {
+    assert.equal(logic.formatCostCents(0.7), '$0.70');
+    assert.equal(logic.formatCostCents(4), '$4.00');
+    assert.equal(logic.formatCostCents(9.994), '$9.99');
+    assert.equal(logic.formatCostCents(14.4), '$14');
+    assert.equal(logic.formatCostCents(0.004), '<$0.01');
+    assert.equal(logic.formatCostCents(null), null);
+    assert.equal(logic.formatCostCents(NaN), null);
+});
+
 test('buildSession: compact is the cost when priced, else a token total', () => {
     const labels = {
         token_summary: '{input} in · {output} out',
@@ -2624,7 +2634,7 @@ function coldCache(overrides) {
 }
 
 test('cache outlook: a lapsed cache costs its context at the write rate of its lifetime', () => {
-    assert.deepEqual(logic.cacheOutlook(coldCache(), PRICES), { warm: false, remaining_seconds: 0, tokens: 400000, rewrite_usd: 4 });
+    assert.deepEqual(logic.cacheOutlook(coldCache(), PRICES), { warm: false, remaining_seconds: 0, ttl_seconds: 3600, tokens: 400000, rewrite_usd: 4 });
     assert.equal(logic.cacheOutlook(coldCache({ cache_ttl_seconds: 300 }), PRICES).rewrite_usd, 2.5);
 });
 
@@ -2652,15 +2662,18 @@ test('cache outlook: a missing or mistyped figure shows nothing', () => {
     }
 });
 
-test('build session: a lapsed cache earns a badge only when your next prompt pays for it', () => {
+test('build session: a lapsed cache warns whatever writing it again costs', () => {
     const idle = logic.buildSession(coldCache(), CACHE_LABELS, PRICES);
     assert.equal(idle.cache_warn, true);
-    assert.equal(idle.cost_tip.split('\n').pop(), 'Expired: 400k again ($4)');
+    assert.equal(idle.cost_tip.split('\n').pop(), 'Expired: 400k again ($4.00)');
 
-    // Below the threshold the line stays in the tooltip.
+    // Small amounts add up across sessions, so a cheap one warns as well, in cents.
     const cheap = logic.buildSession(coldCache({ context_tokens: 50000 }), CACHE_LABELS, PRICES);
-    assert.equal(cheap.cache_warn, false);
-    assert.equal(cheap.cost_tip, 'Expired: 50.0k again (<$1)');
+    assert.equal(cheap.cache_warn, true);
+    assert.equal(cheap.cost_tip, 'Expired: 50.0k again ($0.50)');
+
+    // A warm cache does not warn.
+    assert.equal(logic.buildSession(coldCache({ cache_expires_in_seconds: 60 }), CACHE_LABELS, PRICES).cache_warn, false);
 
     // A running turn keeps its cache warm, and an ended session has none to pay for.
     for (const fields of [{ last_entry_kind: 'user_text', last_stop_reason: null }, { alive: false }]) {
@@ -2672,7 +2685,85 @@ test('build session: a lapsed cache earns a badge only when your next prompt pay
 
 test('build session: the cache line does not wait for a pending scan', () => {
     const session = logic.buildSession(coldCache({ scan_pending: true }), CACHE_LABELS, PRICES);
-    assert.equal(session.cost_tip, 'Expired: 400k again ($4)');
+    assert.equal(session.cost_tip, 'Expired: 400k again ($4.00)');
+});
+
+test('cache phase: warm, expiring in the last fifth of its lifetime, then cold', () => {
+    assert.equal(logic.cachePhase(3000, 3600), 'warm');
+    assert.equal(logic.cachePhase(3600 * logic.CACHE_EXPIRING_SHARE + 1, 3600), 'warm');
+    assert.equal(logic.cachePhase(3600 * logic.CACHE_EXPIRING_SHARE, 3600), 'expiring');
+    assert.equal(logic.cachePhase(1, 3600), 'expiring');
+    assert.equal(logic.cachePhase(60, 300), 'expiring');
+    for (const remaining of [0, -5, NaN, -Infinity]) {
+        assert.equal(logic.cachePhase(remaining, 3600), 'cold');
+    }
+    // Without a known lifetime a warm cache is never called expiring.
+    assert.equal(logic.cachePhase(10, NaN), 'warm');
+});
+
+test('cache share left: the bar covers what is left of the lifetime, clamped', () => {
+    assert.equal(logic.cacheShareLeft(1800, 3600), 0.5);
+    assert.equal(logic.cacheShareLeft(5000, 3600), 1);
+    assert.equal(logic.cacheShareLeft(-10, 3600), 0);
+    assert.equal(logic.cacheShareLeft(100, 0), 0);
+    assert.equal(logic.cacheShareLeft(NaN, 3600), 0);
+});
+
+const CACHE_LIST_LABELS = Object.assign({}, CACHE_LABELS, {
+    list_cache_warm: 'Cache {time}',
+    list_cache_cold: 'Cache expired', list_cache_cold_cost: 'Cache expired · {cost}',
+    list_cache_tip: 'Next prompt writes {tokens} ({cost})', list_cache_tokens_tip: 'Next prompt writes {tokens}',
+});
+
+test('cache list text: the time left, or that it expired with the cost when known', () => {
+    assert.equal(logic.cacheListText(1500, '$0.70', CACHE_LIST_LABELS), 'Cache 25m');
+    assert.equal(logic.cacheListText(1500, '', CACHE_LIST_LABELS), 'Cache 25m');
+    assert.equal(logic.cacheListText(0, '$0.70', CACHE_LIST_LABELS), 'Cache expired · $0.70');
+    assert.equal(logic.cacheListText(0, '', CACHE_LIST_LABELS), 'Cache expired');
+});
+
+test('cache meta markup: names the second the cache expires, so a poll writes the same markup', () => {
+    const cache = logic.cacheOutlook(coldCache({ cache_expires_in_seconds: 1500 }), PRICES);
+    const first = logic.cacheMetaMarkup(cache, 1000000200, CACHE_LIST_LABELS);
+    assert.match(first, /class="meta-cache cache-warm"/);
+    assert.match(first, /data-cache-until="1001500000"/);
+    assert.match(first, /data-cache-ttl="3600"/);
+    assert.match(first, /data-cache-cost="\$4\.00"/);
+    assert.match(first, /data-tip="Next prompt writes 400k \(\$4\.00\)"/);
+    // The next poll, a moment later and with the remaining time one second shorter.
+    const later = logic.cacheOutlook(coldCache({ cache_expires_in_seconds: 1499 }), PRICES);
+    assert.equal(logic.cacheMetaMarkup(later, 1000001300, CACHE_LIST_LABELS), first);
+    assert.equal(logic.cacheMetaMarkup(null, 0, CACHE_LIST_LABELS), '');
+});
+
+test('cache meta markup: a lapsed cache stays lapsed between polls and never reads as expiring', () => {
+    const cold = logic.cacheOutlook(coldCache(), PRICES);
+    const first = logic.cacheMetaMarkup(cold, 1000000600, CACHE_LIST_LABELS);
+    assert.match(first, /class="meta-cache cache-cold"/);
+    assert.match(first, /data-cache-until="0"/);
+    assert.equal(logic.cacheMetaMarkup(cold, 1000004400, CACHE_LIST_LABELS), first);
+});
+
+test('cache meta markup: html safety - hostile label text stays inside its attribute', () => {
+    const hostile = Object.assign({}, CACHE_LIST_LABELS, {
+        list_cache_tip: '"><img src=x onerror=alert(1)> {tokens}',
+        cache_cold_tip: '<script>{tokens}</script>',
+    });
+    const warm = logic.cacheMetaMarkup(logic.cacheOutlook(coldCache({ cache_expires_in_seconds: 1500 }), PRICES), 0, hostile);
+    const cold = logic.cacheMetaMarkup(logic.cacheOutlook(coldCache(), PRICES), 0, hostile);
+    for (const html of [warm, cold]) {
+        assert.ok(!/<img|<script/.test(html), html);
+        assert.equal((html.match(/</g) || []).length, 2, html);
+    }
+});
+
+test('warm cache cost: sums what the warm caches hold, none when one has no price', () => {
+    const warm = (usd) => ({ cache: { warm: true, rewrite_usd: usd } });
+    assert.equal(logic.warmCacheCostUsd([warm(0.7), warm(0.3), { cache: { warm: false, rewrite_usd: 4 } }, { cache: null }]), 1);
+    assert.equal(logic.warmCacheCostUsd([{ cache: { warm: false, rewrite_usd: 4 } }]), null);
+    assert.equal(logic.warmCacheCostUsd([warm(0.7), warm(null)]), null);
+    assert.equal(logic.warmCacheCostUsd([]), null);
+    assert.equal(logic.warmCacheCostUsd(null), null);
 });
 
 test('pull request addresses: only a plain https address may reach an href', () => {

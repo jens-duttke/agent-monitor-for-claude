@@ -18,6 +18,7 @@ function applyBootstrap(bootstrap) {
     state.pricing = (bootstrap.pricing && typeof bootstrap.pricing === 'object') ? bootstrap.pricing : {};
     const previousInterval = state.pollInterval;
     state.pollInterval = bootstrap.poll_interval || 5;
+    state.listContext = bootstrap.list_context === true;
     // A retried bootstrap can bring the configured interval after the poll started.
     if (state.pollTimer && state.pollInterval !== previousInterval) {
         startPoll();

@@ -12,6 +12,7 @@ A local desktop window that shows every running Claude Code agent at a glance - 
 - **What it is doing** - each entry shows in one line what the agent waits on, what it is running, or the first line of its last answer.
 - **Signals** - each entry shows up to two of: unfinished git work (uncommitted, not pushed, local-only or deleted branch), running processes, subagents or workflow progress, a budget from 80% spent, Auto mode on hold, an available Claude Code update, and queued prompts.
 - **Cost** - an estimated dollar cost per session, including subagents and web searches. Prices are in an editable `pricing.json` (see [docs/configuration.md](docs/configuration.md)).
+- **Prompt cache** - a session waiting for you counts down the time its prompt cache stays warm, with a bar along the entry that turns amber when it is about to expire. Once it has expired, the entry names what your next prompt pays to write the context again. The toolbar adds up what the warm caches hold. The context use can be shown as well (`list_context`).
 
 ### Details
 Select a session to see its details beside the list:

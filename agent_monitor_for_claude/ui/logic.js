@@ -1992,9 +1992,9 @@ function modelRate(modelId, prices) {
    left alone past that lifetime pays for its whole context again on the next
    request, at the cache-write rate instead of the read rate. */
 
-// From this cost on, a lapsed cache earns a badge on the row; below it, and
-// while the cache is warm, the line stays in the cost tooltip.
-const CACHE_REWRITE_BADGE_USD = 1;
+// The share of its lifetime from which a warm cache reads as expiring soon: the
+// last twelve minutes of an hour, the last minute of five.
+const CACHE_EXPIRING_SHARE = 0.2;
 
 const SECONDS_PER_HOUR = 3600;
 
@@ -2018,9 +2018,93 @@ function cacheOutlook(raw, prices) {
     return {
         warm: remaining > 0,
         remaining_seconds: Math.max(0, remaining),
+        ttl_seconds: ttl,
         tokens: tokens,
         rewrite_usd: priced ? tokens * writeRate / TOKENS_PER_UNIT_PRICE : null,
     };
+}
+
+// Where a cache stands with *remaining* of its *ttl* seconds left: `warm`,
+// `expiring` in the last CACHE_EXPIRING_SHARE of its lifetime, or `cold`.
+function cachePhase(remaining, ttl) {
+    if (!(Number.isFinite(remaining) && remaining > 0)) {
+        return 'cold';
+    }
+    if (Number.isFinite(ttl) && ttl > 0 && remaining <= ttl * CACHE_EXPIRING_SHARE) {
+        return 'expiring';
+    }
+    return 'warm';
+}
+
+// The share of its lifetime a cache has left, between 0 and 1.
+function cacheShareLeft(remaining, ttl) {
+    if (!(Number.isFinite(remaining) && Number.isFinite(ttl) && ttl > 0)) {
+        return 0;
+    }
+    return Math.min(1, Math.max(0, remaining / ttl));
+}
+
+// What a list entry says about its cache with *remaining* seconds left: the
+// time until it expires, or that it has and what writing it again costs. A warm
+// cache's amount stays in the tooltip - the line has no room for it, and the
+// toolbar adds them up.
+function cacheListText(remaining, costText, labels) {
+    const strings = labels || {};
+    if (cachePhase(remaining, 1) !== 'cold') {
+        return fmt(strings.list_cache_warm, { time: formatAge(remaining, strings) });
+    }
+    return costText ? fmt(strings.list_cache_cold_cost, { cost: costText }) : (strings.list_cache_cold || '');
+}
+
+// The list entry's cache figure. The markup names only the moment the cache
+// expires, to the second, so the next poll writes the same markup; the
+// controller writes its text and phase from that and keeps them current.
+function cacheMetaMarkup(cache, capturedAt, labels) {
+    if (!cache) {
+        return '';
+    }
+    const at = Number.isFinite(capturedAt) ? capturedAt : Date.now();
+    // A lapsed cache names no moment of its own: rounded, "now" can lie half a
+    // second ahead and read as expiring, and it would change with every poll.
+    const until = cache.warm ? Math.round((at + cache.remaining_seconds * 1000) / 1000) * 1000 : 0;
+    return '<span'
+        + attr('class', 'meta-cache cache-' + cachePhase(cache.remaining_seconds, cache.ttl_seconds))
+        + attr('data-cache-until', until)
+        + attr('data-cache-ttl', cache.ttl_seconds)
+        + attr('data-cache-cost', formatCostCents(cache.rewrite_usd) || '')
+        + attr('data-tip', cacheListTip(cache, labels || {}))
+        + '></span>';
+}
+
+// The cache figure's tooltip: what the next prompt pays once the cache has
+// expired. It names no time, which the figure itself counts down.
+function cacheListTip(cache, labels) {
+    if (!cache.warm) {
+        return cacheLine(cache, labels);
+    }
+    const tokens = formatTokens(cache.tokens);
+    return cache.rewrite_usd === null
+        ? fmt(labels.list_cache_tokens_tip, { tokens: tokens })
+        : fmt(labels.list_cache_tip, { tokens: tokens, cost: formatCostCents(cache.rewrite_usd) });
+}
+
+// What writing every warm cache among *sessions* again would cost, or null when
+// none is warm or one of them has no price.
+function warmCacheCostUsd(sessions) {
+    let total = 0;
+    let warm = 0;
+    for (const session of sessions || []) {
+        const cache = session && session.cache;
+        if (!cache || !cache.warm) {
+            continue;
+        }
+        if (cache.rewrite_usd === null) {
+            return null;
+        }
+        total += cache.rewrite_usd;
+        warm += 1;
+    }
+    return warm > 0 ? total : null;
 }
 
 function cacheLine(cache, labels) {
@@ -2033,7 +2117,23 @@ function cacheLine(cache, labels) {
     if (cache.rewrite_usd === null) {
         return fmt(labels.cache_cold_tokens_tip, { tokens: formatTokens(cache.tokens) });
     }
-    return fmt(labels.cache_cold_tip, { tokens: formatTokens(cache.tokens), cost: formatCost(cache.rewrite_usd) });
+    return fmt(labels.cache_cold_tip, { tokens: formatTokens(cache.tokens), cost: formatCostCents(cache.rewrite_usd) });
+}
+
+// Dollars and cents below ten dollars ("$0.70"), whole dollars from there. The
+// cache's figures are small per session and add up across many, so the whole
+// dollars of formatCost would hide exactly what they are about.
+function formatCostCents(usd) {
+    if (usd == null || !Number.isFinite(usd)) {
+        return null;
+    }
+    if (usd < 0.01) {
+        return '<$0.01';
+    }
+    if (usd < 10) {
+        return '$' + usd.toFixed(2);
+    }
+    return '$' + Math.round(usd);
 }
 
 // Whole dollars ("$19"); anything under a dollar is just "<$1". The estimate is
@@ -2642,7 +2742,7 @@ function buildSession(raw, labels, prices) {
         context: context,
         context_warn: Boolean(context && context.ratio !== null && context.ratio >= NEAR_LIMIT_RATIO),
         cache: cache,
-        cache_warn: Boolean(cache && !cache.warm && cache.rewrite_usd !== null && cache.rewrite_usd >= CACHE_REWRITE_BADGE_USD),
+        cache_warn: Boolean(cache && !cache.warm),
         plan: alive ? planProgress(raw) : null,
         queued: QUEUE_STATUSES.has(status) ? (positiveInteger(raw.queued) || 0) : 0,
         budget: budgetOf(raw),
@@ -4701,6 +4801,7 @@ const SETTING_LABEL_KEYS = new Map([
     ['ended_max_age', { label: 'setting_ended_max_age', hint: 'setting_ended_max_age_hint' }],
     ['include_completed', { label: 'setting_include_completed', hint: 'setting_include_completed_hint' }],
     ['subagent_recent_seconds', { label: 'setting_subagent_recent_seconds', hint: 'setting_subagent_recent_seconds_hint' }],
+    ['list_context', { label: 'setting_list_context', hint: 'setting_list_context_hint' }],
     ['wsl', { label: 'setting_wsl', hint: 'setting_wsl_hint' }],
     ['window_width', { label: 'setting_window_width', hint: '' }],
     ['window_height', { label: 'setting_window_height', hint: '' }],
@@ -5029,14 +5130,20 @@ const AMC_LOGIC = {
     usageCostUsd,
     sessionCostUsd,
     modelRate,
-    CACHE_REWRITE_BADGE_USD,
+    CACHE_EXPIRING_SHARE,
     cacheOutlook,
+    cachePhase,
+    cacheShareLeft,
+    cacheListText,
+    cacheMetaMarkup,
+    warmCacheCostUsd,
     cacheLine,
     sessionTotalCostUsd,
     webSearchPrice,
     costTipLines,
     costShares,
     formatCost,
+    formatCostCents,
     usageTotalTokens,
     modelHistory,
     cliHistory,

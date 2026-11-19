@@ -61,6 +61,7 @@ class Settings:
     ended_max_age: int = 3600
     include_completed: bool = False
     subagent_recent_seconds: int = 900
+    list_context: bool = False
     window_width: int = 1180
     window_height: int = 760
     language: str = ''
@@ -93,6 +94,7 @@ SPECS: tuple[SettingSpec, ...] = (
     SettingSpec('ended_max_age', 'int', 'sessions', minimum=0, unit='seconds'),
     SettingSpec('include_completed', 'bool', 'sessions'),
     SettingSpec('subagent_recent_seconds', 'int', 'sessions', minimum=1, unit='seconds'),
+    SettingSpec('list_context', 'bool', 'sessions'),
     SettingSpec('wsl', 'bool', 'wsl', windows_only=True),
     # No smaller than the window is created to allow, or a saved size is silently not honoured.
     SettingSpec('window_width', 'int', 'window', minimum=NORMAL_MIN_SIZE[0], maximum=10000, unit='pixels', applies='restart'),

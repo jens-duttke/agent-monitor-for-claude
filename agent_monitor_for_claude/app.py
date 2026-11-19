@@ -922,6 +922,7 @@ class _MonitorApi:
         return {
             'labels': dict(T),
             'poll_interval': current_settings().poll_interval,
+            'list_context': current_settings().list_context,
             'version': __version__,
             'default_effort': _default_effort(),
             'pricing': load_pricing(),

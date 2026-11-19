@@ -229,7 +229,10 @@ function createItem() {
         + '<div class="row-hits"></div>'
         // The compact view's way to this session's details in the full view;
         // hidden everywhere else, where a click on the entry already selects it.
-        + '<button class="item-open" type="button">' + OPEN_DETAILS_SVG + '</button>';
+        + '<button class="item-open" type="button">' + OPEN_DETAILS_SVG + '</button>'
+        // How much of its prompt cache's lifetime the session has left, as a
+        // bar along the entry's foot that shrinks as it runs out.
+        + '<div class="item-cache" aria-hidden="true"><i></i></div>';
     return el;
 }
 
@@ -240,6 +243,7 @@ function updateItem(el, session) {
     el.className = 'item status-' + session.status
         + (session.is_history ? ' is-history' : '')
         + (hasWindow(session) ? '' : ' no-window')
+        + (session.cache ? ' has-cache' : '')
         + (selected ? ' selected' : '');
     el.setAttribute('aria-selected', selected ? 'true' : 'false');
     el.dataset.session = session.session_id || '';
@@ -292,7 +296,10 @@ function updateItem(el, session) {
     const line = el.querySelector('.item-line');
     setMarkup(line, itemActivityMarkup(session.activity, session.is_history ? state.historyReceivedAt : state.receivedAt));
     fillTicks(line);
-    setMarkup(el.querySelector('.item-meta'), itemMetaMarkup(session));
+    const meta = el.querySelector('.item-meta');
+    setMarkup(meta, itemMetaMarkup(session));
+    updateCacheBar(el.querySelector('.item-cache'), meta.querySelector('.meta-cache'));
+    fillCacheTicks(el);
 
     // The passages the content search found, only the first one here - the
     // detail shows them all. A match is never mutated in place, so identity is
@@ -445,6 +452,58 @@ function fillTicks(root) {
     root.querySelectorAll('.age[data-age], .tick[data-age]').forEach((el) => {
         el.textContent = logic.formatAgeSince(Number(el.dataset.age), Number(el.dataset.ageAt), now, state.labels);
     });
+    fillCacheTicks(root);
+}
+
+// The cache bar of an entry follows the moment its cache figure names; an entry
+// without one has no bar.
+function updateCacheBar(bar, figure) {
+    if (!bar) {
+        return;
+    }
+    if (figure) {
+        bar.dataset.cacheUntil = figure.dataset.cacheUntil;
+        bar.dataset.cacheTtl = figure.dataset.cacheTtl;
+    } else {
+        delete bar.dataset.cacheUntil;
+        delete bar.dataset.cacheTtl;
+        delete bar.dataset.moving;
+        bar.className = 'item-cache';
+        bar.firstElementChild.style.width = '';
+    }
+}
+
+// Write what every cache figure and bar inside *root* says now: the time left,
+// the phase it is in and the share of its lifetime the bar still covers.
+function fillCacheTicks(root) {
+    if (!root) {
+        return;
+    }
+    const now = Date.now();
+    root.querySelectorAll('[data-cache-until]').forEach((el) => {
+        const remaining = (Number(el.dataset.cacheUntil) - now) / 1000;
+        const ttl = Number(el.dataset.cacheTtl);
+        const phase = logic.cachePhase(remaining, ttl);
+        if (el.classList.contains('item-cache')) {
+            setClass(el, 'item-cache cache-' + phase);
+            const fill = el.firstElementChild;
+            // The first width is set as it stands; only the seconds after it glide,
+            // or a new entry would show an empty track filling up.
+            if (fill.style.width) {
+                el.dataset.moving = '';
+            }
+            fill.style.width = (logic.cacheShareLeft(remaining, ttl) * 100).toFixed(2) + '%';
+            return;
+        }
+        setClass(el, 'meta-cache cache-' + phase);
+        setText(el, logic.cacheListText(Math.max(0, Math.floor(remaining)), el.dataset.cacheCost || '', state.labels));
+    });
+}
+
+function setClass(el, className) {
+    if (el.className !== className) {
+        el.className = className;
+    }
 }
 
 // The line under the title: the project (unless the group already names it),
@@ -457,6 +516,11 @@ function itemMetaMarkup(session) {
     if (session.usage_compact) {
         parts.push('<span class="meta-cost">' + esc(session.usage_compact) + '</span>');
     }
+    if (state.listContext && session.context && session.context.ratio !== null) {
+        parts.push('<span' + attr('class', 'meta-context' + (session.context_warn ? ' warn' : '')) + '>'
+            + esc(fmt(state.labels.list_context, { percent: Math.round(session.context.ratio * 100) })) + '</span>');
+    }
+    parts.push(logic.cacheMetaMarkup(session.cache, state.receivedAt, state.labels));
     const signals = logic.sessionSignals(session, state.labels).slice(0, logic.LIST_SIGNAL_LIMIT);
     for (const signal of signals) {
         parts.push('<span' + attr('class', 'sig sig-' + signal.tone) + (signal.tip ? attr('data-tip', signal.tip) : '') + '>'
@@ -753,7 +817,7 @@ function render(snapshot) {
     }
 
     reportAttention(sessions);
-    updateToolbarSummary(snapshot, prices);
+    updateToolbarSummary(snapshot, prices, sessions);
     ensureShell();
 
     // Section counts follow the query, like the list. "Older" counts its
@@ -965,9 +1029,10 @@ function findItem(key) {
     return null;
 }
 
-// The count of active sessions and their cost, at the right of the toolbar.
-// An ended session the snapshot still lists for a while is neither.
-function updateToolbarSummary(snapshot, prices) {
+// The count of active sessions and their cost, at the right of the toolbar,
+// and what the warm prompt caches of the sessions waiting on you hold. An ended
+// session the snapshot still lists for a while is none of these.
+function updateToolbarSummary(snapshot, prices, sessions) {
     const el = document.getElementById('toolbar-summary');
     if (!el) {
         return;
@@ -985,7 +1050,10 @@ function updateToolbarSummary(snapshot, prices) {
     }
     const count = '<b>' + esc(live.length) + '</b>';
     const label = esc(state.labels.summary_active || '').replace('{count}', count);
-    setMarkup(el, label + (priced ? ' · <b>' + esc(logic.formatCost(total)) + '</b>' : ''));
+    const cached = logic.warmCacheCostUsd(sessions);
+    const cache = cached === null ? '' : ' · <span class="summary-cache"' + attr('data-tip', state.labels.summary_cache_tip || '') + '>'
+        + esc(state.labels.summary_cache || '').replace('{cost}', () => '<b>' + esc(logic.formatCostCents(cached)) + '</b>') + '</span>';
+    setMarkup(el, label + (priced ? ' · <b>' + esc(logic.formatCost(total)) + '</b>' : '') + cache);
 }
 
 // Tell the window how many sessions are blocked on you, and whether one of them

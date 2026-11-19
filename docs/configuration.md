@@ -28,6 +28,7 @@ You can edit the file by hand; the app reads it at start. Only values that diffe
 | `poll_interval` | integer (1 - 3600) | `5` | Seconds between full refreshes. Changes to sessions are picked up within about a second regardless. |
 | `ended_max_age` | integer (>= 0) | `3600` | How long (seconds) a finished session stays visible after its process exits. For sessions that ended before Agent Monitor started, counted from their last activity. |
 | `include_completed` | boolean | `false` | Show finished sessions regardless of `ended_max_age`. |
+| `list_context` | boolean | `false` | Show how full each session's context is on its list entry, next to its cost. |
 | `wsl` | boolean | `true` | Windows only. List Claude Code sessions running inside WSL distributions. `false` turns off all WSL access. |
 | `subagent_recent_seconds` | integer (>= 1) | `900` | How long (seconds) a subagent is counted after its last write - as running, then as recently finished. |
 | `window_width` | integer (480 - 10000) | `1180` | Window width at start, in logical pixels. |

@@ -392,6 +392,9 @@ function applySavedSettings(result) {
         state.pollInterval = values.poll_interval;
         startPoll();
     }
+    if (typeof values.list_context === 'boolean') {
+        state.listContext = values.list_context;
+    }
     const restart = Array.isArray(result.restart) ? result.restart : [];
     toast(restart.length > 0 ? state.labels.settings_saved_restart : state.labels.settings_saved);
     if (changed.length > 0) {

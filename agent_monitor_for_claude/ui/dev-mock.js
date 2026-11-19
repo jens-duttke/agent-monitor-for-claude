@@ -44,16 +44,17 @@ window.__MOCK_SETTINGS__ = {
         { key: 'ended_max_age', kind: 'int', group: 'sessions', minimum: 0, maximum: null, unit: 'seconds', applies: 'now' },
         { key: 'include_completed', kind: 'bool', group: 'sessions', minimum: null, maximum: null, unit: '', applies: 'now' },
         { key: 'subagent_recent_seconds', kind: 'int', group: 'sessions', minimum: 1, maximum: null, unit: 'seconds', applies: 'now' },
+        { key: 'list_context', kind: 'bool', group: 'sessions', minimum: null, maximum: null, unit: '', applies: 'now' },
         { key: 'wsl', kind: 'bool', group: 'wsl', minimum: null, maximum: null, unit: '', applies: 'now' },
         { key: 'window_width', kind: 'int', group: 'window', minimum: 480, maximum: 10000, unit: 'pixels', applies: 'restart' },
         { key: 'window_height', kind: 'int', group: 'window', minimum: 360, maximum: 10000, unit: 'pixels', applies: 'restart' },
     ],
     values: {
-        poll_interval: 5, ended_max_age: 7200, include_completed: false, subagent_recent_seconds: 900,
+        poll_interval: 5, ended_max_age: 7200, include_completed: false, subagent_recent_seconds: 900, list_context: false,
         window_width: 1180, window_height: 760, language: '', wsl: true,
     },
     defaults: {
-        poll_interval: 5, ended_max_age: 3600, include_completed: false, subagent_recent_seconds: 900,
+        poll_interval: 5, ended_max_age: 3600, include_completed: false, subagent_recent_seconds: 900, list_context: false,
         window_width: 1180, window_height: 760, language: '', wsl: true,
     },
     errors: [],
@@ -136,6 +137,7 @@ window.__MOCK_SNAPSHOT__ = {
                 { text: 'Which upsampling basis should the sampler use?', options: ['Jakob-Hanika sigmoid', 'Smits RGB', 'Measured spectra'] },
             ] },
             current_tool_age_seconds: 38,
+            cache_ttl_seconds: 3600, cache_expires_in_seconds: 3562,
             work_intervals: [[7200, 6100], [5400, 3900], [1800, 38]],
             lines_added: 412, lines_removed: 96, files_edited: 9,
             // A pull request Claude Code linked; without an address it is listed
@@ -157,9 +159,11 @@ window.__MOCK_SNAPSHOT__ = {
             title: 'Warm the pipeline cache on first frame', permission_mode: 'auto',
             last_stop_reason: 'tool_use', pending_tool: true, last_tool_name: 'Bash',
             current_tool: { tool: 'Bash', text: 'cmake --build build --target shader-cache --parallel 16', detail: 'Rebuild the shader cache', questions: [] },
-            current_tool_age_seconds: 145,
+            current_tool_age_seconds: 3100,
             auto_denials_consecutive: 3, auto_denials_total: 7,
-            age_seconds: 145,
+            age_seconds: 3100,
+            // Waiting long enough that its one-hour cache is about to expire.
+            cache_ttl_seconds: 3600, cache_expires_in_seconds: 500,
             ...priced('claude-opus-4-8[1m]', {
                 input_tokens: 21700, output_tokens: 4300, cache_read_input_tokens: 12600000,
                 cache_creation_input_tokens: 480000, cache_creation_5m_input_tokens: 310000, cache_creation_1h_input_tokens: 170000,
@@ -324,13 +328,15 @@ window.__MOCK_SNAPSHOT__ = {
         rawSession({
             session_id: 'h4d', short_name: 'helios-renderer-2f', pid: 21030, entrypoint: 'claude-vscode', host: 'VS Code',
             title: 'Retune the importance sampler across models', permission_mode: 'default',
-            last_entry_kind: 'assistant', last_stop_reason: 'end_turn', age_seconds: 210,
+            last_entry_kind: 'assistant', last_stop_reason: 'end_turn', age_seconds: 3080,
+            // Its one-hour cache is in its last minutes: the entry's bar turns amber.
+            cache_ttl_seconds: 3600, cache_expires_in_seconds: 520,
             last_reply: '## Importance sampler retuned\n\nThe variance dropped on every scene but the glossy one:\n\n'
                 + '| Scene | Before | After |\n|---|--:|--:|\n| Cornell box | 0.041 | 0.034 |\n| Sponza | 0.052 | 0.046 |\n'
                 + '| Glossy spheres | 0.090 | 0.088 |\n\n- The **MIS weights** now use the power heuristic\n'
                 + '- `--spp 64` stays the default\n\n```glsl\nfloat w = pdfA * pdfA / (pdfA * pdfA + pdfB * pdfB);\n```\n\n'
                 + 'Shall I start on the glossy pass next?',
-            work_intervals: [[4000, 3100], [2600, 210]],
+            work_intervals: [[6900, 6000], [5500, 3080]],
             lines_added: 64, lines_removed: 52, files_edited: 3,
             model_id: 'claude-opus-4-8[1m]', effort: 'max', speed: 'fast',
             usage: {
@@ -369,6 +375,7 @@ window.__MOCK_SNAPSHOT__ = {
             last_entry_kind: 'user_interrupt', last_stop_reason: null,
             subagents_running: 2, subagents_labels: ['Benchmark the 8-wide traversal kernel', 'Port the SAH split to SoA'],
             age_seconds: 320,
+            cache_ttl_seconds: 3600, cache_expires_in_seconds: 3280,
             ...priced('claude-opus-4-8[1m]', {
                 input_tokens: 28800, output_tokens: 6400, cache_read_input_tokens: 19600000,
                 cache_creation_input_tokens: 720000, cache_creation_5m_input_tokens: 520000, cache_creation_1h_input_tokens: 200000,
@@ -385,6 +392,7 @@ window.__MOCK_SNAPSHOT__ = {
             last_entry_kind: 'api_error', last_stop_reason: 'stop_sequence', api_error_kind: 'rate_limit', api_error_status: 429,
             api_error_detail: "You've hit your session limit - resets 11:30pm (Europe/Berlin)",
             age_seconds: 5400,
+            cache_ttl_seconds: 3600, cache_expires_in_seconds: -1800,
             ...priced('claude-opus-4-8[1m]', {
                 input_tokens: 52300, output_tokens: 11800, cache_read_input_tokens: 34700000,
                 cache_creation_input_tokens: 1300000, cache_creation_5m_input_tokens: 900000, cache_creation_1h_input_tokens: 400000,
@@ -410,10 +418,10 @@ window.__MOCK_SNAPSHOT__ = {
             entrypoint: 'cli', host: 'Windows Terminal', via_cli: true,
             title: 'Fix cursor drift on high-latency connections',
             last_entry_kind: 'assistant', last_stop_reason: 'end_turn',
-            age_seconds: 2460,
-            // Idle past its 5-minute cache: the badge says what the next prompt
+            age_seconds: 4300,
+            // Idle past its one-hour cache: the entry says what the next prompt
             // pays to write the context again.
-            context_tokens: 640000, cache_ttl_seconds: 300, cache_expires_in_seconds: -2160,
+            context_tokens: 640000, cache_ttl_seconds: 3600, cache_expires_in_seconds: -700,
             ...priced('claude-sonnet-5', {
                 input_tokens: 28700, output_tokens: 6100, cache_read_input_tokens: 19400000,
                 cache_creation_input_tokens: 820000, cache_creation_5m_input_tokens: 300000, cache_creation_1h_input_tokens: 520000,
@@ -505,8 +513,8 @@ window.__MOCK_SNAPSHOT__ = {
             title: 'Parallelize the N-body force solver across cores', permission_mode: 'default',
             last_entry_kind: 'assistant', last_stop_reason: 'end_turn',
             age_seconds: 96,
-            // Still warm: the cost tooltip counts down instead of a badge.
-            cache_ttl_seconds: 300, cache_expires_in_seconds: 204,
+            // Still warm: the entry counts down the time its cache has left.
+            cache_ttl_seconds: 3600, cache_expires_in_seconds: 3504,
             ...priced('claude-sonnet-5', {
                 input_tokens: 14200, output_tokens: 3100, cache_read_input_tokens: 9800000,
                 cache_creation_input_tokens: 420000, cache_creation_5m_input_tokens: 420000, cache_creation_1h_input_tokens: 0,
