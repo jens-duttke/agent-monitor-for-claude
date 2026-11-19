@@ -145,6 +145,10 @@ const state = {
     // drives the loading note.
     history: null,
     historyLoading: false,
+    // The cache misses something (a session that left the live list, a wider
+    // window): fetched again - at once while the rows are shown, else on the
+    // next opening - with the cached rows kept until the new ones land.
+    historyStale: false,
     // How far back the history chip reaches (a logic.HISTORY_RANGES key), and
     // the window the cache above was actually fetched for. The two differ while
     // a narrower selection is served from a wider fetch; undefined means the

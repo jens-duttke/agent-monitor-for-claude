@@ -698,13 +698,16 @@ function render(snapshot) {
     let rawSessions = snapshot.sessions || [];
     if (foldHistory) {
         rawSessions = rawSessions.concat(historyRows);
-        // A live session that just left the snapshot was excluded from the
-        // one-shot history fetch; re-fetch so it moves into "Older" instead of
-        // vanishing from both.
-        if (previous && logic.historyNeedsRefresh(previous.sessions, snapshot.sessions)) {
-            state.history = null;
-            state.historyLoadedSeconds = undefined;
-            ensureHistoryLoaded();
+    }
+    // A live session that just left the snapshot was excluded from the history
+    // fetch; fetch again so it moves into "Older" instead of vanishing from
+    // both - at once while the rows are shown, else on the next opening, so a
+    // closed section never starts a scan of its own.
+    if (Array.isArray(state.history) && previous && logic.historyNeedsRefresh(previous.sessions, snapshot.sessions)) {
+        if (foldHistory) {
+            refreshHistory();
+        } else {
+            state.historyStale = true;
         }
     }
     const loadingNote = ((historyActive || widened) && state.historyLoading) ? labels.history_loading : '';

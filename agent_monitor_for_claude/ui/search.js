@@ -304,7 +304,7 @@ function widenSearch(step) {
         // while the history chip is off. Load them first - afterHistoryLoaded
         // starts the search once the complete widened scope is in hand, so the
         // scan runs once rather than once now and again when the history lands.
-        if (state.history === null) {
+        if (state.history === null || state.historyStale) {
             ensureHistoryLoaded();
             return;
         }

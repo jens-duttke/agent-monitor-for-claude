@@ -18,7 +18,7 @@ function toggleSection(key) {
     // Opening "Older" triggers the (potentially second-long) scan of past
     // sessions - lazily, off the UI thread. When it arrives, afterHistoryLoaded
     // re-runs any active search over the wider scope and re-renders.
-    if (!wasHistory && state.filters.has('history') && state.history === null) {
+    if (!wasHistory && state.filters.has('history') && (state.history === null || state.historyStale)) {
         ensureHistoryLoaded();
         return;
     }
@@ -173,8 +173,9 @@ function setHistoryRange(key, activateChip = true) {
     }
 
     if (needsFetch) {
-        state.history = null;
-        state.historyLoadedSeconds = undefined;
+        // The cached rows stay until the wider ones land; a fetch already
+        // running for the narrower window is followed by one for this one.
+        state.historyStale = true;
         ensureHistoryLoaded();
         return;
     }
@@ -193,7 +194,7 @@ function setHistoryRange(key, activateChip = true) {
 // does not block the WebView: the live overview stays interactive and a loading
 // note shows until the scan returns.
 async function ensureHistoryLoaded() {
-    if (state.history !== null || state.historyLoading) {
+    if ((state.history !== null && !state.historyStale) || state.historyLoading) {
         // Already loading (or loaded): still reflect the current section and
         // loading state. Opening "Older" again during the in-flight first load
         // lands here, and without this render the section would look closed with
@@ -214,6 +215,7 @@ async function ensureHistoryLoaded() {
             // window; the selected range then narrows it client-side like a real
             // wider fetch would.
             state.history = Array.isArray(window.__MOCK_HISTORY__) ? window.__MOCK_HISTORY__ : [];
+            state.historyStale = false;
             state.historyLoadedSeconds = null;
             state.historyReceivedAt = Date.now();
             afterHistoryLoaded();
@@ -221,6 +223,7 @@ async function ensureHistoryLoaded() {
         return;
     }
 
+    state.historyStale = false;
     state.historyLoading = true;
     if (state.last) {
         render(state.last);
@@ -229,23 +232,46 @@ async function ensureHistoryLoaded() {
     // The window is read once, up front: the selection can change while the
     // scan is in flight, and the cache must be stamped with the window the
     // records actually came from, never with a newer one it does not cover.
+    // The live sessions are read with it: the scan leaves out every session
+    // still live at that moment, so one that ends while it runs is in neither.
     const windowSeconds = logic.historyRangeSeconds(state.historyRange);
+    const basis = state.last ? state.last.sessions : null;
     try {
         const history = await bridge.get_history(windowSeconds);
         state.history = Array.isArray(history) ? history : [];
         state.historyLoadedSeconds = windowSeconds;
         state.historyReceivedAt = Date.now();
     } catch (e) {
-        // A failed one-shot fetch must not cache []: that empty sentinel is what
-        // a genuine empty result uses, so the loaded-guard would be satisfied
-        // forever and never retry. Reset to null so toggling History off and on
-        // (or the next invalidation) re-fetches.
-        state.history = null;
-        state.historyLoadedSeconds = undefined;
+        // A failed fetch must not cache []: that empty sentinel is what a
+        // genuine empty result uses, so the loaded-guard would be satisfied
+        // forever and never retry. Rows from an earlier fetch stay; without
+        // any, null lets toggling History off and on (or the next
+        // invalidation) fetch again.
+        if (!Array.isArray(state.history)) {
+            state.history = null;
+            state.historyLoadedSeconds = undefined;
+        }
     }
 
     state.historyLoading = false;
+    if (!logic.historyRangeCovered(windowSeconds, logic.historyRangeSeconds(state.historyRange))
+        || (basis && state.last && logic.historyNeedsRefresh(basis, state.last.sessions))) {
+        state.historyStale = true;
+    }
+    if (state.historyStale) {
+        ensureHistoryLoaded();
+        return;
+    }
     afterHistoryLoaded();
+}
+
+// Fetch the past sessions again, keeping the cached rows on screen until the
+// new ones land - blanking them first would drop every past session from the
+// list for the length of the scan, and a selected one with them. Run after the
+// current render, which may be the caller: the fetch renders as it starts.
+function refreshHistory() {
+    state.historyStale = true;
+    setTimeout(ensureHistoryLoaded, 0);
 }
 
 // Past sessions just became part of the view. Re-run any active search so its
