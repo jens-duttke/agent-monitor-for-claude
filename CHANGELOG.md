@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - After a long reply the prompt cache no longer reads as alive for as long as the reply streamed past its real end.
 - A reopened session no longer names the tool call its earlier process left open in the status, such as "Permission needed" while Claude Code reports a question.
 - The task console no longer colours output wrongly - red, bold or reset - when a tool uses 256-colour or true-colour codes.
+- In a formatted reply, a sentence containing `|` right above a `---` line is no longer shown as a table.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07

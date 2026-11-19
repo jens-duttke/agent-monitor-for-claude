@@ -3172,7 +3172,10 @@ function mdBlocks(lines, depth) {
             continue;
         }
 
-        if (line.includes('|') && index + 1 < lines.length && lines[index + 1].includes('-') && MD_TABLE_RULE.test(lines[index + 1])) {
+        // As in GFM, the delimiter row must have as many cells as the header:
+        // otherwise a sentence holding a pipe above a `---` rule became a table.
+        if (line.includes('|') && index + 1 < lines.length && lines[index + 1].includes('-') && MD_TABLE_RULE.test(lines[index + 1])
+            && mdCells(lines[index + 1]).length === mdCells(line).length) {
             flush();
             const table = mdTable(lines, index);
             html += table.html;

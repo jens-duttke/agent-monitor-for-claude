@@ -3341,6 +3341,14 @@ test('markdown: the structure Claude writes renders as its elements', () => {
     assert.ok(!logic.markdownToHtml('>'.repeat(40) + ' deep').includes('<blockquote><blockquote><blockquote><blockquote><blockquote><blockquote><blockquote><blockquote><blockquote><blockquote>'));
 });
 
+test('markdown: a paragraph line with a pipe above a rule stays a paragraph', () => {
+    // GFM accepts a table only when the delimiter row has as many cells as the header.
+    const html = logic.markdownToHtml('Use "a | b" here.\n---');
+    assert.ok(!html.includes('md-table'), html);
+    assert.ok(html.includes('<hr'), html);
+    assert.ok(logic.markdownToHtml('a | b\n---|---\n1 | 2').includes('md-table'));
+});
+
 test('markdown: html safety - conversation text never becomes markup, a link never an href', () => {
     const hostile = [
         '<script>alert(1)</script>', '<img src=x onerror=alert(1)>', '# <b onclick=x>head</b>',
