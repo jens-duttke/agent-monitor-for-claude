@@ -23,18 +23,12 @@ function closeMenu() {
     menu.el.remove();
 }
 
-// Make room for a menu on `anchor`. Clicking the same trigger again toggles the
-// menu shut, so this returns false when the click was the one closing it.
-function claimMenuSlot(anchor) {
-    const toggleShut = openMenuState && openMenuState.anchorEl === anchor;
-    closeMenu();
-    return !toggleShut;
-}
-
+// Open a menu on `anchor`, in place of any open one. Every menu is a context
+// menu: a second right-click on the same element opens it again where the
+// pointer now is - the contextmenu event reaches no outside-click listener
+// first, so toggling it shut would leave the click with no menu at all.
 function openMenu(anchor, items, onSelect, context) {
-    if (!claimMenuSlot(anchor)) {
-        return;
-    }
+    closeMenu();
 
     const el = document.createElement('div');
     el.className = 'menu';
