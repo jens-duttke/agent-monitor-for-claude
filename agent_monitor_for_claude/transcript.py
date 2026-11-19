@@ -1839,7 +1839,10 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
     display length.
     """
     resolved_tool_ids: set[str] = set()
-    last_tool_id: str | None = None
+    # The tool calls of the newest response, in reply order: (id, name, block,
+    # time).  Parallel calls share one response id, written one entry per block.
+    batch: list[tuple[str | None, Any, dict, float | None]] = []
+    batch_message_id: object = None
     last_tool_name: str | None = None
     last_stop_reason: str | None = None
     last_timestamp: str | None = None
@@ -1890,6 +1893,8 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
         if entry_type == 'user' and not _carries_tool_result(content):
             turn_origin = _turn_origin(entry)
             turn_end_signal = None
+            batch = []
+            batch_message_id = None
 
         # Notices Claude Code injects into the conversation (the local-command
         # "DO NOT respond" caveat, continuation summaries, ...) carry isMeta.
@@ -1961,10 +1966,14 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
                 reply = _reply_text(content, full)
                 if reply:
                     last_reply = reply
+                message_id = message.get('id')
+                if message_id is None or message_id != batch_message_id:
+                    batch = []
+                    batch_message_id = message_id
                 if isinstance(content, list):
                     for block in content:
                         if isinstance(block, dict) and block.get('type') == 'tool_use':
-                            last_tool_id = block.get('id')
+                            batch.append((_text(block.get('id')), block.get('name'), block, _timestamp_epoch(timestamp)))
                             last_tool_name = block.get('name')
                             last_tool_block = block
                             last_tool_at = _timestamp_epoch(timestamp)
@@ -2035,7 +2044,17 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
             # waiting on the network rather than thinking, which the label can say.
             api_retry = _api_retry(entry)
 
-    pending_tool = last_tool_id is not None and last_tool_id not in resolved_tool_ids
+    # Pending is any call of the newest response without its result - not only
+    # its last: of two parallel calls the allowed one answers while the other
+    # waits on a permission dialog.  The call named is the first unanswered one
+    # after the newest answered sibling (the one running or prompting in a
+    # serial batch), else the first unanswered one.
+    unanswered = [index for index, call in enumerate(batch) if call[0] is not None and call[0] not in resolved_tool_ids]
+    pending_tool = bool(unanswered)
+    if pending_tool:
+        answered = [index for index, call in enumerate(batch) if call[0] in resolved_tool_ids]
+        after = [index for index in unanswered if not answered or index > answered[-1]]
+        _, last_tool_name, last_tool_block, last_tool_at = batch[(after or unanswered)[0]]
     current_tool = _tool_call(last_tool_block, full) if pending_tool and last_tool_block is not None else None
 
     return TranscriptState(

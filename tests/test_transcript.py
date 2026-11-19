@@ -608,6 +608,31 @@ class TurnOriginTest(unittest.TestCase):
         self.assertEqual(state.last_entry_kind, 'assistant')
         self.assertEqual(state.last_timestamp, _END_TURN['timestamp'])
 
+    def test_a_call_of_a_parallel_batch_still_waiting_is_pending(self) -> None:
+        # Two calls in one reply: the allowed one ran and answered while the
+        # other waits on its permission dialog. Only the last call was looked
+        # at, which was answered - the session read "working" for good.
+        def call(tool_id: str, name: str) -> dict:
+            return {'type': 'assistant', 'timestamp': '2026-07-11T10:00:10Z',
+                    'message': {'id': 'msg_1', 'stop_reason': 'tool_use', 'model': 'claude-opus-5-5',
+                                'content': [{'type': 'tool_use', 'id': tool_id, 'name': name, 'input': {'file_path': 'a.py'}}]}}
+
+        state = _parse(_lines(_PROMPT, call('t1', 'Edit'), call('t2', 'Read'), _tool_result('t2')))
+        self.assertTrue(state.pending_tool)
+        self.assertEqual(state.last_tool_name, 'Edit')
+
+        # Answered both: nothing pending.
+        state = _parse(_lines(_PROMPT, call('t1', 'Edit'), call('t2', 'Read'), _tool_result('t2'), _tool_result('t1')))
+        self.assertFalse(state.pending_tool)
+
+    def test_a_call_of_an_earlier_reply_left_unanswered_is_not_pending(self) -> None:
+        old = {'type': 'assistant', 'timestamp': '2026-07-11T10:00:10Z',
+               'message': {'id': 'msg_1', 'stop_reason': 'tool_use', 'content': [{'type': 'tool_use', 'id': 't1', 'name': 'Edit', 'input': {}}]}}
+        new = {'type': 'assistant', 'timestamp': '2026-07-11T10:00:20Z',
+               'message': {'id': 'msg_2', 'stop_reason': 'tool_use', 'content': [{'type': 'tool_use', 'id': 't2', 'name': 'Read', 'input': {}}]}}
+        state = _parse(_lines(_PROMPT, old, new, _tool_result('t2')))
+        self.assertFalse(state.pending_tool)
+
     def test_a_tool_result_does_not_open_a_turn(self) -> None:
         state = _parse(_lines({**_PROMPT, 'origin': {'kind': 'task-notification'}}, _tool_call('Bash'), _tool_result()))
         self.assertEqual(state.turn_origin, 'task-notification')
