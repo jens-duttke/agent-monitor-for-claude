@@ -58,6 +58,21 @@ class SessionsTest(unittest.TestCase):
 
         self.assertEqual([record['session_id'] for record in records], ['abc-def'])
 
+    def test_an_unchanged_registry_is_listed_without_a_thread_pool(self) -> None:
+        # The registry is listed every second; when every file is a cache hit
+        # there is nothing to read in parallel.
+        from agent_monitor_for_claude import sessions as sessions_mod
+
+        for pid in range(20):
+            self._write(f'{pid}.json', {'pid': pid, 'sessionId': f's{pid}', 'cwd': 'd:\Dev'})
+            stamp = time.time() - 3600
+            os.utime(self._sessions / f'{pid}.json', (stamp, stamp))
+        self.assertEqual(len(list_sessions(self.root)), 20)
+
+        with mock.patch.object(sessions_mod, 'ThreadPoolExecutor', side_effect=AssertionError('pool built')) as pool:
+            self.assertEqual(len(list_sessions(self.root)), 20)
+        pool.assert_not_called()
+
     def test_parses_native_status_and_waiting_for(self) -> None:
         self._write('5.json', {
             'pid': 5, 'sessionId': 's', 'cwd': 'd:\\x',

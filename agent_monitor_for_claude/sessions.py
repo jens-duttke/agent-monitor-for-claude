@@ -96,11 +96,22 @@ def list_sessions(root: SessionRoot) -> list[dict[str, Any]]:
     with _lock:
         previous = _registry_cache.get(str(directory), {})
 
-    # Read in parallel: on a WSL root every file is a round trip over the share,
+    # The unchanged files come from the cache, which costs no read; the rest are
+    # read in parallel: on a WSL root every file is a round trip over the share,
     # and a distro's registry keeps hundreds of ended sessions' records, so the
-    # first listing took seconds one file at a time. Later ones hit the cache.
-    with ThreadPoolExecutor(max_workers=_READ_WORKERS) as pool:
-        loaded = list(pool.map(lambda entry: _cached_or_read(entry, previous.get(entry.name)), files))
+    # first listing took seconds one file at a time.  A listing with nothing to
+    # read - the usual one, every second - builds no threads at all.
+    loaded: list[_CachedRecord | None] = []
+    misses: list[int] = []
+    for position, entry in enumerate(files):
+        hit, stat_result = _cache_hit(entry, previous.get(entry.name))
+        loaded.append(hit)
+        if hit is None and stat_result is not None:
+            misses.append(position)
+    if misses:
+        with ThreadPoolExecutor(max_workers=min(_READ_WORKERS, len(misses))) as pool:
+            for position, record in zip(misses, pool.map(lambda position: _read_record(files[position]), misses)):
+                loaded[position] = record
 
     current: dict[str, _CachedRecord] = {}
     records: list[dict[str, Any]] = []
@@ -124,8 +135,8 @@ def list_sessions(root: SessionRoot) -> list[dict[str, Any]]:
     return records
 
 
-def _cached_or_read(entry: os.DirEntry[str], cached: _CachedRecord | None) -> _CachedRecord | None:
-    """Return *entry*'s cached record if the file is unchanged, else read it; None if it cannot be stat'ed.
+def _cache_hit(entry: os.DirEntry[str], cached: _CachedRecord | None) -> tuple[_CachedRecord | None, os.stat_result | None]:
+    """Return *entry*'s cached record if the file is unchanged, with its stat; ``(None, None)`` if it cannot be stat'ed.
 
     On Windows the directory listing already carries the time and size, so an
     unchanged file costs no file-system call at all.
@@ -133,12 +144,22 @@ def _cached_or_read(entry: os.DirEntry[str], cached: _CachedRecord | None) -> _C
     try:
         stat_result = entry.stat()
     except OSError:
-        return None
+        return None, None
 
     recently_written = time.time() - stat_result.st_mtime < _RECENT_WRITE_SECONDS
     if (cached is not None and not recently_written and cached.mtime_ns == stat_result.st_mtime_ns
             and cached.size == stat_result.st_size):
-        return cached
+        return cached, stat_result
+
+    return None, stat_result
+
+
+def _read_record(entry: os.DirEntry[str]) -> _CachedRecord | None:
+    """Read *entry* afresh; None if it cannot be stat'ed."""
+    try:
+        stat_result = entry.stat()
+    except OSError:
+        return None
 
     return _CachedRecord(stat_result.st_mtime_ns, stat_result.st_size, _normalize(_read_json(Path(entry.path))))
 
