@@ -101,6 +101,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - A settings dialog, opened with the gear in the toolbar or *Ctrl+,*, changes the refresh interval, how long finished sessions stay, the language, WSL and the window size - no more editing a file by hand. Most changes apply on save; the window size at the next start.
+- A right-click on text selected in a list entry, such as a search excerpt, offers to copy it instead of opening the session menu.
 - A right-click on selected text, such as an agent's last reply, offers to copy it.
 - Every entry in the list says whether its work is finished in git: uncommitted files, commits not pushed, a branch only on this machine, or one deleted on origin - merged or not. The remote's state is that of your last `git fetch`.
 - The session details list each failed hook with its command, exit code, output and the tool call that set it off, and link the branch to its page on GitHub, GitLab, Bitbucket or Gitea.

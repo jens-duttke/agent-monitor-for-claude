@@ -574,6 +574,11 @@ function onContentContextMenu(event) {
     if (!item) {
         return;
     }
+    // A right-click on text selected in the row - an excerpt, a title - is a
+    // copy request, left to onSelectionContextMenu.
+    if (selectedTextAt(event.target, event.clientX, event.clientY)) {
+        return;
+    }
     event.preventDefault();
     if (!state.compact) {
         selectSession(item.dataset.key, false);
