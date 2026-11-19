@@ -115,6 +115,22 @@ class SetTaskbarAttentionTest(unittest.TestCase):
 
 
 @_WINDOWS_ONLY
+class OverlayBadgeTest(unittest.TestCase):
+    def test_the_taskbar_object_is_released_when_drawing_the_icon_fails(self) -> None:
+        # A drawing failure left the COM object unreleased for the process lifetime.
+        def create(_clsid: object, _outer: object, _context: object, _iid: object, out: object) -> int:
+            out._obj.value = 1234
+            return 0
+
+        slots: list[int] = []
+        with mock.patch.object(win32._ole32, 'CoCreateInstance', side_effect=create),                 mock.patch.object(win32, '_badge_icon', side_effect=RuntimeError('no GDI+')),                 mock.patch.object(win32, '_com_method', side_effect=lambda _pointer, index, *_a, **_k: (slots.append(index), lambda *_args: 0)[1]):
+            with self.assertRaises(RuntimeError):
+                win32._set_overlay_badge(1, '3')
+
+        self.assertIn(win32._VTBL_RELEASE, slots)
+
+
+@_WINDOWS_ONLY
 class DotnetVersionTest(unittest.TestCase):
     def test_non_dword_release_does_not_crash(self) -> None:
         # A damaged registry can hold a non-DWORD Release; comparing it against

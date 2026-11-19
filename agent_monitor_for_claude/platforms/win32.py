@@ -612,8 +612,10 @@ def _set_overlay_badge(hwnd: int, badge: str) -> bool:
     if hresult != _S_OK or not taskbar:
         return False
 
-    icon = _badge_icon(badge) if badge else None
+    # Drawn inside the try, so the taskbar object is released when drawing fails.
+    icon = None
     try:
+        icon = _badge_icon(badge) if badge else None
         if _com_method(taskbar, _VTBL_HR_INIT)(taskbar) != _S_OK:
             return False
         set_overlay = _com_method(taskbar, _VTBL_SET_OVERLAY_ICON, ctypes.wintypes.HWND, ctypes.c_void_p, ctypes.wintypes.LPCWSTR)
