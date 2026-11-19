@@ -184,9 +184,11 @@ _JSON_ESCAPES = {
 
 # Regex metacharacters that make a raw-line prefilter unsound in regex mode:
 # an anchor means something different on the JSON line than in the extracted
-# text, and a backslash or a quote can spell an escape the raw line writes
-# differently. A pattern carrying any of them is scanned without a prefilter.
-_UNSAFE_REGEX_CHARS = '\\"^$'
+# text, a backslash or a quote can spell an escape the raw line writes
+# differently, and a '.' or a class consumes one character of the text that the
+# line may write as an escape of two or six. A pattern carrying any of them is
+# scanned without a prefilter.
+_UNSAFE_REGEX_CHARS = '\\"^$.['
 
 
 def run_search(
@@ -439,7 +441,9 @@ def _prefilter(text: str, use_regex: bool, match_case: bool) -> re.Pattern[str] 
       is allowed to do; the matcher then applies the real word boundaries to
       the parsed text.
     - Regular expressions.  An anchor addresses a different string on the raw
-      line, and an escape can be spelled in ways this cannot see through, so a
+      line, an escape can be spelled in ways this cannot see through, and a
+      ``.`` or a character class consumes one character of the text that the
+      line may write as an escape of several, so a
       pattern carrying one of ``_UNSAFE_REGEX_CHARS`` (or any non-ASCII
       character, whose escaped spelling a pattern cannot be rewritten to allow)
       gets no prefilter at all - correct, merely slower.

@@ -227,6 +227,18 @@ class SearchOptionsTest(SearchEnvTest):
         # The same pattern as a literal string does not match.
         self.assertEqual(self._matched_ids(self._run(r'\d{5}', ref)), [])
 
+    def test_a_regex_finds_a_character_the_line_writes_as_an_escape(self) -> None:
+        # A '.', a class or a counted quantifier consumes one character of the
+        # text, which the raw JSON line may spell with two or six.
+        cases = {'quote': 'foo"bar', 'backslash': 'foo\\bar', 'tab': 'foo\tbar', 'control': 'foo\x1bbar'}
+        for session_id, text in cases.items():
+            self._write(session_id, _CWD, self._entry(f'say {text} now'))
+        refs = [self._ref(session_id) for session_id in cases]
+
+        for pattern in ('foo.bar', 'foo[^a-z]bar', 'fo{2}.ba'):
+            with self.subTest(pattern=pattern):
+                self.assertEqual(sorted(self._matched_ids(self._run(pattern, refs, {'use_regex': True}))), sorted(cases))
+
     def test_invalid_regex_reports_error_and_no_matches(self) -> None:
         self._write('id-a', _CWD, 'anything')
         ref = [self._ref('id-a')]
