@@ -30,10 +30,10 @@ from pathlib import Path
 from typing import Iterable
 
 from .. import procfs
-from ..procinfo import ChildProcessStat, ProcessDetails, ProcessInfo, child_processes
+from ..procinfo import ChildProcessStat, EntrypointWindow, ProcessDetails, ProcessInfo, child_processes
 
 __all__ = [
-    'IGNORED_ANCESTOR_NAMES', 'TERMINAL_WINDOW_OWNERS',
+    'ENTRYPOINT_WINDOW_OWNERS', 'IGNORED_ANCESTOR_NAMES', 'TERMINAL_WINDOW_OWNERS',
     'ancestry', 'probe_all', 'process_details', 'process_names', 'process_stats', 'vmmem_present',
 ]
 
@@ -123,6 +123,10 @@ _GUI_HOSTS = {**_EDITOR_HOSTS, **_TERMINAL_HOSTS}
 # fallback is still offered for the cases the chain cannot cover (a session
 # reattached to a different terminal), and it is confined to these owners.
 TERMINAL_WINDOW_OWNERS = frozenset(_TERMINAL_HOSTS)
+
+# Empty on purpose: the table names the host window of a session running inside
+# a WSL distribution, and WSL sessions are only discovered on a Windows host.
+ENTRYPOINT_WINDOW_OWNERS: dict[str, EntrypointWindow] = {}
 
 # Ancestors that own windows for the whole desktop, never for one session; the
 # window search skips them so it never raises the shell instead of the editor.

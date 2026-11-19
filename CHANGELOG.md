@@ -107,6 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - List entries no longer carry extra space at the bottom for lines they do not show.
 - In the graph, the selected session keeps its highlight under the pointer, and its fold arrow no longer squares off the box's corner.
 - A graph label whose title ends in "…" keeps it, and its tooltip.
+- *Switch to window* now raises Claude Desktop for a Desktop chat that runs inside WSL; before, nothing happened. (thanks to [@jeroenbu](https://github.com/jeroenbu) for the contribution)
 
 ## [1.0.0] - 2026-11-07
 

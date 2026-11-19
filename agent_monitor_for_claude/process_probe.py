@@ -38,21 +38,21 @@ from __future__ import annotations
 
 import sys
 
-from .procinfo import ChildProcessStat, ProcessDetails, ProcessInfo, SESSION_HELPER_WINDOW_SECONDS
+from .procinfo import ChildProcessStat, EntrypointWindow, ProcessDetails, ProcessInfo, SESSION_HELPER_WINDOW_SECONDS
 
 if sys.platform == 'win32':
     from .platforms.process_win32 import (
-        IGNORED_ANCESTOR_NAMES, TERMINAL_WINDOW_OWNERS, ancestry, probe_all, process_details, process_names, process_stats,
-        vmmem_present,
+        ENTRYPOINT_WINDOW_OWNERS, IGNORED_ANCESTOR_NAMES, TERMINAL_WINDOW_OWNERS, ancestry, probe_all, process_details, process_names,
+        process_stats, vmmem_present,
     )
 else:
     from .platforms.process_linux import (
-        IGNORED_ANCESTOR_NAMES, TERMINAL_WINDOW_OWNERS, ancestry, probe_all, process_details, process_names, process_stats,
-        vmmem_present,
+        ENTRYPOINT_WINDOW_OWNERS, IGNORED_ANCESTOR_NAMES, TERMINAL_WINDOW_OWNERS, ancestry, probe_all, process_details, process_names,
+        process_stats, vmmem_present,
     )
 
 __all__ = [
-    'ChildProcessStat', 'IGNORED_ANCESTOR_NAMES', 'ProcessDetails', 'ProcessInfo', 'SESSION_HELPER_WINDOW_SECONDS',
+    'ChildProcessStat', 'ENTRYPOINT_WINDOW_OWNERS', 'EntrypointWindow', 'IGNORED_ANCESTOR_NAMES', 'ProcessDetails', 'ProcessInfo', 'SESSION_HELPER_WINDOW_SECONDS',
     'TERMINAL_WINDOW_OWNERS', 'ancestry', 'probe', 'probe_all', 'process_details', 'process_names', 'process_stats',
     'vmmem_present',
 ]

@@ -9,7 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 from unittest import mock
 
-from agent_monitor_for_claude import app
+from agent_monitor_for_claude import app, window_focus
 from agent_monitor_for_claude.app import _LOG_MAX_LEN, _MonitorApi, _sanitize_log
 from agent_monitor_for_claude.paths import SessionRoot, cwd_to_slug, local_root
 from agent_monitor_for_claude.process_probe import ChildProcessStat, ProcessDetails
@@ -326,6 +326,52 @@ class FocusSessionOriginTest(unittest.TestCase):
         focus_window.assert_not_called()
         sleep_mock.assert_called_once()
         open_vscode.assert_called_once_with('a7a12d93-e700-4d96-b024-689a35c12bc2')
+
+
+class FocusSessionEntrypointTest(unittest.TestCase):
+    """A WSL session of an application with a window of its own is found by that window's owner."""
+
+    def test_wsl_desktop_session_uses_the_entrypoint_route(self) -> None:
+        api = _MonitorApi()
+        with mock.patch.object(app, 'focus_session_window') as focus_window, \
+             mock.patch.object(app, 'focus_entrypoint_window', return_value=True) as focus_entrypoint, \
+             mock.patch.object(app, 'focus_terminal_window') as focus_terminal:
+            result = api.focus_session(12345, project_name='proj', session_title='Chat', origin='wsl:Ubuntu', entrypoint='claude-desktop')
+
+        self.assertTrue(result)
+        focus_entrypoint.assert_called_once_with('claude-desktop', 'proj')
+        focus_window.assert_not_called()
+        focus_terminal.assert_not_called()
+
+    def test_wsl_terminal_session_keeps_the_title_route(self) -> None:
+        api = _MonitorApi()
+        with mock.patch.object(app, 'focus_session_window') as focus_window, \
+             mock.patch.object(window_focus, 'enum_windows', return_value=[]) as enum, \
+             mock.patch.object(app, 'focus_terminal_window', return_value=True) as focus_terminal:
+            result = api.focus_session(12345, session_title='My Session', origin='wsl:Ubuntu', entrypoint='cli')
+
+        self.assertTrue(result)
+        enum.assert_not_called()
+        focus_window.assert_not_called()
+        focus_terminal.assert_called_once_with('My Session')
+
+    def test_a_non_string_entrypoint_is_ignored(self) -> None:
+        api = _MonitorApi()
+        with mock.patch.object(app, 'focus_entrypoint_window', return_value=False) as focus_entrypoint, \
+             mock.patch.object(app, 'focus_terminal_window', return_value=False):
+            api.focus_session(1, session_title='t', origin='wsl:Ubuntu', entrypoint=['claude-desktop'])
+
+        focus_entrypoint.assert_called_once_with('', '')
+
+    def test_local_session_ignores_the_entrypoint(self) -> None:
+        api = _MonitorApi()
+        with mock.patch.object(app, 'focus_session_window', return_value=True) as focus_window, \
+             mock.patch.object(app, 'focus_entrypoint_window') as focus_entrypoint:
+            result = api.focus_session(4242, project_name='proj', session_title='title', entrypoint='claude-desktop')
+
+        self.assertTrue(result)
+        focus_window.assert_called_once_with(4242, 'proj', 'title')
+        focus_entrypoint.assert_not_called()
 
 
 class DeleteSessionOriginTest(unittest.TestCase):

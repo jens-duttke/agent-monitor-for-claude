@@ -21,8 +21,11 @@ from agent_monitor_for_claude import window_focus
 from agent_monitor_for_claude.app import _MonitorApi
 from agent_monitor_for_claude.paths import SessionRoot, local_root
 from agent_monitor_for_claude.platforms import IS_WINDOWS
+from agent_monitor_for_claude.process_probe import ENTRYPOINT_WINDOW_OWNERS
+from agent_monitor_for_claude.procinfo import EntrypointWindow
 from agent_monitor_for_claude.window_focus import (
-    focus_terminal_window, open_directory, reveal_in_file_manager, select_terminal_window, select_window, vscode_session_url,
+    focus_entrypoint_window, focus_terminal_window, open_directory, reveal_in_file_manager, select_entrypoint_window, select_terminal_window,
+    select_window, vscode_session_url,
 )
 
 _WINDOWS_ONLY = unittest.skipUnless(IS_WINDOWS, 'Windows host path translation')
@@ -321,6 +324,97 @@ class FocusTerminalWindowTest(unittest.TestCase):
              mock.patch.object(window_focus, 'activate_window') as activate:
             self.assertFalse(focus_terminal_window('Implement AskUser dialog interaction'))
 
+        activate.assert_not_called()
+
+
+# A table shaped like the platform's, plus a multi-window editor entry that picks by project.
+_ENTRYPOINT_RULES = {
+    'claude-desktop': EntrypointWindow(owners=frozenset({'claude.exe'}), title='Claude'),
+    'claude-vscode': EntrypointWindow(owners=frozenset({'code.exe', 'code - insiders.exe', 'cursor.exe'}), match_project=True),
+}
+
+
+class SelectEntrypointWindowTest(unittest.TestCase):
+    """The owner-based choice for a WSL session whose application has a window of its own on this side."""
+
+    def test_picks_the_owners_window_with_the_wanted_title(self) -> None:
+        windows = [(10, 1, 'Windows Terminal'), (20, 2, 'Claude')]
+        owners = {1: 'windowsterminal.exe', 2: 'claude.exe'}
+
+        self.assertEqual(select_entrypoint_window(windows, owners, 'claude-desktop', 'proj', _ENTRYPOINT_RULES), 20)
+
+    def test_unknown_or_missing_entrypoint_selects_nothing(self) -> None:
+        windows = [(20, 2, 'Claude')]
+        owners = {2: 'claude.exe'}
+
+        for entrypoint in ('', 'cli', 'constructor', None, 42):
+            with self.subTest(entrypoint=entrypoint):
+                self.assertIsNone(select_entrypoint_window(windows, owners, entrypoint, 'proj', _ENTRYPOINT_RULES))  # type: ignore[arg-type]  # untrusted value
+
+    def test_no_matching_window_selects_nothing(self) -> None:
+        windows = [(10, 1, 'Windows Terminal'), (30, 3, 'Claude')]
+        owners = {1: 'windowsterminal.exe', 3: 'chrome.exe'}
+
+        self.assertIsNone(select_entrypoint_window(windows, owners, 'claude-desktop', 'proj', _ENTRYPOINT_RULES))
+        self.assertIsNone(select_entrypoint_window([], {}, 'claude-desktop', 'proj', _ENTRYPOINT_RULES))
+
+    def test_a_claude_exe_window_with_another_title_is_never_picked(self) -> None:
+        # The native CLI is claude.exe too; only the Desktop app's main window qualifies.
+        windows = [(40, 4, '\u2733 Fix the login flow'), (41, 4, 'Claude Code'), (42, 4, '')]
+        owners = {4: 'claude.exe'}
+
+        self.assertIsNone(select_entrypoint_window(windows, owners, 'claude-desktop', 'proj', _ENTRYPOINT_RULES))
+
+    def test_a_windowless_cli_process_is_never_picked(self) -> None:
+        # The CLI's console window belongs to its console host, never to claude.exe itself.
+        windows = [(50, 5, 'Claude')]
+        owners = {5: 'conhost.exe', 6: 'claude.exe'}
+
+        self.assertIsNone(select_entrypoint_window(windows, owners, 'claude-desktop', 'proj', _ENTRYPOINT_RULES))
+
+    def test_several_owners_prefer_the_project_window(self) -> None:
+        windows = [(60, 6, 'a.py - other - Visual Studio Code'), (61, 7, 'b.py - proj - Cursor'), (62, 6, 'c.py - proj - Visual Studio Code')]
+        owners = {6: 'code.exe', 7: 'cursor.exe'}
+
+        self.assertEqual(select_entrypoint_window(windows, owners, 'claude-vscode', 'proj', _ENTRYPOINT_RULES), 61)
+        self.assertEqual(select_entrypoint_window(windows, owners, 'claude-vscode', 'none', _ENTRYPOINT_RULES), 60)
+        self.assertEqual(select_entrypoint_window(windows, owners, 'claude-vscode', '', _ENTRYPOINT_RULES), 60)
+
+
+class EntrypointWindowTableTest(unittest.TestCase):
+    """The platform's own table: Claude Desktop on Windows, nothing on Linux."""
+
+    @unittest.skipUnless(IS_WINDOWS, 'the Windows table')
+    def test_windows_table_finds_only_the_desktop_main_window(self) -> None:
+        windows = [(70, 8, 'Claude'), (71, 9, 'Claude')]
+        owners = {8: 'claude.exe', 9: 'notepad.exe'}
+
+        self.assertEqual(select_entrypoint_window(windows, owners, 'claude-desktop', '', ENTRYPOINT_WINDOW_OWNERS), 70)
+        self.assertIsNone(select_entrypoint_window(windows, owners, 'cli', '', ENTRYPOINT_WINDOW_OWNERS))
+
+    @unittest.skipIf(IS_WINDOWS, 'the Linux table')
+    def test_linux_table_is_empty(self) -> None:
+        self.assertEqual(ENTRYPOINT_WINDOW_OWNERS, {})
+
+
+class FocusEntrypointWindowTest(unittest.TestCase):
+    def test_activates_the_selected_window(self) -> None:
+        rules = {'claude-desktop': EntrypointWindow(owners=frozenset({'claude.exe'}), title='Claude')}
+        with mock.patch.object(window_focus, 'ENTRYPOINT_WINDOW_OWNERS', rules), \
+             mock.patch.object(window_focus, 'enum_windows', return_value=[(900, 42, 'Claude')]), \
+             mock.patch.object(window_focus, 'process_names', return_value={42: 'claude.exe'}), \
+             mock.patch.object(window_focus, 'activate_window', return_value=True) as activate:
+            self.assertTrue(focus_entrypoint_window('claude-desktop'))
+
+        activate.assert_called_once_with(900)
+
+    def test_unlisted_entrypoint_enumerates_nothing(self) -> None:
+        with mock.patch.object(window_focus, 'enum_windows') as enum, \
+             mock.patch.object(window_focus, 'activate_window') as activate:
+            self.assertFalse(focus_entrypoint_window('cli'))
+            self.assertFalse(focus_entrypoint_window(''))
+
+        enum.assert_not_called()
         activate.assert_not_called()
 
 

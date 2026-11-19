@@ -21,7 +21,10 @@ A session running inside a WSL distribution has no host-side process at all -
 the agent runs inside the distro, so there is no pid and no ancestor chain to
 walk in the first place.  ``app.py`` routes those sessions straight to
 :func:`focus_terminal_window`, the same title-only match used as the
-fallback above, skipping the pid-based search entirely.
+fallback above, skipping the pid-based search entirely.  A WSL session of an
+application that is no terminal (Claude Desktop) carries no session title in
+its window, so :func:`focus_entrypoint_window` finds that one by its owner
+instead, from a fixed table per registry entrypoint in the platform layer.
 
 Side effects are limited to window enumeration and activation, and run only on
 an explicit user click.  Window titles are compared in memory to pick the right
@@ -42,11 +45,11 @@ import os
 import re
 
 from .platforms import activate_window, enum_windows, open_path, open_uri, reveal_file
-from .process_probe import IGNORED_ANCESTOR_NAMES, TERMINAL_WINDOW_OWNERS, ancestry, process_names
+from .process_probe import ENTRYPOINT_WINDOW_OWNERS, IGNORED_ANCESTOR_NAMES, TERMINAL_WINDOW_OWNERS, EntrypointWindow, ancestry, process_names
 
 __all__ = [
-    'focus_session_window', 'focus_terminal_window', 'open_directory', 'open_vscode_session',
-    'reveal_in_file_manager', 'select_terminal_window', 'select_window', 'vscode_session_url',
+    'focus_entrypoint_window', 'focus_session_window', 'focus_terminal_window', 'open_directory', 'open_vscode_session',
+    'reveal_in_file_manager', 'select_entrypoint_window', 'select_terminal_window', 'select_window', 'vscode_session_url',
 ]
 
 # Official deep link of the Claude Code VS Code extension (since v2.1.72):
@@ -117,6 +120,31 @@ def focus_terminal_window(session_title: str) -> bool:
         True if a matching terminal window was found and activated.
     """
     handle = select_terminal_window(enum_windows(), process_names(), session_title)
+
+    if handle is None:
+        return False
+
+    return activate_window(handle)
+
+
+def focus_entrypoint_window(entrypoint: str, project_name: str = '') -> bool:
+    """Bring the host window of a WSL session's application to the foreground by its owner.
+
+    For an application that hosts a WSL session in a window of its own on this
+    side (Claude Desktop), the window carries no session title, so
+    :func:`focus_terminal_window` can never find it.  The platform table
+    ``ENTRYPOINT_WINDOW_OWNERS`` names which windows may belong to the
+    *entrypoint*; an entrypoint it does not list raises nothing.
+
+    Returns
+    -------
+    bool
+        True if a matching window was found and activated.
+    """
+    if entrypoint not in ENTRYPOINT_WINDOW_OWNERS:
+        return False
+
+    handle = select_entrypoint_window(enum_windows(), process_names(), entrypoint, project_name, ENTRYPOINT_WINDOW_OWNERS)
 
     if handle is None:
         return False
@@ -250,3 +278,48 @@ def select_terminal_window(windows: list[tuple[int, int, str]], owner_names: dic
             return handle
 
     return None
+
+
+def select_entrypoint_window(windows: list[tuple[int, int, str]], owner_names: dict[int, str], entrypoint: str, project_name: str,
+                             rules: dict[str, EntrypointWindow]) -> int | None:
+    """Pick the host window for a session of *entrypoint* by the window's owner (pure decision logic).
+
+    Parameters
+    ----------
+    windows : list of (handle, pid, title)
+        Visible top-level windows.
+    owner_names : dict[int, str]
+        Map of window-owner PID to lowercased process name.
+    entrypoint : str
+        The session's registry entrypoint; one *rules* does not list selects nothing.
+    project_name : str
+        Project folder name, preferred in the title when the rule asks for it.
+    rules : dict[str, EntrypointWindow]
+        The windows each entrypoint may own, see ``EntrypointWindow``.
+    """
+    if not isinstance(entrypoint, str) or not entrypoint:
+        return None
+
+    rule = rules.get(entrypoint)
+    if rule is None:
+        return None
+
+    wanted_title = rule.title.casefold() if rule.title is not None else None
+    candidates = []
+    for handle, pid, title in windows:
+        if owner_names.get(pid) not in rule.owners:
+            continue
+        if wanted_title is not None and title.strip().casefold() != wanted_title:
+            continue
+        candidates.append((handle, title))
+
+    if not candidates:
+        return None
+
+    needle = project_name.casefold() if rule.match_project else ''
+    if needle:
+        for handle, title in candidates:
+            if needle in title.casefold():
+                return handle
+
+    return candidates[0][0]

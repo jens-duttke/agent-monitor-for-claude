@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 __all__ = [
-    'ChildProcess', 'ChildProcessStat', 'ProcessDetails', 'ProcessInfo', 'SESSION_HELPER_WINDOW_SECONDS', 'child_processes',
+    'ChildProcess', 'ChildProcessStat', 'EntrypointWindow', 'ProcessDetails', 'ProcessInfo', 'SESSION_HELPER_WINDOW_SECONDS', 'child_processes',
     'clip_arguments',
 ]
 
@@ -52,6 +52,22 @@ class ChildProcess:
     parent: int
     name: str
     started_at: float | None = None
+
+
+@dataclass(frozen=True)
+class EntrypointWindow:
+    """Which host windows can belong to a session of one entrypoint when no process chain leads to them.
+
+    ``owners`` are the lowercased process names that may own the window.  ``title``,
+    when set, must equal the window title exactly (case-insensitively) - it is what
+    tells an application's main window apart from another program of the same
+    name.  ``match_project`` prefers, among the matching windows, one whose title
+    names the session's project, the way a multi-window editor is picked.
+    """
+
+    owners: frozenset[str]
+    title: str | None = None
+    match_project: bool = False
 
 
 @dataclass(frozen=True)
