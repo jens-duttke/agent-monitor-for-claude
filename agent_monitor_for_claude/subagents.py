@@ -687,9 +687,14 @@ def _agent_type(agent_path: Path) -> str:
         return cached
 
     data = _meta(agent_path)
+    # Only a meta file not there yet (it can land a moment after the
+    # transcript) is asked for again; one read once keeps its answer, a type
+    # outside the pattern included.
+    if not data:
+        return ''
     agent_type = data.get('agentType')
     if not isinstance(agent_type, str) or not _AGENT_TYPE_PATTERN.fullmatch(agent_type):
-        return ''
+        agent_type = ''
 
     with _agent_type_lock:
         while len(_agent_type_cache) >= _AGENT_TYPE_CACHE_MAX:

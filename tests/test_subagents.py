@@ -131,6 +131,20 @@ class SubagentsTest(unittest.TestCase):
         self.assertNotIn('never shown', json.dumps(texts))
         self.assertEqual(agent_texts(local_root(), _SESSION_ID, 'a2'), {'task': 'The task', 'result': '', 'steps': []})
 
+    def test_a_type_outside_the_pattern_is_read_from_its_file_once(self) -> None:
+        # A meta file read fine but naming an odd type was parsed again on
+        # every poll - over the WSL share, one round trip per agent per second.
+        agent = self._dir / 'agent-odd.jsonl'
+        agent.write_text('{}\n', encoding='utf-8')
+        (self._dir / 'agent-odd.meta.json').write_text(json.dumps({'agentType': 'has a space'}), encoding='utf-8')
+        smod._agent_type_cache.clear()
+        self.addCleanup(smod._agent_type_cache.clear)
+
+        with mock.patch.object(smod, '_meta', wraps=smod._meta) as meta:
+            self.assertEqual(smod._agent_type(agent), '')
+            self.assertEqual(smod._agent_type(agent), '')
+        self.assertEqual(meta.call_count, 1)
+
     def test_the_result_comes_from_the_steps_without_reading_the_tail_again(self) -> None:
         # A working agent's newest entries are often tool calls only; looking
         # for a text reply read up to 16 MB of its file on every refresh.
