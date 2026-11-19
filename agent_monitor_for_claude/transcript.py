@@ -2570,7 +2570,13 @@ def _absorb_file(path: Path, state: _ScanState, end: int, before_chunk: Callable
             lines = (remainder + chunk).split(b'\n')
             remainder = lines.pop()
             for raw_line in lines:
-                _absorb_line(raw_line, state)
+                # One line the scan cannot digest is skipped like a malformed
+                # one: raising here failed the file, and a first scan that fails
+                # is queued again by the next poll - forever, on the same line.
+                try:
+                    _absorb_line(raw_line, state)
+                except Exception:  # noqa: BLE001  # last-resort isolation per line
+                    continue
             state.consumed = position - len(remainder)
 
     return remainder
@@ -3554,7 +3560,8 @@ def _load(line: str) -> dict | None:
 
     try:
         value = json.loads(line)
-    except (json.JSONDecodeError, ValueError):
+    except (ValueError, RecursionError):
+        # RecursionError: a line nested deeper than the decoder follows.
         return None
 
     return value if isinstance(value, dict) else None

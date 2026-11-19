@@ -43,6 +43,44 @@ class MistypedIdentifierTest(unittest.TestCase):
         # The tail parse reads the same lines for the status.
         self.assertEqual(transcript._parse(lines).last_entry_kind, 'tool_result')
 
+    def test_a_line_nested_too_deep_to_parse_is_skipped(self) -> None:
+        # Neither decoder can read it; a scan that raised on it was re-queued
+        # by every poll and read the whole file again, forever.
+        deep = '{"type":"user","message":{"content":' + '[' * 100000 + ']' * 100000 + '}}'
+        turn = '{"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":100,"output_tokens":0}}}'
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session.jsonl'
+            path.write_text(deep + '\n' + turn + '\n', encoding='utf-8')
+
+            self.assertEqual(transcript._scan_appended(path).usage['input_tokens'], 100)
+            self.assertTrue(transcript._first_scan('deep-key', path))
+            self.addCleanup(transcript._scan_cache.pop, 'deep-key', None)
+
+    def test_a_line_the_scan_fails_on_is_skipped_rather_than_failing_the_file(self) -> None:
+        # A first scan that raised was stored nowhere and queued again by the
+        # next poll - a deterministic failure read the whole file forever.
+        turn = '{"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":100,"output_tokens":0}}}'
+        real = transcript._absorb_line
+
+        def failing(raw_line: bytes, state: object) -> None:
+            if b'poison' in raw_line:
+                raise KeyError('poison')
+            real(raw_line, state)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session.jsonl'
+            path.write_text('{"type":"user","poison":1}\n' + turn + '\n', encoding='utf-8')
+            with mock.patch.object(transcript, '_absorb_line', side_effect=failing):
+                self.assertTrue(transcript._first_scan('poison-key', path))
+            self.addCleanup(transcript._scan_cache.pop, 'poison-key', None)
+            self.assertEqual(transcript._scan_cache['poison-key'].totals['input_tokens'], 100)
+
+    def test_the_tail_parse_skips_a_line_nested_too_deep(self) -> None:
+        deep = '{"type":"user","message":{"content":' + '[' * 100000 + ']' * 100000 + '}}'
+        turn = '{"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":100,"output_tokens":0}}}'
+        # The tail parse reads such a line as unparsable too.
+        self.assertEqual(transcript._parse([deep, turn]).last_entry_kind, 'assistant')
+
 
 class ScanAppendedConcurrencyTest(unittest.TestCase):
     """Two overlapping snapshot builds must not sum an appended turn twice.

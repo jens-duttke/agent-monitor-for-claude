@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The app now starts on a system whose locale name Python cannot read, such as `en-IL`, instead of failing silently on every start.
 - The test counts on a task row add up every target of a `cargo test` run, instead of showing the doc-tests' usual "0 passed".
 - While the cost of a long session is still being counted after start, the list no longer re-reads the end of its transcript every second.
+- A transcript with a line the app cannot read no longer leaves its session's cost on `…` forever while one processor core re-reads the file.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07
