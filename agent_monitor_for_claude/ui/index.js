@@ -81,9 +81,11 @@ function typingTarget(target) {
 }
 
 // A focused button or link answers Enter itself - a section header, the
-// grouping switch, a detail action - rather than raising the selected session.
+// grouping switch, a detail action - rather than raising the selected session;
+// so do a disclosure (an activity step) and the splitter.
 function controlTarget(target) {
-    return Boolean(target && target.closest && target.closest('button, a[href], select, [role="radio"], [role="button"]'));
+    return Boolean(target && target.closest
+        && target.closest('button, a[href], select, summary, [role="radio"], [role="button"], [role="separator"]'));
 }
 
 function onKeyDown(event) {
