@@ -235,6 +235,33 @@ function setSettingField(key, value) {
     input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+// Put the window's size into the fields, measured now: the window can be
+// resized while the dialog is open, and the size read when it opened is stale.
+async function useCurrentSize(button) {
+    let fresh = null;
+    try {
+        fresh = await fetchSettings();
+    } catch (err) {
+        fresh = null;
+    }
+    if (!settingsOpen() || !settingsView) {
+        return;
+    }
+    if (fresh && logic.validWindowSize(fresh.window_size)) {
+        settingsView.window_size = fresh.window_size;
+    }
+    if (!logic.validWindowSize(settingsView.window_size)) {
+        return;
+    }
+    const [width, height] = settingsView.window_size;
+    const label = button.querySelector('.setting-size');
+    if (label) {
+        label.textContent = width + ' × ' + height;
+    }
+    setSettingField('window_width', width);
+    setSettingField('window_height', height);
+}
+
 function onSettingsClick(event) {
     const overlay = document.getElementById('settings-overlay');
     const target = event.target && event.target.closest ? event.target : null;
@@ -262,9 +289,9 @@ function onSettingsClick(event) {
         }
         return;
     }
-    if (target.closest('[data-use-size]') && logic.validWindowSize(settingsView.window_size)) {
-        setSettingField('window_width', settingsView.window_size[0]);
-        setSettingField('window_height', settingsView.window_size[1]);
+    const useSize = target.closest('[data-use-size]');
+    if (useSize) {
+        useCurrentSize(useSize);
         return;
     }
     if (target.closest('[data-reveal-settings]')) {
