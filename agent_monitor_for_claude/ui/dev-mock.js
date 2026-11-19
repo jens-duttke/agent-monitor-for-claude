@@ -205,6 +205,9 @@ window.__MOCK_SNAPSHOT__ = {
                 { text: 'Add a regression test for the reload path', status: 'pending' },
                 { text: 'Write up the root cause', status: 'pending' },
             ],
+            // Its turn waits on a subagent call: unanswered, so pending, as the
+            // transcript parser reports a running call.
+            last_stop_reason: 'tool_use', pending_tool: true, last_tool_name: 'Agent',
             current_tool: { tool: 'Agent', text: 'Explore', detail: 'Bisect the frame where the GPU fence deadlocks', questions: [] },
             current_tool_age_seconds: 312, turn_open_seconds: 1500,
             work_intervals: [[14400, 12000], [9000, 7600], [5200, 4400]],
@@ -427,7 +430,9 @@ window.__MOCK_SNAPSHOT__ = {
             session_id: 'n1g', short_name: 'nimbus-gateway-1c', pid: 15188, cwd: 'D:\\Projects\\nimbus-gateway',
             entrypoint: 'cli', host: 'PowerShell', via_cli: true,
             title: 'Implement adaptive token-bucket rate limiting', permission_mode: 'default',
-            native_status: 'busy', last_entry_kind: 'user_text', last_stop_reason: 'end_turn',
+            native_status: 'busy', last_entry_kind: 'assistant', last_stop_reason: 'tool_use',
+            pending_tool: true, last_tool_name: 'Bash',
+            child_count: 1, child_processes: [{ pid: 15342, parent: 0, name: 'node.exe', age_seconds: 46 }],
             // A hook that keeps failing without blocking - worth a look at its configuration.
             hook_errors: [
                 { hook: 'PostToolUse:Bash', exit_code: 7, count: 12, message: 'eslint: 3 problems (2 errors, 1 warning)' },
