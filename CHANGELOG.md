@@ -61,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An image too large or too damaged to show is no longer listed as an empty thumbnail that the app tried to load again on every refresh.
 - A ticking status line in the session details ("for 2m", "wakes in 4m") no longer drops your selection in the details' head or the focus of its buttons.
 - The details' "Show transcript" button of a session that just received its first prompt no longer goes missing when an earlier answer arrives late.
+- A background process's Invocation block appears even if its first request was refused, and a process that reuses an ended one's id no longer shows the ended one's command line.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07

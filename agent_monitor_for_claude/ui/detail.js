@@ -1452,7 +1452,7 @@ function renderProcessDetail(pane, session, process) {
     setMarkup(pane.querySelector('.detail-head'), processHeadMarkup(session, process));
     requestProcessInfo(session, process);
     updateBlock(pane.querySelector('.block-procinfo'), state.labels.block_process_info || '', '',
-        processInfoMarkup(processInfo.byKey.get(processInfoKey(session, process.pid))));
+        processInfoMarkup(processInfoOf(session, process)));
     if (process.ended) {
         // Its last measured figures are all there is of it; the table only lists what runs now.
         setMarkup(pane.querySelector('.detail-kpis'), processKpisMarkup(lastProcessStats.get(process.pid)));
@@ -1487,21 +1487,61 @@ function processCrumbMarkup(session) {
 /* How a selected process was started - asked once per process while it runs,
    and kept, so one that ended still shows it. */
 const PROCESS_INFO_KEPT = 50;
-const processInfo = { byKey: new Map(), pending: new Set() };
+// A refused answer - a registry not re-read yet, a handle not open yet - is
+// asked for again after this long, instead of standing for good.
+const PROCESS_INFO_RETRY_MS = 5000;
+const processInfo = { byKey: new Map(), pending: new Set(), failedAt: new Map() };
 
 function processInfoKey(session, pid) {
     return rowKey(session) + '/' + pid;
 }
 
+// The cached invocation of *process*, or null when none is known for it. An
+// entry proves it belongs to the process shown - by its name, and by its start
+// where both are known - since the system reuses the pid of one that ended.
+function processInfoOf(session, process) {
+    const entry = processInfo.byKey.get(processInfoKey(session, process.pid));
+    if (!entry || entry.name !== (process.name || '')) {
+        return null;
+    }
+    const started = entry.details.started_at;
+    const age = Number(process.age_seconds);
+    // An ended process keeps the age it had last; its entry is the one it was asked with.
+    if (!process.ended && Number.isFinite(started) && Number.isFinite(age) && state.receivedAt != null) {
+        const startedNow = state.receivedAt / 1000 - age;
+        if (Math.abs(startedNow - started) > PROCESS_START_TOLERANCE_SECONDS) {
+            return null;
+        }
+    }
+    return entry.details;
+}
+
+// How far a process's start may differ between the invocation and the snapshot
+// before the two are taken for different processes behind one pid.
+const PROCESS_START_TOLERANCE_SECONDS = 30;
+
 function requestProcessInfo(session, process) {
     const key = processInfoKey(session, process.pid);
-    if (process.ended || processInfo.byKey.has(key) || processInfo.pending.has(key)) {
+    if (process.ended || processInfoOf(session, process) || processInfo.pending.has(key)) {
+        return;
+    }
+    const failedAt = processInfo.failedAt.get(key);
+    if (failedAt !== undefined && Date.now() - failedAt < PROCESS_INFO_RETRY_MS) {
         return;
     }
     processInfo.pending.add(key);
     callProcessDetails(Number(session.pid), process.pid, session.origin || 'local').then((details) => {
         processInfo.pending.delete(key);
-        processInfo.byKey.set(key, details);
+        if (!details) {
+            processInfo.failedAt.set(key, Date.now());
+            while (processInfo.failedAt.size > PROCESS_INFO_KEPT) {
+                processInfo.failedAt.delete(processInfo.failedAt.keys().next().value);
+            }
+            return;
+        }
+        processInfo.failedAt.delete(key);
+        processInfo.byKey.delete(key);
+        processInfo.byKey.set(key, { name: process.name || '', details });
         while (processInfo.byKey.size > PROCESS_INFO_KEPT) {
             processInfo.byKey.delete(processInfo.byKey.keys().next().value);
         }
