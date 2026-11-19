@@ -2344,6 +2344,16 @@ test('diffToHtml: markup in a file stays text and never reaches a class', () => 
     }
 });
 
+test('ansiToHtml: hyperlinks, titles and other escapes leave no control text behind', () => {
+    assert.equal(logic.ansiToHtml('\x1b]8;;https://example.org\x1b\\link\x1b]8;;\x1b\\ done'), 'link done');
+    assert.equal(logic.ansiToHtml('\x1b]0;my title\x07text'), 'text');
+    assert.equal(logic.ansiToHtml('\x1b=keypad\x1b>\x1b7saved\x1b8'), 'keypadsaved');
+    assert.equal(logic.ansiToHtml('a\x1b[1~b\x1b[@c'), 'abc');
+    assert.equal(logic.ansiToHtml('\x1b(Bplain'), 'plain');
+    // A colour still applies.
+    assert.equal(logic.ansiToHtml('\x1b[31mred\x1b[0m'), '<span class="ansi-red">red</span>');
+});
+
 test('ansiToHtml: the arguments of an extended colour are not read as codes of their own', () => {
     // 38;5;31 is a palette index, not "red"; 38;2;0;1;30 is an RGB colour, not reset-bold-black.
     assert.equal(logic.ansiToHtml('\x1b[38;5;31mt'), 't');

@@ -105,7 +105,11 @@ function diffToHtml(value) {
 // text run goes through `esc`.
 function ansiToHtml(value) {
     const text = String(value == null ? '' : value);
-    const csi = /\x1b\[[0-9;?]*[A-Za-z]/g;
+    // Every ECMA-48 control shape, so none leaves text behind: a CSI with its
+    // full parameter and final ranges, an OSC up to BEL or ST (a hyperlink, a
+    // window title; one cut at the tail ends there), and a two-byte escape
+    // (keypad mode, cursor save, a character set). Only a plain SGR colours.
+    const csi = /\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -\/]*[0-~]/g;
     let html = '';
     let index = 0;
     let fg = null;
@@ -131,10 +135,10 @@ function ansiToHtml(value) {
         flush(text.slice(index, match.index));
         index = csi.lastIndex;
         const seq = match[0];
-        if (seq[seq.length - 1] !== 'm') {
-            continue;   // a cursor/erase control, not a color - drop it
-        }
         const body = seq.slice(2, -1);
+        if (!seq.startsWith('\x1b[') || seq[seq.length - 1] !== 'm' || !/^[0-9;:]*$/.test(body)) {
+            continue;   // any other control, not a color - drop it
+        }
         const params = body === '' ? ['0'] : body.split(';');
         for (let i = 0; i < params.length; i++) {
             const code = parseInt(params[i], 10);
