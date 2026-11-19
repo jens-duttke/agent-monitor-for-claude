@@ -118,7 +118,8 @@ def probe_all(requests: Iterable[tuple[int, int | None]], helper_commands: froze
     ----------
     requests : iterable of (pid, proc_start_ticks)
         Process IDs from the session registry, each with the recorded process
-        start time (.NET local-time ticks) or ``None``.
+        start time (the registry's ``procStart``, read by
+        :func:`_ticks_match_epoch`) or ``None``.
     helper_commands : frozenset of str
         The program names of the servers the installed plugins configure
         (``plugin_servers.server_commands``): a direct child running one is a
@@ -226,7 +227,7 @@ def process_stats(pid: int, proc_start_ticks: int | None = None, helper_commands
     pid : int
         The session process id from the registry.
     proc_start_ticks : int or None
-        The recorded process start time (.NET local-time ticks); when given, a
+        The registry's ``procStart`` (read by :func:`_ticks_match_epoch`); when given, a
         mismatch means Windows recycled the PID and an empty list is returned.
 
     Returns

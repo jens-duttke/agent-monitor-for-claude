@@ -11,8 +11,9 @@ local root, and nothing below this line ever runs there.
 Two guarantees this module exists to uphold, both load-bearing for the app's
 read-only, no-network posture:
 
-1. The only program this module - or the application as a whole - ever
-   executes is ``wsl.exe --list --running --quiet``: fixed arguments, a
+1. The only program this module ever executes is
+   ``wsl.exe --list --running --quiet`` (the application's one other
+   program, ``git``, is run by ``git_status.py``): fixed arguments, a
    hidden console window (``CREATE_NO_WINDOW``), used strictly to enumerate.
    Nothing is ever run inside a distribution.
 2. A distro absent from that call's output is never touched by any
