@@ -156,8 +156,15 @@ button {
 
 @media (prefers-reduced-motion: reduce) {
     .chip i,
-    .skeleton-row {
+    .skeleton-row,
+    .search-progress.indeterminate .search-progress-fill {
         animation: none !important;
+    }
+
+    /* Still, the sweep's fill would read as 30 % done; a dim full bar says busy. */
+    .search-progress.indeterminate .search-progress-fill {
+        width: 100%;
+        opacity: 0.5;
     }
 }
 
@@ -399,7 +406,8 @@ body.list-sized .workspace {
 }
 
 /* The line between the panes: an invisible grip (::before) wide enough to hit,
-   and a 2px marking (::after) centered on it. */
+   and a 2px marking (::after) on the line. The grip reaches into the detail's
+   padding, not the list: there it covered the edge of the list's scrollbar. */
 .splitter {
     position: relative;
     z-index: 2;
@@ -410,7 +418,7 @@ body.list-sized .workspace {
         position: absolute;
         top: 0;
         bottom: 0;
-        left: -5px;
+        left: -1px;
         width: 10px;
         cursor: col-resize;
     }
@@ -3349,7 +3357,8 @@ body.compact .item:not(.is-history):not(.no-window) {
 
 @media (max-width: 799px) {
     .workspace,
-    body.list-sized .workspace {
+    body.list-sized .workspace,
+    body.group-graph .workspace {
         grid-template-columns: minmax(0, 1fr);
     }
 

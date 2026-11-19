@@ -78,6 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tooltips appear on figures that refresh while you hover them, and an open task console that follows its output no longer hides every tooltip in the window.
 - Leaving the compact view into the graph shows its subagents, messages and tools at once rather than after the next refresh.
 - On Linux, the launcher always starts its own checkout, even from a folder that holds another copy of the app.
+- In a window narrower than 800 pixels the graph uses the full width, the splitter no longer catches presses on the list's scrollbar, and with reduced motion turned on the search bar no longer sweeps.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07
