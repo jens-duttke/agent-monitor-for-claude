@@ -666,18 +666,21 @@ class StartSearchSeqTest(unittest.TestCase):
         api.start_search('q', [], {}, 7)
         self.assertEqual(api._search_seq, 8)
 
-    def test_bootstrap_resets_seq_so_a_reloaded_page_is_not_stranded(self) -> None:
-        # A page reload restarts the UI's seq counter at 0; the backend must reset
-        # too, or the monotonic guard would reject every new (lower) seq forever.
+    def test_a_reloaded_page_counts_on_above_every_earlier_search(self) -> None:
+        # The reloaded page must not be stranded by the monotonic guard - and a
+        # scan from before the reload, still waiting on a slow read, must not
+        # come back to life when the new page's counter reaches its id again.
         api = self._api()
         api.start_search('q', [], {}, 42)
-        self.assertEqual(api._search_seq, 42)
 
-        api.get_bootstrap()
-        self.assertEqual(api._search_seq, 0)
+        base = api.get_bootstrap()['search_seq_base']
+        self.assertGreaterEqual(base, 42)
+        self.assertNotEqual(api._search_seq, 42)
 
-        api.start_search('q', [], {}, 1)
-        self.assertEqual(api._search_seq, 1)
+        for offset in range(1, 50):
+            api.start_search('q', [], {}, base + offset)
+            self.assertEqual(api._search_seq, base + offset)
+            self.assertNotEqual(api._search_seq, 42)
 
 
 class HttpPortTest(unittest.TestCase):

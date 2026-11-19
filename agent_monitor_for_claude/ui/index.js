@@ -14,6 +14,10 @@ function applyBootstrap(bootstrap) {
     state.labelsLoaded = Object.keys(received).length > 0;
     state.pricing = (bootstrap.pricing && typeof bootstrap.pricing === 'object') ? bootstrap.pricing : {};
     state.pollInterval = bootstrap.poll_interval || 5;
+    // Search ids count on from the backend's, never from 0 again (see get_bootstrap).
+    if (Number.isInteger(bootstrap.search_seq_base) && bootstrap.search_seq_base > state.searchSeq) {
+        state.searchSeq = bootstrap.search_seq_base;
+    }
 
     // The window title names the app; the toolbar does not repeat it.
     document.title = state.labels.app_title;

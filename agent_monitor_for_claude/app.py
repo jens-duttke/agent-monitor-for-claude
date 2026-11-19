@@ -498,8 +498,8 @@ class _MonitorApi:
         # ordering guarantee, so a later start_search can arrive before an earlier
         # one. Never regress to an older seq: a stale, lower seq would abort the
         # active search and get its pushes dropped, stranding the UI in
-        # "Searching...". A page reload resets the UI counter, and get_bootstrap
-        # resets this one to match, so the guard never rejects a fresh page.
+        # "Searching...". A reloaded page counts on from get_bootstrap's
+        # search_seq_base, so the guard never rejects it.
         with self._search_lock:
             self._search_seq = max(self._search_seq, seq_value)
 
@@ -907,11 +907,14 @@ class _MonitorApi:
 
     def get_bootstrap(self) -> dict[str, Any]:
         """Return static UI configuration loaded once when the page starts."""
-        # A fresh page restarts the UI's search-seq counter at 0, so reset the
-        # backend's to match - otherwise the monotonic guard in start_search
-        # would keep rejecting the reloaded page's new, lower seqs.
+        # A fresh page counts its search ids on from here (``search_seq_base``):
+        # restarting them at 0 would let a scan from before the reload, still
+        # waiting on a slow read, find its own id active again once the new
+        # page reached it, and push the old query's matches.  The bump cancels
+        # whatever still runs.
         with self._search_lock:
-            self._search_seq = 0
+            self._search_seq += 1
+            search_seq_base = self._search_seq
 
         return {
             'labels': dict(T),
@@ -919,6 +922,7 @@ class _MonitorApi:
             'version': __version__,
             'default_effort': _default_effort(),
             'pricing': load_pricing(),
+            'search_seq_base': search_seq_base,
         }
 
 
