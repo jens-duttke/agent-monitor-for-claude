@@ -166,7 +166,7 @@ Only when you click or press a key:
 
 ## Third-party services
 
-None. Prices come from the local `pricing.json`. Dependencies: `pywebview`, `psutil` and `msgspec`,
+None. Prices come from the local `pricing.json`. Dependencies: `pywebview`, `psutil`, `msgspec` and `regex`,
 plus the browser engine (WebView2 or WebKitGTK) and, on Linux, PyGObject.
 
 ## Verify it yourself

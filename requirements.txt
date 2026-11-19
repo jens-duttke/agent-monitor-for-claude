@@ -1,6 +1,7 @@
 pywebview
 psutil
 msgspec
+regex
 
 # Linux additionally needs PyGObject and WebKitGTK, which pip cannot install
 # usefully - they come from the distribution (see the README's Linux section)

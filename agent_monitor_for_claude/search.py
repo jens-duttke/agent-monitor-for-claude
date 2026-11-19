@@ -85,7 +85,9 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, BinaryIO, Callable, Iterator
+from typing import Any, BinaryIO, Callable, Iterator, Protocol
+
+import regex
 
 from .background_scans import pause_background_scans
 from .paths import SessionRoot, projects_dir, transcript_path
@@ -182,6 +184,11 @@ _JSON_ESCAPES = {
     '\f': r'(?:\x0c|\\f)',
 }
 
+# How long one call of a user's regular expression may run before the search
+# gives up on it. Backtracking can make a short pattern run for longer than the
+# universe exists on a few dozen characters, and nothing else could stop it.
+_REGEX_TIMEOUT_SECONDS = 1.0
+
 # Regex metacharacters that make a raw-line prefilter unsound in regex mode:
 # an anchor means something different on the JSON line than in the extracted
 # text, a backslash or a quote can spell an escape the raw line writes
@@ -219,8 +226,8 @@ def run_search(
         Called as ``(processed, total, matches, done, error)``: how many
         transcripts have been scanned, how many in all, any newly matched
         sessions since the last update (newest first, each once), whether the
-        scan has finished, and whether the query was an invalid regular
-        expression.  Each entry of ``matches`` is a mapping with the session's
+        scan has finished, and whether the query was an invalid (or a hopelessly
+        slow) regular expression.  Each entry of ``matches`` is a mapping with the session's
         ``session_id``, its ``count`` of hits, up to ``_MAX_SNIPPETS``
         ``snippets`` around the first of them, and ``partial`` when the count
         stopped early (see :func:`_scan_file`).  A final call always arrives
@@ -228,6 +235,9 @@ def run_search(
     should_cancel
         Polled throughout; when it returns true the scan stops as soon as
         possible (no further updates).
+
+    A regular expression is given ``_REGEX_TIMEOUT_SECONDS`` per text it is
+    tried on; one that runs out of time ends the search with ``error`` set.
     """
     cancel = should_cancel if callable(should_cancel) else _never
 
@@ -247,11 +257,21 @@ def run_search(
         on_update(0, 0, [], True, False)
         return
 
+    # Set when the pattern ran out of time on one file: every other file stops too.
+    timed_out = threading.Event()
+
+    def stop() -> bool:
+        return timed_out.is_set() or cancel()
+
     def check(item: tuple[Path, str]) -> dict[str, Any] | None:
         path, session_id = item
-        if cancel():
+        if stop():
             return None
-        return _scan_file(path, session_id, compiled, cancel)
+        try:
+            return _scan_file(path, session_id, compiled, stop)
+        except _PatternTimeout:
+            timed_out.set()
+            raise
 
     workers = min(_MAX_WORKERS, total)
     processed = 0
@@ -276,7 +296,14 @@ def run_search(
                 on_update(processed, total, pending, False, False)
                 pending, reported, last_report = [], processed, time.monotonic()
 
-            result = future.result()
+            try:
+                result = future.result()
+            except _PatternTimeout:
+                # A pattern this slow is unusable, so it is reported like an
+                # invalid one rather than left to run file after file.
+                if not cancel():
+                    on_update(processed, total, [], True, True)
+                return
             if cancel():
                 return
 
@@ -318,6 +345,64 @@ class _Literal:
         return any(extra in haystack for extra in self.extras)
 
 
+class _Pattern(Protocol):
+    """What the scan asks of a compiled pattern - the standard engine's or a :class:`_TimedPattern`."""
+
+    @property
+    def pattern(self) -> str: ...
+
+    @property
+    def flags(self) -> int: ...
+
+    def search(self, string: str) -> Any: ...
+
+    def finditer(self, string: str) -> Iterator[Any]: ...
+
+
+class _PatternTimeout(Exception):
+    """A user's regular expression ran out of time (``_REGEX_TIMEOUT_SECONDS``) on one text."""
+
+
+class _TimedPattern:
+    """A user's regular expression whose every call stops after ``_REGEX_TIMEOUT_SECONDS``.
+
+    Compiled by the ``regex`` engine in its ``re``-compatible mode, which can
+    bound a call and releases the interpreter lock while it matches, so a
+    pattern that backtracks without end neither freezes the window nor outlives
+    the search.  A call that runs out of time raises :class:`_PatternTimeout` -
+    never the built-in ``TimeoutError``, which is an ``OSError`` and would read
+    as a file that could not be read.
+    """
+
+    def __init__(self, pattern: str, match_case: bool) -> None:
+        self._compiled = regex.compile(pattern, regex.V0 | (0 if match_case else regex.IGNORECASE))
+
+    @property
+    def pattern(self) -> str:
+        return self._compiled.pattern
+
+    @property
+    def flags(self) -> int:
+        return self._compiled.flags
+
+    def search(self, string: str) -> Any:
+        try:
+            return self._compiled.search(string, concurrent=True, timeout=_REGEX_TIMEOUT_SECONDS)
+        except TimeoutError:
+            raise _PatternTimeout from None
+
+    def finditer(self, string: str) -> Iterator[Any]:
+        matches = self._compiled.finditer(string, concurrent=True, timeout=_REGEX_TIMEOUT_SECONDS)
+        while True:
+            try:
+                match = next(matches)
+            except StopIteration:
+                return
+            except TimeoutError:
+                raise _PatternTimeout from None
+            yield match
+
+
 @dataclass(frozen=True)
 class _Query:
     """A compiled query: the matcher, its raw-line prefilter and its byte literal.
@@ -327,8 +412,8 @@ class _Query:
     ``None`` when no sound one can be built.
     """
 
-    matcher: re.Pattern[str]
-    prefilter: re.Pattern[str] | None
+    matcher: _Pattern
+    prefilter: _Pattern | None
     literal: _Literal | None
 
     @property
@@ -360,15 +445,17 @@ def _compile_query(query: object, options: object) -> tuple[_Query | None, bool]
     if whole_word:
         pattern = r'\b(?:' + pattern + r')\b'
 
-    flags = 0 if match_case else re.IGNORECASE
-    try:
-        matcher = re.compile(pattern, flags)
-    except re.error:
-        return None, True
-
     # A regular expression without a single metacharacter matches exactly what
-    # the same text does as a phrase, so it is filtered like one.
+    # the same text does as a phrase, so it is filtered like one - and, unable
+    # to backtrack, it stays with the standard engine the fold table is pinned
+    # against (see _ASCII_FOLD_EXTRAS).
     plain = not use_regex or not any(char in _REGEX_METACHARS for char in text)
+
+    matcher: _Pattern
+    try:
+        matcher = re.compile(pattern, 0 if match_case else re.IGNORECASE) if plain else _TimedPattern(pattern, match_case)
+    except (re.error, regex.error):
+        return None, True
 
     return _Query(matcher, _prefilter(text, not plain, match_case), _literal(text, plain, match_case)), False
 
@@ -418,7 +505,7 @@ def _literal_runs(text: str) -> Iterator[str]:
         yield text[start:]
 
 
-def _prefilter(text: str, use_regex: bool, match_case: bool) -> re.Pattern[str] | None:
+def _prefilter(text: str, use_regex: bool, match_case: bool) -> _Pattern | None:
     """Build a cheap pattern that no matching raw line can escape, or ``None``.
 
     Matching runs on each entry's extracted text, but parsing every line to get
@@ -461,8 +548,8 @@ def _prefilter(text: str, use_regex: bool, match_case: bool) -> re.Pattern[str] 
         pattern = ''.join(alternative for alternative in alternatives if alternative is not None)
 
     try:
-        return re.compile(pattern, 0 if match_case else re.IGNORECASE)
-    except re.error:
+        return _TimedPattern(pattern, match_case) if use_regex else re.compile(pattern, 0 if match_case else re.IGNORECASE)
+    except (re.error, regex.error):
         return None
 
 

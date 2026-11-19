@@ -14,6 +14,7 @@ import os
 import re
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -238,6 +239,22 @@ class SearchOptionsTest(SearchEnvTest):
         for pattern in ('foo.bar', 'foo[^a-z]bar', 'fo{2}.ba'):
             with self.subTest(pattern=pattern):
                 self.assertEqual(sorted(self._matched_ids(self._run(pattern, refs, {'use_regex': True}))), sorted(cases))
+
+    def test_a_regex_that_backtracks_without_end_is_stopped_and_reported(self) -> None:
+        # (a|aa)+$ over a run of a's that does not end the text takes the
+        # standard engine seconds per character - it never returns in practice,
+        # and nothing could cancel it or release the paused background scans.
+        from agent_monitor_for_claude import background_scans
+
+        self._write('id-a', _CWD, self._entry('a' * 38 + 'b'))
+        started = time.monotonic()
+        with mock.patch.object(search, '_REGEX_TIMEOUT_SECONDS', 0.2):
+            updates = self._run('(a|aa)+$', [self._ref('id-a')], {'use_regex': True})
+
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertTrue(self._errored(updates))
+        self.assertTrue(updates[-1][3])
+        self.assertEqual(background_scans._deferred.readers, 0)
 
     def test_invalid_regex_reports_error_and_no_matches(self) -> None:
         self._write('id-a', _CWD, 'anything')

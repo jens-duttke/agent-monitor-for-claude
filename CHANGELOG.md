@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An expanded background-task console no longer makes the app sluggish in a long session: the task labels are read from the transcript's new lines only, not from the whole file every second.
 - A session that switched into a git worktree no longer freezes the list while its long transcript is read, and one whose worktree cannot be matched is no longer re-read in full every ten seconds.
 - A regular-expression search such as `foo.bar` now also finds text where the `.` stands for a quote, a backslash, a tab or another control character.
+- A regular expression that would take practically forever, such as `(a|aa)+$`, no longer freezes the app and stalls the cost figures until a restart: the search stops after a second on such a text and marks the expression as unusable. Running from source now needs the `regex` package (`pip install -r requirements.txt`).
 
 ## [1.0.0] - 2026-11-07
 
