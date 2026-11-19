@@ -131,6 +131,21 @@ class SubagentsTest(unittest.TestCase):
         self.assertNotIn('never shown', json.dumps(texts))
         self.assertEqual(agent_texts(local_root(), _SESSION_ID, 'a2'), {'task': 'The task', 'result': '', 'steps': []})
 
+    def test_the_result_comes_from_the_steps_without_reading_the_tail_again(self) -> None:
+        # A working agent's newest entries are often tool calls only; looking
+        # for a text reply read up to 16 MB of its file on every refresh.
+        from agent_monitor_for_claude import transcript
+
+        reply = json.dumps({'type': 'assistant', 'isSidechain': True, 'message': {'content': [{'type': 'text', 'text': 'Halfway there.'}]}})
+        call = json.dumps({'type': 'assistant', 'isSidechain': True, 'message': {'content': [{'type': 'tool_use', 'id': 't1', 'name': 'Bash', 'input': {'command': 'make'}}]}})
+        self._add_agent('a9', 5, 'Build', body='\n'.join([reply, call, call.replace('t1', 't2')]) + '\n')
+
+        with mock.patch.object(transcript, '_read_tail', wraps=transcript._read_tail) as tail:
+            texts = agent_texts(local_root(), _SESSION_ID, 'a9')
+
+        self.assertEqual(texts['result'], 'Halfway there.')
+        tail.assert_not_called()
+
     def test_a_handed_back_report_or_a_structured_output_is_the_result(self) -> None:
         first = json.dumps({'type': 'user', 'isSidechain': True, 'message': {'content': 'The task'}})
 

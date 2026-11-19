@@ -46,7 +46,7 @@ from typing import Any
 
 from .paths import SessionRoot, cwd_to_slug, projects_dir
 from .settings import current_settings
-from .transcript import agent_steps, final_reply, media_image, media_index, usage_scan, usage_scan_once
+from .transcript import agent_steps, media_image, media_index, result_from_steps, usage_scan, usage_scan_once
 from .usage_parts import UsageScan, merge_scans
 
 __all__ = ['AgentNode', 'SubagentInfo', 'WorkflowActivity', 'agent_media', 'agent_media_image', 'agent_texts', 'count_subagents', 'past_subagent_usage']
@@ -281,7 +281,8 @@ def agent_texts(root: SessionRoot, session_id: str, agent_id: str) -> dict[str, 
     if path is None:
         return None
 
-    return {'task': _first_prompt(path) or '', 'result': final_reply(path) or '', 'steps': agent_steps(path)}
+    steps = agent_steps(path)
+    return {'task': _first_prompt(path) or '', 'result': result_from_steps(steps) or '', 'steps': steps}
 
 
 def agent_media(root: SessionRoot, session_id: str, agent_id: str) -> dict[str, Any] | None:

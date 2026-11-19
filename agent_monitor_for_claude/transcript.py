@@ -43,6 +43,7 @@ name.
 """
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import re
@@ -63,7 +64,7 @@ from .usage_parts import UsageScan
 
 __all__ = [
     'AgentLaunch', 'ApiRetry', 'Artifact', 'HookError', 'MessageEvent', 'PlanItem', 'PullRequest', 'Question', 'ToolCall', 'TranscriptState',
-    'HistoryState', 'WorktreeState', 'agent_steps', 'final_reply', 'full_texts', 'session_steps', 'state_for', 'history_state_for', 'worktree_for',
+    'HistoryState', 'WorktreeState', 'agent_steps', 'final_reply', 'full_texts', 'result_from_steps', 'session_steps', 'state_for', 'history_state_for', 'worktree_for',
     'edited_files', 'hook_failures', 'media_image', 'media_index', 'prioritize_session', 'prune_scan_cache', 'usage_scan', 'usage_scan_once',
 ]
 
@@ -1081,6 +1082,35 @@ def final_reply(path: Path) -> str | None:
     return None
 
 
+def result_from_steps(steps: list[dict[str, Any]]) -> str | None:
+    """Return the result :func:`final_reply` reads, taken from :func:`agent_steps`' list instead of the file.
+
+    The newest of a ``SubagentHandback`` call's ``message``, a ``StructuredOutput``
+    call's input as JSON, or a reply's text - its text blocks joined as
+    :func:`_reply_text` joins them.  The steps are read incrementally anyway, so
+    a working agent whose newest entries are tool calls only costs no re-read of
+    its tail.
+    """
+    for index in range(len(steps) - 1, -1, -1):
+        step = steps[index]
+        if step.get('kind') == 'call':
+            tool_input = step.get('input') or {}
+            message = tool_input.get('message')
+            if step.get('tool') == _HANDBACK_TOOL and isinstance(message, str) and message.strip():
+                return message.strip()
+            if step.get('tool') == _STRUCTURED_OUTPUT_TOOL and tool_input:
+                return json.dumps(tool_input, ensure_ascii=False, indent=2)
+            continue
+        if step.get('kind') == 'text':
+            parts = [step['text']]
+            while index > 0 and steps[index - 1].get('kind') == 'text' and steps[index - 1].get('reply') == step.get('reply'):
+                index -= 1
+                parts.insert(0, steps[index]['text'])
+            return '\n'.join(part for part in parts if part)
+
+    return None
+
+
 def agent_steps(path: Path) -> list[dict[str, Any]]:
     """Return everything a subagent did, in order: each tool call with its input and its result, and each reply's text.
 
@@ -1462,8 +1492,17 @@ def _absorb_steps(lines: Iterable[bytes], main_only: bool, steps: list[dict[str,
             _note_results(entry, content, at, calls)
 
 
+# Numbers the replies _note_steps reads, so the text blocks of one can be told apart from the next's.
+_reply_numbers = itertools.count()
+
+
 def _note_steps(content: list, at: float | None, steps: list[dict[str, Any]], calls: dict[str, dict[str, Any]]) -> None:
-    """Add a reply's tool calls and texts to *steps*, each call kept by its id for its result."""
+    """Add a reply's tool calls and texts to *steps*, each call kept by its id for its result.
+
+    A text step carries ``reply``, the same number for every text block of one
+    reply, so its texts can be joined again (see :func:`result_from_steps`).
+    """
+    reply = next(_reply_numbers)
     for block in content:
         if not isinstance(block, dict):
             continue
@@ -1478,7 +1517,7 @@ def _note_steps(content: list, at: float | None, steps: list[dict[str, Any]], ca
             calls[block['id']] = step
             steps.append(step)
         elif block.get('type') == 'text' and isinstance(block.get('text'), str) and block['text'].strip():
-            steps.append({'kind': 'text', 'text': block['text'].strip(), 'at': at})
+            steps.append({'kind': 'text', 'text': block['text'].strip(), 'at': at, 'reply': reply})
 
 
 def _note_results(entry: dict, content: list, at: float | None, calls: dict[str, dict[str, Any]]) -> None:

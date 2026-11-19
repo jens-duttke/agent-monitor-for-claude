@@ -81,6 +81,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Leaving the compact view into the graph shows its subagents, messages and tools at once rather than after the next refresh.
 - On Linux, the launcher always starts its own checkout, even from a folder that holds another copy of the app.
 - In a window narrower than 800 pixels the graph uses the full width, the splitter no longer catches presses on the list's scrollbar, and with reduced motion turned on the search bar no longer sweeps.
+- The details of a busy subagent no longer read up to 16 MB of its transcript on every refresh to find its latest reply.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07
