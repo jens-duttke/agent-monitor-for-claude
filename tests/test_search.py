@@ -625,6 +625,18 @@ class SearchBoundaryTest(SearchEnvTest):
         self.assertNotIn('partial', match)
         self.assertEqual(match['count'], search._MAX_MATCH_ENTRIES - 1)
 
+    def test_exactly_the_cap_is_exact_whatever_follows(self) -> None:
+        # A later line that only gets past the prefilter (a regex without one,
+        # a line whose metadata holds the query) is no 51st match.
+        entries = ''.join(self._entry('needle') for _ in range(search._MAX_MATCH_ENTRIES))
+        for query, options, tail in (('needle$', {'use_regex': True}, self._entry('nothing')),
+                                     ('needle', {}, json.dumps({'type': 'user', 'cwd': 'needle-dir', 'message': {'content': 'other'}}) + '\n')):
+            with self.subTest(query=query):
+                self._write('id-a', _CWD, entries + tail)
+                match = self._matches(self._run(query, [self._ref('id-a')], options))[0]
+                self.assertNotIn('partial', match)
+                self.assertEqual(match['count'], search._MAX_MATCH_ENTRIES)
+
     def test_text_beyond_the_context_window_is_never_reported(self) -> None:
         far = 'SECRET_BODY' + ('x' * search._CONTEXT_CHARS)
         self._write('id-a', _CWD, self._entry(far + ' findme ' + far[::-1]))

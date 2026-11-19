@@ -941,8 +941,12 @@ def _take_line(line: str, progress: _FileScan, query: _Query) -> bool:
     if query.prefilter is not None and not query.prefilter.search(line):
         return True
     if progress.entries >= _MAX_MATCH_ENTRIES:
-        progress.partial = True
-        return False
+        # Only a line that really holds a hit makes the count a floor; one that
+        # merely got past the prefilter is read on, uncounted.
+        if _line_hits(line, query.matcher, []):
+            progress.partial = True
+            return False
+        return True
 
     hits = _line_hits(line, query.matcher, progress.snippets)
     if hits:
