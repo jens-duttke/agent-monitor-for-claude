@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A WSL process the share refuses to report on no longer makes every session of that distro vanish from the list for a refresh.
 - On Linux and in WSL, a background process that has exited but was not yet collected by its parent no longer keeps a session on "Background".
 - On Linux, raising a session's window no longer runs `ldconfig`, a C compiler or `ld` to find the X11 library; the app runs no program besides `git` and, on Windows, `wsl.exe`.
+- On Linux, a full runtime directory, or locking that fails after you confirm replacing a running instance, no longer stops the app from starting.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07

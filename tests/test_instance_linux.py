@@ -87,6 +87,20 @@ class LockFileTest(unittest.TestCase):
         ask.assert_not_called()
         self.assertFalse(self._path().exists())
 
+    def test_a_holder_record_that_cannot_be_written_still_starts(self) -> None:
+        # The record only names the version in a later dialog; a full runtime
+        # directory must not keep the app from starting.
+        with mock.patch.object(instance_linux.os, 'write', side_effect=OSError(errno.ENOSPC, 'full')):
+            self.assertTrue(instance_linux.ensure_single_instance())
+
+    def test_an_unlockable_retake_after_the_replacement_fails_open(self) -> None:
+        # The same failure the first attempt fails open on, met after the user
+        # confirmed replacing the holder.
+        with mock.patch.object(instance_linux, '_acquire', side_effect=[None, OSError(errno.ENOLCK, 'no locks')]), \
+             mock.patch.object(instance_linux, '_read_holder_info', return_value=(None, None)), \
+             mock.patch.object(instance_linux, 'ask_yes_no', return_value=True):
+            self.assertTrue(instance_linux.ensure_single_instance())
+
     def test_malformed_holder_record_reads_as_no_holder(self) -> None:
         self._path().write_text('not-a-pid\n', encoding='utf-8')
         self.assertEqual(instance_linux._read_holder_info(), (None, None))

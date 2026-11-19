@@ -106,8 +106,12 @@ def ensure_single_instance() -> bool:
     # Retaking the lock is the ground truth for whether the old instance is
     # really gone: the kernel only frees it when that process exits.  Failing
     # here leaves the old instance running and exits, rather than starting a
-    # second window and hijacking the holder record.
-    fd = _acquire(path)
+    # second window and hijacking the holder record.  Locking that fails
+    # outright fails open here too, as on the first attempt.
+    try:
+        fd = _acquire(path)
+    except OSError:
+        return True
     if fd is None:
         return False
 
@@ -197,12 +201,20 @@ def _acquire(path: Path) -> int | None:
 
 
 def _store_holder_info(fd: int) -> None:
-    """Write this process's PID and version into the locked file."""
+    """Write this process's PID and version into the locked file, best-effort.
+
+    The record only names the running version in a later instance's dialog, and
+    a missing one reads as no holder (see :func:`_read_holder_info`) - a full
+    runtime directory must not keep the app from starting.
+    """
     payload = f'{os.getpid()}\n{__version__}\n'.encode('utf-8')
-    os.ftruncate(fd, 0)
-    os.lseek(fd, 0, os.SEEK_SET)
-    os.write(fd, payload)
-    os.fsync(fd)
+    try:
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, payload)
+        os.fsync(fd)
+    except OSError:
+        pass
 
 
 def _read_holder_info() -> tuple[int | None, str | None]:
