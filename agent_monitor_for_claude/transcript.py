@@ -263,6 +263,10 @@ _MAX_MESSAGES = 500
 # the older ``turnOrigin`` spelling): typed by you, a background task that
 # finished, or a message from another session.  Mapped through this table so
 # an unknown value reads as nothing instead of reaching the UI verbatim.
+# The origin labels of the injected (isMeta) prompts that open a turn: a message
+# from another session, and a loop's scheduled wakeup.
+_INJECTED_TURN_ORIGINS = frozenset({'peer', 'scheduled'})
+
 _TURN_ORIGINS = {
     'human': 'human',
     'task-notification': 'task-notification',
@@ -465,6 +469,7 @@ class _Entry(_Node):
     frameUrl: Any = msgspec.UNSET
     title: Any = msgspec.UNSET
     origin: Any = msgspec.UNSET
+    turnOrigin: Any = msgspec.UNSET
     worktreeSession: Any = msgspec.UNSET
     message: _Message | None | msgspec.UnsetType = msgspec.UNSET
     toolUseResult: _ToolResult | str | list[msgspec.Raw] | None | msgspec.UnsetType = msgspec.UNSET
@@ -1834,8 +1839,10 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
         # Notices Claude Code injects into the conversation (the local-command
         # "DO NOT respond" caveat, continuation summaries, ...) carry isMeta.
         # They are not conversational turns, so - like sidechain entries - they
-        # must never be read as a prompt the model owes a response to.
-        if entry.get('isMeta') is True:
+        # must never be read as a prompt the model owes a response to.  A peer's
+        # message and a loop's wakeup are injected the same way but are exactly
+        # such a prompt, read below like a typed one.
+        if entry.get('isMeta') is True and not _opens_injected_turn(entry, content):
             continue
 
         # Claude Code also appends bookkeeping entries - queue operations,
@@ -2356,6 +2363,24 @@ def _carries_tool_result(content: object) -> bool:
         return False
 
     return any(isinstance(block, _JSON_OBJECT) and block.get('type') == 'tool_result' for block in content)
+
+
+def _opens_injected_turn(entry: Any, content: object) -> bool:
+    """Whether a meta user entry is a prompt the model owes a reply to: a peer's message or a loop's wakeup.
+
+    Claude Code injects both as ``isMeta`` entries, like the notices that are
+    no turn at all (the local-command caveat, a continuation summary), and tells
+    them apart only by their origin label - ``origin.kind``, or the older
+    ``turnOrigin`` - never by the text around it.
+    """
+    if entry.get('type') != 'user' or _carries_tool_result(content):
+        return False
+    origin = entry.get('origin')
+    kind = origin.get('kind') if isinstance(origin, _JSON_OBJECT) else None
+    if not isinstance(kind, str):
+        kind = entry.get('turnOrigin')
+
+    return kind in _INJECTED_TURN_ORIGINS
 
 
 def _turn_origin(entry: dict) -> str | None:
@@ -3012,7 +3037,7 @@ def _note_user_entry(entry: dict, state: _ScanState) -> None:
     if _is_task_notification(origin):
         _note_task_notification(_prompt_text(content), at, state)
 
-    if at is None or entry.get('isMeta') is True or _carries_tool_result(content):
+    if at is None or _carries_tool_result(content) or (entry.get('isMeta') is True and not _opens_injected_turn(entry, content)):
         return
     # A local command's output ends the turn like an interrupt: it ran outside
     # the model, so no reply is owed - its invocation must not stay a worked turn.

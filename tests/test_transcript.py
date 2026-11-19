@@ -590,6 +590,24 @@ class TurnOriginTest(unittest.TestCase):
         state = _parse(_lines({**_PROMPT, 'origin': {'kind': 'human'}}, _END_TURN, peer, _tool_call('Bash')))
         self.assertEqual(state.turn_origin, 'peer')
 
+    def test_an_injected_peer_message_or_wakeup_is_a_prompt_the_model_owes_a_reply(self) -> None:
+        # Until the first reply block lands - minutes of thinking - the session
+        # would otherwise read as idle on the end_turn before it.
+        later = '2026-07-11T10:05:00Z'
+        for injected in ({**_PROMPT, 'timestamp': later, 'isMeta': True, 'origin': {'kind': 'peer', 'from': 'x'}},
+                         {**_PROMPT, 'timestamp': later, 'isMeta': True, 'turnOrigin': 'scheduled'}):
+            with self.subTest(injected=injected):
+                state = _parse(_lines(_PROMPT, _END_TURN, injected))
+                self.assertEqual(state.last_entry_kind, 'user_text')
+                self.assertEqual(state.last_timestamp, later)
+
+    def test_any_other_injected_notice_still_says_nothing(self) -> None:
+        caveat = {**_PROMPT, 'timestamp': '2026-07-11T10:05:00Z', 'isMeta': True,
+                  'message': {'content': '<local-command-caveat>Caveat: DO NOT respond</local-command-caveat>'}}
+        state = _parse(_lines(_PROMPT, _END_TURN, caveat))
+        self.assertEqual(state.last_entry_kind, 'assistant')
+        self.assertEqual(state.last_timestamp, _END_TURN['timestamp'])
+
     def test_a_tool_result_does_not_open_a_turn(self) -> None:
         state = _parse(_lines({**_PROMPT, 'origin': {'kind': 'task-notification'}}, _tool_call('Bash'), _tool_result()))
         self.assertEqual(state.turn_origin, 'task-notification')
@@ -1615,6 +1633,15 @@ class ScanMonitoringTest(unittest.TestCase):
         epoch = _timestamp_epoch
         self.assertEqual(state.intervals, [(epoch('2026-07-11T10:00:00Z'), epoch('2026-07-11T10:00:01Z')),
                                            (epoch('2026-07-11T14:00:00Z'), epoch('2026-07-11T14:01:00Z'))])
+
+    def test_an_injected_peer_message_or_wakeup_opens_a_worked_turn(self) -> None:
+        for injected in ({'isMeta': True, 'origin': {'kind': 'peer', 'from': 'x'}}, {'isMeta': True, 'turnOrigin': 'scheduled'}):
+            with self.subTest(injected=injected):
+                state = _ScanState()
+                self._absorb(state, {**_prompt('wake up', '2026-07-11T10:00:00Z'), **injected})
+                self._absorb(state, _assistant([{'type': 'text', 'text': 'done'}], 'end_turn', '2026-07-11T10:02:00Z'))
+                epoch = _timestamp_epoch
+                self.assertEqual(state.intervals, [(epoch('2026-07-11T10:00:00Z'), epoch('2026-07-11T10:02:00Z'))])
 
     def test_an_unfinished_turn_stays_open(self) -> None:
         state = _ScanState()
