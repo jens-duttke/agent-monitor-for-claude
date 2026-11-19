@@ -23,6 +23,14 @@ let procBlock = null;
 function showProcBlock(el, noteEl, session, withTasks = true) {
     const key = rowKey(session);
     if (procBlock && procBlock.key === key && procBlock.el === el && procBlock.withTasks === withTasks) {
+        // A worktree session is filed under its launch project once the switch
+        // is read; its tasks live there. Follow it, and list them again at once,
+        // keeping the open consoles.
+        if (procBlock.cwd !== (session.cwd || '') || procBlock.origin !== (session.origin || 'local')) {
+            procBlock.cwd = session.cwd || '';
+            procBlock.origin = session.origin || 'local';
+            procBlock.tick = 0;
+        }
         return;
     }
     stopProcBlock();
