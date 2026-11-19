@@ -44,7 +44,7 @@ const sessionSteps = { key: null, sig: null, steps: [], partial: false, pending:
 
 // The task and the result of the selected subagent, whole; `sig` says which
 // state of a running agent's file they were read from.
-const agentTexts = { key: null, sig: null, task: '', result: '', steps: [], pending: false, open: new Set() };
+const agentTexts = { key: null, sig: null, task: '', result: '', steps: [], pending: false };
 
 function selectedSession() {
     return state.selectedKey ? (state.sessionsByKey.get(state.selectedKey) || null) : null;
@@ -101,7 +101,7 @@ function renderDetail() {
     updateBlock(pane.querySelector('.block-session'), state.labels.block_session, '', sessionBodyMarkup(session));
     requestSessionSteps(session);
     const steps = sessionSteps.key === rowKey(session) ? sessionSteps : { steps: [], partial: false };
-    updateActivityBlock(pane, steps.steps, session.status === 'working' || session.status === 'processing', steps.partial);
+    updateActivityBlock(pane, steps.steps, session.status === 'working' || session.status === 'processing', steps.partial, 'session:' + rowKey(session));
     applyShares(pane);
 }
 
@@ -929,7 +929,13 @@ function hookFailuresMarkup(session) {
     }
     const labels = state.labels;
     const code = (text) => '<pre class="hook-text">' + esc(text) + '</pre>';
-    return '<details class="hook-failures"><summary>' + esc(fmt(labels.hook_failures_title, { count: hookFailures.list.length })) + '</summary>'
+    // Open rows are remembered (see onStepToggle): the session block is
+    // rewritten whenever anything in it changes, a new failure included.
+    const owner = 'session:' + rowKey(session);
+    const opened = openRows(owner);
+    const open = (id) => attr('data-open-id', id) + (opened.has(id) ? attr('open', '') : '');
+    return '<details class="hook-failures"' + attr('data-owner', owner) + open('hook-failures') + '><summary>'
+        + esc(fmt(labels.hook_failures_title, { count: hookFailures.list.length })) + '</summary>'
         + hookFailures.list.map((failure) => {
             const head = [failure.at ? fmtDateTime(failure.at * 1000) : '', failure.hook || failure.event || '',
                 failure.exit_code === null || failure.exit_code === undefined ? '' : fmt(labels.hook_exit_code, { code: failure.exit_code }),
@@ -941,7 +947,7 @@ function hookFailuresMarkup(session) {
             body += kvRow(labels.hook_command, failure.command ? code(failure.command) : '');
             body += kvRow('stderr', failure.stderr ? code(failure.stderr) : '');
             body += kvRow('stdout', failure.stdout ? code(failure.stdout) : '');
-            return '<details class="hook-failure"><summary>' + esc(head) + '</summary>'
+            return '<details class="hook-failure"' + open('hook-' + failure.at + '-' + (failure.hook || failure.event || '')) + '><summary>' + esc(head) + '</summary>'
                 + (body ? '<div class="kv">' + body + '</div>' : '') + '</details>';
         }).join('') + '</details>';
 }
@@ -1259,7 +1265,7 @@ function renderAgentDetail(pane, session, agent) {
     const resultTitle = agent.running ? state.labels.block_reply : state.labels.block_result;
     updateBlock(pane.querySelector('.block-result'), resultTitle, '', texts.result ? textMarkup(texts.result, true) : '', markdownToggleMarkup());
     updateBlock(pane.querySelector('.block-task'), state.labels.block_task, '', texts.task ? textMarkup(texts.task, true) : '', markdownToggleMarkup());
-    updateActivityBlock(pane, texts.steps, agent.running, false);
+    updateActivityBlock(pane, texts.steps, agent.running, false, 'agent:' + rowKey(session) + '/' + agent.id);
     updateMediaBlock(pane, session, agent);
     applyShares(pane);
 }
@@ -1268,7 +1274,7 @@ function renderAgentDetail(pane, session, agent) {
 // tool's calls while a tool picked in the graph is selected, with how many
 // calls and failures they hold, and - for a long session - that older ones
 // were left out.
-function updateActivityBlock(pane, allSteps, running, partial) {
+function updateActivityBlock(pane, allSteps, running, partial, owner) {
     const labels = state.labels;
     const toolKey = state.selectedTool;
     const steps = toolKey ? allSteps.filter((step) => step.kind === 'call' && logic.toolNodeKey(step.tool) === toolKey) : allSteps;
@@ -1289,7 +1295,7 @@ function updateActivityBlock(pane, allSteps, running, partial) {
             + esc(logic.toolNodeLabel(toolKey)) + ' <span aria-hidden="true">×</span></button>'
         : '';
     const activity = pane.querySelector('.block-activity');
-    updateBlock(activity, labels.block_activity, parts.filter(Boolean).join(' · '), activityMarkup(steps, running), filter);
+    updateBlock(activity, labels.block_activity, parts.filter(Boolean).join(' · '), activityMarkup(steps, running, owner), filter);
     // A tool picked in the graph brings its calls on screen, once they are in.
     if (state.scrollToActivity && activity && !activity.hidden) {
         state.scrollToActivity = false;
@@ -1315,7 +1321,6 @@ function requestAgentTexts(session, agent) {
         agentTexts.task = '';
         agentTexts.result = '';
         agentTexts.steps = [];
-        agentTexts.open = new Set();
     }
     agentTexts.key = key;
     agentTexts.sig = sig;
@@ -1653,19 +1658,28 @@ function processKpisMarkup(stat) {
 // One collapsed row per step - when it happened (from the first step), what it
 // did and how long it took - opening to the whole request and result. A reply
 // between calls is a step too. Which rows are open survives a refresh.
-function activityMarkup(steps, running) {
+function activityMarkup(steps, running, owner = '') {
     if (steps.length === 0) {
         return '';
     }
     const labels = state.labels;
     const start = steps.find((step) => step.at !== null);
     const offset = (at) => (start && at !== null ? '+' + logic.formatClock(Math.max(0, at - start.at)) : '');
-    let html = '<div class="activity-list">';
-    steps.forEach((step, index) => {
-        const id = step.kind === 'call' ? step.id : 'text-' + index;
-        const open = agentTexts.open.has(id) ? attr('open', '') : '';
+    const opened = openRows(owner);
+    // A reply has no id of its own; its time keeps its row the same row as
+    // the list grows at the front or is cut from the back.
+    const repliesAt = new Map();
+    let html = '<div class="activity-list"' + attr('data-owner', owner) + '>';
+    steps.forEach((step) => {
+        let id = step.id;
+        if (step.kind !== 'call') {
+            const seen = repliesAt.get(step.at) || 0;
+            repliesAt.set(step.at, seen + 1);
+            id = 'text-' + step.at + '-' + seen;
+        }
+        const open = opened.has(id) ? attr('open', '') : '';
         if (step.kind === 'text') {
-            html += '<details class="step step-text"' + attr('data-step', id) + open + '><summary>'
+            html += '<details class="step step-text"' + attr('data-open-id', id) + open + '><summary>'
                 + '<span class="step-at">' + esc(offset(step.at)) + '</span>'
                 + '<span class="step-tool">' + esc(labels.step_reply || '') + '</span>'
                 + '<span class="step-subject">' + esc(logic.firstLine(step.text)) + '</span><span></span></summary>'
@@ -1688,7 +1702,7 @@ function activityMarkup(steps, running) {
             flag = '<span class="step-flag">' + esc(labels.agent_running) + '</span>';
         }
         const tone = step.outcome === 'failed' ? ' failed' : (step.outcome ? ' declined' : '');
-        html += '<details' + attr('class', 'step' + tone) + attr('data-step', id) + open + '><summary>'
+        html += '<details' + attr('class', 'step' + tone) + attr('data-open-id', id) + open + '><summary>'
             + '<span class="step-at">' + esc(offset(step.at)) + '</span>'
             + '<span class="step-tool">' + esc(step.tool) + '</span>'
             + '<span class="step-subject">' + esc(logic.stepSubject(step)) + '</span>'
@@ -1704,15 +1718,35 @@ function activityMarkup(steps, running) {
     return html + '</div>';
 }
 
-// Remember which steps are open, so a refresh of a running agent keeps them.
+// Which collapsible rows are open, per owner - a session's details, or one
+// subagent's - so a rewrite of their block keeps them open, and a row of one
+// session never opens the row of another that happens to share its id.
+const OPEN_ROW_OWNERS_KEPT = 20;
+const openRowsByOwner = new Map();
+
+function openRows(owner) {
+    let rows = openRowsByOwner.get(owner);
+    if (!rows) {
+        rows = new Set();
+        openRowsByOwner.set(owner, rows);
+        while (openRowsByOwner.size > OPEN_ROW_OWNERS_KEPT) {
+            openRowsByOwner.delete(openRowsByOwner.keys().next().value);
+        }
+    }
+    return rows;
+}
+
+// Remember a row opened or closed: a <details data-open-id> below a [data-owner].
 function onStepToggle(event) {
-    const step = event.target;
-    if (!step || !step.matches || !step.matches('details[data-step]')) {
+    const row = event.target;
+    if (!row || !row.matches || !row.matches('details[data-open-id]')) {
         return;
     }
-    if (step.open) {
-        agentTexts.open.add(step.dataset.step);
+    const holder = row.closest('[data-owner]');
+    const rows = openRows(holder ? holder.dataset.owner : '');
+    if (row.open) {
+        rows.add(row.dataset.openId);
     } else {
-        agentTexts.open.delete(step.dataset.step);
+        rows.delete(row.dataset.openId);
     }
 }

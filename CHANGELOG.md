@@ -62,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A ticking status line in the session details ("for 2m", "wakes in 4m") no longer drops your selection in the details' head or the focus of its buttons.
 - The details' "Show transcript" button of a session that just received its first prompt no longer goes missing when an earlier answer arrives late.
 - A background process's Invocation block appears even if its first request was refused, and a process that reuses an ended one's id no longer shows the ended one's command line.
+- Opened hook failures stay open when the session details refresh, a reply row opened in one session no longer opens in another, and a session's opened rows survive looking at one of its subagents.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07
