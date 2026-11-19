@@ -3652,6 +3652,13 @@ test('gitSignal: what is not finished, in one signal ranked first', () => {
     assert.equal(logic.gitDirKey({ cwd: '' }), '');
 });
 
+test('branchWebUrl: a forge on its own web port keeps the port', () => {
+    assert.strictEqual(logic.branchWebUrl('https://gitlab.example.com:8443/o/r', 'feature', ['https://gitlab.example.com:8443/o/r/-/merge_requests/4']),
+        'https://gitlab.example.com:8443/o/r/-/tree/feature');
+    // A port is digits only; anything else gives no link.
+    assert.strictEqual(logic.branchWebUrl('https://gitlab.example.com:84x/o/r', 'feature', []), '');
+});
+
 test('gitSignal: a local branch squashed into the default branch reads as merged', () => {
     // The tooltip already said so, while the signal warned "only local".
     const labels = { git_local_only: 'Only local: {count}', git_merged: 'Merged', git_tip_branch: 'Branch: {branch}', git_tip_squashed: 'In {branch} (squash)' };

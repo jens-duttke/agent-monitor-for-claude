@@ -56,6 +56,9 @@ class RemoteWebAddressTest(unittest.TestCase):
             'ssh://git@gitlab.example.com:2222/team/sub/app.git': 'https://gitlab.example.com/team/sub/app',
             'https://user:s3cr3t-token@gitlab.example.com/a/b.git': 'https://gitlab.example.com/a/b',
             'https://GitHub.com/Owner/Repo': 'https://github.com/Owner/Repo',
+            # A web port is part of the address; an ssh port is not.
+            'https://gitlab.example.com:8443/o/r.git': 'https://gitlab.example.com:8443/o/r',
+            'https://gitlab.example.com:443/o/r.git': 'https://gitlab.example.com/o/r',
         }
         for url, expected in cases.items():
             with self.subTest(url=url):

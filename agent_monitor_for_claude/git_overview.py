@@ -51,7 +51,7 @@ _MAX_COMPARED_FILES = 300
 # A remote written the scp way: ``git@host:owner/repo.git``.
 _SCP_REMOTE = re.compile(r'^[A-Za-z0-9._-]+@([A-Za-z0-9.-]+):(?!//)(.+)$')
 # A remote written as a URL: its scheme, an optional user (and token) before an @, the host, an optional port, the path.
-_URL_REMOTE = re.compile(r'^(?:https?|ssh|git|git\+ssh)://(?:[^@/]*@)?([A-Za-z0-9.-]+)(?::\d+)?(/[^?#]*)$')
+_URL_REMOTE = re.compile(r'^(?P<scheme>https?|ssh|git|git\+ssh)://(?:[^@/]*@)?([A-Za-z0-9.-]+)(?::(?P<port>\d+))?(/[^?#]*)$')
 _WEB_HOST = re.compile(r'^[A-Za-z0-9.-]+$')
 _WEB_PATH_SEGMENT = re.compile(r'^[A-Za-z0-9._~+-]+$')
 
@@ -287,21 +287,29 @@ def remote_web_address(url: str) -> str:
     ``git@host:owner/repo.git``, ``ssh://git@host:2222/owner/repo.git`` and a
     web URL with ``user:token@`` in it all read as the same address: the user,
     a password or token, an ssh port, the ``.git`` ending and any query are
-    dropped here, so none of them ever leaves this module.  A local path or a
-    host or path with unusual characters gives ''.
+    dropped here, so none of them ever leaves this module.  A web remote's own
+    port (``https://host:8443/...``) is kept, since that is where the forge
+    answers.  A local path or a host or path with unusual characters gives ''.
     """
     text = url.strip() if isinstance(url, str) else ''
     match = _SCP_REMOTE.match(text) or _URL_REMOTE.match(text)
     if not match:
         return ''
-    host, path = match.group(1), match.group(2)
+    if match.re is _SCP_REMOTE:
+        host, path, port = match.group(1), match.group(2), ''
+    else:
+        host, path = match.group(2), match.group(4)
+        # A web remote's port is where the forge answers; an ssh port says
+        # nothing about the web address.
+        web_port = match.group('scheme') in ('http', 'https') and match.group('port') not in (None, '443')
+        port = ':' + match.group('port') if web_port else ''
     segments = [segment for segment in path.strip('/').split('/') if segment]
     if segments and segments[-1].endswith('.git'):
         segments[-1] = segments[-1][:-len('.git')]
     if not _WEB_HOST.match(host or '') or len(segments) < 2 or not all(_WEB_PATH_SEGMENT.match(segment) for segment in segments):
         return ''
 
-    return 'https://' + host.lower() + '/' + '/'.join(segments)
+    return 'https://' + host.lower() + port + '/' + '/'.join(segments)
 
 
 def _fetched_at(directory: str) -> float | None:

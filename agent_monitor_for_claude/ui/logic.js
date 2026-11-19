@@ -2800,7 +2800,8 @@ function pullRequestUrl(url) {
 // (git_overview.py reduces the remote to its host and path) and the kind
 // of forge it is - read from the host's name, else from the shape of a pull
 // request address on the same host. '' when the forge is not one of these.
-const REPOSITORY_WEB_URL = /^https:\/\/[A-Za-z0-9.-]+(\/[A-Za-z0-9._~+-]+){2,}$/;
+// A forge on its own web port keeps it (digits only).
+const REPOSITORY_WEB_URL = /^https:\/\/[A-Za-z0-9.-]+(?::\d{1,5})?(\/[A-Za-z0-9._~+-]+){2,}$/;
 const FORGE_BRANCH_PATHS = new Map([
     ['github', '/tree/'], ['gitlab', '/-/tree/'], ['bitbucket', '/src/'], ['gitea', '/src/branch/'],
 ]);
