@@ -1147,7 +1147,9 @@ def _snippet(kind: str, tool: str | None, text: str, match: re.Match[str]) -> di
         'kind': kind,
         'before': _one_line(text[before_from:start]),
         'match': _one_line(matched[:_MAX_MATCH_CHARS]),
-        'after': _one_line(text[end:after_to]),
+        # A match cut short is followed by the gap it leaves, never by the text
+        # behind its own end.
+        'after': '' if len(matched) > _MAX_MATCH_CHARS else _one_line(text[end:after_to]),
     }
     if tool:
         snippet['tool'] = tool

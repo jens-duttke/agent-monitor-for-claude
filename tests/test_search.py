@@ -676,6 +676,17 @@ class SearchBoundaryTest(SearchEnvTest):
         for snippet in match['snippets']:
             self.assertLessEqual(len(snippet['match']), search._MAX_MATCH_CHARS)
 
+    def test_a_clipped_match_is_not_followed_by_text_from_behind_its_end(self) -> None:
+        # The excerpt read as the match's first 120 characters glued to the
+        # text after the whole match, with the gap marked only after that.
+        self._write('id-a', _CWD, self._entry('x' * 300 + ' TAIL'))
+
+        snippet = self._matches(self._run('x+', [self._ref('id-a')], {'use_regex': True}))[0]['snippets'][0]
+
+        self.assertEqual(len(snippet['match']), search._MAX_MATCH_CHARS)
+        self.assertEqual(snippet['after'], '')
+        self.assertTrue(snippet['clipped_after'])
+
     def test_path_traversal_is_confined_to_projects(self) -> None:
         # A file outside projects/ that a crafted id would resolve to via `..`.
         secret = config_dir() / 'outside-secret.jsonl'

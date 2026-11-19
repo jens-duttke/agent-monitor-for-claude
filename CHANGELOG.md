@@ -97,6 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Text you selected in a running session's activity line is no longer dropped by a refresh that changed nothing.
 - Enter on a focused activity step opens it, and on the splitter does nothing, instead of raising the session's window.
 - The delete confirmation quotes the session's age as the list shows it now, not as it was when the menu opened.
+- A search excerpt whose match is cut short no longer shows text from behind the end of the match right after it.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07
