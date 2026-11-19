@@ -154,6 +154,23 @@ class ReadDirectoryTest(unittest.TestCase):
                 self.assertTrue(record['upstream_gone'])
                 self.assertEqual((record['unmerged'], record['changes_in_default']), (1, False))
 
+    def test_a_clone_of_an_empty_repository_is_only_local_not_deleted_on_the_remote(self) -> None:
+        # git configures the upstream for such a clone, but nothing was ever
+        # fetched - an upstream without a distance means "never there" here.
+        empty_remote = os.path.join(self.base, 'empty.git')
+        clone = os.path.join(self.base, 'fresh')
+        self._git(self.base, 'init', '--bare', '-b', 'main', empty_remote)
+        self._git(self.base, 'clone', empty_remote, clone)
+        with open(os.path.join(clone, 'a.txt'), 'w', encoding='utf-8') as handle:
+            handle.write('one\n')
+        self._git(clone, 'add', 'a.txt')
+        self._git(clone, 'commit', '-m', 'first')
+
+        record = git_overview.read_directory(clone)
+
+        self.assertFalse(record['upstream_gone'])
+        self.assertEqual(record['unmerged'], 1)
+
     def test_no_repository_and_no_directory_read_as_none(self) -> None:
         self.assertIsNone(git_overview.read_directory(self.base))
         self.assertIsNone(git_overview.read_directory(os.path.join(self.base, 'missing')))

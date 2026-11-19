@@ -145,6 +145,13 @@ def read_directory(directory: str) -> dict[str, Any] | None:
     default_ref = refs['default']
     remote_branch = refs['branch']
 
+    # An upstream without a distance is gone from the remote - unless the remote
+    # was never fetched with anything in it (a clone of an empty repository),
+    # where nothing was ever there to delete.
+    never_fetched = parsed['upstream_gone'] and not _has_remote_refs(directory, remote)
+    if never_fetched:
+        parsed['upstream_gone'] = False
+
     ahead: int | None = parsed['ahead']
     if parsed['upstream'] and parsed['upstream_gone']:
         ahead = None
@@ -156,6 +163,9 @@ def read_directory(directory: str) -> dict[str, Any] | None:
     default_branch = default_ref.removeprefix(f'refs/remotes/{remote}/') if default_ref else ''
     if default_ref and not parsed['detached'] and branch and branch != default_branch:
         unmerged = _count(directory, default_ref + '..HEAD')
+    elif never_fetched and not parsed['detached'] and branch:
+        # Every commit of such a branch exists only here.
+        unmerged = _count(directory, 'HEAD')
 
     # Commits the default branch lacks can still have reached it as one squashed commit; that only
     # matters for a branch no longer on the remote, where it tells "merged" from "deleted".
@@ -232,6 +242,11 @@ def _remote_refs(directory: str, remote: str, branch: str, upstream: str) -> dic
         default = next((f'refs/remotes/{remote}/{name}' for name in _DEFAULT_BRANCH_NAMES if f'refs/remotes/{remote}/{name}' in found), '')
 
     return {'default': default, 'branch': wanted if wanted and wanted in found else ''}
+
+
+def _has_remote_refs(directory: str, remote: str) -> bool:
+    """Whether *remote* has any remote-tracking ref here, i.e. was ever fetched with something in it."""
+    return bool((run_git(directory, 'for-each-ref', '--count=1', '--format=%(refname)', f'refs/remotes/{remote}/') or '').strip())
 
 
 def _changes_in(directory: str, default_ref: str) -> bool | None:
