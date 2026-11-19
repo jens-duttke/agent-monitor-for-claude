@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from .platforms import IS_WINDOWS, show_error_box, user_config_dir
+from .window_layout import NORMAL_MIN_SIZE
 
 __all__ = [
     'SETTINGS_FILENAME', 'SPECS', 'SettingSpec', 'Settings',
@@ -93,8 +94,9 @@ SPECS: tuple[SettingSpec, ...] = (
     SettingSpec('include_completed', 'bool', 'sessions'),
     SettingSpec('subagent_recent_seconds', 'int', 'sessions', minimum=1, unit='seconds'),
     SettingSpec('wsl', 'bool', 'wsl', windows_only=True),
-    SettingSpec('window_width', 'int', 'window', minimum=320, maximum=10000, unit='pixels', applies='restart'),
-    SettingSpec('window_height', 'int', 'window', minimum=240, maximum=10000, unit='pixels', applies='restart'),
+    # No smaller than the window is created to allow, or a saved size is silently not honoured.
+    SettingSpec('window_width', 'int', 'window', minimum=NORMAL_MIN_SIZE[0], maximum=10000, unit='pixels', applies='restart'),
+    SettingSpec('window_height', 'int', 'window', minimum=NORMAL_MIN_SIZE[1], maximum=10000, unit='pixels', applies='restart'),
 )
 
 _SPECS_BY_KEY = {spec.key: spec for spec in SPECS}

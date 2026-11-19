@@ -45,8 +45,8 @@ window.__MOCK_SETTINGS__ = {
         { key: 'include_completed', kind: 'bool', group: 'sessions', minimum: null, maximum: null, unit: '', applies: 'now' },
         { key: 'subagent_recent_seconds', kind: 'int', group: 'sessions', minimum: 1, maximum: null, unit: 'seconds', applies: 'now' },
         { key: 'wsl', kind: 'bool', group: 'wsl', minimum: null, maximum: null, unit: '', applies: 'now' },
-        { key: 'window_width', kind: 'int', group: 'window', minimum: 320, maximum: 10000, unit: 'pixels', applies: 'restart' },
-        { key: 'window_height', kind: 'int', group: 'window', minimum: 240, maximum: 10000, unit: 'pixels', applies: 'restart' },
+        { key: 'window_width', kind: 'int', group: 'window', minimum: 480, maximum: 10000, unit: 'pixels', applies: 'restart' },
+        { key: 'window_height', kind: 'int', group: 'window', minimum: 360, maximum: 10000, unit: 'pixels', applies: 'restart' },
     ],
     values: {
         poll_interval: 5, ended_max_age: 7200, include_completed: false, subagent_recent_seconds: 900,

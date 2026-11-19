@@ -30,8 +30,8 @@ You can edit the file by hand; the app reads it at start. Only values that diffe
 | `include_completed` | boolean | `false` | Show finished sessions regardless of `ended_max_age`. |
 | `wsl` | boolean | `true` | Windows only. List Claude Code sessions running inside WSL distributions. `false` turns off all WSL access. |
 | `subagent_recent_seconds` | integer (>= 1) | `900` | How long (seconds) a subagent is counted after its last write - as running, then as recently finished. |
-| `window_width` | integer (320 - 10000) | `1180` | Window width at start, in logical pixels. |
-| `window_height` | integer (240 - 10000) | `760` | Window height at start, in logical pixels. |
+| `window_width` | integer (480 - 10000) | `1180` | Window width at start, in logical pixels. |
+| `window_height` | integer (360 - 10000) | `760` | Window height at start, in logical pixels. |
 | `language` | string | `""` | Force a language by locale code (see below). Empty means auto-detect from the system locale. |
 
 ## Example

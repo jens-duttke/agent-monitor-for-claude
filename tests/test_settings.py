@@ -409,5 +409,16 @@ class SaveTest(_SettingsTestCase):
         self.assertEqual(json.loads(self.places.config_file.read_text(encoding='utf-8')), {})
 
 
+
+class WindowSizeBoundsTest(unittest.TestCase):
+    def test_the_smallest_size_offered_is_the_smallest_the_window_takes(self) -> None:
+        # The window is created with this minimum, so a smaller saved size was
+        # accepted by the dialog and then silently not honoured.
+        from agent_monitor_for_claude.settings import SPECS
+        from agent_monitor_for_claude.window_layout import NORMAL_MIN_SIZE
+
+        minimums = {spec.key: spec.minimum for spec in SPECS}
+        self.assertEqual((minimums['window_width'], minimums['window_height']), NORMAL_MIN_SIZE)
+
 if __name__ == '__main__':
     unittest.main()

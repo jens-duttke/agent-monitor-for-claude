@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On Linux, a full runtime directory, or locking that fails after you confirm replacing a running instance, no longer stops the app from starting.
 - `--verbose` now also shows the window toolkit's own debug messages, as intended.
 - `--verbose` no longer prints a garbled path, or your user name, for a `CLAUDE_CONFIG_DIR` typed with a doubled separator or a `..` segment.
+- The settings dialog no longer accepts a window size below 480 x 360, which the window could not take anyway.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07
