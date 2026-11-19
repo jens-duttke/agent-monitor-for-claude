@@ -50,7 +50,7 @@ SETTINGS_FILENAME = 'agent-monitor-settings.json'
 
 # A language code as the locale files are named (``de``, ``pt-BR``, ``zh-CN``).
 # Which codes exist is checked on save, against the locale files themselves.
-_LANGUAGE_PATTERN = re.compile(r'^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,4})?$')
+_LANGUAGE_PATTERN = re.compile(r'\A[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,4})?\Z')
 
 
 @dataclass(frozen=True)

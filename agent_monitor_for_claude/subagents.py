@@ -90,7 +90,7 @@ _AGENT_FILE_CACHE_MAX = 64
 # An agent id as it appears in its file name - letters, digits, ``_`` and
 # ``-`` only, so one can never name a path outside the agent's folder - and the
 # longest first line read for its task.
-_AGENT_ID_PATTERN = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$')
+_AGENT_ID_PATTERN = re.compile(r'\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z')
 _PROMPT_LINE_MAX_BYTES = 4 * 1024 * 1024
 
 

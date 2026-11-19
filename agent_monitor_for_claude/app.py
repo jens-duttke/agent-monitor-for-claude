@@ -61,7 +61,7 @@ __all__ = ['run']
 _LOG_MAX_LEN = 2000
 
 # Session ids are UUIDs; validated before a session id is built into a path.
-_SESSION_UUID = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+_SESSION_UUID = re.compile(r'\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z')
 
 # Ports offered to pywebview's own asset server, in order.  The first is the one it would
 # pick by itself; the rest sit far apart because Windows reserves whole contiguous blocks

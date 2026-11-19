@@ -43,8 +43,8 @@ from .test_results import TestSummary, test_summary
 
 __all__ = ['TaskInfo', 'list_tasks', 'read_task_output']
 
-_SESSION_ID_PATTERN = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
-_TASK_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+_SESSION_ID_PATTERN = re.compile(r'\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z')
+_TASK_ID_PATTERN = re.compile(r'\A[A-Za-z0-9_-]{1,64}\Z')
 
 # The registration line Claude Code writes as the tool result of a background
 # task, naming the task id.  Matched to map an id back to the command that

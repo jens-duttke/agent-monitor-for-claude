@@ -31,7 +31,7 @@ __all__ = [
 ]
 
 _NON_ALNUM_PATTERN = re.compile(r'[^A-Za-z0-9]')
-_SESSION_UUID_PATTERN = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+_SESSION_UUID_PATTERN = re.compile(r'\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z')
 
 # Directory Claude Code keeps its per-session temp tree in, below the system
 # temp directory.  Windows' temp directory is already per-user, so the name is
