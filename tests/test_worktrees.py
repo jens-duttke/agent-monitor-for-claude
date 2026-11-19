@@ -180,6 +180,20 @@ class ResolveWorktreeTest(unittest.TestCase):
 
         absorb.assert_not_called()
 
+    def test_a_lookup_that_keeps_missing_is_retried_less_and_less_often(self) -> None:
+        # A record of an ended session that never wrote a transcript searched
+        # every project folder every ten seconds, for good.
+        record = self._record()
+        searches = []
+        with mock.patch.object(wmod, 'find_transcript', side_effect=lambda *_args: searches.append(1)):
+            for second in range(0, 400):
+                with mock.patch.object(wmod.time, 'monotonic', return_value=1000.0 + second):
+                    resolve_worktree(self.root, record)
+
+        # A flat 10 s retry searched 40 times in 400 s.
+        self.assertLess(len(searches), 10)
+        self.assertGreaterEqual(len(searches), 4)
+
     def test_prune_drops_lookups_of_records_that_are_gone(self) -> None:
         self._write_transcript(_LAUNCH_CWD, _worktree_entry())
         resolve_worktree(self.root, self._record())

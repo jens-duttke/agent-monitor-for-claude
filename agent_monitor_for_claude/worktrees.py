@@ -39,7 +39,7 @@ import os
 import threading
 import time
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +51,8 @@ __all__ = ['located_transcripts', 'resolve_worktree', 'prune_worktree_cache']
 # How long a failed lookup is trusted before the project folders are searched
 # again for the same registry record.
 _RETRY_SECONDS = 10.0
+# The longest a record that keeps missing waits between two searches.
+_MAX_RETRY_SECONDS = 320.0
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,8 @@ class _Resolution:
     branch: str | None
     checked_at: float
     transcript: Path | None = None
+    # How many lookups in a row have missed; each waits twice as long as the last.
+    misses: int = 0
 
 
 # (origin, session_id, registry cwd) -> the lookup's outcome.
@@ -103,7 +107,10 @@ def resolve_worktree(root: SessionRoot, record: dict[str, Any], index: Transcrip
         resolution = _resolutions.get(key)
 
     if resolution is None or not _still_valid(root, session_id, resolution, index):
-        resolution = _locate(root, session_id, cwd)
+        located = _locate(root, session_id, cwd)
+        if located.project_cwd is None and resolution is not None and resolution.project_cwd is None:
+            located = replace(located, misses=resolution.misses + 1)
+        resolution = located
         with _lock:
             _resolutions[key] = resolution
 
@@ -145,7 +152,10 @@ def located_transcripts() -> list[Path]:
 def _still_valid(root: SessionRoot, session_id: str, resolution: _Resolution, index: TranscriptIndex) -> bool:
     """Return True if a remembered lookup can be reused without searching again."""
     if resolution.project_cwd is None:
-        return time.monotonic() - resolution.checked_at < _RETRY_SECONDS
+        # A record that keeps missing is most often an ended session that never
+        # wrote a transcript; a new one gets its first retries quickly.
+        wait = min(_RETRY_SECONDS * 2 ** resolution.misses, _MAX_RETRY_SECONDS)
+        return time.monotonic() - resolution.checked_at < wait
 
     return index.stat(root, session_id, resolution.project_cwd) is not None
 
