@@ -900,6 +900,9 @@ function ensureSelection() {
     state.selectedKey = state.listKeys.length > 0 ? state.listKeys[0] : null;
     state.selectedAgent = null;
     state.selectedProcess = null;
+    // A tool filter belonged to the session that left; the next was never filtered.
+    state.selectedTool = null;
+    state.scrollToActivity = false;
     state.detailOpen = false;
     document.body.classList.remove('detail-open');
     markSelectedItem();

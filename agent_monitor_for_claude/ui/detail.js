@@ -1209,7 +1209,11 @@ function selectedAgentOf(session) {
     }
     const agent = logic.agentsByStart(session.agents || []).find((item) => item.id === state.selectedAgent) || null;
     if (!agent) {
+        // Its tool filter goes with it: the session the pane falls back to was
+        // not filtered by the agent's tool.
         state.selectedAgent = null;
+        state.selectedTool = null;
+        state.scrollToActivity = false;
     }
     return agent;
 }
