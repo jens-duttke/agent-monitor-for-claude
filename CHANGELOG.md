@@ -66,6 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A background task whose output file is named like `constructor.output` no longer crashes the task panel.
 - Search results show their hit count and where each excerpt comes from even when the language file has not loaded yet.
 - Escape in the delete confirmation only cancels it; it no longer also leaves the session's details.
+- Without a loadable language file, a running content search is no longer cancelled by every refresh, and a refresh interval received after start-up takes effect at once.
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07

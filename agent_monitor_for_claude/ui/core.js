@@ -55,6 +55,7 @@ window.addEventListener('unhandledrejection', (event) => reportUiError(event.rea
 const state = {
     labels: {},
     labelsLoaded: false,
+    bootstrapLoaded: false,
     pricing: {},
     // The global default effort the header names; a row names its own effort
     // only when it differs.

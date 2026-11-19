@@ -12,8 +12,16 @@ function applyBootstrap(bootstrap) {
     const received = bootstrap.labels || {};
     state.labels = Object.assign({}, DEFAULT_LABELS, received);
     state.labelsLoaded = Object.keys(received).length > 0;
+    // Answered by the bridge, empty labels or not: only a bootstrap that ran
+    // before the bridge was ready is asked for again (see tick).
+    state.bootstrapLoaded = !!apiBridge();
     state.pricing = (bootstrap.pricing && typeof bootstrap.pricing === 'object') ? bootstrap.pricing : {};
+    const previousInterval = state.pollInterval;
     state.pollInterval = bootstrap.poll_interval || 5;
+    // A retried bootstrap can bring the configured interval after the poll started.
+    if (state.pollTimer && state.pollInterval !== previousInterval) {
+        startPoll();
+    }
     // Search ids count on from the backend's, never from 0 again (see get_bootstrap).
     if (Number.isInteger(bootstrap.search_seq_base) && bootstrap.search_seq_base > state.searchSeq) {
         state.searchSeq = bootstrap.search_seq_base;
@@ -150,8 +158,8 @@ async function tick() {
         return;
     }
 
-    // Recover translations if the first bootstrap ran before the bridge was ready.
-    if (!state.labelsLoaded && apiBridge()) {
+    // Recover the bootstrap if the first one ran before the bridge was ready.
+    if (!state.bootstrapLoaded && apiBridge()) {
         try {
             applyBootstrap(await callBootstrap());
         } catch (err) {
