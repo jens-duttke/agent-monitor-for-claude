@@ -247,11 +247,14 @@ def _changes_in(directory: str, default_ref: str) -> bool | None:
     paths = [path for path in names.split('\0') if path]
     if not paths or len(paths) > _MAX_COMPARED_FILES:
         return None
-    differing = run_git(directory, '--literal-pathspecs', 'diff', '--name-only', '--no-renames', 'HEAD', default_ref, '--', *paths)
+    # Compared here rather than through a pathspec: git names the files relative
+    # to the top level, but resolves a pathspec against *directory*, which may be
+    # a folder below it.
+    differing = run_git(directory, 'diff', '--name-only', '-z', '--no-renames', 'HEAD', default_ref, '--')
     if differing is None:
         return None
 
-    return not differing.strip()
+    return set(paths).isdisjoint(path for path in differing.split('\0') if path)
 
 
 def _count(directory: str, revision_range: str) -> int | None:

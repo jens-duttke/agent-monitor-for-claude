@@ -135,6 +135,25 @@ class ReadDirectoryTest(unittest.TestCase):
         self.assertEqual((record['unmerged'], record['changes_in_default']), (1, True))
         self.assertIsNotNone(record['fetched_at'])
 
+    def test_an_unmerged_deleted_branch_reads_as_unmerged_from_a_subdirectory_too(self) -> None:
+        # git lists the changed files relative to the top level, but resolves a
+        # pathspec against the directory it runs in - a session in a package
+        # folder compared files that do not exist and read as squash-merged.
+        os.makedirs(os.path.join(self.work, 'sub'))
+        self._commit('sub/x.txt', 'base\n', 'sub')
+        self._git(self.work, 'push', 'origin', 'main')
+        self._git(self.work, 'switch', '-c', 'abandoned')
+        self._commit('sub/x.txt', 'changed\n', 'work')
+        self._git(self.work, 'push', '-u', 'origin', 'abandoned')
+        self._git(self.work, 'push', 'origin', ':abandoned')
+        self._git(self.work, 'fetch', '--prune')
+
+        for directory in (self.work, os.path.join(self.work, 'sub')):
+            with self.subTest(directory=directory):
+                record = git_overview.read_directory(directory)
+                self.assertTrue(record['upstream_gone'])
+                self.assertEqual((record['unmerged'], record['changes_in_default']), (1, False))
+
     def test_no_repository_and_no_directory_read_as_none(self) -> None:
         self.assertIsNone(git_overview.read_directory(self.base))
         self.assertIsNone(git_overview.read_directory(os.path.join(self.base, 'missing')))
