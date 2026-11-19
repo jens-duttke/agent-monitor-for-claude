@@ -475,7 +475,7 @@ window.__MOCK_SNAPSHOT__ = {
             }),
         }),
         rawSession({
-            session_id: 'c2j', short_name: 'cipher-vault-a5', pid: 29456, cwd: 'D:\\Projects\\cipher-vault', kind: 'background',
+            session_id: 'c2j', short_name: 'cipher-vault-a5', pid: 29456, cwd: 'D:\\Projects\\cipher-vault',
             entrypoint: 'claude-vscode', host: 'VS Code',
             title: 'Sweep Argon2id memory-hardness parameters', permission_mode: 'acceptEdits',
             last_entry_kind: 'tool_result', last_stop_reason: 'tool_use',
