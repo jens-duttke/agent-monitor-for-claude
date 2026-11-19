@@ -25,6 +25,13 @@ class ParseStatusTest(unittest.TestCase):
         self.assertEqual((branch, upstream, ahead, behind), ('main', 'origin/main', 2, 1))
         self.assertEqual(entries, [(' M', 'src/a.py'), ('??', 'notes.txt'), ('R ', 'new.py')])
 
+    def test_a_rename_in_the_work_tree_skips_its_origin_too(self) -> None:
+        # git writes R or C in the second column for a work-tree rename; its
+        # origin record follows and is no entry of its own.
+        output = '## main\0 R new.py\0README.md\0 M other.txt\0'
+        entries = gmod._parse_status(output)[4]
+        self.assertEqual(entries, [(' R', 'new.py'), (' M', 'other.txt')])
+
     def test_a_branch_without_upstream_or_commit(self) -> None:
         self.assertEqual(gmod._parse_branch('feature'), ('feature', '', 0, 0))
         self.assertEqual(gmod._parse_branch('No commits yet on main'), ('main', '', 0, 0))

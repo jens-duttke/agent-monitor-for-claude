@@ -222,8 +222,9 @@ def _parse_status(output: str) -> tuple[str, str, int, int, list[tuple[str, str]
             branch, upstream, ahead, behind = _parse_branch(record[3:])
             continue
         code, path = record[:2], record[3:]
-        # A rename or copy is followed by the path it came from, which is not a file of its own.
-        if code[0] in 'RC':
+        # A rename or copy - in the index or in the work tree, either column - is
+        # followed by the path it came from, which is not a file of its own.
+        if 'R' in code or 'C' in code:
             index += 1
         entries.append((code, path))
 
