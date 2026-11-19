@@ -795,10 +795,23 @@ def _dotnet_version() -> str:
 
 
 def _paint_class(handle: int, color: int) -> None:
-    """Set one window's class background brush to a solid *color*."""
-    brush = _gdi32.CreateSolidBrush(color)
-    if brush:
-        _set_class_long_ptr(handle, _GCLP_HBRBACKGROUND, brush)
+    """Set one window's class background brush to a solid *color*.
+
+    One brush per colour serves every window and every call, and is kept for
+    the process: a class may hold it at any time, so it is never deleted - and
+    creating one per call left a brush behind on every page load.
+    """
+    brush = _brushes.get(color)
+    if brush is None:
+        brush = _gdi32.CreateSolidBrush(color)
+        if not brush:
+            return
+        _brushes[color] = brush
+    _set_class_long_ptr(handle, _GCLP_HBRBACKGROUND, brush)
+
+
+# COLORREF -> the solid brush created for it (see _paint_class).
+_brushes: dict[int, int] = {}
 
 
 def _colorref(hex_color: str) -> int | None:

@@ -115,6 +115,21 @@ class SetTaskbarAttentionTest(unittest.TestCase):
 
 
 @_WINDOWS_ONLY
+class ClassBrushTest(unittest.TestCase):
+    def test_one_brush_serves_every_window_of_a_colour(self) -> None:
+        # A new brush per call and per window, never deleted: the GDI object
+        # count grew with every page load.
+        win32._brushes.clear()
+        self.addCleanup(win32._brushes.clear)
+        with mock.patch.object(win32, '_gdi32') as gdi, mock.patch.object(win32, '_set_class_long_ptr'):
+            gdi.CreateSolidBrush.return_value = 77
+            for handle in (1, 2, 3):
+                win32._paint_class(handle, 0x202020)
+
+        self.assertEqual(gdi.CreateSolidBrush.call_count, 1)
+
+
+@_WINDOWS_ONLY
 class OverlayBadgeTest(unittest.TestCase):
     def test_the_taskbar_object_is_released_when_drawing_the_icon_fails(self) -> None:
         # A drawing failure left the COM object unreleased for the process lifetime.
