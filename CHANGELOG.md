@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On Linux, a settings file with an invalid entry no longer crashes the app on start from a terminal of the Snap-packaged VS Code; the dialog naming the error appears instead.
 - On Linux, clicking a session whose window has just closed no longer ends the app with an X `BadWindow` error.
 - On Linux, the window asks for attention again each time another session starts waiting, not only for the first one after none was. On a Wayland session, where GTK cannot ask, the app no longer reports that it did.
+- On Windows, the app no longer shares its local port with another app built on the same window toolkit that is already running, which could show one app's page in the other's window.
 
 ## [1.0.0] - 2026-11-07
 

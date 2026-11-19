@@ -731,6 +731,18 @@ class BindablePortTest(unittest.TestCase):
         self.assertIsInstance(port, int)
         self.assertGreater(port, 0)
 
+    def test_a_port_another_server_listens_on_is_not_free(self) -> None:
+        # The asset server of another pywebview app binds the same default port
+        # with SO_REUSEADDR, which on Windows lets a second SO_REUSEADDR bind
+        # succeed - and two listeners on one port answer at random.
+        import socket
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server.bind(('127.0.0.1', 0))
+            server.listen()
+            self.assertIsNone(app._bindable_port(server.getsockname()[1]))
+
     def test_a_free_port_reports_itself_and_is_released_again(self) -> None:
         free = app._bindable_port(0)
         self.assertIsNotNone(free)

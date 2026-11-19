@@ -30,7 +30,7 @@ from .history import list_history
 from .i18n import T, available_languages, reload_translations
 from .paths import SessionRoot, config_dir, host_path, local_root, projects_dir, scratchpad_dir
 from .paths import transcript_path as _transcript_path
-from .platforms import prepare_gui_environment, storage_dir
+from .platforms import IS_WINDOWS, prepare_gui_environment, storage_dir
 from .pricing import load_pricing
 from .process_probe import process_details, process_stats
 from .roots import root_for_origin
@@ -1014,10 +1014,15 @@ def _http_port() -> int | None:
 def _bindable_port(port: int) -> int | None:
     """Bind a localhost TCP port to see whether it is free, and release it again.
 
-    The probe sets ``SO_REUSEADDR`` because the asset server does too: without
-    it a restart could trip over its own previous connections still in
-    ``TIME_WAIT`` and move to a different port for no reason.  A port inside a
-    reserved block fails either way.
+    The option differs per system, and each is what makes a port another
+    server already listens on read as taken.  On Linux ``SO_REUSEADDR`` lets
+    the probe past this app's own earlier connections still in ``TIME_WAIT``,
+    which would otherwise move it to a different port for no reason, while a
+    listener still refuses it.  On Windows the same option would let the probe
+    bind beside a listener of the same user that set it too - another pywebview
+    app's asset server on the default port, which then shares the port with
+    this one - so the probe asks for exclusive use instead, which ``TIME_WAIT``
+    does not block there.  A port inside a reserved block fails either way.
 
     Parameters
     ----------
@@ -1033,7 +1038,8 @@ def _bindable_port(port: int) -> int | None:
     """
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            option = socket.SO_EXCLUSIVEADDRUSE if IS_WINDOWS else socket.SO_REUSEADDR  # type: ignore[attr-defined]  # Windows-only name
+            sock.setsockopt(socket.SOL_SOCKET, option, 1)
             sock.bind(('127.0.0.1', port))
 
             return int(sock.getsockname()[1])
