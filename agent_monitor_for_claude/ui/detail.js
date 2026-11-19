@@ -1605,8 +1605,10 @@ function activityMarkup(steps, running) {
                 + '<div class="step-body">' + textMarkup(step.text, true) + '</div></details>';
             return;
         }
-        const running = step.result === null;
-        const duration = !running && step.at !== null && step.result_at !== null ? logic.stepDuration(step.result_at - step.at, labels) : '';
+        // Not to be named `running`: that is the parameter - whether the agent
+        // or session is running, without which an unanswered call never will be.
+        const pending = step.result === null;
+        const duration = !pending && step.at !== null && step.result_at !== null ? logic.stepDuration(step.result_at - step.at, labels) : '';
         // A failure in red, with its exit status when the command gave one; a
         // call you rejected or one stopped early in yellow - neither failed.
         let flag = '';
@@ -1615,8 +1617,8 @@ function activityMarkup(steps, running) {
                 + esc(step.exit_code !== null ? fmt(labels.step_exit, { code: step.exit_code }) : (labels.step_error || '')) + '</span>';
         } else if (step.outcome === 'rejected' || step.outcome === 'interrupted') {
             flag = '<span class="step-flag declined">' + esc(step.outcome === 'rejected' ? labels.step_rejected : labels.step_interrupted) + '</span>';
-        } else if (running) {
-            flag = '<span class="step-flag">' + esc(running ? labels.agent_running : '') + '</span>';
+        } else if (pending && running) {
+            flag = '<span class="step-flag">' + esc(labels.agent_running) + '</span>';
         }
         const tone = step.outcome === 'failed' ? ' failed' : (step.outcome ? ' declined' : '');
         html += '<details' + attr('class', 'step' + tone) + attr('data-step', id) + open + '><summary>'
@@ -1628,7 +1630,7 @@ function activityMarkup(steps, running) {
             + Object.keys(step.input).map((key) => '<span class="kv-key">' + esc(key) + '</span>'
                 + '<pre class="step-value">' + esc(logic.stepInputText(step.input[key])) + '</pre>').join('')
             + '</div>'
-            + (running ? '' : '<div class="step-sub">' + esc(labels.block_result || '') + '</div><pre class="step-value step-result">'
+            + (pending ? '' : '<div class="step-sub">' + esc(labels.block_result || '') + '</div><pre class="step-value step-result">'
                 + esc(step.result) + '</pre>')
             + '</div></details>';
     });

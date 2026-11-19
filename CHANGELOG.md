@@ -56,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - When a WSL distro briefly fails to list its sessions, its sessions no longer come back with their costs on `…` while every transcript is read again.
 - Deleting a past session whose subagent folder holds a file in use no longer leaves a half-deleted session; it stays in *Older* so you can try again.
 - *Older* lists a Claude Desktop chat run in WSL under its distro rather than under the host's copy when the copy names no project folder, so deleting it removes the original.
+- In a finished subagent's or a stopped session's activity, a tool call that never got a result no longer reads "Running".
 - On Linux, the texts meant to be copied - search excerpts, paths, replies, the task console, diffs - can be selected again.
 
 ## [1.0.0] - 2026-11-07
