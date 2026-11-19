@@ -225,6 +225,29 @@ class GitDiffTest(unittest.TestCase):
         # A file without changes has no diff - it is not shown as new.
         self.assertEqual(unchanged, {'path': 'same.txt', 'diff': '', 'truncated': False})
 
+    def test_a_renamed_file_shows_its_changes_not_its_whole_content(self) -> None:
+        # The list shows a staged rename with its own small line counts; a diff
+        # limited to the new path had no old side and showed every line as new.
+        with tempfile.TemporaryDirectory() as directory:
+            def git(*args: str) -> None:
+                subprocess.run(['git', '-C', directory, *args], check=True, capture_output=True,
+                               env=dict(os.environ, GIT_AUTHOR_NAME='t', GIT_AUTHOR_EMAIL='t@t', GIT_COMMITTER_NAME='t', GIT_COMMITTER_EMAIL='t@t'))
+
+            git('init', '-q')
+            body = ''.join(f'line {number}\n' for number in range(20))
+            (Path(directory) / 'old.txt').write_text(body, encoding='utf-8')
+            git('add', '.')
+            git('commit', '-q', '-m', 'first')
+            git('mv', 'old.txt', 'new.txt')
+            (Path(directory) / 'new.txt').write_text(body + 'added\n', encoding='utf-8')
+            git('add', 'new.txt')
+
+            diff = gmod.git_diff(directory, 'new.txt')['diff']
+
+        self.assertIn('rename from old.txt', diff)
+        self.assertNotIn('+line 0', diff)
+        self.assertIn('+added', diff)
+
 
 if __name__ == '__main__':
     unittest.main()

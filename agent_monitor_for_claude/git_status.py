@@ -124,8 +124,10 @@ def git_diff(directory: str, path: str) -> dict[str, Any] | None:
         return None
 
     # Run from the top level, which the listed path is relative to; a literal
-    # pathspec, so a name holding * or : is that name and nothing else.
-    diff = _git(root, '--literal-pathspecs', 'diff', *_DIFF_OPTIONS, 'HEAD', '--', path)
+    # pathspec, so a name holding * or : is that name and nothing else.  A
+    # renamed file needs the path it came from in it too, or git has no old
+    # side to pair it with and shows the whole file as new.
+    diff = _git(root, '--literal-pathspecs', 'diff', *_DIFF_OPTIONS, 'HEAD', '--', *_rename_source(root, path), path)
     if not diff and _git(root, '--literal-pathspecs', 'ls-files', '-z', '--', path) == '':
         # An untracked file: its whole content is new, so compare it with
         # nothing. This form reports a difference with exit code 1.
@@ -135,6 +137,25 @@ def git_diff(directory: str, path: str) -> dict[str, Any] | None:
 
     text, truncated = _clip_diff(diff)
     return {'path': path, 'diff': text, 'truncated': truncated}
+
+
+def _rename_source(root: str, path: str) -> tuple[str, ...]:
+    """The path *path* was renamed or copied from against ``HEAD``, as a one-element tuple; empty when it was not."""
+    output = _git(root, 'diff', '--name-status', '-z', '-M', 'HEAD') or ''
+    records = output.split('\0')
+    index = 0
+    while index < len(records):
+        status = records[index]
+        index += 1
+        if status[:1] in ('R', 'C') and index + 1 < len(records):
+            source, target = records[index], records[index + 1]
+            index += 2
+            if target == path and _valid_relative_path(source):
+                return (source,)
+        elif status:
+            index += 1
+
+    return ()
 
 
 def _valid_relative_path(path: object) -> bool:
