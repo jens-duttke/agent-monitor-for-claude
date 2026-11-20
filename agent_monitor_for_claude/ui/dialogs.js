@@ -78,6 +78,7 @@ function confirmDeleteSession(sessionId, cwd, name, age, origin) {
         }
 
         if (ok) {
+            unpinSession(sessionId);
             if (Array.isArray(state.history)) {
                 state.history = state.history.filter((session) => session.session_id !== sessionId);
             }

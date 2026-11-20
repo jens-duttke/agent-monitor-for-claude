@@ -4289,3 +4289,41 @@ test('searchScopeRefs: a member of a group that is not listed is scoped by its c
     const sections = logic.buildSections([mk('in'), mk('out')].map((s) => Object.assign(s, { status: 'working' })), new Set(), view);
     assert.deepEqual(placedIn(sections, 'out'), ['running']);
 });
+
+test('parsePins rejects garbage and non-uuid', () => {
+    const id = '11111111-2222-4333-8444-555555555555';
+    assert.equal(logic.parsePins('not json').size, 0);
+    assert.equal(logic.parsePins('{"a":1}').size, 0);
+    assert.equal(logic.parsePins('null').size, 0);
+    const other = id.replace('1', '2');
+    const pins = logic.parsePins(JSON.stringify([
+        { id: id, origin: 'Ubuntu' }, { id: 'constructor' }, { id: 7 }, null, 'x', { id: id, origin: 'dup' }, { id: other },
+    ]));
+    assert.deepStrictEqual(Array.from(pins), [[id, 'Ubuntu'], [other, 'local']]);
+});
+
+test('parsePins caps at MAX_PINS', () => {
+    const many = Array.from({ length: logic.MAX_PINS + 20 }, (_, n) => ({ id: '00000000-0000-4000-8000-' + String(n).padStart(12, '0'), origin: 'local' }));
+    assert.equal(logic.parsePins(JSON.stringify(many)).size, logic.MAX_PINS);
+});
+
+test('prunePins removes only missing, and only after two answers in a row', () => {
+    const pins = new Map([['a', 'local'], ['b', 'local'], ['c', 'local']]);
+    const first = logic.prunePins(pins, { a: 'missing', b: 'present', c: 'unknown' }, new Map());
+    assert.deepStrictEqual(Array.from(first.pins.keys()), ['a', 'b', 'c']);
+    assert.deepStrictEqual(Array.from(first.misses), [['a', 1]]);
+    const second = logic.prunePins(first.pins, { a: 'missing', b: 'missing', c: 'missing' }, first.misses);
+    assert.deepStrictEqual(Array.from(second.pins.keys()), ['b', 'c']);
+});
+
+test('prunePins: unknown or present resets the count, so unknown keeps the pin', () => {
+    const pins = new Map([['a', 'local']]);
+    const one = logic.prunePins(pins, { a: 'missing' }, new Map());
+    const reset = logic.prunePins(one.pins, { a: 'unknown' }, one.misses);
+    assert.equal(reset.misses.size, 0);
+    const again = logic.prunePins(reset.pins, { a: 'missing' }, reset.misses);
+    assert.equal(again.pins.size, 1);
+    const silent = logic.prunePins(one.pins, {}, one.misses);
+    assert.equal(silent.misses.size, 0);
+    assert.equal(logic.prunePins(pins, null, null).pins.size, 1);
+});

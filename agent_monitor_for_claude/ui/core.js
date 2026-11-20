@@ -134,6 +134,8 @@ const state = {
     collapsed: new Set(),
     // The pinned sessions, session id -> origin (amc-pins).
     pins: new Map(),
+    // Consecutive `missing` answers per pinned id (see logic.prunePins).
+    pinMisses: new Map(),
     // Whether the user folded (true) or unfolded (false) a Pinned or Desktop
     // group section, by section key (amc-group-collapsed); a section missing
     // here follows Desktop's own folding.
@@ -404,6 +406,9 @@ const DEFAULT_LABELS = {
     section_recent: 'Recent',
     section_older: 'Older',
     section_pinned: 'Pinned',
+    pin_session: 'Pin to top',
+    unpin_session: 'Unpin',
+    pin_tip: 'Keeps this session at the top of the list, also after it ends (key P)',
     section_archived: 'Archived',
     label_archived: 'Archived',
     group_collapse_tip: 'Fold or unfold this group',
@@ -666,7 +671,7 @@ async function callBootstrap() {
    pinned sessions and the members of a Claude Desktop group (declared by the
    features that own them). */
 function keptSessionIds() {
-    return Array.from(state.desktopGroups.members.keys());
+    return Array.from(new Set([...state.pins.keys(), ...state.desktopGroups.members.keys()]));
 }
 
 async function callSnapshot() {

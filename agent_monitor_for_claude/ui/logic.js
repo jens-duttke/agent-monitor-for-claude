@@ -5288,7 +5288,70 @@ function desktopGroupsSignature(normalized) {
     return JSON.stringify([normalized.groups, members, archived]);
 }
 
+/* The pinned sessions as stored (amc-pins, JSON `[{id, origin}]`): untrusted
+   text, so only a UUID id counts, an origin is any non-empty string (else
+   'local'), a repeated id keeps its first entry, and garbage is an empty Map. */
+const MAX_PINS = 100;
+const PIN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isPinId(id) {
+    return typeof id === 'string' && PIN_ID_PATTERN.test(id);
+}
+
+function parsePins(text) {
+    const pins = new Map();
+    let parsed = null;
+    try {
+        parsed = JSON.parse(text);
+    } catch (e) {
+        return pins;
+    }
+    if (!Array.isArray(parsed)) {
+        return pins;
+    }
+    for (const entry of parsed) {
+        if (pins.size >= MAX_PINS) {
+            break;
+        }
+        if (!entry || typeof entry !== 'object' || !isPinId(entry.id) || pins.has(entry.id)) {
+            continue;
+        }
+        pins.set(entry.id, typeof entry.origin === 'string' && entry.origin ? entry.origin : 'local');
+    }
+    return pins;
+}
+
+/* How many consecutive `missing` answers drop a pin: one read that fails to
+   find a session is not proof it is gone. */
+const PIN_MISSING_LIMIT = 2;
+
+/* Apply one `check_pins` answer. A pin goes after PIN_MISSING_LIMIT `missing`
+   answers in a row; `present`, `unknown` and no answer at all reset its count.
+   `misses` (id -> consecutive count) is the memory between answers. Returns the
+   remaining pins and the new counts as fresh Maps. */
+function prunePins(pins, status, misses) {
+    const kept = new Map();
+    const counts = new Map();
+    const answers = status && typeof status === 'object' ? status : {};
+    for (const [id, origin] of pins) {
+        const missing = Object.prototype.hasOwnProperty.call(answers, id) && answers[id] === 'missing';
+        const count = missing ? ((misses && misses.get(id)) || 0) + 1 : 0;
+        if (count >= PIN_MISSING_LIMIT) {
+            continue;
+        }
+        kept.set(id, origin);
+        if (count > 0) {
+            counts.set(id, count);
+        }
+    }
+    return { pins: kept, misses: counts };
+}
+
 const AMC_LOGIC = {
+    MAX_PINS,
+    isPinId,
+    parsePins,
+    prunePins,
     normalizeDesktopGroups,
     desktopGroupsSignature,
     fmt,

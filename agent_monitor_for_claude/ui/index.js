@@ -143,6 +143,9 @@ function onKeyDown(event) {
             event.preventDefault();
             runSessionAction('copy-id', session);
         }
+    } else if (!ctrl && key === 'p' && session) {
+        event.preventDefault();
+        togglePin(session);
     } else if (!ctrl && key === 't' && session) {
         event.preventDefault();
         runSessionAction('transcript', session);
@@ -219,6 +222,7 @@ async function boot() {
         state.searchRegex = false;
     }
     loadGroupCollapsed();
+    loadPins();
     // Each init step is isolated so a failure in one (e.g. a control the
     // markup no longer matches) cannot abort boot and freeze the loading
     // skeleton - the data still renders.
@@ -290,6 +294,7 @@ async function boot() {
     setInterval(tickAges, 1000);
     gitOverviewLoop();
     desktopGroupsLoop();
+    pinCheckLoop();
     updateStatusLoop();
 }
 

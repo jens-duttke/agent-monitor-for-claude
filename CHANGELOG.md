@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- [Pinned sessions](https://github.com/jens-duttke/agent-monitor-for-claude/issues/13) - pin a session from its row menu, the details or the *P* key, and it stays in a *Pinned* section at the top of the list, also after it ends. A pin is dropped once the session is deleted or its files are gone.
+
 ## [1.1.0] - 2026-11-20
 
 ### Added

@@ -63,6 +63,51 @@ function currentGroupsView() {
     };
 }
 
+// Read the pins back (amc-pins); anything unreadable is no pins.
+function loadPins() {
+    let stored = null;
+    try {
+        stored = localStorage.getItem('amc-pins');
+    } catch (e) { /* storage unavailable */ }
+    state.pins = logic.parsePins(stored || '[]');
+    state.pinMisses = new Map();
+}
+
+function savePins() {
+    try {
+        localStorage.setItem('amc-pins', JSON.stringify(Array.from(state.pins, ([id, origin]) => ({ id: id, origin: origin }))));
+    } catch (e) { /* storage unavailable */ }
+}
+
+// Pin the session to the top of the list, or take the pin off. A kept ended
+// session has to appear or go, so the snapshot is asked for again.
+function togglePin(session) {
+    const id = session && session.session_id;
+    if (!logic.isPinId(id)) {
+        return;
+    }
+    if (state.pins.has(id)) {
+        state.pins.delete(id);
+    } else if (state.pins.size < logic.MAX_PINS) {
+        state.pins.set(id, session.origin || 'local');
+    }
+    state.pinMisses.delete(id);
+    savePins();
+    if (state.last) {
+        render(state.last);
+    }
+    tick();
+}
+
+// A session deleted from History is gone for good; so is its pin.
+function unpinSession(sessionId) {
+    if (!state.pins.delete(sessionId)) {
+        return;
+    }
+    state.pinMisses.delete(sessionId);
+    savePins();
+}
+
 // Fold or unfold one group section, and remember it.
 const GROUP_COLLAPSED_MAX = 100;
 

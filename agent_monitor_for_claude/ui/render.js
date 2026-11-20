@@ -51,6 +51,7 @@ function rowKey(session) {
    the list shows first and the git signals follow. */
 const GIT_OVERVIEW_MS = 4000;
 const DESKTOP_GROUPS_MS = 5000;
+const PIN_CHECK_MS = 60000;
 const GIT_OVERVIEW_PENDING_MS = 1000;
 
 // Give each session its directory's latest git record, with the age of the
@@ -85,6 +86,44 @@ async function desktopGroupsLoop() {
         // A bridge hiccup - the next round asks again.
     }
     setTimeout(desktopGroupsLoop, DESKTOP_GROUPS_MS);
+}
+
+// Ask whether the pinned sessions still exist; one that is missing twice in a
+// row is dropped, an unreadable answer keeps it.
+async function pinCheckLoop() {
+    try {
+        await refreshPins();
+    } catch (err) {
+        // A bridge hiccup - the next round asks again.
+    }
+    setTimeout(pinCheckLoop, PIN_CHECK_MS);
+}
+
+async function refreshPins() {
+    const bridge = apiBridge();
+    if (state.pins.size === 0 || !bridge || typeof bridge.check_pins !== 'function') {
+        return;
+    }
+    const refs = Array.from(state.pins, ([id, origin]) => ({ id: id, origin: origin }));
+    const asked = new Set(state.pins.keys());
+    const status = await bridge.check_pins(refs);
+    const result = logic.prunePins(state.pins, status, state.pinMisses);
+    state.pinMisses = result.misses;
+    // A pin added while the bridge answered was not asked about: keep it.
+    for (const [id, origin] of state.pins) {
+        if (!asked.has(id)) {
+            result.pins.set(id, origin);
+        }
+    }
+    if (result.pins.size === state.pins.size) {
+        return;
+    }
+    state.pins = result.pins;
+    savePins();
+    if (state.last) {
+        render(state.last);
+    }
+    tick();
 }
 
 async function refreshDesktopGroups() {

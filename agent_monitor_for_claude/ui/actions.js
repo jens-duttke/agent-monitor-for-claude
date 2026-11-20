@@ -143,6 +143,8 @@ async function runSessionAction(action, session) {
         if (session.job_id) {
             copyToClipboard('claude attach ' + session.job_id);
         }
+    } else if (action === 'pin' || action === 'unpin') {
+        togglePin(session);
     } else if (action === 'transcript') {
         revealPath(await transcriptPath(session.session_id || '', session.cwd || '', origin), origin);
     } else if (action === 'scratchpad') {
@@ -188,6 +190,9 @@ async function openSessionMenu(itemEl, point) {
     const items = [];
     if (state.compact) {
         items.push({ key: 'details', label: labels.action_show_details });
+    }
+    if (logic.isPinId(session.session_id)) {
+        items.push(state.pins.has(session.session_id) ? { key: 'unpin', label: labels.unpin_session } : { key: 'pin', label: labels.pin_session });
     }
     items.push({ key: 'copy-id', label: labels.copy_session_id });
     if (session.job_id) {
