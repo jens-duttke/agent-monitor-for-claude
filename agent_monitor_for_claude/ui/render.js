@@ -50,6 +50,7 @@ function rowKey(session) {
    bridge answers from its cache at once and reads git in the background, so
    the list shows first and the git signals follow. */
 const GIT_OVERVIEW_MS = 4000;
+const DESKTOP_GROUPS_MS = 5000;
 const GIT_OVERVIEW_PENDING_MS = 1000;
 
 // Give each session its directory's latest git record, with the age of the
@@ -74,6 +75,29 @@ async function gitOverviewLoop() {
         // A bridge hiccup - the next round asks again.
     }
     setTimeout(gitOverviewLoop, pending ? GIT_OVERVIEW_PENDING_MS : GIT_OVERVIEW_MS);
+}
+
+// Follow Claude Desktop's groups; a changed answer re-renders.
+async function desktopGroupsLoop() {
+    try {
+        await refreshDesktopGroups();
+    } catch (err) {
+        // A bridge hiccup - the next round asks again.
+    }
+    setTimeout(desktopGroupsLoop, DESKTOP_GROUPS_MS);
+}
+
+async function refreshDesktopGroups() {
+    const bridge = apiBridge();
+    const raw = bridge && typeof bridge.get_desktop_groups === 'function' ? await bridge.get_desktop_groups() : window.__MOCK_DESKTOP_GROUPS__;
+    const next = logic.normalizeDesktopGroups(raw);
+    if (logic.desktopGroupsSignature(next) === logic.desktopGroupsSignature(state.desktopGroups)) {
+        return;
+    }
+    state.desktopGroups = next;
+    if (state.last) {
+        render(state.last);
+    }
 }
 
 async function refreshGitOverview() {

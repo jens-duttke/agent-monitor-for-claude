@@ -4064,3 +4064,30 @@ test('appVersionMarkup: names the version and what the check found; html safety'
     assert.ok(!hostile.includes('<img') && !hostile.includes('<script') && !hostile.includes('href'));
     assert.ok(hostile.includes('&lt;img src=x onerror=alert(1)&gt;'));
 });
+
+test('normalizeDesktopGroups drops bad shapes', () => {
+    const empty = { groups: [], members: new Map(), archived: new Set() };
+    assert.deepEqual(logic.normalizeDesktopGroups(null), empty);
+    assert.deepEqual(logic.normalizeDesktopGroups({ groups: 'x', members: 'y', archived: 'z' }), empty);
+
+    const result = logic.normalizeDesktopGroups({
+        groups: [{ id: 'g1', name: 'Active', order: 1, collapsed: true }, { id: 5, name: 'bad' }, null, { id: 'g2', name: 'B', order: 'x' }],
+        members: { s1: 'g1', s2: 'unknown', s3: 7, constructor: 'g1', toString: 'nope' },
+        archived: ['a1', 4, null, 'constructor'],
+    });
+    assert.deepEqual(result.groups.map((group) => group.id), ['g1', 'g2']);
+    assert.equal(result.groups[0].collapsed, true);
+    assert.equal(result.groups[1].order, 0);
+    assert.ok(result.members instanceof Map);
+    assert.deepEqual(Array.from(result.members.entries()), [['s1', 'g1'], ['constructor', 'g1']]);
+    assert.deepEqual(Array.from(result.archived), ['a1', 'constructor']);
+});
+
+test('desktopGroupsSignature is stable across key order', () => {
+    const one = logic.normalizeDesktopGroups({ groups: [{ id: 'g', name: 'N', order: 0, collapsed: false }], members: { a: 'g', b: 'g' }, archived: ['x', 'y'] });
+    const two = logic.normalizeDesktopGroups({ groups: [{ id: 'g', name: 'N', order: 0, collapsed: false }], members: { b: 'g', a: 'g' }, archived: ['y', 'x'] });
+    assert.equal(logic.desktopGroupsSignature(one), logic.desktopGroupsSignature(two));
+
+    const moved = logic.normalizeDesktopGroups({ groups: [{ id: 'g', name: 'N', order: 0, collapsed: true }], members: { a: 'g', b: 'g' }, archived: ['x', 'y'] });
+    assert.notEqual(logic.desktopGroupsSignature(one), logic.desktopGroupsSignature(moved));
+});

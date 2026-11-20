@@ -5105,7 +5105,52 @@ function settingsFileMarkup(view, labels) {
         + '<button type="button" class="setting-action" data-reveal-settings>' + esc(labels.show_in_file_manager) + '</button>';
 }
 
+/* Claude Desktop's groups as the bridge answers them, which is untrusted on-disk
+   data: wrong types are dropped, a member must name a known group, and the
+   lookups are Maps (a key such as `constructor` is just a key). */
+function normalizeDesktopGroups(raw) {
+    const result = { groups: [], members: new Map(), archived: new Set() };
+    if (!raw || typeof raw !== 'object') {
+        return result;
+    }
+    const known = new Set();
+    for (const group of Array.isArray(raw.groups) ? raw.groups : []) {
+        if (!group || typeof group !== 'object' || typeof group.id !== 'string' || !group.id || known.has(group.id)) {
+            continue;
+        }
+        known.add(group.id);
+        result.groups.push({
+            id: group.id,
+            name: typeof group.name === 'string' ? group.name : '',
+            order: Number.isFinite(group.order) ? group.order : 0,
+            collapsed: group.collapsed === true,
+        });
+    }
+    if (raw.members && typeof raw.members === 'object' && !Array.isArray(raw.members)) {
+        for (const [sessionId, groupId] of Object.entries(raw.members)) {
+            if (typeof groupId === 'string' && known.has(groupId)) {
+                result.members.set(sessionId, groupId);
+            }
+        }
+    }
+    for (const sessionId of Array.isArray(raw.archived) ? raw.archived : []) {
+        if (typeof sessionId === 'string' && sessionId) {
+            result.archived.add(sessionId);
+        }
+    }
+    return result;
+}
+
+/* A string that changes exactly when the groups, a member or an archived id does. */
+function desktopGroupsSignature(normalized) {
+    const members = Array.from(normalized.members.entries()).sort((one, two) => (one[0] < two[0] ? -1 : one[0] > two[0] ? 1 : 0));
+    const archived = Array.from(normalized.archived).sort();
+    return JSON.stringify([normalized.groups, members, archived]);
+}
+
 const AMC_LOGIC = {
+    normalizeDesktopGroups,
+    desktopGroupsSignature,
     fmt,
     parseSettingInput,
     settingErrorText,

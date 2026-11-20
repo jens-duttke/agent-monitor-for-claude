@@ -109,6 +109,8 @@ const state = {
     processTracker: null,
     // Each listed directory's latest git record (git_overview.py), by logic.gitDirKey.
     gitOverview: new Map(),
+    // Claude Desktop's groups (logic.normalizeDesktopGroups), refreshed by desktopGroupsLoop.
+    desktopGroups: { groups: [], members: new Map(), archived: new Set() },
     // A tool of the selected subagent, by its key (a tool name, or mcp:<server>):
     // its activity then lists that tool's calls alone.
     selectedTool: null,
@@ -651,7 +653,7 @@ async function callBootstrap() {
    pinned sessions and the members of a Claude Desktop group (declared by the
    features that own them). */
 function keptSessionIds() {
-    return [];
+    return Array.from(state.desktopGroups.members.keys());
 }
 
 async function callSnapshot() {

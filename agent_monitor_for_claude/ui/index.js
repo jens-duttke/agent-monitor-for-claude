@@ -288,6 +288,7 @@ async function boot() {
     setInterval(checkForChanges, FINGERPRINT_INTERVAL);
     setInterval(tickAges, 1000);
     gitOverviewLoop();
+    desktopGroupsLoop();
     updateStatusLoop();
 }
 

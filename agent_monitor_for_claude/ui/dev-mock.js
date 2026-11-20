@@ -557,6 +557,13 @@ window.__MOCK_PROC_STATS__ = {
     ]),
 };
 
+// Claude Desktop's groups (get_desktop_groups): one group of three sessions and one archived session.
+window.__MOCK_DESKTOP_GROUPS__ = {
+    groups: [{ id: 'grp-active', name: 'Actief', order: 0, collapsed: false }],
+    members: { h1a: 'grp-active', h2p: 'grp-active', h3c: 'grp-active' },
+    archived: ['h4d'],
+};
+
 // Where each directory's work stands in git, keyed by the directory (get_git_overview).
 window.__MOCK_GIT_OVERVIEW__ = {
     'D:\\Projects\\helios-renderer': {
