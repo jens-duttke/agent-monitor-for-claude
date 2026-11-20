@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -264,6 +265,37 @@ def find_transcript(root: SessionRoot, session_id: str) -> Path | None:
             return candidate
 
     return None
+
+
+def project_folders(root: SessionRoot) -> list[Path] | None:
+    """Return the project folders under *root*, or None when the listing failed.
+
+    An absent ``projects/`` folder in a root whose configuration folder exists
+    is an empty listing; any other failure means the root could not be read.
+    """
+    try:
+        return [Path(entry.path) for entry in os.scandir(projects_dir(root))]
+    except FileNotFoundError:
+        return [] if root.config_dir.is_dir() else None
+    except OSError:
+        return None
+
+
+def folder_has_transcript(folder: Path, session_id: str) -> bool | None:
+    """Return whether *folder* holds the transcript of *session_id*, or None when that could not be told.
+
+    Unlike :func:`find_transcript`, a read failure is not an absence.  The id
+    must be a UUID, so it can never name a path outside the folder.
+    """
+    if not is_session_id(session_id):
+        return False
+
+    try:
+        return stat.S_ISREG(os.stat(folder / f'{session_id}.jsonl').st_mode)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return None
 
 
 def task_output_dir(root: SessionRoot, session_id: str, cwd: str) -> Path:

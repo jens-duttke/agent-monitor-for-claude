@@ -33,7 +33,7 @@ from .background_scans import completed_background_scans, pause_background_scans
 from .cli_install import installed_version
 from .last_seen import note_alive, prune_last_seen, seconds_since_alive
 from .model_catalog import context_window
-from .paths import SessionRoot, TranscriptIndex, find_transcript, is_session_id, sessions_dir, transcript_path
+from .paths import SessionRoot, TranscriptIndex, find_transcript, folder_has_transcript, is_session_id, project_folders, sessions_dir, transcript_path
 from .plugin_servers import server_commands
 from .process_probe import ProcessInfo, probe_all
 from .procinfo import ChildProcess
@@ -586,16 +586,40 @@ def pin_status(refs: object) -> dict[str, str]:
 
     roots = session_roots()
     listed_origins = {root.origin for root in roots}
+    folders_by_origin: dict[str, list[Path]] = {}
+    unreadable_origins: set[str] = set()
+    for root in roots:
+        folders = project_folders(root)
+        if folders is None:
+            unreadable_origins.add(root.origin)
+        else:
+            folders_by_origin[root.origin] = folders
+
     status: dict[str, str] = {}
     for session_id, origin in pins.items():
-        if any(find_transcript(root, session_id) is not None for root in roots):
+        found, readable = _transcript_in_roots(session_id, folders_by_origin)
+        if found:
             status[session_id] = 'present'
-        elif origin in listed_origins:
+        elif origin in listed_origins and readable and not unreadable_origins:
             status[session_id] = 'missing'
         else:
             status[session_id] = 'unknown'
 
     return status
+
+
+def _transcript_in_roots(session_id: str, folders_by_origin: dict[str, list[Path]]) -> tuple[bool, bool]:
+    """Return ``(found, fully_read)`` for *session_id* across the already listed project folders."""
+    fully_read = True
+    for folders in folders_by_origin.values():
+        for folder in folders:
+            has_it = folder_has_transcript(folder, session_id)
+            if has_it:
+                return True, True
+            if has_it is None:
+                fully_read = False
+
+    return False, fully_read
 
 
 def _kept_transcripts(keep: list[str]) -> list[tuple[str, SessionRoot, Path, int, int]]:
