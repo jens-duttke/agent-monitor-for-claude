@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An expired prompt cache is marked in the session details whatever writing it again costs, and the amounts are shown in cents, since small ones add up across sessions.
 
 ### Fixed
+- Sessions that use Claude Fable 5.2 or Claude Mythos 5.2 show their cost instead of a plain token count. (thanks to [@jeroenbu](https://github.com/jeroenbu) for the contribution)
 - A list entry no longer cuts a figure off mid-word when its line is full. What does not fit moves to a second line.
 - Reading git information no longer runs an fsmonitor program configured in a repository, and git's ownership check is skipped only for repositories inside WSL, so a repository another user prepared can no longer run a program as you.
 - An expanded background-task console no longer makes the app sluggish in a long session: the task labels are read from the transcript's new lines only, not from the whole file every second.
