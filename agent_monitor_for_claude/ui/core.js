@@ -647,11 +647,18 @@ async function callBootstrap() {
     return window.__MOCK_BOOTSTRAP__ || { labels: {}, poll_interval: 5 };
 }
 
+/* The session ids the overview must keep listing however long ago they ended:
+   pinned sessions and the members of a Claude Desktop group (declared by the
+   features that own them). */
+function keptSessionIds() {
+    return [];
+}
+
 async function callSnapshot() {
     const bridge = apiBridge();
     if (bridge) {
         // Every subagent with its tools only while the graph shows them.
-        return bridge.get_snapshot(state.group === 'graph' && !state.compact);
+        return bridge.get_snapshot(state.group === 'graph' && !state.compact, keptSessionIds());
     }
     return window.__MOCK_SNAPSHOT__ || { generated_at: '', sessions: [] };
 }

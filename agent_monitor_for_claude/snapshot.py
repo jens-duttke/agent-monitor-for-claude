@@ -26,13 +26,14 @@ import os
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from .background_scans import completed_background_scans, pause_background_scans
 from .cli_install import installed_version
 from .last_seen import note_alive, prune_last_seen, seconds_since_alive
 from .model_catalog import context_window
-from .paths import SessionRoot, TranscriptIndex, sessions_dir, transcript_path
+from .paths import SessionRoot, TranscriptIndex, find_transcript, is_session_id, sessions_dir, transcript_path
 from .plugin_servers import server_commands
 from .process_probe import ProcessInfo, probe_all
 from .procinfo import ChildProcess
@@ -72,20 +73,33 @@ _PROBE_REUSE_SECONDS = 10.0
 _last_probes: dict[str, tuple[float, dict[int, ProcessInfo]]] = {}
 _last_probes_lock = threading.Lock()
 
+# The most kept session ids one call honours, and how long a kept id whose
+# transcript was not found waits before the roots are searched for it again;
+# session id -> (the root and transcript found, or None; monotonic time looked).
+_MAX_KEEP = 200
+_KEEP_RETRY_SECONDS = 60.0
+_keep_lookup: dict[str, tuple[tuple[SessionRoot, Path] | None, float]] = {}
+_keep_lookup_lock = threading.Lock()
 
-def build_snapshot(graph: bool = False) -> dict[str, Any]:
+
+def build_snapshot(graph: bool = False, keep: object = None) -> dict[str, Any]:
     """Return the raw session overview as a flat list of per-session records, across every session root.
 
     Each session's subagents, the tools it called and its messages fill only
     the connection graph and an agent's details, and with every agent a session
     ever ran they are most of the snapshot's size - so they are filled in only
     when *graph* asks for them, and empty otherwise.
+
+    *keep* lists session ids the overview holds on to however long ago they
+    ended, and even without a registry record (pinned sessions and members of a
+    Claude Desktop group): each one the regular pass did not emit is built from
+    its transcript, like a History record, and marked ``kept``.
     """
     with pause_background_scans():
-        return _build_snapshot(graph)
+        return _build_snapshot(graph, _keep_ids(keep))
 
 
-def _build_snapshot(graph: bool) -> dict[str, Any]:
+def _build_snapshot(graph: bool, keep: list[str]) -> dict[str, Any]:
     """Assemble :func:`build_snapshot`'s result."""
     sessions: list[dict[str, Any]] = []
 
@@ -108,6 +122,7 @@ def _build_snapshot(graph: bool) -> dict[str, Any]:
             sessions.append(session)
 
     _prune_caches(pairs, listed)
+    sessions.extend(_kept_records(keep, {session['session_id'] for session in sessions}))
 
     return {
         'generated_at': datetime.now().astimezone().isoformat(timespec='seconds'),
@@ -484,7 +499,7 @@ def live_or_recent_ids() -> set[str]:
     return ids
 
 
-def registry_fingerprint() -> str:
+def registry_fingerprint(keep: object = None) -> str:
     """Return a cheap change fingerprint of the session registry and transcripts, across every session root.
 
     Built from registry records (origin, pid, session, native status) and each
@@ -501,7 +516,8 @@ def registry_fingerprint() -> str:
 
     The count of finished background scans leads it: a large transcript's
     first scan completes without the file changing, and the snapshot that
-    reported it as pending is outdated from that moment on.
+    reported it as pending is outdated from that moment on.  Each kept id
+    (see :func:`build_snapshot`) whose transcript is found adds its time and size.
     """
     parts: list[str] = [f'scans:{completed_background_scans()}']
     index = TranscriptIndex()
@@ -514,7 +530,94 @@ def registry_fingerprint() -> str:
                 f"{record['waiting_for']}:{record['remote_control']}:{transcript_mark}"
             )
 
+        for session_id, location in _kept_transcripts(_keep_ids(keep)):
+            try:
+                stat = location[1].stat()
+            except OSError:
+                continue
+
+            parts.append(f'keep:{session_id}:{stat.st_mtime_ns}:{stat.st_size}')
+
     return '|'.join(parts)
+
+
+def _keep_ids(keep: object) -> list[str]:
+    """Return the session ids of *keep* that may be kept: UUID strings only, each once, at most ``_MAX_KEEP``."""
+    if not isinstance(keep, (list, tuple)):
+        return []
+
+    ids: list[str] = []
+    for value in keep:
+        if is_session_id(value) and value not in ids:
+            ids.append(value)
+            if len(ids) >= _MAX_KEEP:
+                break
+
+    return ids
+
+
+def _kept_transcripts(keep: list[str]) -> list[tuple[str, tuple[SessionRoot, Path]]]:
+    """Return each kept id with the root and transcript it was found under, searching the roots in order.
+
+    A lookup that found nothing is repeated only after ``_KEEP_RETRY_SECONDS``;
+    one that found a file is trusted until the file is gone.  Ids no longer
+    kept are dropped from the cache.
+    """
+    now = time.monotonic()
+    roots: list[SessionRoot] | None = None
+    found: list[tuple[str, tuple[SessionRoot, Path]]] = []
+
+    with _keep_lookup_lock:
+        for session_id in [known for known in _keep_lookup if known not in keep]:
+            del _keep_lookup[session_id]
+
+        for session_id in keep:
+            cached = _keep_lookup.get(session_id)
+            if cached is not None:
+                location, looked_at = cached
+                if location is not None and location[1].is_file():
+                    found.append((session_id, location))
+                    continue
+                if location is None and now - looked_at < _KEEP_RETRY_SECONDS:
+                    continue
+
+            if roots is None:
+                roots = session_roots()
+
+            location = None
+            for root in roots:
+                path = find_transcript(root, session_id)
+                if path is not None:
+                    location = (root, path)
+                    break
+
+            _keep_lookup[session_id] = (location, now)
+            if location is not None:
+                found.append((session_id, location))
+
+    return found
+
+
+def _kept_records(keep: list[str], emitted: set[str]) -> list[dict[str, Any]]:
+    """Build the records of the kept ids the regular pass did not emit, from their transcripts."""
+    from .history import history_record
+
+    records: list[dict[str, Any]] = []
+    for session_id, (root, path) in _kept_transcripts(keep):
+        if session_id in emitted:
+            continue
+
+        record = history_record(path)
+        if record is None:
+            continue
+
+        record['origin'] = root.origin
+        record['origin_label'] = root.label
+        record['is_history'] = False
+        record['kept'] = True
+        records.append(record)
+
+    return records
 
 
 def _collect_pairs(index: TranscriptIndex, listed: set[str] | None = None) -> list[tuple[SessionRoot, dict[str, Any]]]:

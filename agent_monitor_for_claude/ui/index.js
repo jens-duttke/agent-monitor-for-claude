@@ -61,7 +61,7 @@ async function checkForChanges() {
 
     state.checking = true;
     try {
-        const fingerprint = await bridge.get_fingerprint();
+        const fingerprint = await bridge.get_fingerprint(keptSessionIds());
         if (fingerprint !== state.fingerprint) {
             state.fingerprint = fingerprint;
             await tick();

@@ -51,7 +51,7 @@ from .subagents import past_subagent_usage
 from .transcript import history_state_for
 from .usage_parts import session_usage
 
-__all__ = ['list_history']
+__all__ = ['history_record', 'list_history']
 
 # Transcripts read at once per session root.
 _MAX_WORKERS = 16
@@ -324,6 +324,15 @@ def _resolve_folder_cwd(slug: str, folder_records: list[dict[str, Any]], slug_to
             return record['cwd'], False
 
     return _cwd_from_slug(slug), True
+
+
+def history_record(path: Path) -> dict[str, Any] | None:
+    """Return the raw history record of the transcript at *path*, or None when it cannot be read.
+
+    The caller stamps ``origin`` and ``origin_label`` and, for a session the
+    live overview keeps, resets ``is_history``.
+    """
+    return _build_history_record(path)
 
 
 def _build_history_record(path: Path) -> dict[str, Any] | None:

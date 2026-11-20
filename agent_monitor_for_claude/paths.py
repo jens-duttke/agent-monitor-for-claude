@@ -27,7 +27,7 @@ from .platforms import IS_WINDOWS
 
 __all__ = [
     'SessionRoot', 'TranscriptIndex', 'local_root', 'claude_temp_dir', 'config_dir', 'sessions_dir', 'plugins_dir', 'projects_dir', 'model_catalog_dir',
-    'update_result_path', 'cwd_to_slug', 'transcript_path', 'find_transcript', 'task_output_dir', 'task_output_path', 'scratchpad_dir', 'host_path',
+    'update_result_path', 'cwd_to_slug', 'transcript_path', 'find_transcript', 'is_session_id', 'task_output_dir', 'task_output_path', 'scratchpad_dir', 'host_path',
 ]
 
 _NON_ALNUM_PATTERN = re.compile(r'[^A-Za-z0-9]')
@@ -226,6 +226,11 @@ def _transcript_files(folder: Path) -> dict[str, tuple[int, int]]:
         return {}
 
     return files
+
+
+def is_session_id(value: object) -> bool:
+    """Return True if *value* is a string shaped like a session id (a UUID)."""
+    return isinstance(value, str) and _SESSION_UUID_PATTERN.match(value) is not None
 
 
 def find_transcript(root: SessionRoot, session_id: str) -> Path | None:

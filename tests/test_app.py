@@ -572,6 +572,20 @@ class DesktopGroupsBridgeTest(unittest.TestCase):
         self.assertEqual(result, expected)
 
 
+class SnapshotBridgeKeepTest(unittest.TestCase):
+    def test_get_snapshot_passes_keep(self) -> None:
+        with mock.patch.object(app, 'build_snapshot', return_value={'sessions': []}) as build:
+            _MonitorApi().get_snapshot(True, ['a'])
+
+        build.assert_called_once_with(True, ['a'])
+
+    def test_get_fingerprint_passes_keep(self) -> None:
+        with mock.patch.object(app, 'registry_fingerprint', return_value='f') as fingerprint:
+            _MonitorApi().get_fingerprint(['a'])
+
+        fingerprint.assert_called_once_with(['a'])
+
+
 class PrioritizeSessionTest(unittest.TestCase):
     """Selecting a session whose figures are still being read moves its scans to the front - nothing else."""
 

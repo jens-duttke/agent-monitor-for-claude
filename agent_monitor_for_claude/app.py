@@ -308,13 +308,13 @@ class _MonitorApi:
 
         print('[UI]', _sanitize_log(message), file=sys.stderr, flush=True)
 
-    def get_snapshot(self, graph: object = False) -> dict[str, Any]:
-        """Return the current session overview; *graph* adds what only the connection graph shows."""
-        return build_snapshot(graph is True)
+    def get_snapshot(self, graph: object = False, keep: object = None) -> dict[str, Any]:
+        """Return the current session overview; *graph* adds what only the connection graph shows, *keep* names sessions to retain."""
+        return build_snapshot(graph is True, keep)
 
-    def get_fingerprint(self) -> str:
-        """Return the cheap registry/transcript change fingerprint."""
-        return registry_fingerprint()
+    def get_fingerprint(self, keep: object = None) -> str:
+        """Return the cheap registry/transcript change fingerprint, covering the kept sessions too."""
+        return registry_fingerprint(keep)
 
     def get_history(self, max_age_seconds: object = None) -> list[dict[str, Any]]:
         """Return past, non-live sessions for the history listing (on demand).

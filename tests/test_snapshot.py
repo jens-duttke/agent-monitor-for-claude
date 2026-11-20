@@ -790,6 +790,55 @@ class FingerprintTest(_RegistryFixture):
         self.assertNotEqual(before, registry_fingerprint())
 
 
+_KEPT_ID = '11111111-2222-3333-4444-555555555555'
+
+
+class KeptSessionTest(_RegistryFixture):
+    def _add_kept_transcript(self, session_id: str = _KEPT_ID, cwd: str = 'd:\WebDev\kept') -> Path:
+        path = transcript_path(local_root(), session_id, cwd)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_END_TURN, encoding='utf-8')
+        return path
+
+    def test_kept_id_without_registry_record_is_built_from_transcript(self) -> None:
+        self._add_kept_transcript()
+
+        sessions = build_snapshot(keep=[_KEPT_ID])['sessions']
+
+        self.assertEqual([s['session_id'] for s in sessions], [_KEPT_ID])
+        self.assertFalse(sessions[0]['alive'])
+        self.assertIs(sessions[0]['kept'], True)
+        self.assertIs(sessions[0]['is_history'], False)
+        self.assertEqual(sessions[0]['origin'], local_root().origin)
+
+    def test_kept_id_already_live_is_not_duplicated(self) -> None:
+        self._add_session(_KEPT_ID, 'd:\WebDev\kept')
+
+        sessions = build_snapshot(keep=[_KEPT_ID])['sessions']
+
+        self.assertEqual(len(sessions), 1)
+        self.assertNotIn('kept', sessions[0])
+
+    def test_non_uuid_keep_entries_are_ignored(self) -> None:
+        self._add_kept_transcript()
+
+        self.assertEqual(build_snapshot(keep=['a', 7, None, {}, ['x']])['sessions'], [])
+        self.assertEqual(build_snapshot(keep='not a list')['sessions'], [])
+
+    def test_missing_transcript_yields_no_record(self) -> None:
+        self.assertEqual(build_snapshot(keep=[_KEPT_ID])['sessions'], [])
+
+    def test_fingerprint_changes_when_kept_transcript_grows(self) -> None:
+        path = self._add_kept_transcript()
+        before = registry_fingerprint([_KEPT_ID])
+
+        with path.open('a', encoding='utf-8') as handle:
+            handle.write(chr(10) + _END_TURN)
+
+        self.assertNotEqual(before, registry_fingerprint([_KEPT_ID]))
+        self.assertEqual(registry_fingerprint(), registry_fingerprint())
+
+
 class WorktreeSessionTest(_RegistryFixture):
     """A session that entered a git worktree: the registry names the worktree, the transcript stays with the project."""
 
