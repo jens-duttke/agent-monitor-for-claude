@@ -1038,21 +1038,61 @@ body.splitter-dragging {
     }
 }
 
-/* Inside a group, the list section its sessions would otherwise be listed under. */
+/* Inside a group, the list section its sessions would otherwise be listed
+   under: its dot, label and count, as a toggle that folds it. */
 .group-sub-head {
     display: flex;
-    align-items: baseline;
+}
+
+.group-sub-toggle {
+    display: flex;
+    flex: 1;
+    align-items: center;
     gap: 6px;
+    min-width: 0;
     padding: 8px 14px 4px;
+    border: none;
+    background: transparent;
     color: var(--fg-faint);
+    font: inherit;
     font-size: 10.5px;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
+    text-align: left;
+    cursor: pointer;
+
+    &:hover {
+        color: var(--fg);
+    }
+
+    .chevron {
+        flex: none;
+        width: 9px;
+        font-size: 10px;
+        line-height: 1;
+        transition: transform 0.12s ease;
+    }
+
+    .section-dot {
+        flex: none;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--s);
+    }
 
     .sub-count {
         color: var(--fg-dim);
         font-variant-numeric: tabular-nums;
+    }
+
+    .group-sub.closed & {
+        padding-bottom: 8px;
+
+        .chevron {
+            transform: rotate(-90deg);
+        }
     }
 }
 
@@ -3777,9 +3817,19 @@ body.compact {
         border-radius: 6px;
     }
 
-    .group-sub-head {
+    .group-sub-toggle {
+        gap: 5px;
         padding: 4px 12px 2px;
         font-size: 9.5px;
+
+        .group-sub.closed & {
+            padding-bottom: 4px;
+        }
+
+        .section-dot {
+            width: 5px;
+            height: 5px;
+        }
     }
 
     .list-divider {

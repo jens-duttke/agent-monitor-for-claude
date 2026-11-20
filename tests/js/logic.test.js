@@ -4477,3 +4477,94 @@ test('pinSourceMarkup: html safety', () => {
     assert.equal(logic.pinSourceMarkup('constructor', hostile), '');
     assert.equal(logic.pinSourceMarkup('desktop', {}), '');
 });
+
+test('groupSubFoldKey: the group section key and the list section key', () => {
+    assert.equal(logic.groupSubFoldKey('group:a', 'older'), 'group:a|older');
+    assert.equal(logic.groupSubFoldKey('pinned', 'needs'), 'pinned|needs');
+});
+
+test('parseFoldedSubs: only well-formed keys, deduped, capped, garbage is empty', () => {
+    assert.equal(logic.parseFoldedSubs('not json').size, 0);
+    assert.equal(logic.parseFoldedSubs('{"a":1}').size, 0);
+    assert.equal(logic.parseFoldedSubs(null).size, 0);
+    const parsed = logic.parseFoldedSubs(JSON.stringify(['pinned|older', 'group:x|archived', 'group:x|archived', 7, 'pinned|constructor',
+        'nobar', 'other|older', 'group:|needs', null]));
+    assert.deepEqual([...parsed], ['pinned|older', 'group:x|archived']);
+    const many = Array.from({ length: logic.GROUP_SUB_FOLDED_MAX + 10 }, (_, n) => 'group:g' + n + '|older');
+    const capped = logic.parseFoldedSubs(JSON.stringify(many));
+    assert.equal(capped.size, logic.GROUP_SUB_FOLDED_MAX);
+    assert.ok(capped.has(many[many.length - 1]));
+    assert.ok(!capped.has(many[0]));
+});
+
+test('toggledFoldedSubs: folds and unfolds one key on a copy, newest kept under the cap', () => {
+    const start = new Set(['pinned|older']);
+    const folded = logic.toggledFoldedSubs(start, 'group:a|running');
+    assert.deepEqual([...folded], ['pinned|older', 'group:a|running']);
+    assert.deepEqual([...start], ['pinned|older']);
+    assert.deepEqual([...logic.toggledFoldedSubs(folded, 'pinned|older')], ['group:a|running']);
+    assert.deepEqual([...logic.toggledFoldedSubs(null, 'pinned|needs')], ['pinned|needs']);
+    assert.deepEqual([...logic.toggledFoldedSubs(start, 'bad key')], ['pinned|older']);
+    let full = new Set();
+    for (let n = 0; n < logic.GROUP_SUB_FOLDED_MAX + 5; n += 1) {
+        full = logic.toggledFoldedSubs(full, 'group:g' + n + '|older');
+    }
+    assert.equal(full.size, logic.GROUP_SUB_FOLDED_MAX);
+    assert.ok(full.has('group:g' + (logic.GROUP_SUB_FOLDED_MAX + 4) + '|older'));
+});
+
+test('buildSections: a sub-heading folds per group and per section, open by default', () => {
+    const view = groupsView({
+        pinned: new Set(['p1', 'p2']),
+        members: new Map([['g1', 'g'], ['g2', 'g']]),
+        subCollapsed: new Set(['group:g|older']),
+    });
+    const sections = logic.buildSections([
+        { session_id: 'p1', status: 'working', alive: true, age_seconds: 1 },
+        { session_id: 'p2', status: 'completed', alive: false, kept: true, age_seconds: 9 },
+        { session_id: 'g1', status: 'working', alive: true, age_seconds: 1 },
+        { session_id: 'g2', status: 'completed', alive: false, kept: true, age_seconds: 9 },
+    ], new Set(), view);
+    const pinned = sectionByKey(sections, 'pinned');
+    const group = sectionByKey(sections, 'group:g');
+
+    assert.deepEqual(pinned.subsections.map((sub) => [sub.foldKey, sub.collapsed]), [['pinned|running', false], ['pinned|older', false]]);
+    assert.deepEqual(group.subsections.map((sub) => [sub.foldKey, sub.collapsed]), [['group:g|running', false], ['group:g|older', true]]);
+    // Folded, its sessions are still the group's and still counted.
+    assert.deepEqual(group.subsections[1].sessions.map((s) => s.session_id), ['g2']);
+    assert.deepEqual(group.sessions.map((s) => s.session_id), ['g1', 'g2']);
+    assert.equal(sectionByKey(sections, 'older').sessions.length, 0);
+});
+
+test('foldedGroupSessionCount: a folded sub-heading counts too, a folded group only once', () => {
+    const view = groupsView({
+        groups: [{ id: 'g', name: 'G' }, { id: 'h', name: 'H' }],
+        members: new Map([['a', 'g'], ['b', 'g'], ['c', 'h'], ['d', 'h']]),
+        collapsed: new Set(['group:h']),
+        subCollapsed: new Set(['group:g|running', 'group:h|running']),
+    });
+    const sections = logic.buildSections([
+        { session_id: 'a', status: 'working', alive: true, age_seconds: 1 },
+        { session_id: 'b', status: 'awaiting_permission', alive: true, age_seconds: 1 },
+        { session_id: 'c', status: 'working', alive: true, age_seconds: 1 },
+        { session_id: 'd', status: 'working', alive: true, age_seconds: 1 },
+    ], new Set(), view);
+
+    assert.equal(logic.foldedGroupSessionCount(sections), 3);
+});
+
+test('groupSubheadMarkup: a folding button with the section dot, html safety', () => {
+    const open = logic.groupSubheadMarkup({ key: 'older', labelKey: 'section_older', foldKey: 'group:g|older', collapsed: false, sessions: [{}] },
+        { section_older: 'Older' });
+    assert.match(open, /^<button type="button" class="group-sub-toggle section-older"/);
+    assert.match(open, /data-group-sub="group:g\|older"/);
+    assert.match(open, /aria-expanded="true"/);
+    assert.match(open, /class="chevron"/);
+    assert.match(open, /<span class="section-dot"><\/span>/);
+    assert.doesNotMatch(open, /data-tip|title=/);
+    const closed = logic.groupSubheadMarkup({ key: 'older', labelKey: 'section_older', foldKey: 'pinned|older', collapsed: true, sessions: [{}, {}] }, {});
+    assert.match(closed, /aria-expanded="false"/);
+    assert.match(closed, />2</);
+    const hostile = logic.groupSubheadMarkup({ key: '"><img src=x>', labelKey: 'x', foldKey: '"><script>', sessions: [] }, {});
+    assert.doesNotMatch(hostile, /<img|<script/);
+});

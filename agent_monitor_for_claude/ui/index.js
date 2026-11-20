@@ -222,6 +222,7 @@ async function boot() {
         state.searchRegex = false;
     }
     loadGroupCollapsed();
+    loadGroupSubCollapsed();
     loadPins();
     // Each init step is isolated so a failure in one (e.g. a control the
     // markup no longer matches) cannot abort boot and freeze the loading

@@ -139,7 +139,7 @@ Nothing is ever run inside a distribution.
 1. **Interface preferences** - in `%LOCALAPPDATA%\AgentMonitorForClaude` (Windows) or
    `~/.local/share/agent-monitor-for-claude` (Linux). This is the browser engine's profile; the app
    stores open sections, time ranges, grouping, list width, search options, view settings, and which
-   projects (by folder path), Desktop groups and graph sessions (by session id) you collapsed, and the
+   projects (by folder path), Desktop groups, the headings inside them and graph sessions (by session id) you collapsed, and the
    sessions (by session id) you pinned. The rest of the folder is
    the engine's own cache. You can delete the folder at any time; the preferences then reset.
 2. **Settings** - `agent-monitor-settings.json` in `%APPDATA%\AgentMonitorForClaude` (Windows) or

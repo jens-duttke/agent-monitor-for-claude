@@ -868,7 +868,11 @@ function buildSections(sessions, activeKeys, groupsView) {
         if (members.length === 0) {
             return;
         }
-        const subsections = groupSubsections(members.map((session) => withArchivedMark(session, view.archived)), view.archived);
+        const subsections = groupSubsections(members.map((session) => withArchivedMark(session, view.archived)), view.archived)
+            .map((sub) => {
+                const foldKey = groupSubFoldKey(key, sub.key);
+                return Object.assign(sub, { foldKey: foldKey, collapsed: view.subCollapsed.has(foldKey) });
+            });
         groupSections.push(Object.assign({ key: key }, fields, {
             kind: 'group',
             collapsed: view.collapsed.has(key),
@@ -925,12 +929,78 @@ function groupSubsections(sessions, archived) {
     return result;
 }
 
-// A group's sub-heading: its label and how many sessions it holds.
+// A group's sub-heading: the toggle that folds it, with the dot, label and
+// count of the list section it stands for. A control that changes the list
+// carries no tooltip.
 function groupSubheadMarkup(subsection, labels) {
     const strings = labels || {};
     const count = Array.isArray(subsection.sessions) ? subsection.sessions.length : 0;
-    return '<span class="sub-label">' + esc(strings[subsection.labelKey] || subsection.key) + '</span>'
-        + '<span class="sub-count">' + esc(count) + '</span>';
+    return '<button' + attr('type', 'button') + attr('class', 'group-sub-toggle section-' + subsection.key)
+        + attr('data-group-sub', subsection.foldKey || '') + attr('aria-expanded', subsection.collapsed ? 'false' : 'true') + '>'
+        + '<span class="chevron" aria-hidden="true">&#9662;</span>'
+        + '<span class="section-dot"></span>'
+        + '<span class="sub-label">' + esc(strings[subsection.labelKey] || subsection.key) + '</span>'
+        + '<span class="sub-count">' + esc(count) + '</span>'
+        + '</button>';
+}
+
+// How many folded sub-headings are remembered (amc-group-sub-collapsed); the
+// oldest choices go first.
+const GROUP_SUB_FOLDED_MAX = 200;
+const GROUP_SUB_FOLD_KEY_MAX = 300;
+
+// The key a sub-heading of a group folds under: the group section's key and
+// the list section's, so Older in one group folds apart from Older in another
+// and from the list's own.
+function groupSubFoldKey(groupKey, sectionKey) {
+    return groupKey + '|' + sectionKey;
+}
+
+// Whether a stored value is a sub-heading's fold key: Pinned or a group, then
+// one of the list sections.
+function isGroupSubFoldKey(value) {
+    if (typeof value !== 'string' || value.length > GROUP_SUB_FOLD_KEY_MAX) {
+        return false;
+    }
+    const cut = value.lastIndexOf('|');
+    if (cut < 0) {
+        return false;
+    }
+    const groupKey = value.slice(0, cut);
+    if (groupKey !== 'pinned' && !(groupKey.startsWith('group:') && groupKey.length > 'group:'.length)) {
+        return false;
+    }
+    return listSection(value.slice(cut + 1)) !== null;
+}
+
+// The folded sub-headings from their stored JSON list; anything else is none.
+function parseFoldedSubs(raw) {
+    let stored;
+    try {
+        stored = JSON.parse(raw);
+    } catch (e) {
+        return new Set();
+    }
+    if (!Array.isArray(stored)) {
+        return new Set();
+    }
+    const keys = new Set(stored.filter(isGroupSubFoldKey));
+    return new Set([...keys].slice(-GROUP_SUB_FOLDED_MAX));
+}
+
+// A copy of the folded sub-headings with one key folded or unfolded; a key
+// folded now goes last, so the cap keeps the newest choices.
+function toggledFoldedSubs(folded, key) {
+    const next = new Set(folded instanceof Set ? folded : []);
+    if (!isGroupSubFoldKey(key)) {
+        return next;
+    }
+    if (next.has(key)) {
+        next.delete(key);
+        return next;
+    }
+    next.add(key);
+    return new Set([...next].slice(-GROUP_SUB_FOLDED_MAX));
 }
 
 // The heading between the group sections and the status sections.
@@ -948,13 +1018,23 @@ function withArchivedMark(session, archived) {
     return Object.assign({}, session, { archived: true });
 }
 
-// How many sessions the folded group sections hold: they are listed, only not
-// unfolded, so a view whose hits all sit in one is not an empty one.
+// How many sessions the folded group sections and the folded sub-headings of
+// the open ones hold: they are listed, only not unfolded, so a view whose hits
+// all sit in one is not an empty one.
 function foldedGroupSessionCount(sections) {
     let count = 0;
     for (const section of sections || []) {
-        if (section && section.kind === 'group' && section.collapsed) {
+        if (!section || section.kind !== 'group') {
+            continue;
+        }
+        if (section.collapsed) {
             count += section.sessions.length;
+            continue;
+        }
+        for (const sub of section.subsections || []) {
+            if (sub.collapsed) {
+                count += sub.sessions.length;
+            }
         }
     }
     return count;
@@ -972,6 +1052,7 @@ function normalizedGroupsView(groupsView) {
         members: view.members instanceof Map ? view.members : new Map(),
         archived: view.archived instanceof Set ? view.archived : new Set(),
         collapsed: view.collapsed instanceof Set ? view.collapsed : new Set(),
+        subCollapsed: view.subCollapsed instanceof Set ? view.subCollapsed : new Set(),
     };
 }
 
@@ -5540,6 +5621,10 @@ const AMC_LOGIC = {
     buildSections,
     groupSubsections,
     groupSubheadMarkup,
+    GROUP_SUB_FOLDED_MAX,
+    groupSubFoldKey,
+    parseFoldedSubs,
+    toggledFoldedSubs,
     listDividerMarkup,
     groupHeaderMarkup,
     foldedGroupSessionCount,

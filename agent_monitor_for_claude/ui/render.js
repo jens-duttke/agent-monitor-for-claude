@@ -712,7 +712,8 @@ function updateGroupSection(el, item) {
 }
 
 // One sub-heading of a group - the list section its sessions would otherwise
-// be listed in - with its rows. Not interactive: the whole group folds.
+// be listed in - with its rows. It folds on its own; folded, its rows are left
+// out and its header still gives the count.
 function createGroupSub() {
     const el = document.createElement('div');
     el.className = 'group-sub';
@@ -721,9 +722,16 @@ function createGroupSub() {
 }
 
 function updateGroupSub(el, sub, pinned) {
-    setClass(el, 'group-sub group-sub-' + sub.key);
-    setMarkup(el.querySelector('.group-sub-head'), logic.groupSubheadMarkup(sub, state.labels));
-    reconcile(el.querySelector('.group-sub-items'), sub.sessions, rowKey, createItem, (itemEl, session) => updateGroupItem(itemEl, session, pinned));
+    setClass(el, 'group-sub group-sub-' + sub.key + (sub.collapsed ? ' closed' : ''));
+    // A rewritten toggle would take the keyboard focus with it.
+    const head = el.querySelector('.group-sub-head');
+    const focused = head.contains(document.activeElement);
+    setMarkup(head, logic.groupSubheadMarkup(sub, state.labels));
+    if (focused && !head.contains(document.activeElement) && head.firstElementChild) {
+        head.firstElementChild.focus();
+    }
+    const rows = sub.collapsed ? [] : sub.sessions;
+    reconcile(el.querySelector('.group-sub-items'), rows, rowKey, createItem, (itemEl, session) => updateGroupItem(itemEl, session, pinned));
 }
 
 // A session that ended stays in its group, dimmed.
@@ -1050,7 +1058,9 @@ function render(snapshot) {
                 // keyboard walks the rows in the order of the sub-headings.
                 const subsections = section.collapsed ? [] : section.subsections;
                 for (const sub of subsections) {
-                    shown.push(...sub.sessions);
+                    if (!sub.collapsed) {
+                        shown.push(...sub.sessions);
+                    }
                 }
                 sections.push({ key: section.key, kind: 'group', section: section, subsections: subsections });
                 continue;

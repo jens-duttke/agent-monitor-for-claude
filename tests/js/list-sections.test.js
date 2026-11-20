@@ -129,3 +129,22 @@ test('opening only Archived runs the History fetch end to end', async () => {
     assert.deepEqual(plain(run('state.history')).map((row) => row.session_id), ['p']);
     assert.ok(context.__renders >= 2);
 });
+
+test('a sub-heading inside a group folds on its own and the folding is remembered', () => {
+    const { context, stored, run } = controller();
+    const renders = context.__renders;
+
+    assert.equal(run('currentGroupsView().subCollapsed.size'), 0);
+    run('toggleGroupSub("group:a|older"); toggleGroupSub("pinned|needs"); toggleGroupSub("pinned|needs");');
+    assert.deepEqual(plain([...run('currentGroupsView().subCollapsed')]), ['group:a|older']);
+    assert.ok(context.__renders >= renders + 3);
+    assert.deepEqual(JSON.parse(stored.get('amc-group-sub-collapsed')), ['group:a|older']);
+    // The list's own Older is untouched.
+    assert.equal(run('state.groupCollapsed.size'), 0);
+
+    run('state.groupSubCollapsed = new Set(); loadGroupSubCollapsed();');
+    assert.deepEqual(plain([...run('state.groupSubCollapsed')]), ['group:a|older']);
+    stored.set('amc-group-sub-collapsed', '{not json');
+    run('loadGroupSubCollapsed();');
+    assert.equal(run('state.groupSubCollapsed.size'), 0);
+});

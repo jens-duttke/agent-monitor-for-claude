@@ -469,6 +469,12 @@ function onContentClick(event) {
         return;
     }
 
+    const groupSub = event.target.closest('[data-group-sub]');
+    if (groupSub) {
+        toggleGroupSub(groupSub.dataset.groupSub);
+        return;
+    }
+
     // Checked before the section heads: a group's header is styled as one.
     const groupToggle = event.target.closest('[data-group-toggle]');
     if (groupToggle) {

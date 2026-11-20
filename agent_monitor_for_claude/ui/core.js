@@ -140,6 +140,9 @@ const state = {
     // group section, by section key (amc-group-collapsed); a section missing
     // here follows Desktop's own folding.
     groupCollapsed: new Map(),
+    // The sub-headings folded inside a group section, by `<section key>|<list
+    // section key>` (amc-group-sub-collapsed); every other one is open.
+    groupSubCollapsed: new Set(),
     last: null,
     receivedAt: null,
     // Epoch (ms) when the history list was fetched. History age_seconds is frozen

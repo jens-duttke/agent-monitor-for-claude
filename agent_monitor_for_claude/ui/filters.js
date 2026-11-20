@@ -60,6 +60,7 @@ function currentGroupsView() {
         members: state.desktopGroups.members,
         archived: state.desktopGroups.archived,
         collapsed: collapsed,
+        subCollapsed: state.groupSubCollapsed,
     };
 }
 
@@ -161,6 +162,25 @@ function loadGroupCollapsed() {
         }
     } catch (e) {
         state.groupCollapsed = new Map();
+    }
+}
+
+// Fold or unfold one sub-heading inside a group, and remember it.
+function toggleGroupSub(key) {
+    state.groupSubCollapsed = logic.toggledFoldedSubs(state.groupSubCollapsed, key);
+    try {
+        localStorage.setItem('amc-group-sub-collapsed', JSON.stringify([...state.groupSubCollapsed]));
+    } catch (e) { /* storage unavailable */ }
+    if (state.last) {
+        render(state.last);
+    }
+}
+
+function loadGroupSubCollapsed() {
+    try {
+        state.groupSubCollapsed = logic.parseFoldedSubs(localStorage.getItem('amc-group-sub-collapsed') || '[]');
+    } catch (e) {
+        state.groupSubCollapsed = new Set();
     }
 }
 
