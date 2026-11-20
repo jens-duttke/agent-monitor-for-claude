@@ -797,7 +797,7 @@ class _MonitorApi:
         return git_status(host_path(root, directory), edited)
 
     def get_desktop_groups(self) -> dict[str, Any]:
-        """Return Claude Desktop's session groups (id, name, order, collapsed), the group of each session, the archived session ids and the sessions pinned in Desktop."""
+        """Return Claude Desktop's session groups (id, name, order, collapsed), each session's group, and the archived and pinned session ids."""
         return desktop_groups()
 
     def get_git_overview(self, refs: object) -> list[dict[str, Any] | str | None]:

@@ -155,7 +155,6 @@ class DesktopGroupsTest(_Fixture):
             self.assertEqual(desktop_groups.desktop_groups(), {'groups': [], 'members': {}, 'archived': [], 'starred': []})
 
 
-
 class DesktopStarredTest(_Fixture):
     def test_starred_sessions_map_to_cli_session_ids_in_desktop_order(self) -> None:
         self.write_config(_config([], starred=[f'local_{_D2}', f'local_{_D1}', f'local_{_D2}']))
