@@ -965,6 +965,12 @@ body.splitter-dragging {
 
 /* --- List: Pinned and the Claude Desktop groups --- */
 
+/* Out of the box tree, so the header sticks within its section like a status
+   section's does, not within a wrapper of its own height. */
+.group-section-head {
+    display: contents;
+}
+
 .group-section {
     /* A session that ended stays in its group, dimmed. */
     .item.ended {

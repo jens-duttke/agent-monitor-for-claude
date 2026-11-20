@@ -28,6 +28,7 @@ function controller() {
     context.__renders = 0;
     context.__historyLoads = 0;
     vm.runInContext(`
+        __realEnsureHistoryLoaded = ensureHistoryLoaded;
         render = () => { __renders += 1; };
         runSearch = () => {};
         ensureHistoryLoaded = () => { __historyLoads += 1; };
@@ -109,4 +110,22 @@ test('the search scope holds the sessions of a group whatever the chips', () => 
     `);
 
     assert.deepEqual(plain(run('currentSessionRefs()')).map((ref) => ref.session_id), ['m']);
+});
+
+test('opening only Archived runs the History fetch end to end', async () => {
+    const { context, run } = controller();
+    context.__fetches = [];
+    run(`
+        ensureHistoryLoaded = __realEnsureHistoryLoaded;
+        apiBridge = () => ({ get_history: (seconds) => { __fetches.push(seconds); return [{ session_id: 'p', alive: false, is_history: true }]; } });
+        state.filters = new Set(['needs']);
+        state.history = null;
+    `);
+    run('toggleSection("archived")');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(run('state.filters.has("history")'), false);
+    assert.equal(context.__fetches.length, 1);
+    assert.deepEqual(plain(run('state.history')).map((row) => row.session_id), ['p']);
+    assert.ok(context.__renders >= 2);
 });

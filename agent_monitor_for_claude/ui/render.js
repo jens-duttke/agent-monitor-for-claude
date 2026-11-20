@@ -624,7 +624,14 @@ function updateGroupSection(el, item) {
     const section = item.section;
     el.className = 'list-section group-section ' + (section.key === 'pinned' ? 'section-pinned' : 'section-group')
         + (section.collapsed ? ' closed' : '');
-    setMarkup(el.querySelector('.group-section-head'), logic.groupHeaderMarkup(section, state.labels));
+    // A rewritten header would take the keyboard focus with it, so it goes to
+    // the new toggle.
+    const head = el.querySelector('.group-section-head');
+    const focused = head.contains(document.activeElement);
+    setMarkup(head, logic.groupHeaderMarkup(section, state.labels));
+    if (focused && !head.contains(document.activeElement) && head.firstElementChild) {
+        head.firstElementChild.focus();
+    }
     const items = el.querySelector('.section-items');
     if (section.collapsed) {
         items.replaceChildren();
@@ -921,6 +928,8 @@ function render(snapshot) {
 
     let outsideFilters = 0;
     const shown = [];
+    // Sessions listed in a folded group: not on screen, but not missing either.
+    let folded = 0;
     if (grouping !== 'graph') {
         setMarkup(graphSlot, '');
         setMarkup(legendSlot, '');
@@ -950,6 +959,7 @@ function render(snapshot) {
         fitGraphText(graphSlot);
     } else if (grouping === 'urgency') {
         setMarkup(chipsSlot, '');
+        folded = logic.foldedGroupSessionCount(sectionData);
         const sections = sectionData.map((section) => {
             if (section.kind === 'group') {
                 // A folded group still says what it holds in its header.
@@ -985,9 +995,9 @@ function render(snapshot) {
         const visible = [];
         for (const session of found) {
             if (matchesFilter(session)) {
-                visible.push(session);
+                visible.push(logic.withArchivedMark(session, groupsView.archived));
             } else if (isWidenedHit(session)) {
-                visible.push(session);
+                visible.push(logic.withArchivedMark(session, groupsView.archived));
                 outsideFilters += 1;
             }
         }
@@ -1015,9 +1025,10 @@ function render(snapshot) {
     // With the sections on screen, closing all of them empties the list on
     // purpose: their headers and counts already say what there is, so only no
     // agents at all, a search or a load gets a message.
-    const noteHere = grouping !== 'project' && shown.length > 0 ? '' : loadingNote;
+    const listed = shown.length + folded;
+    const noteHere = grouping !== 'project' && listed > 0 ? '' : loadingNote;
     const sectionsSpeak = grouping === 'urgency' && !searchActive && !noteHere && sessions.length > 0;
-    if ((shown.length > 0 && !(searchActive && state.searchLoading) && !noteHere) || sectionsSpeak) {
+    if ((listed > 0 && !(searchActive && state.searchLoading) && !noteHere) || sectionsSpeak) {
         setMarkup(stateSlot, '');
     } else {
         const quiet = sessions.length === 0 ? labels.empty_state : (labels.empty_filter || labels.empty_state);

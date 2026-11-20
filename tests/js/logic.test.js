@@ -4238,7 +4238,8 @@ test('searchScopeRefs: pinned and group sessions are in scope whatever the chips
         last_stop_reason: 'end_turn', has_transcript: true, has_activity: true }, extra);
     const sessions = [mk('pin', false), mk('member', false), mk('gone', false), mk('plain', false)];
     const history = [mk('past', false, { is_history: true }), mk('oldpast', false, { is_history: true })];
-    const view = { pinned: new Set(['pin']), members: new Map([['member', 'g'], ['gone', 'g']]), archived: new Set(['gone', 'past']) };
+    const view = { pinned: new Set(['pin']), groups: [{ id: 'g', name: 'G' }], members: new Map([['member', 'g'], ['gone', 'g']]),
+        archived: new Set(['gone', 'past']) };
 
     const none = logic.searchScopeRefs(sessions, history, new Set(), true, false, view).map((ref) => ref.session_id).sort();
     assert.deepEqual(none, ['member', 'pin']);
@@ -4248,4 +4249,43 @@ test('searchScopeRefs: pinned and group sessions are in scope whatever the chips
 
     const historyOn = logic.searchScopeRefs(sessions, history, new Set(['history']), true, false, view).map((ref) => ref.session_id).sort();
     assert.deepEqual(historyOn, ['member', 'oldpast', 'pin']);
+});
+
+test('foldedGroupSessionCount: a folded group still holds its sessions for the empty state', () => {
+    const view = groupsView({
+        groups: [{ id: 'g', name: 'G' }, { id: 'h', name: 'H' }],
+        members: new Map([['a', 'g'], ['b', 'g'], ['c', 'h']]),
+        collapsed: new Set(['group:g']),
+    });
+    const sections = logic.buildSections([
+        { session_id: 'a', status: 'working', alive: true, age_seconds: 1 },
+        { session_id: 'b', status: 'working', alive: true, age_seconds: 1 },
+        { session_id: 'c', status: 'working', alive: true, age_seconds: 1 },
+        { session_id: 'd', status: 'working', alive: true, age_seconds: 1 },
+    ], new Set(), view);
+
+    assert.equal(logic.foldedGroupSessionCount(sections), 2);
+    assert.equal(logic.foldedGroupSessionCount([]), 0);
+});
+
+test('withArchivedMark: only a live archived session is marked, on a copy', () => {
+    const archived = new Set(['a', 'e']);
+    const live = { session_id: 'a', alive: true };
+    const marked = logic.withArchivedMark(live, archived);
+
+    assert.equal(marked.archived, true);
+    assert.equal(live.archived, undefined);
+    assert.equal(logic.withArchivedMark({ session_id: 'e', alive: false }, archived).archived, undefined);
+    assert.equal(logic.withArchivedMark({ session_id: 'o', alive: true }, archived).archived, undefined);
+    assert.equal(logic.withArchivedMark(live, undefined).archived, undefined);
+});
+
+test('searchScopeRefs: a member of a group that is not listed is scoped by its chip', () => {
+    const mk = (id) => ({ session_id: id, cwd: 'D:\\p', alive: true, has_transcript: true, has_activity: true, last_entry_kind: 'user_text' });
+    const view = { groups: [{ id: 'g', name: 'G' }], members: new Map([['in', 'g'], ['out', 'gone']]) };
+
+    const refs = logic.searchScopeRefs([mk('in'), mk('out')], null, new Set(), true, false, view).map((ref) => ref.session_id);
+    assert.deepEqual(refs, ['in']);
+    const sections = logic.buildSections([mk('in'), mk('out')].map((s) => Object.assign(s, { status: 'working' })), new Set(), view);
+    assert.deepEqual(placedIn(sections, 'out'), ['running']);
 });

@@ -852,14 +852,13 @@ function buildSections(sessions, activeKeys, groupsView) {
     }
     for (const session of sessions || []) {
         const placement = groupPlacement(session, view);
-        if (placement !== null && byGroup.has(placement)) {
+        if (placement !== null) {
             byGroup.get(placement).push(session);
             continue;
         }
         const key = sectionOf(session, view.archived);
         if (key) {
-            const archivedLive = Boolean(session.alive) && view.archived.has(session.session_id);
-            bySection.get(key).push(archivedLive ? Object.assign({}, session, { archived: true }) : session);
+            bySection.get(key).push(withArchivedMark(session, view.archived));
         }
     }
 
@@ -889,13 +888,36 @@ function buildSections(sessions, activeKeys, groupsView) {
     })));
 }
 
+// A session Claude Desktop archived while it still runs keeps its place, marked:
+// a copy with `archived` set, so the rows can say so. Anything else unchanged.
+function withArchivedMark(session, archived) {
+    if (!session || !session.alive || !(archived instanceof Set) || !archived.has(session.session_id)) {
+        return session;
+    }
+    return Object.assign({}, session, { archived: true });
+}
+
+// How many sessions the folded group sections hold: they are listed, only not
+// unfolded, so a view whose hits all sit in one is not an empty one.
+function foldedGroupSessionCount(sections) {
+    let count = 0;
+    for (const section of sections || []) {
+        if (section && section.kind === 'group' && section.collapsed) {
+            count += section.sessions.length;
+        }
+    }
+    return count;
+}
+
 // The pins and Desktop groups a list is split by, with every part defaulted, so
 // the section builders and the search scope read them without a guard each.
 function normalizedGroupsView(groupsView) {
     const view = groupsView || {};
+    const groups = Array.isArray(view.groups) ? view.groups.filter((group) => group && typeof group.id === 'string') : [];
     return {
         pinned: view.pinned instanceof Set ? view.pinned : new Set(),
-        groups: Array.isArray(view.groups) ? view.groups.filter((group) => group && typeof group.id === 'string') : [],
+        groups: groups,
+        groupIds: new Set(groups.map((group) => group.id)),
         members: view.members instanceof Map ? view.members : new Map(),
         archived: view.archived instanceof Set ? view.archived : new Set(),
         collapsed: view.collapsed instanceof Set ? view.collapsed : new Set(),
@@ -906,6 +928,7 @@ function normalizedGroupsView(groupsView) {
 // for a session its status places. A pin wins over Desktop's archiving, which in
 // turn takes an ended session out of its group; a live archived session is not
 // listed in its group either, but in its status section with the archived mark.
+// A member of a group that is not listed has only its status to go by.
 function groupPlacement(session, view) {
     if (!session || !session.session_id) {
         return null;
@@ -914,7 +937,7 @@ function groupPlacement(session, view) {
     if (view.pinned.has(sessionId)) {
         return 'pinned';
     }
-    if (view.archived.has(sessionId) || !view.members.has(sessionId)) {
+    if (view.archived.has(sessionId) || !view.groupIds.has(view.members.get(sessionId))) {
         return null;
     }
     return 'group:' + view.members.get(sessionId);
@@ -5321,6 +5344,8 @@ const AMC_LOGIC = {
     sortGroupSessions,
     buildSections,
     groupHeaderMarkup,
+    foldedGroupSessionCount,
+    withArchivedMark,
     flattenProjects,
     sessionSignals,
     searchRegExp,
