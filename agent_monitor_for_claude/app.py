@@ -42,7 +42,7 @@ from .sessions import list_sessions
 from .settings import current_settings, describe_settings, report_load_errors, settings_path
 from .settings import save_settings as _save_settings
 from .snapshot import (
-    build_snapshot, registry_fingerprint, session_activity, session_hook_failures, session_media, session_media_image, session_texts,
+    build_snapshot, pin_status, registry_fingerprint, session_activity, session_hook_failures, session_media, session_media_image, session_texts,
 )
 from .subagents import agent_media, agent_media_image, agent_texts
 from .tasks import list_tasks
@@ -315,6 +315,10 @@ class _MonitorApi:
     def get_fingerprint(self, keep: object = None) -> str:
         """Return the cheap registry/transcript change fingerprint, covering the kept sessions too."""
         return registry_fingerprint(keep)
+
+    def check_pins(self, refs: object) -> dict[str, str]:
+        """Return ``present``, ``missing`` or ``unknown`` per pinned session id, so the page drops only the pins that are really gone."""
+        return pin_status(refs)
 
     def get_history(self, max_age_seconds: object = None) -> list[dict[str, Any]]:
         """Return past, non-live sessions for the history listing (on demand).

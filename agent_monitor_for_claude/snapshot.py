@@ -50,7 +50,7 @@ from .worktrees import located_transcripts, prune_worktree_cache, resolve_worktr
 from .wsl import probe_wsl_sessions
 
 __all__ = [
-    'build_snapshot', 'live_or_recent_ids', 'registry_fingerprint', 'session_activity', 'session_hook_failures', 'session_media', 'session_media_image',
+    'build_snapshot', 'live_or_recent_ids', 'pin_status', 'registry_fingerprint', 'session_activity', 'session_hook_failures', 'session_media', 'session_media_image',
     'session_texts',
 ]
 
@@ -554,6 +554,48 @@ def _keep_ids(keep: object) -> list[str]:
                 break
 
     return ids
+
+
+def pin_status(refs: object) -> dict[str, str]:
+    """Return, per pinned session id, whether its transcript is ``present``, ``missing`` or ``unknown``.
+
+    ``missing`` is reported only when the pin's own root is among the reachable
+    roots and holds no transcript for it; a pin whose root is not listed (a
+    stopped WSL distribution) is ``unknown``, and no filesystem access ever
+    reaches a root that is not listed.
+
+    Parameters
+    ----------
+    refs : object
+        A list of ``{id, origin}`` pins; anything else, a non-UUID id and an
+        entry without a string origin are skipped, at most ``_MAX_KEEP`` kept.
+    """
+    if not isinstance(refs, (list, tuple)):
+        return {}
+
+    pins: dict[str, str] = {}
+    for ref in refs:
+        if len(pins) >= _MAX_KEEP:
+            break
+        if not isinstance(ref, dict):
+            continue
+        session_id = ref.get('id')
+        origin = ref.get('origin')
+        if is_session_id(session_id) and isinstance(origin, str) and session_id not in pins:
+            pins[session_id] = origin
+
+    roots = session_roots()
+    listed_origins = {root.origin for root in roots}
+    status: dict[str, str] = {}
+    for session_id, origin in pins.items():
+        if any(find_transcript(root, session_id) is not None for root in roots):
+            status[session_id] = 'present'
+        elif origin in listed_origins:
+            status[session_id] = 'missing'
+        else:
+            status[session_id] = 'unknown'
+
+    return status
 
 
 def _kept_transcripts(keep: list[str]) -> list[tuple[str, SessionRoot, Path, int, int]]:

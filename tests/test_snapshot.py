@@ -1125,3 +1125,43 @@ class MultiRootSnapshotTest(_RegistryFixture):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class PinStatusTest(_RegistryFixture):
+    _PIN_ID = '33333333-3333-4333-8333-333333333333'
+
+    def _add_transcript(self, root: SessionRoot, cwd: str = 'd:\WebDev\pinned') -> None:
+        path = transcript_path(root, self._PIN_ID, cwd)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_END_TURN, encoding='utf-8')
+
+    def _wsl_root(self) -> SessionRoot:
+        wsl_dir = Path(self._temp.name) / 'wsl'
+        return SessionRoot(
+            origin='wsl:Ubuntu', label='Ubuntu', config_dir=wsl_dir / 'cfg', proc_dir=wsl_dir / 'proc', claude_temp_dir=wsl_dir / 'tmp',
+        )
+
+    def test_present_when_transcript_exists_under_any_root(self) -> None:
+        wsl_root = self._wsl_root()
+        self._add_transcript(wsl_root)
+
+        with mock.patch.object(snapshot_mod, 'session_roots', return_value=[local_root(), wsl_root]):
+            status = snapshot_mod.pin_status([{'id': self._PIN_ID, 'origin': local_root().origin}])
+
+        self.assertEqual(status, {self._PIN_ID: 'present'})
+
+    def test_missing_when_own_root_listed_and_no_transcript(self) -> None:
+        status = snapshot_mod.pin_status([{'id': self._PIN_ID, 'origin': local_root().origin}])
+
+        self.assertEqual(status, {self._PIN_ID: 'missing'})
+
+    def test_unreachable_root_is_unknown(self) -> None:
+        status = snapshot_mod.pin_status([{'id': self._PIN_ID, 'origin': 'wsl:Ubuntu'}])
+
+        self.assertEqual(status, {self._PIN_ID: 'unknown'})
+
+    def test_invalid_refs_are_skipped(self) -> None:
+        refs = ['text', None, {'id': 'not-a-uuid', 'origin': 'local'}, {'id': self._PIN_ID}, {'id': 5, 'origin': 'local'}]
+
+        self.assertEqual(snapshot_mod.pin_status(refs), {})
+        self.assertEqual(snapshot_mod.pin_status('nope'), {})
