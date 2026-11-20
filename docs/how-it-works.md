@@ -13,6 +13,11 @@ Under the Claude config directory (`CLAUDE_CONFIG_DIR`, or `~/.claude/`):
 - **Last self-update** - `.last-update-result.json`, to tell when a restart would bring a newer Claude Code.
 - **Process list** - shows whether a session's process is alive, whether it has child processes (a tool running), and which application hosts it.
 
+On Windows, from Claude Desktop's own folder (`%LOCALAPPDATA%\Claude-Data\claude_<id>\` for the Microsoft Store install, else `%APPDATA%\Claude\`), read only:
+
+- **Desktop groups** - `claude_desktop_config.json`, for the groups you made in Claude Desktop, their order and which sessions they hold.
+- **Desktop sessions** - `claude-code-sessions/<account>/<org>/local_<id>.json`, for each chat's session id and whether you archived it.
+
 Each transcript is read in full once, then only the lines appended since. Large transcripts are read in the background, so the window shows every session right away; until the read is done, the cost shows `…`. The selected session is read first.
 
 The *Older* section reads past sessions under `projects/` only when you open it, and only within the selected time window. *Archived* (closed by default) lists sessions you archived in Claude Desktop and uses the same time window.
@@ -21,7 +26,7 @@ The *Older* section reads past sessions under `projects/` only when you open it,
 
 A pinned session stays in the *Pinned* section at the top of the list, also after it ended or Claude Code removed its registry record. Pin it from its menu, the details or with *P*; a pin is dropped when the session's files are gone.
 
-On Windows, the groups you made in Claude Desktop are listed as sections below *Pinned*, in Desktop's order. Each header counts its sessions per status and can be folded. The list refreshes within a few seconds of a change in Desktop. Linux has no Claude Desktop, so there are no groups.
+On Windows, the groups you made in Claude Desktop are listed as sections below *Pinned*, in Desktop's order. Each header counts its sessions per status and can be folded. Like a pinned session, a group's session stays listed after it ended. The list refreshes within a few seconds of a change in Desktop. Linux has no Claude Desktop, so there are no groups.
 
 A session appears once, in the first place that applies: *Pinned*, then *Archived* (unless it is running), then its Desktop group, then its status section. A running archived session stays in its status section, marked *Archived*.
 
@@ -90,7 +95,7 @@ The last 16 KB of each background task's output are checked for a test runner's 
 
 ## Deleting a past session
 
-From the details or menu of an *Older* entry, you can delete that session's transcript and subagent folder after a confirmation. It then also disappears from `claude --resume`. A session that is still running cannot be deleted.
+From the details or menu of an *Older* entry, or of a pinned or grouped session that ended, you can delete that session's transcript and subagent folder after a confirmation. It then also disappears from `claude --resume`. A session that is still running cannot be deleted.
 
 ## Compatibility
 

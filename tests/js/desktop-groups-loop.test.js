@@ -55,8 +55,18 @@ test('a bridge failure keeps the previous answer', async () => {
     const { context, run } = controller();
     run(`
         render = () => { __renders += 1; };
-        apiBridge = () => ({ get_desktop_groups: () => { throw new Error('x'); } });
+        state.last = { sessions: [] };
+        __bridge = { get_desktop_groups: () => ({ groups: [{ id: 'g', name: 'N', order: 0, collapsed: false }], members: { s1: 'g' }, archived: ['s2'] }) };
+        apiBridge = () => __bridge;
     `);
+    await run('refreshDesktopGroups()');
+    assert.equal(context.__renders, 1);
+
+    run(`__bridge = { get_desktop_groups: () => { throw new Error('x'); } }`);
     await run('desktopGroupsLoop()');
-    assert.equal(context.__renders, 0);
+
+    assert.equal(context.__renders, 1);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(run('keptSessionIds()'))), ['s1']);
+    assert.equal(run("state.desktopGroups.groups.map((group) => group.id).join()"), 'g');
+    assert.equal(run("state.desktopGroups.archived.has('s2')"), true);
 });

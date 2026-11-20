@@ -409,6 +409,7 @@ const DEFAULT_LABELS = {
     pin_session: 'Pin to top',
     unpin_session: 'Unpin',
     pin_tip: 'Keeps this session at the top of the list, also after it ends (key P)',
+    pins_full: 'At most {max} sessions can be pinned - unpin one first',
     section_archived: 'Archived',
     label_archived: 'Archived',
     group_collapse_tip: 'Fold or unfold this group',

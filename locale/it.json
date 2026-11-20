@@ -167,6 +167,7 @@
     "pin_session": "Fissa in alto",
     "unpin_session": "Rimuovi",
     "pin_tip": "Tiene questa sessione in cima all'elenco, anche dopo la sua fine (tasto P)",
+    "pins_full": "Si possono fissare al massimo {max} sessioni - rimuovine prima una",
     "section_archived": "Archiviate",
     "label_archived": "Archiviata",
     "group_collapse_tip": "Comprimi o espandi questo gruppo",

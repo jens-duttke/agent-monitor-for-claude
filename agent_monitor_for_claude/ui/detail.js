@@ -547,7 +547,7 @@ function actionsMarkup(session) {
         html += actionButton('scratchpad', labels.action_scratchpad);
     }
     // Only a past session may be deleted - never one with a live process.
-    if (session.is_history) {
+    if (canDeleteSession(session)) {
         html += actionButton('delete', labels.action_delete, { kind: 'danger' });
     }
     return html;

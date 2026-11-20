@@ -150,9 +150,11 @@ async function runSessionAction(action, session) {
     } else if (action === 'scratchpad') {
         openPath(await scratchpadPath(session.session_id || '', session.cwd || '', origin), origin);
     } else if (action === 'delete') {
-        if (session.is_history) {
-            // As the row shows it now: the fetched age, counted on since the fetch.
-            const fetchedAt = state.historyReceivedAt != null ? state.historyReceivedAt : NaN;
+        if (canDeleteSession(session)) {
+            // As the row shows it now: the fetched age, counted on since the fetch -
+            // the history fetch's for a History row, the snapshot's for a kept one.
+            const receivedAt = session.is_history ? state.historyReceivedAt : state.receivedAt;
+            const fetchedAt = receivedAt != null ? receivedAt : NaN;
             const age = logic.formatAgeSince(session.age_seconds, fetchedAt, Date.now(), state.labels);
             confirmDeleteSession(session.session_id, session.cwd || '', session.name || '', age, origin);
         }
@@ -204,7 +206,7 @@ async function openSessionMenu(itemEl, point) {
     if (scratchpad) {
         items.push({ key: 'scratchpad', label: labels.show_scratchpad });
     }
-    if (session.is_history) {
+    if (canDeleteSession(session)) {
         items.push({ key: 'delete', label: labels.delete_session, danger: true });
     }
 

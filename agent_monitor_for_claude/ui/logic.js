@@ -2870,6 +2870,9 @@ function buildSession(raw, labels, prices) {
         pid: raw.pid,
         cwd: raw.cwd,
         is_history: Boolean(raw.is_history),
+        // Listed because it is pinned or in a Desktop group, after it ended or
+        // lost its registry record (see snapshot.build_snapshot's keep).
+        kept: raw.kept === true,
         name: raw.title || raw.short_name,
         title: raw.title || '',
         short_name: raw.short_name,

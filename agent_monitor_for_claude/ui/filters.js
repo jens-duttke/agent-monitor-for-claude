@@ -63,6 +63,16 @@ function currentGroupsView() {
     };
 }
 
+// The groups view the list's sections are built with: Pinned and the Desktop
+// groups are sections of the urgency grouping only (the compact view included);
+// elsewhere every session counts by its status, an archived one that ended under
+// "Archived". The search scope uses the same view, so it is the visible set.
+function listGroupsView() {
+    const view = currentGroupsView();
+    const grouping = state.compact ? 'urgency' : state.group;
+    return grouping === 'urgency' ? view : { archived: view.archived };
+}
+
 // Read the pins back (amc-pins); anything unreadable is no pins.
 function loadPins() {
     let stored = null;
@@ -90,6 +100,9 @@ function togglePin(session) {
         state.pins.delete(id);
     } else if (state.pins.size < logic.MAX_PINS) {
         state.pins.set(id, session.origin || 'local');
+    } else {
+        toast(logic.fmt(state.labels.pins_full, { max: logic.MAX_PINS }));
+        return;
     }
     state.pinMisses.delete(id);
     savePins();

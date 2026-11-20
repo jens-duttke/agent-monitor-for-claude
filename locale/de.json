@@ -167,6 +167,7 @@
     "pin_session": "Oben anheften",
     "unpin_session": "Lösen",
     "pin_tip": "Hält diese Sitzung oben in der Liste, auch nachdem sie beendet ist (Taste P)",
+    "pins_full": "Höchstens {max} Sitzungen können angeheftet werden - löse zuerst eine",
     "section_archived": "Archiviert",
     "label_archived": "Archiviert",
     "group_collapse_tip": "Diese Gruppe ein- oder ausklappen",

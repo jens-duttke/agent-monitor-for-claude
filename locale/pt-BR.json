@@ -167,6 +167,7 @@
     "pin_session": "Fixar no topo",
     "unpin_session": "Desafixar",
     "pin_tip": "Mantém esta sessão no topo da lista, mesmo depois de terminar (tecla P)",
+    "pins_full": "No máximo {max} sessões podem ser fixadas - desafixe uma primeiro",
     "section_archived": "Arquivadas",
     "label_archived": "Arquivada",
     "group_collapse_tip": "Recolher ou expandir este grupo",

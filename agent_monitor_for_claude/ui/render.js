@@ -193,11 +193,23 @@ function endedProcessesOf(key) {
 }
 
 // Whether a click can bring the session's window forward: a past session has no
-// process, and a background agent runs under the daemon with no window - the
-// title fallback in focus_session_window could otherwise raise an unrelated
-// terminal that happens to match.
+// process - nor has a pinned or grouped one kept listed after it ended - and a
+// background agent runs under the daemon with no window - the title fallback in
+// focus_session_window could otherwise raise an unrelated terminal that happens
+// to match.
 function hasWindow(session) {
-    return !session.is_history && !session.background;
+    return !session.is_history && !session.background && !isEndedKept(session);
+}
+
+// A pinned or grouped session listed after it ended, from its transcript.
+function isEndedKept(session) {
+    return session.kept === true && session.alive !== true;
+}
+
+// Whether the session may be offered for deletion: only a past one - a History
+// row, or a kept one that ended. The backend checks again that no process holds it.
+function canDeleteSession(session) {
+    return Boolean(session.is_history) || isEndedKept(session);
 }
 
 // Keyed reconciliation: reuse existing child nodes (matched by data-key),
@@ -936,11 +948,8 @@ function render(snapshot) {
     const compact = state.compact;
     const grouping = compact ? 'urgency' : state.group;
 
-    // Pinned and the Desktop groups are sections of the urgency grouping only;
-    // elsewhere every session counts by its status, an archived one that ended
-    // under "Archived".
-    const groupsView = currentGroupsView();
-    const sectionData = logic.buildSections(found, state.filters, grouping === 'urgency' ? groupsView : { archived: groupsView.archived });
+    const groupsView = listGroupsView();
+    const sectionData = logic.buildSections(found, state.filters, groupsView);
 
     // Section counts follow the query, like the list, and count only what a
     // status section lists. "Older" and "Archived" count their past sessions

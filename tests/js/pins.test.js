@@ -130,3 +130,87 @@ test('the pin check drops a pin only after two missing answers in a row, never o
     await run('refreshPins()');
     assert.equal(run('state.pins.size'), 0);
 });
+
+test('pinning past the limit says so instead of doing nothing', () => {
+    const { context, run } = controller();
+    run(`
+        render = () => {};
+        tick = () => {};
+        toast = (message) => __calls.push(message);
+        state.labels = Object.assign({}, DEFAULT_LABELS);
+        state.pins = new Map();
+        for (let index = 0; index < logic.MAX_PINS; index += 1) {
+            state.pins.set('00000000-0000-4000-8000-' + String(index).padStart(12, '0'), 'local');
+        }
+        togglePin({ session_id: '${ID}', origin: 'local' });
+    `);
+    assert.equal(run('state.pins.size'), run('logic.MAX_PINS'));
+    assert.equal(run(`state.pins.has('${ID}')`), false);
+    assert.deepStrictEqual(plain(context.__calls), [run('logic.fmt(DEFAULT_LABELS.pins_full, { max: logic.MAX_PINS })')]);
+    assert.ok(!plain(context.__calls)[0].includes('{max}'));
+});
+
+const KEPT_RAW = { session_id: ID, pid: 0, cwd: '/x', alive: false, kept: true, has_transcript: true, has_activity: true,
+    last_entry_kind: 'assistant', last_stop_reason: 'end_turn', age_seconds: 60, origin: 'local' };
+
+test('a kept session carries its kept flag through buildSession', () => {
+    const { run } = controller();
+    run(`state.labels = Object.assign({}, DEFAULT_LABELS)`);
+    assert.equal(run(`logic.buildSession(${JSON.stringify(KEPT_RAW)}, state.labels).kept`), true);
+    assert.equal(run(`logic.buildSession(${JSON.stringify(Object.assign({}, KEPT_RAW, { kept: undefined }))}, state.labels).kept`), false);
+});
+
+test('an ended kept session offers delete and no window; a live one the reverse', async () => {
+    for (const alive of [false, true]) {
+        const { context, run } = controller();
+        run(`
+            state.labels = Object.assign({}, DEFAULT_LABELS);
+            state.sessionsByKey.set('k', { session_id: '${ID}', origin: 'local', cwd: '/x', kept: true, alive: ${alive} });
+            apiBridge = () => null;
+            openMenu = (el, items) => { __calls.push(items.map((item) => item.key)); };
+        `);
+        await run(`openSessionMenu({ dataset: { key: 'k' }, isConnected: true }, null)`);
+        assert.equal(plain(context.__calls[0]).includes('delete'), !alive);
+        assert.equal(run(`hasWindow(state.sessionsByKey.get('k'))`), alive);
+    }
+});
+
+test('deleting an ended kept session quotes the age the snapshot row shows', () => {
+    const { run } = controller();
+    run(`
+        state.labels = Object.assign({}, DEFAULT_LABELS);
+        globalThis.__quoted = null;
+        confirmDeleteSession = (id, cwd, name, age) => { __quoted = age; };
+        state.historyReceivedAt = null;
+        state.receivedAt = Date.now() - 3600 * 1000;
+        runSessionAction('delete', { session_id: '${ID}', pid: 0, cwd: '/x', name: 'n', kept: true, alive: false, age_seconds: 60, origin: 'local' });
+    `);
+    assert.strictEqual(run('__quoted'), run('logic.formatAge(3660, state.labels)'));
+});
+
+test('a live kept session cannot be deleted from the action', () => {
+    const { run } = controller();
+    run(`
+        state.labels = Object.assign({}, DEFAULT_LABELS);
+        globalThis.__quoted = null;
+        confirmDeleteSession = () => { __quoted = 'asked'; };
+        state.receivedAt = Date.now();
+        runSessionAction('delete', { session_id: '${ID}', pid: 5, cwd: '/x', name: 'n', kept: true, alive: true, age_seconds: 60, origin: 'local' });
+    `);
+    assert.strictEqual(run('__quoted'), null);
+});
+
+test('the search scope is the visible set in every grouping', () => {
+    for (const [group, expected] of [['urgency', [ID]], ['project', []], ['graph', []]]) {
+        const { run } = controller();
+        run(`
+            state.compact = false;
+            state.group = '${group}';
+            state.filters = new Set(['needs']);
+            state.pins = new Map([['${ID}', 'local']]);
+            state.last = { sessions: [${JSON.stringify(KEPT_RAW)}] };
+            state.history = [];
+        `);
+        assert.deepStrictEqual(plain(run('collectSearchRefs(true)')).map((ref) => ref.session_id), expected, group);
+    }
+});

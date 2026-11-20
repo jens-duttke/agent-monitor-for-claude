@@ -167,6 +167,7 @@
     "pin_session": "先頭にピン留め",
     "unpin_session": "ピン留めを外す",
     "pin_tip": "このセッションを終了後もリストの先頭に保ちます (キー P)",
+    "pins_full": "ピン留めできるのは最大 {max} セッションです - 先に1つ外してください",
     "section_archived": "アーカイブ済み",
     "label_archived": "アーカイブ済み",
     "group_collapse_tip": "このグループを折りたたむ/展開する",
