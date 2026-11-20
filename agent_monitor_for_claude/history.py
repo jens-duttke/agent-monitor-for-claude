@@ -51,7 +51,10 @@ from .subagents import past_subagent_usage
 from .transcript import history_state_for
 from .usage_parts import session_usage
 
-__all__ = ['history_record', 'list_history']
+# How many sibling transcripts a cwd-less kept session reads for its project's cwd.
+_KEPT_SIBLINGS = 5
+
+__all__ = ['history_record', 'kept_cwd', 'list_history']
 
 # Transcripts read at once per session root.
 _MAX_WORKERS = 16
@@ -324,6 +327,33 @@ def _resolve_folder_cwd(slug: str, folder_records: list[dict[str, Any]], slug_to
             return record['cwd'], False
 
     return _cwd_from_slug(slug), True
+
+
+def kept_cwd(root: SessionRoot, path: Path) -> str:
+    """Return the project cwd of a transcript that carries none, resolved as the History listing does.
+
+    The root's registry names the folder's cwd first, then a sibling transcript
+    of the same project folder (at most ``_KEPT_SIBLINGS`` are read), and only
+    then the raw slug.
+    """
+    folder = path.parent
+    slug_to_cwd: dict[str, str] = {}
+    for record in list_sessions(root):
+        slug_to_cwd.setdefault(cwd_to_slug(record['cwd']).lower(), record['cwd'])
+
+    siblings: list[dict[str, Any]] = []
+    if folder.name.lower() not in slug_to_cwd:
+        try:
+            candidates = [sibling for sibling in sorted(folder.glob('*.jsonl')) if sibling != path]
+        except OSError:
+            candidates = []
+        for sibling in candidates[:_KEPT_SIBLINGS]:
+            record = _build_history_record(sibling)
+            if record is not None and record['cwd']:
+                siblings.append(record)
+                break
+
+    return _resolve_folder_cwd(folder.name, siblings, slug_to_cwd)[0]
 
 
 def history_record(path: Path) -> dict[str, Any] | None:

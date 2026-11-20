@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_monitor_for_claude import cli_install
+from agent_monitor_for_claude import history as history_mod
 from agent_monitor_for_claude import snapshot as snapshot_mod
 from agent_monitor_for_claude.paths import SessionRoot, transcript_path, local_root
 from agent_monitor_for_claude.procinfo import ProcessInfo
@@ -791,10 +792,16 @@ class FingerprintTest(_RegistryFixture):
 
 
 _KEPT_ID = '11111111-2222-3333-4444-555555555555'
+_KEEP_MISS_ID = '99999999-2222-3333-4444-555555555555'
 
 
 class KeptSessionTest(_RegistryFixture):
-    def _add_kept_transcript(self, session_id: str = _KEPT_ID, cwd: str = 'd:\WebDev\kept') -> Path:
+    def setUp(self) -> None:
+        super().setUp()
+        snapshot_mod._keep_lookup.clear()
+        snapshot_mod._keep_records.clear()
+
+    def _add_kept_transcript(self, session_id: str = _KEPT_ID, cwd: str = 'd:\\WebDev\\kept') -> Path:
         path = transcript_path(local_root(), session_id, cwd)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(_END_TURN, encoding='utf-8')
@@ -812,7 +819,7 @@ class KeptSessionTest(_RegistryFixture):
         self.assertEqual(sessions[0]['origin'], local_root().origin)
 
     def test_kept_id_already_live_is_not_duplicated(self) -> None:
-        self._add_session(_KEPT_ID, 'd:\WebDev\kept')
+        self._add_session(_KEPT_ID, 'd:\\WebDev\\kept')
 
         sessions = build_snapshot(keep=[_KEPT_ID])['sessions']
 
@@ -837,6 +844,61 @@ class KeptSessionTest(_RegistryFixture):
 
         self.assertNotEqual(before, registry_fingerprint([_KEPT_ID]))
         self.assertEqual(registry_fingerprint(), registry_fingerprint())
+
+    def test_unchanged_transcript_is_not_rebuilt_and_its_age_advances(self) -> None:
+        self._add_kept_transcript()
+        real = history_mod.history_record
+
+        with mock.patch.object(history_mod, 'history_record', side_effect=real) as build:
+            first = build_snapshot(keep=[_KEPT_ID])['sessions'][0]
+            with mock.patch.object(snapshot_mod.time, 'monotonic', return_value=time.monotonic() + 30):
+                second = build_snapshot(keep=[_KEPT_ID])['sessions'][0]
+
+        self.assertEqual(build.call_count, 1)
+        self.assertAlmostEqual(second['age_seconds'] - first['age_seconds'], 30, delta=2)
+
+    def test_changed_transcript_is_rebuilt(self) -> None:
+        path = self._add_kept_transcript()
+        real = history_mod.history_record
+
+        with mock.patch.object(history_mod, 'history_record', side_effect=real) as build:
+            build_snapshot(keep=[_KEPT_ID])
+            with path.open('a', encoding='utf-8') as handle:
+                handle.write(chr(10) + _END_TURN)
+            build_snapshot(keep=[_KEPT_ID])
+
+        self.assertEqual(build.call_count, 2)
+
+    def test_cwd_less_transcript_gets_a_cwd(self) -> None:
+        path = transcript_path(local_root(), _KEPT_ID, 'd:\\WebDev\\kept')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_END_TURN, encoding='utf-8')
+
+        session = build_snapshot(keep=[_KEPT_ID])['sessions'][0]
+
+        self.assertTrue(session['cwd'])
+
+    def test_miss_is_retried_only_after_the_retry_interval(self) -> None:
+        start = time.monotonic()
+        with mock.patch.object(snapshot_mod, 'find_transcript', return_value=None) as find:
+            with mock.patch.object(snapshot_mod.time, 'monotonic', return_value=start):
+                build_snapshot(keep=[_KEEP_MISS_ID])
+                build_snapshot(keep=[_KEEP_MISS_ID])
+            self.assertEqual(find.call_count, 1)
+
+            with mock.patch.object(snapshot_mod.time, 'monotonic', return_value=start + snapshot_mod._KEEP_RETRY_SECONDS + 1):
+                build_snapshot(keep=[_KEEP_MISS_ID])
+            self.assertEqual(find.call_count, 2)
+
+    def test_lookup_cache_is_pruned_to_the_keep_set(self) -> None:
+        self._add_kept_transcript()
+        build_snapshot(keep=[_KEPT_ID])
+        self.assertIn(_KEPT_ID, snapshot_mod._keep_lookup)
+
+        build_snapshot(keep=[])
+
+        self.assertNotIn(_KEPT_ID, snapshot_mod._keep_lookup)
+        self.assertNotIn(_KEPT_ID, snapshot_mod._keep_records)
 
 
 class WorktreeSessionTest(_RegistryFixture):

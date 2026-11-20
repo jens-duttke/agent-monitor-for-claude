@@ -81,6 +81,11 @@ _KEEP_RETRY_SECONDS = 60.0
 _keep_lookup: dict[str, tuple[tuple[SessionRoot, Path] | None, float]] = {}
 _keep_lookup_lock = threading.Lock()
 
+# A kept session's record is rebuilt only when its transcript changed; session id ->
+# (transcript mtime_ns, size, monotonic time built, record).  The age counts on from the build.
+_keep_records: dict[str, tuple[int, int, float, dict[str, Any]]] = {}
+_keep_records_lock = threading.Lock()
+
 
 def build_snapshot(graph: bool = False, keep: object = None) -> dict[str, Any]:
     """Return the raw session overview as a flat list of per-session records, across every session root.
@@ -530,13 +535,8 @@ def registry_fingerprint(keep: object = None) -> str:
                 f"{record['waiting_for']}:{record['remote_control']}:{transcript_mark}"
             )
 
-        for session_id, location in _kept_transcripts(_keep_ids(keep)):
-            try:
-                stat = location[1].stat()
-            except OSError:
-                continue
-
-            parts.append(f'keep:{session_id}:{stat.st_mtime_ns}:{stat.st_size}')
+        for session_id, _, _, mtime_ns, size in _kept_transcripts(_keep_ids(keep)):
+            parts.append(f'keep:{session_id}:{mtime_ns}:{size}')
 
     return '|'.join(parts)
 
@@ -556,31 +556,37 @@ def _keep_ids(keep: object) -> list[str]:
     return ids
 
 
-def _kept_transcripts(keep: list[str]) -> list[tuple[str, tuple[SessionRoot, Path]]]:
-    """Return each kept id with the root and transcript it was found under, searching the roots in order.
+def _kept_transcripts(keep: list[str]) -> list[tuple[str, SessionRoot, Path, int, int]]:
+    """Return each kept id with the root, transcript, mtime (ns) and size it was found with, searching the roots in order.
 
     A lookup that found nothing is repeated only after ``_KEEP_RETRY_SECONDS``;
     one that found a file is trusted until the file is gone.  Ids no longer
-    kept are dropped from the cache.
+    kept are dropped from the caches.  The lock covers the cache only, never a
+    search of the roots.
     """
     now = time.monotonic()
     roots: list[SessionRoot] | None = None
-    found: list[tuple[str, tuple[SessionRoot, Path]]] = []
+    found: list[tuple[str, SessionRoot, Path, int, int]] = []
 
     with _keep_lookup_lock:
         for session_id in [known for known in _keep_lookup if known not in keep]:
             del _keep_lookup[session_id]
+        cache = dict(_keep_lookup)
 
-        for session_id in keep:
-            cached = _keep_lookup.get(session_id)
-            if cached is not None:
-                location, looked_at = cached
-                if location is not None and location[1].is_file():
-                    found.append((session_id, location))
-                    continue
-                if location is None and now - looked_at < _KEEP_RETRY_SECONDS:
-                    continue
+    with _keep_records_lock:
+        for session_id in [known for known in _keep_records if known not in keep]:
+            del _keep_records[session_id]
 
+    for session_id in keep:
+        cached = cache.get(session_id)
+        location: tuple[SessionRoot, Path] | None = None
+        if cached is not None:
+            location, looked_at = cached
+            if location is None and now - looked_at < _KEEP_RETRY_SECONDS:
+                continue
+
+        stat = _stat_transcript(location[1]) if location is not None else None
+        if stat is None:
             if roots is None:
                 roots = session_roots()
 
@@ -591,33 +597,72 @@ def _kept_transcripts(keep: list[str]) -> list[tuple[str, tuple[SessionRoot, Pat
                     location = (root, path)
                     break
 
-            _keep_lookup[session_id] = (location, now)
-            if location is not None:
-                found.append((session_id, location))
+            stat = _stat_transcript(location[1]) if location is not None else None
+            with _keep_lookup_lock:
+                _keep_lookup[session_id] = (location if stat is not None else None, now)
+
+        if location is not None and stat is not None:
+            found.append((session_id, location[0], location[1], stat[0], stat[1]))
 
     return found
 
 
-def _kept_records(keep: list[str], emitted: set[str]) -> list[dict[str, Any]]:
-    """Build the records of the kept ids the regular pass did not emit, from their transcripts."""
-    from .history import history_record
+def _stat_transcript(path: Path) -> tuple[int, int] | None:
+    """Return a transcript's mtime (ns) and size, or None when it is gone."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
 
+    return stat.st_mtime_ns, stat.st_size
+
+
+def _kept_records(keep: list[str], emitted: set[str]) -> list[dict[str, Any]]:
+    """Build the records of the kept ids the regular pass did not emit, from their transcripts.
+
+    A record is rebuilt only when its transcript changed since the last build;
+    otherwise the remembered one is handed out with its age moved on.
+    """
     records: list[dict[str, Any]] = []
-    for session_id, (root, path) in _kept_transcripts(keep):
+    for session_id, root, path, mtime_ns, size in _kept_transcripts(keep):
         if session_id in emitted:
             continue
 
-        record = history_record(path)
-        if record is None:
-            continue
-
-        record['origin'] = root.origin
-        record['origin_label'] = root.label
-        record['is_history'] = False
-        record['kept'] = True
-        records.append(record)
+        record = _kept_record(session_id, root, path, mtime_ns, size)
+        if record is not None:
+            records.append(record)
 
     return records
+
+
+def _kept_record(session_id: str, root: SessionRoot, path: Path, mtime_ns: int, size: int) -> dict[str, Any] | None:
+    """Return one kept session's record, from the memo while its transcript is unchanged."""
+    from .history import history_record, kept_cwd
+
+    now = time.monotonic()
+    with _keep_records_lock:
+        memo = _keep_records.get(session_id)
+
+    if memo is not None and memo[0] == mtime_ns and memo[1] == size:
+        record = dict(memo[3])
+        if record['age_seconds'] is not None:
+            record['age_seconds'] += now - memo[2]
+        return record
+
+    record = history_record(path)
+    if record is None:
+        return None
+
+    if not record['cwd']:
+        record['cwd'] = kept_cwd(root, path)
+    record['origin'] = root.origin
+    record['origin_label'] = root.label
+    record['is_history'] = False
+    record['kept'] = True
+    with _keep_records_lock:
+        _keep_records[session_id] = (mtime_ns, size, now, record)
+
+    return dict(record)
 
 
 def _collect_pairs(index: TranscriptIndex, listed: set[str] | None = None) -> list[tuple[SessionRoot, dict[str, Any]]]:
