@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-20
+
 ### Added
 - When Claude's safeguards refuse a request, the session details show the refusal category and the explanation the API gave, for example `reasoning_extraction`. Quote the category when you report a false refusal.
 - [Prompt cache on the list](https://github.com/jens-duttke/agent-monitor-for-claude/issues/12) - a session waiting for you shows on its list entry how long its prompt cache stays warm, with a bar that runs down and turns amber shortly before it expires, and once it has expired, what your next prompt pays to write the context again. The toolbar adds up what all warm caches hold. (thanks to [@jeroenbu](https://github.com/jeroenbu) for the suggestion)
@@ -427,7 +429,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 13 languages, auto-detected from the system locale.
 - Optional settings file to tune the poll interval and window size.
 
-[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.13.0...v1.0.0
 [0.13.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/jens-duttke/agent-monitor-for-claude/compare/v0.11.0...v0.12.0
