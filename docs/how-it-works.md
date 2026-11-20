@@ -15,7 +15,15 @@ Under the Claude config directory (`CLAUDE_CONFIG_DIR`, or `~/.claude/`):
 
 Each transcript is read in full once, then only the lines appended since. Large transcripts are read in the background, so the window shows every session right away; until the read is done, the cost shows `…`. The selected session is read first.
 
-The *Older* section reads past sessions under `projects/` only when you open it, and only within the selected time window.
+The *Older* section reads past sessions under `projects/` only when you open it, and only within the selected time window. *Archived* (closed by default) lists sessions you archived in Claude Desktop and uses the same time window.
+
+## Pinned sessions and Desktop groups
+
+A pinned session stays in the *Pinned* section at the top of the list, also after it ended or Claude Code removed its registry record. Pin it from its menu, the details or with *P*; a pin is dropped when the session's files are gone.
+
+On Windows, the groups you made in Claude Desktop are listed as sections below *Pinned*, in Desktop's order. Each header counts its sessions per status and can be folded. The list refreshes within a few seconds of a change in Desktop. Linux has no Claude Desktop, so there are no groups.
+
+A session appears once, in the first place that applies: *Pinned*, then *Archived* (unless it is running), then its Desktop group, then its status section. A running archived session stays in its status section, marked *Archived*.
 
 ## Status
 

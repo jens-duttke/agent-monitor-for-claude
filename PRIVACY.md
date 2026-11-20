@@ -70,6 +70,7 @@ All reads are local and read-only. The paths below are under `~/.claude/` (or `C
 | `plugins/` manifests | The program each installed plugin runs as a language or MCP server, to tell such a server from a tool the session runs. |
 | Process table (`/proc` on Linux) | Process ids, parent ids, names and start times, to tell live sessions from ended ones. The program a session's direct child runs (the first word of its command line), to recognise a plugin's server. CPU and memory for the selected session's processes. |
 | Window titles | Compared in memory to find the window to raise when you click a session. Not stored. |
+| Claude Desktop's `claude_desktop_config.json` and `claude-code-sessions/**/local_*.json` (Windows) | Your Desktop groups: their names, which sessions belong to them, their order and whether they are collapsed; per session only its Claude Code session id and whether it is archived. Read only, never written. |
 | `agent-monitor-settings.json` | The app's own settings (see [What it writes](#what-it-writes)). An older copy in `~/.claude/` is still read. |
 
 ### Conversation text shown in the window
@@ -138,7 +139,8 @@ Nothing is ever run inside a distribution.
 1. **Interface preferences** - in `%LOCALAPPDATA%\AgentMonitorForClaude` (Windows) or
    `~/.local/share/agent-monitor-for-claude` (Linux). This is the browser engine's profile; the app
    stores open sections, time ranges, grouping, list width, search options, view settings, and which
-   projects (by folder path) and graph sessions (by session id) you collapsed. The rest of the folder is
+   projects (by folder path), Desktop groups and graph sessions (by session id) you collapsed, and the
+   sessions (by session id) you pinned. The rest of the folder is
    the engine's own cache. You can delete the folder at any time; the preferences then reset.
 2. **Settings** - `agent-monitor-settings.json` in `%APPDATA%\AgentMonitorForClaude` (Windows) or
    `~/.config/agent-monitor-for-claude` (Linux), or next to the executable if the file is already
@@ -192,7 +194,7 @@ grep -rnE "^\s*(import|from)\s+(requests|urllib|http|socket|ssl)\b" agent_monito
 # beside it, and the GitHub release address in update_check.py
 grep -rn "https\?://" agent_monitor_for_claude/ --include=*.py --include=*.js --include=*.html --include=*.css
 
-# Credentials - one hit: a docstring saying none are read
+# Credentials - two hits: a docstring saying none are read and a comment in git_status.py
 grep -rni "credential" agent_monitor_for_claude/ --exclude-dir=__pycache__
 
 # Disk writes - the settings file (settings.py), the session deletion (session_delete.py), the Linux
