@@ -847,6 +847,35 @@ class KeptSessionTest(_RegistryFixture):
         self.assertIs(sessions[0]['is_history'], False)
         self.assertEqual(sessions[0]['origin'], local_root().origin)
 
+    def test_kept_record_names_the_entrypoint_its_transcript_was_written_by(self) -> None:
+        path = self._add_kept_transcript()
+        entries = [
+            {'type': 'user', 'timestamp': '2026-07-11T10:53:00Z', 'entrypoint': 'cli', 'message': {'content': 'hi'}},
+            {'type': 'assistant', 'timestamp': '2026-07-11T10:54:00Z', 'entrypoint': 'claude-desktop',
+             'message': {'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': 'x'}]}},
+            # A subagent's entry is not the main conversation's writer.
+            {'type': 'assistant', 'timestamp': '2026-07-11T10:54:05Z', 'isSidechain': True, 'entrypoint': 'sdk-ts',
+             'message': {'stop_reason': 'end_turn', 'content': []}},
+        ]
+        path.write_text('\n'.join(json.dumps(entry) for entry in entries) + '\n', encoding='utf-8')
+
+        sessions = _kept_snapshot([_KEPT_ID])['sessions']
+
+        self.assertEqual(sessions[0]['entrypoint'], 'claude-desktop')
+
+    def test_kept_record_without_a_well_formed_entrypoint_names_none(self) -> None:
+        for value in (7, '', 'Claude Desktop', '<b>', ['claude-desktop'], None):
+            with self.subTest(value=value):
+                _wait_for_kept_builds()
+                snapshot_mod._keep_records.clear()
+                path = self._add_kept_transcript()
+                path.write_text(json.dumps({'type': 'assistant', 'timestamp': '2026-07-11T10:54:00Z', 'entrypoint': value,
+                                            'message': {'stop_reason': 'end_turn', 'content': []}}) + '\n', encoding='utf-8')
+
+                sessions = _kept_snapshot([_KEPT_ID])['sessions']
+
+                self.assertIsNone(sessions[0]['entrypoint'])
+
     def test_kept_id_already_live_is_not_duplicated(self) -> None:
         self._add_session(_KEPT_ID, 'd:\\WebDev\\kept')
 

@@ -347,3 +347,15 @@ test('the pin check never asks about the sessions pinned in Desktop', async () =
     await run('refreshPins()');
     assert.deepStrictEqual(plain(context.__calls), []);
 });
+
+test('an ended kept Desktop chat pinned here says so under Pinned', () => {
+    const { run } = controller();
+    run(`state.labels = Object.assign({}, DEFAULT_LABELS); state.pins = new Map([['${ID}', 'local']]); ${DESKTOP([])}`);
+    const raw = JSON.stringify(Object.assign({}, KEPT_RAW, { entrypoint: 'claude-desktop' }));
+    const markup = run(`logic.pinSourceMarkup(logic.pinSource(logic.buildSession(${raw}, state.labels), state.pins,
+        state.desktopGroups.starred, state.desktopGroups.members), state.labels)`);
+    assert.ok(markup.includes(run('DEFAULT_LABELS.pinned_in_agent_monitor')));
+    // Without the transcript's entrypoint it is not known as a Desktop chat.
+    assert.equal(run(`logic.pinSource(logic.buildSession(${JSON.stringify(KEPT_RAW)}, state.labels), state.pins,
+        state.desktopGroups.starred, state.desktopGroups.members)`), null);
+});

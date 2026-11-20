@@ -185,6 +185,10 @@ _SKILL_NAME_PATTERN = re.compile(r'[A-Za-z0-9][A-Za-z0-9:._-]{0,63}')
 # (``high``, ``xhigh``, ``fast``); anything else is not displayed.
 _LABEL_TOKEN_PATTERN = re.compile(r'^[a-z][a-z0-9_-]{0,15}$')
 
+# The app that wrote an entry (``cli``, ``claude-vscode``, ``claude-desktop``):
+# a lowercase token, anything else names none.
+_ENTRYPOINT_PATTERN = re.compile(r'^[a-z][a-z0-9_-]{0,39}$')
+
 # Caps on what the tail reports for display: the newest pull requests, the most
 # frequent failing hooks, and the length of a branch, hook or repository name.
 _MAX_PR_LINKS = 5
@@ -959,6 +963,8 @@ class TranscriptState:
     title: str | None = None
     model: str | None = None
     cli_version: str | None = None
+    # The app that wrote the newest main-conversation entry naming one (tail).
+    cli_entrypoint: str | None = None
     usage: dict[str, int] | None = None
     usage_by_model: dict[str, dict[str, int]] | None = None
     # Usage per skill and model, and the web searches made; None/0 while the
@@ -989,6 +995,7 @@ class HistoryState:
     title: str | None = None
     model: str | None = None
     cli_version: str | None = None
+    cli_entrypoint: str | None = None
     git_branch: str | None = None
     age_seconds: float | None = None
     usage: UsageScan = field(default_factory=UsageScan)
@@ -1641,7 +1648,7 @@ def history_state_for(path: Path, before_chunk: Callable[[], None] | None = None
 
     return HistoryState(
         session_id=session_id, cwd=cwd, title=scan.title(), model=tail.model, cli_version=tail.cli_version,
-        git_branch=tail.git_branch, age_seconds=age_seconds, usage=scan.usage(),
+        cli_entrypoint=tail.cli_entrypoint, git_branch=tail.git_branch, age_seconds=age_seconds, usage=scan.usage(),
         artifacts=_artifact_list(scan.artifacts), worktree_paths=tuple(scan.worktree_paths),
     )
 
@@ -1890,6 +1897,7 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
     api_refusal_explanation: str | None = None
     model: str | None = None
     cli_version: str | None = None
+    cli_entrypoint: str | None = None
     rate_limit_type: str | None = None
     rate_limit_resets_at: float | None = None
     api_retry: ApiRetry | None = None
@@ -1956,6 +1964,10 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
         entry_version = entry.get('version')
         if isinstance(entry_version, str) and entry_version:
             cli_version = entry_version
+        # Likewise the app that wrote it, as a token only.
+        entry_entrypoint = entry.get('entrypoint')
+        if isinstance(entry_entrypoint, str) and _ENTRYPOINT_PATTERN.match(entry_entrypoint):
+            cli_entrypoint = entry_entrypoint
 
         details.absorb_entry(entry_type, entry)
 
@@ -2112,6 +2124,7 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
         turn_origin=turn_origin,
         model=model,
         cli_version=cli_version,
+        cli_entrypoint=cli_entrypoint,
         current_tool=current_tool,
         current_tool_at=last_tool_at if current_tool is not None else None,
         last_reply=last_reply,

@@ -394,7 +394,9 @@ def _build_history_record(path: Path, before_chunk: Callable[[], None] | None = 
         'cwd': state.cwd,
         'short_name': state.session_id[:8],
         'kind': 'interactive',
-        'entrypoint': None,
+        # The app the transcript was last written by: a kept Claude Desktop
+        # chat is recognized by it after its registry record is gone.
+        'entrypoint': state.cli_entrypoint,
         'job_id': None,
         'remote_control': False,
         'native_status': None,
