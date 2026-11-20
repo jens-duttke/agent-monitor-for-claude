@@ -868,13 +868,13 @@ function buildSections(sessions, activeKeys, groupsView) {
         if (members.length === 0) {
             return;
         }
-        const sorted = sortGroupSessions(members);
+        const subsections = groupSubsections(members.map((session) => withArchivedMark(session, view.archived)), view.archived);
         groupSections.push(Object.assign({ key: key }, fields, {
             kind: 'group',
             collapsed: view.collapsed.has(key),
             counts: statusCounts(members),
-            sessions: sorted,
-            subsections: groupSubsections(sorted),
+            sessions: subsections.flatMap((sub) => sub.sessions),
+            subsections: subsections,
         }));
     };
     addGroup('pinned', { label: 'section_pinned' });
@@ -890,37 +890,36 @@ function buildSections(sessions, activeKeys, groupsView) {
     })));
 }
 
-// The sub-headings of a group section, in urgency order. A live session goes
-// under the status section it would otherwise be listed in; one that ended -
-// whatever status it ended on, a past one included - under "Ended", since a
-// group keeps its ended sessions and "Recent" would mix them with idle ones.
-const GROUP_SUBSECTIONS = [
-    { key: 'needs', labelKey: 'section_needs' },
-    { key: 'stopped', labelKey: 'section_stopped' },
-    { key: 'running', labelKey: 'section_running' },
-    { key: 'recent', labelKey: 'section_recent' },
-    { key: 'ended', labelKey: 'section_ended' },
-];
+// The sub-heading a session of a group goes under: the list section it would
+// be listed in outside the groups. A record kept only for its pin or group (one
+// the registry no longer lists alive) is a past session like a History row, so
+// it goes to "Older"; a status no section knows reads as "Recent".
+function groupSubsectionOf(session, archived) {
+    const section = sectionOf(session, archived);
+    if (section === 'archived' || section === 'older') {
+        return section;
+    }
+    if (session.kept === true && !session.alive) {
+        return 'older';
+    }
+    return section || 'recent';
+}
 
-// Split a group's sessions under its sub-headings, keeping their order inside
-// each; a sub-heading with no session is left out.
-function groupSubsections(sessions) {
-    const byKey = new Map(GROUP_SUBSECTIONS.map((sub) => [sub.key, []]));
+// Split a group's sessions under the list's own sections, in their order and
+// each sorted like that section outside the groups; a sub-heading with no
+// session is left out. `archived` is the set of sessions Claude Desktop archived.
+function groupSubsections(sessions, archived) {
+    const byKey = new Map(LIST_SECTIONS.map((section) => [section.key, []]));
     for (const session of sessions || []) {
-        if (!session) {
-            continue;
+        if (session) {
+            byKey.get(groupSubsectionOf(session, archived)).push(session);
         }
-        let key = 'ended';
-        if (session.alive) {
-            const section = sectionOf(session, null);
-            key = byKey.has(section) ? section : 'recent';
-        }
-        byKey.get(key).push(session);
     }
     const result = [];
-    for (const sub of GROUP_SUBSECTIONS) {
-        if (byKey.get(sub.key).length > 0) {
-            result.push({ key: sub.key, labelKey: sub.labelKey, sessions: byKey.get(sub.key) });
+    for (const section of LIST_SECTIONS) {
+        const members = byKey.get(section.key);
+        if (members.length > 0) {
+            result.push({ key: section.key, labelKey: section.label, sessions: sortSectionSessions(members, section.order) });
         }
     }
     return result;

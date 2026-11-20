@@ -406,7 +406,6 @@ const DEFAULT_LABELS = {
     section_recent: 'Recent',
     section_older: 'Older',
     section_pinned: 'Pinned',
-    section_ended: 'Ended',
     section_other_sessions: 'Other sessions',
     pin_session: 'Pin to top',
     unpin_session: 'Unpin',

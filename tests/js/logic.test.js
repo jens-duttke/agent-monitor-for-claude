@@ -4328,7 +4328,7 @@ test('prunePins: unknown or present resets the count, so unknown keeps the pin',
     assert.equal(logic.prunePins(pins, null, null).pins.size, 1);
 });
 
-test('groupSubsections: split by status section in urgency order, ended last, empty ones left out', () => {
+test('groupSubsections: the list sections in their order, each session where it would land outside the groups', () => {
     const mk = (id, status, alive) => ({ session_id: id, status: status, alive: alive });
     const sessions = [
         mk('p', 'awaiting_permission', true),
@@ -4341,43 +4341,53 @@ test('groupSubsections: split by status section in urgency order, ended last, em
         mk('u', 'unknown', true),
         mk('c', 'completed', false),
         Object.assign(mk('h', 'completed', false), { is_history: true }),
+        Object.assign(mk('k', 'completed', false), { kept: true }),
+        mk('z', 'completed', false),
+        mk('l', 'working', true),
     ];
-    const subs = logic.groupSubsections(sessions);
-    assert.deepEqual(subs.map((sub) => sub.key), ['needs', 'stopped', 'running', 'recent', 'ended']);
-    assert.deepEqual(subs.map((sub) => sub.labelKey), ['section_needs', 'section_stopped', 'section_running', 'section_recent', 'section_ended']);
-    assert.deepEqual(subs.map((sub) => sub.sessions.map((s) => s.session_id)), [['p'], ['e', 'i'], ['w', 'b'], ['a', 'n', 'u'], ['c', 'h']]);
+    const subs = logic.groupSubsections(sessions, new Set(['z', 'l']));
+    assert.deepEqual(subs.map((sub) => sub.key), ['needs', 'stopped', 'running', 'recent', 'older', 'archived']);
+    assert.deepEqual(subs.map((sub) => sub.labelKey), ['section_needs', 'section_stopped', 'section_running', 'section_recent', 'section_older', 'section_archived']);
+    assert.deepEqual(subs.map((sub) => sub.sessions.map((s) => s.session_id).sort()), [['p'], ['e', 'i'], ['b', 'l', 'w'], ['a', 'c', 'n', 'u'], ['h', 'k'], ['z']]);
 });
 
-test('groupSubsections: keeps the given order inside a sub-heading and omits empty ones', () => {
+test('groupSubsections: each sub-heading sorts like its list section and empty ones are left out', () => {
     const sessions = [
-        { session_id: 'w2', status: 'working', alive: true },
-        { session_id: 'x', status: 'completed', alive: false },
-        { session_id: 'w1', status: 'working', alive: true },
+        { session_id: 'w1', status: 'working', alive: true, process_age_seconds: 50, age_seconds: 1 },
+        { session_id: 'x', status: 'completed', alive: false, kept: true, age_seconds: 90 },
+        { session_id: 'w2', status: 'working', alive: true, process_age_seconds: 10, age_seconds: 40 },
+        { session_id: 'y', status: 'completed', alive: false, kept: true, age_seconds: 30 },
+        { session_id: 'q1', status: 'awaiting_permission', alive: true, age_seconds: 5 },
+        { session_id: 'q2', status: 'awaiting_permission', alive: true, age_seconds: 60 },
     ];
-    const subs = logic.groupSubsections(sessions);
-    assert.deepEqual(subs.map((sub) => sub.key), ['running', 'ended']);
-    assert.deepEqual(subs[0].sessions.map((s) => s.session_id), ['w2', 'w1']);
+    const subs = logic.groupSubsections(sessions, null);
+    assert.deepEqual(subs.map((sub) => [sub.key, sub.sessions.map((s) => s.session_id)]),
+        [['needs', ['q2', 'q1']], ['running', ['w2', 'w1']], ['older', ['y', 'x']]]);
     assert.deepEqual(logic.groupSubsections([]), []);
     assert.deepEqual(logic.groupSubsections(null), []);
 });
 
-test('groupSubsections: a dead session of any status is ended, an unknown status of a live one is recent', () => {
+test('groupSubsections: a dead registry session is recent, an unknown status recent, a kept archived one archived', () => {
     const subs = logic.groupSubsections([
-        { session_id: 'd', status: 'awaiting_permission', alive: false },
+        { session_id: 'd', status: 'completed', alive: false },
         { session_id: 'q', status: 'constructor', alive: true },
-    ]);
-    assert.deepEqual(subs.map((sub) => [sub.key, sub.sessions.map((s) => s.session_id)]), [['recent', ['q']], ['ended', ['d']]]);
+        { session_id: 'k', status: 'completed', alive: false, kept: true },
+        { session_id: 'r', status: 'working', alive: true, kept: true },
+    ], new Set(['k']));
+    assert.deepEqual(subs.map((sub) => [sub.key, sub.sessions.map((s) => s.session_id).sort()]), [['running', ['r']], ['recent', ['d', 'q']], ['archived', ['k']]]);
 });
 
-test('buildSections: a group section carries its subsections in the order of its sessions', () => {
-    const view = { pinned: new Set(['a', 'b']) };
+test('buildSections: a group section carries its subsections, its sessions in their order, a live archived one marked', () => {
+    const view = { pinned: new Set(['a', 'b', 'c']), archived: new Set(['c']) };
     const sections = logic.buildSections([
-        { session_id: 'a', status: 'completed', alive: false, age_seconds: 5 },
+        { session_id: 'a', status: 'completed', alive: false, kept: true, age_seconds: 5 },
         { session_id: 'b', status: 'working', alive: true, age_seconds: 9 },
+        { session_id: 'c', status: 'awaiting_input', alive: true, age_seconds: 3 },
     ], new Set(ALL_FILTER_KEYS), view);
     const pinned = sections.find((section) => section.key === 'pinned');
-    assert.deepEqual(pinned.subsections.map((sub) => sub.key), ['running', 'ended']);
-    assert.deepEqual(pinned.subsections.flatMap((sub) => sub.sessions.map((s) => s.session_id)), ['b', 'a']);
+    assert.deepEqual(pinned.subsections.map((sub) => sub.key), ['running', 'recent', 'older']);
+    assert.deepEqual(pinned.sessions.map((s) => s.session_id), ['b', 'c', 'a']);
+    assert.equal(pinned.subsections[1].sessions[0].archived, true);
 });
 
 test('groupSubheadMarkup: label and count, html safety', () => {
