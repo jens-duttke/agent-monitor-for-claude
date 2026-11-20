@@ -164,6 +164,8 @@
     "section_recent": "Recentes",
     "section_older": "Anteriores",
     "section_pinned": "Fixadas",
+    "section_ended": "Encerradas",
+    "section_other_sessions": "Outras sessões",
     "pin_session": "Fixar no topo",
     "unpin_session": "Desafixar",
     "pin_tip": "Mantém esta sessão no topo da lista, mesmo depois de terminar (tecla P)",

@@ -4327,3 +4327,75 @@ test('prunePins: unknown or present resets the count, so unknown keeps the pin',
     assert.equal(silent.misses.size, 0);
     assert.equal(logic.prunePins(pins, null, null).pins.size, 1);
 });
+
+test('groupSubsections: split by status section in urgency order, ended last, empty ones left out', () => {
+    const mk = (id, status, alive) => ({ session_id: id, status: status, alive: alive });
+    const sessions = [
+        mk('p', 'awaiting_permission', true),
+        mk('e', 'errored', true),
+        mk('i', 'interrupted', true),
+        mk('w', 'working', true),
+        mk('b', 'processing', true),
+        mk('a', 'awaiting_input', true),
+        mk('n', 'new', true),
+        mk('u', 'unknown', true),
+        mk('c', 'completed', false),
+        Object.assign(mk('h', 'completed', false), { is_history: true }),
+    ];
+    const subs = logic.groupSubsections(sessions);
+    assert.deepEqual(subs.map((sub) => sub.key), ['needs', 'stopped', 'running', 'recent', 'ended']);
+    assert.deepEqual(subs.map((sub) => sub.labelKey), ['section_needs', 'section_stopped', 'section_running', 'section_recent', 'section_ended']);
+    assert.deepEqual(subs.map((sub) => sub.sessions.map((s) => s.session_id)), [['p'], ['e', 'i'], ['w', 'b'], ['a', 'n', 'u'], ['c', 'h']]);
+});
+
+test('groupSubsections: keeps the given order inside a sub-heading and omits empty ones', () => {
+    const sessions = [
+        { session_id: 'w2', status: 'working', alive: true },
+        { session_id: 'x', status: 'completed', alive: false },
+        { session_id: 'w1', status: 'working', alive: true },
+    ];
+    const subs = logic.groupSubsections(sessions);
+    assert.deepEqual(subs.map((sub) => sub.key), ['running', 'ended']);
+    assert.deepEqual(subs[0].sessions.map((s) => s.session_id), ['w2', 'w1']);
+    assert.deepEqual(logic.groupSubsections([]), []);
+    assert.deepEqual(logic.groupSubsections(null), []);
+});
+
+test('groupSubsections: a dead session of any status is ended, an unknown status of a live one is recent', () => {
+    const subs = logic.groupSubsections([
+        { session_id: 'd', status: 'awaiting_permission', alive: false },
+        { session_id: 'q', status: 'constructor', alive: true },
+    ]);
+    assert.deepEqual(subs.map((sub) => [sub.key, sub.sessions.map((s) => s.session_id)]), [['recent', ['q']], ['ended', ['d']]]);
+});
+
+test('buildSections: a group section carries its subsections in the order of its sessions', () => {
+    const view = { pinned: new Set(['a', 'b']) };
+    const sections = logic.buildSections([
+        { session_id: 'a', status: 'completed', alive: false, age_seconds: 5 },
+        { session_id: 'b', status: 'working', alive: true, age_seconds: 9 },
+    ], new Set(ALL_FILTER_KEYS), view);
+    const pinned = sections.find((section) => section.key === 'pinned');
+    assert.deepEqual(pinned.subsections.map((sub) => sub.key), ['running', 'ended']);
+    assert.deepEqual(pinned.subsections.flatMap((sub) => sub.sessions.map((s) => s.session_id)), ['b', 'a']);
+});
+
+test('groupSubheadMarkup: label and count, html safety', () => {
+    const html = logic.groupSubheadMarkup({ key: 'running', labelKey: 'section_running', sessions: [{}, {}] }, { section_running: 'Running' });
+    assert.match(html, /Running/);
+    assert.match(html, />2</);
+    const hostile = logic.groupSubheadMarkup({ key: 'x', labelKey: 'section_running', sessions: [{}], count: '<img src=x onerror=alert(1)>' },
+        { section_running: '<script>alert(1)</script>"\'' });
+    assert.doesNotMatch(hostile, /<script|<img/);
+    assert.match(hostile, /&lt;script&gt;/);
+    assert.match(hostile, /&quot;&#39;/);
+    assert.match(hostile, />1</);
+});
+
+test('listDividerMarkup: the heading before the status sections, html safety', () => {
+    assert.match(logic.listDividerMarkup({ section_other_sessions: 'Other sessions' }), /Other sessions/);
+    const hostile = logic.listDividerMarkup({ section_other_sessions: '<b onclick="x">' });
+    assert.doesNotMatch(hostile, /<b /);
+    assert.match(hostile, /&lt;b onclick=&quot;x&quot;&gt;/);
+    assert.equal(typeof logic.listDividerMarkup(null), 'string');
+});

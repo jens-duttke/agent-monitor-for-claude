@@ -164,6 +164,8 @@
     "section_recent": "最近",
     "section_older": "以前",
     "section_pinned": "ピン留め",
+    "section_ended": "終了",
+    "section_other_sessions": "その他のセッション",
     "pin_session": "先頭にピン留め",
     "unpin_session": "ピン留めを外す",
     "pin_tip": "このセッションを終了後もリストの先頭に保ちます (キー P)",

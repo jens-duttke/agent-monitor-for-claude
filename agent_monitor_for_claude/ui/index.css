@@ -45,6 +45,13 @@
        yellow of an interrupted session. */
     --c-cache-expiring: #e3a03a;
 
+    /* The frame of a Pinned or Claude Desktop group: a light warm neutral,
+       since every hue already speaks for a status and the orange accent for
+       focus and selection. */
+    --c-group: #b9b4a8;
+    --group-bg: color-mix(in srgb, var(--c-group) 5%, var(--bg));
+    --group-head-bg: color-mix(in srgb, var(--c-group) 9%, var(--sunken));
+
     /* Terminal (ANSI) palette for the task-output console. */
     --ansi-black: #6b6b6b;
     --ansi-red: #e5726a;
@@ -971,7 +978,34 @@ body.splitter-dragging {
     display: contents;
 }
 
+/* A frame round each group - border, tint and a bar on the left - so where it
+   ends is plain. Clipped rather than hidden, which would make the frame a scroll
+   container and stop its header from sticking. */
 .group-section {
+    margin: 8px 8px 0;
+    border: 1px solid var(--border-strong);
+    border-left: 3px solid var(--c-group);
+    border-radius: 8px;
+    overflow: clip;
+    background: var(--group-bg);
+
+    .section-head {
+        border-top: none;
+        background: var(--group-head-bg);
+    }
+
+    &.closed .section-head {
+        border-bottom: none;
+    }
+
+    .group-sub + .group-sub .group-sub-head {
+        border-top: 1px solid var(--border);
+    }
+
+    .group-sub-items > .item:first-child {
+        border-top: none;
+    }
+
     /* A session that ended stays in its group, dimmed. */
     .item.ended {
         opacity: 0.55;
@@ -989,6 +1023,44 @@ body.splitter-dragging {
         white-space: nowrap;
         text-transform: none;
         letter-spacing: 0.02em;
+    }
+}
+
+/* Inside a group, the status its sessions would otherwise be listed under. */
+.group-sub-head {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 8px 14px 4px;
+    color: var(--fg-faint);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+
+    .sub-count {
+        color: var(--fg-dim);
+        font-variant-numeric: tabular-nums;
+    }
+}
+
+/* Between the groups and the status sections. */
+.list-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 14px 7px;
+    color: var(--fg-dim);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+
+    &::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: var(--border-strong);
     }
 }
 
@@ -3670,6 +3742,22 @@ body.compact {
 
     .section-note-line {
         display: none;
+    }
+
+    .group-section {
+        margin: 4px 4px 0;
+        border-left-width: 2px;
+        border-radius: 6px;
+    }
+
+    .group-sub-head {
+        padding: 4px 12px 2px;
+        font-size: 9.5px;
+    }
+
+    .list-divider {
+        padding: 9px 12px 4px;
+        font-size: 10px;
     }
 
     .item {

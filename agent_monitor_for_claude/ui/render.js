@@ -626,6 +626,13 @@ function createSection(section) {
     if (section.kind === 'group') {
         return createGroupSection();
     }
+    if (section.kind === 'divider') {
+        const divider = document.createElement('div');
+        divider.className = 'list-divider';
+        divider.setAttribute('role', 'heading');
+        divider.setAttribute('aria-level', '2');
+        return divider;
+    }
     const el = document.createElement('section');
     el.className = 'list-section';
     el.innerHTML = '<button class="section-head" type="button">'
@@ -644,6 +651,10 @@ function createSection(section) {
 function updateSection(el, section) {
     if (section.kind === 'group') {
         updateGroupSection(el, section);
+        return;
+    }
+    if (section.kind === 'divider') {
+        setMarkup(el, logic.listDividerMarkup(state.labels));
         return;
     }
     const labels = state.labels;
@@ -683,12 +694,23 @@ function updateGroupSection(el, item) {
     if (focused && !head.contains(document.activeElement) && head.firstElementChild) {
         head.firstElementChild.focus();
     }
-    const items = el.querySelector('.section-items');
-    if (section.collapsed) {
-        items.replaceChildren();
-    } else {
-        reconcile(items, item.items, rowKey, createItem, updateGroupItem);
-    }
+    // Folded, `subsections` is empty and the frame shrinks to its header.
+    reconcile(el.querySelector('.section-items'), item.subsections, (sub) => sub.key, createGroupSub, updateGroupSub);
+}
+
+// One sub-heading of a group - the status section its sessions would otherwise
+// be listed in - with its rows.
+function createGroupSub() {
+    const el = document.createElement('div');
+    el.className = 'group-sub';
+    el.innerHTML = '<div class="group-sub-head"></div><div class="group-sub-items"></div>';
+    return el;
+}
+
+function updateGroupSub(el, sub) {
+    setClass(el, 'group-sub group-sub-' + sub.key);
+    setMarkup(el.querySelector('.group-sub-head'), logic.groupSubheadMarkup(sub, state.labels));
+    reconcile(el.querySelector('.group-sub-items'), sub.sessions, rowKey, createItem, updateGroupItem);
 }
 
 // A session that ended stays in its group, dimmed.
@@ -1008,12 +1030,20 @@ function render(snapshot) {
     } else if (grouping === 'urgency') {
         setMarkup(chipsSlot, '');
         folded = logic.foldedGroupSessionCount(sectionData);
-        const sections = sectionData.map((section) => {
+        const sections = [];
+        for (const section of sectionData) {
             if (section.kind === 'group') {
-                // A folded group still says what it holds in its header.
-                const items = section.collapsed ? [] : section.sessions;
-                shown.push(...items);
-                return { key: section.key, kind: 'group', section: section, items: items };
+                // A folded group still says what it holds in its header. The
+                // keyboard walks the rows in the order of the sub-headings.
+                const subsections = section.collapsed ? [] : section.subsections;
+                for (const sub of subsections) {
+                    shown.push(...sub.sessions);
+                }
+                sections.push({ key: section.key, kind: 'group', section: section, subsections: subsections });
+                continue;
+            }
+            if (sections.length > 0 && sections[sections.length - 1].kind === 'group') {
+                sections.push({ key: '__other', kind: 'divider' });
             }
             const open = section.active;
             const items = open ? section.sessions : section.sessions.filter(isWidenedHit);
@@ -1021,7 +1051,7 @@ function render(snapshot) {
                 outsideFilters += items.length;
             }
             shown.push(...items);
-            return {
+            sections.push({
                 key: section.key,
                 label: section.label,
                 open: open,
@@ -1029,8 +1059,8 @@ function render(snapshot) {
                 count: counts.get(section.key),
                 note: sectionNote(section.key, open),
                 noteLine: PAST_SECTIONS.has(section.key) && open ? loadingNote : '',
-            };
-        });
+            });
+        }
         if (!(listSlot.firstElementChild && listSlot.firstElementChild.classList.contains('list-sections'))) {
             listSlot.innerHTML = '<div class="list-sections"></div>';
         }

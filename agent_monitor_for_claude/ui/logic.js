@@ -868,11 +868,13 @@ function buildSections(sessions, activeKeys, groupsView) {
         if (members.length === 0) {
             return;
         }
+        const sorted = sortGroupSessions(members);
         groupSections.push(Object.assign({ key: key }, fields, {
             kind: 'group',
             collapsed: view.collapsed.has(key),
             counts: statusCounts(members),
-            sessions: sortGroupSessions(members),
+            sessions: sorted,
+            subsections: groupSubsections(sorted),
         }));
     };
     addGroup('pinned', { label: 'section_pinned' });
@@ -886,6 +888,56 @@ function buildSections(sessions, activeKeys, groupsView) {
         active: sectionActive(section.key, activeKeys),
         sessions: sortSectionSessions(bySection.get(section.key), section.order),
     })));
+}
+
+// The sub-headings of a group section, in urgency order. A live session goes
+// under the status section it would otherwise be listed in; one that ended -
+// whatever status it ended on, a past one included - under "Ended", since a
+// group keeps its ended sessions and "Recent" would mix them with idle ones.
+const GROUP_SUBSECTIONS = [
+    { key: 'needs', labelKey: 'section_needs' },
+    { key: 'stopped', labelKey: 'section_stopped' },
+    { key: 'running', labelKey: 'section_running' },
+    { key: 'recent', labelKey: 'section_recent' },
+    { key: 'ended', labelKey: 'section_ended' },
+];
+
+// Split a group's sessions under its sub-headings, keeping their order inside
+// each; a sub-heading with no session is left out.
+function groupSubsections(sessions) {
+    const byKey = new Map(GROUP_SUBSECTIONS.map((sub) => [sub.key, []]));
+    for (const session of sessions || []) {
+        if (!session) {
+            continue;
+        }
+        let key = 'ended';
+        if (session.alive) {
+            const section = sectionOf(session, null);
+            key = byKey.has(section) ? section : 'recent';
+        }
+        byKey.get(key).push(session);
+    }
+    const result = [];
+    for (const sub of GROUP_SUBSECTIONS) {
+        if (byKey.get(sub.key).length > 0) {
+            result.push({ key: sub.key, labelKey: sub.labelKey, sessions: byKey.get(sub.key) });
+        }
+    }
+    return result;
+}
+
+// A group's sub-heading: its label and how many sessions it holds.
+function groupSubheadMarkup(subsection, labels) {
+    const strings = labels || {};
+    const count = Array.isArray(subsection.sessions) ? subsection.sessions.length : 0;
+    return '<span class="sub-label">' + esc(strings[subsection.labelKey] || subsection.key) + '</span>'
+        + '<span class="sub-count">' + esc(count) + '</span>';
+}
+
+// The heading between the group sections and the status sections.
+function listDividerMarkup(labels) {
+    const strings = labels || {};
+    return '<span class="divider-label">' + esc(strings.section_other_sessions || '') + '</span>';
 }
 
 // A session Claude Desktop archived while it still runs keeps its place, marked:
@@ -5409,6 +5461,9 @@ const AMC_LOGIC = {
     sortSectionSessions,
     sortGroupSessions,
     buildSections,
+    groupSubsections,
+    groupSubheadMarkup,
+    listDividerMarkup,
     groupHeaderMarkup,
     foldedGroupSessionCount,
     withArchivedMark,

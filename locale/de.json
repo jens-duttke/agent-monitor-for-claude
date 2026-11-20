@@ -164,6 +164,8 @@
     "section_recent": "Kürzlich",
     "section_older": "Älter",
     "section_pinned": "Angeheftet",
+    "section_ended": "Beendet",
+    "section_other_sessions": "Weitere Sitzungen",
     "pin_session": "Oben anheften",
     "unpin_session": "Lösen",
     "pin_tip": "Hält diese Sitzung oben in der Liste, auch nachdem sie beendet ist (Taste P)",
