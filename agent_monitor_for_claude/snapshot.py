@@ -29,11 +29,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .background_scans import completed_background_scans, pause_background_scans
+from .background_scans import completed_background_scans, pause_background_scans, wait_for_readers
 from .cli_install import installed_version
 from .last_seen import note_alive, prune_last_seen, seconds_since_alive
 from .model_catalog import context_window
-from .paths import SessionRoot, TranscriptIndex, find_transcript, folder_has_transcript, is_session_id, project_folders, sessions_dir, transcript_path
+from .paths import (
+    SessionRoot, TranscriptIndex, cwd_to_slug, find_transcript, folder_has_transcript, is_session_id, project_folders, sessions_dir, transcript_path,
+)
 from .plugin_servers import server_commands
 from .process_probe import ProcessInfo, probe_all
 from .procinfo import ChildProcess
@@ -42,8 +44,8 @@ from .sessions import list_sessions
 from .settings import current_settings
 from .subagents import SubagentInfo, count_subagents
 from .transcript import (
-    AgentLaunch, MessageEvent, ToolCall, TranscriptState, edited_files, full_texts, hook_failures, media_image, media_index, prune_scan_cache,
-    session_steps, state_for,
+    AgentLaunch, MessageEvent, ToolCall, TranscriptState, edited_files, full_texts, head_cwd, hook_failures, media_image, media_index,
+    prune_scan_cache, session_steps, state_for,
 )
 from .usage_parts import UsageScan, session_usage
 from .worktrees import located_transcripts, prune_worktree_cache, resolve_worktree
@@ -82,8 +84,15 @@ _keep_lookup: dict[str, tuple[tuple[SessionRoot, Path] | None, float]] = {}
 _keep_lookup_lock = threading.Lock()
 
 # A kept session's record is rebuilt only when its transcript changed; session id ->
-# (transcript mtime_ns, size, monotonic time built, record).  The age counts on from the build.
-_keep_records: dict[str, tuple[int, int, float, dict[str, Any]]] = {}
+# (transcript mtime_ns, size, monotonic time built, record or None when it could
+# not be built).  The age counts on from the build.  The builds run on one
+# background thread: session id -> the (root, transcript, mtime_ns, size) to
+# build from, the thread while one runs, and how many builds have stored a
+# result (it leads the fingerprint, as a finished build changes the snapshot).
+_keep_records: dict[str, tuple[int, int, float, dict[str, Any] | None]] = {}
+_keep_pending: dict[str, tuple[SessionRoot, Path, int, int]] = {}
+_keep_worker: threading.Thread | None = None
+_keep_builds_done = 0
 _keep_records_lock = threading.Lock()
 
 
@@ -521,10 +530,13 @@ def registry_fingerprint(keep: object = None) -> str:
 
     The count of finished background scans leads it: a large transcript's
     first scan completes without the file changing, and the snapshot that
-    reported it as pending is outdated from that moment on.  Each kept id
+    reported it as pending is outdated from that moment on.  The count of
+    finished kept-record builds follows for the same reason, and each kept id
     (see :func:`build_snapshot`) whose transcript is found adds its time and size.
     """
-    parts: list[str] = [f'scans:{completed_background_scans()}']
+    with _keep_records_lock:
+        kept_builds = _keep_builds_done
+    parts: list[str] = [f'scans:{completed_background_scans()}', f'kept:{kept_builds}']
     index = TranscriptIndex()
     with pause_background_scans():
         for root, record in _collect_pairs(index):
@@ -562,7 +574,8 @@ def pin_status(refs: object) -> dict[str, str]:
     ``missing`` is reported only when the pin's own root is among the reachable
     roots and holds no transcript for it; a pin whose root is not listed (a
     stopped WSL distribution) is ``unknown``, and no filesystem access ever
-    reaches a root that is not listed.
+    reaches a root that is not listed.  A session any listed root's registry
+    names is ``present`` whether or not it wrote a transcript yet.
 
     Parameters
     ----------
@@ -588,7 +601,9 @@ def pin_status(refs: object) -> dict[str, str]:
     listed_origins = {root.origin for root in roots}
     folders_by_origin: dict[str, list[Path]] = {}
     unreadable_origins: set[str] = set()
+    registered: set[str] = set()
     for root in roots:
+        registered.update(record['session_id'] for record in list_sessions(root))
         folders = project_folders(root)
         if folders is None:
             unreadable_origins.add(root.origin)
@@ -597,6 +612,10 @@ def pin_status(refs: object) -> dict[str, str]:
 
     status: dict[str, str] = {}
     for session_id, origin in pins.items():
+        if session_id in registered:
+            status[session_id] = 'present'
+            continue
+
         found, readable = _transcript_in_roots(session_id, folders_by_origin)
         if found:
             status[session_id] = 'present'
@@ -626,12 +645,16 @@ def _kept_transcripts(keep: list[str]) -> list[tuple[str, SessionRoot, Path, int
     """Return each kept id with the root, transcript, mtime (ns) and size it was found with, searching the roots in order.
 
     A lookup that found nothing is repeated only after ``_KEEP_RETRY_SECONDS``;
-    one that found a file is trusted until the file is gone.  Ids no longer
+    one that found a file is trusted until the file is gone.  A location on a
+    root that is not listed now (a stopped WSL distribution) is neither stat'ed
+    nor searched for again - touching its share would start the distribution -
+    but stays cached, so it is back as soon as its root is.  Ids no longer
     kept are dropped from the caches.  The lock covers the cache only, never a
     search of the roots.
     """
     now = time.monotonic()
-    roots: list[SessionRoot] | None = None
+    roots = session_roots()
+    listed_origins = {root.origin for root in roots}
     found: list[tuple[str, SessionRoot, Path, int, int]] = []
 
     with _keep_lookup_lock:
@@ -642,6 +665,8 @@ def _kept_transcripts(keep: list[str]) -> list[tuple[str, SessionRoot, Path, int
     with _keep_records_lock:
         for session_id in [known for known in _keep_records if known not in keep]:
             del _keep_records[session_id]
+        for session_id in [known for known in _keep_pending if known not in keep]:
+            del _keep_pending[session_id]
 
     for session_id in keep:
         cached = cache.get(session_id)
@@ -650,19 +675,12 @@ def _kept_transcripts(keep: list[str]) -> list[tuple[str, SessionRoot, Path, int
             location, looked_at = cached
             if location is None and now - looked_at < _KEEP_RETRY_SECONDS:
                 continue
+            if location is not None and location[0].origin not in listed_origins:
+                continue
 
         stat = _stat_transcript(location[1]) if location is not None else None
         if stat is None:
-            if roots is None:
-                roots = session_roots()
-
-            location = None
-            for root in roots:
-                path = find_transcript(root, session_id)
-                if path is not None:
-                    location = (root, path)
-                    break
-
+            location = _locate_kept(roots, session_id)
             stat = _stat_transcript(location[1]) if location is not None else None
             with _keep_lookup_lock:
                 _keep_lookup[session_id] = (location if stat is not None else None, now)
@@ -671,6 +689,30 @@ def _kept_transcripts(keep: list[str]) -> list[tuple[str, SessionRoot, Path, int
             found.append((session_id, location[0], location[1], stat[0], stat[1]))
 
     return found
+
+
+def _locate_kept(roots: list[SessionRoot], session_id: str) -> tuple[SessionRoot, Path] | None:
+    """Return the root and transcript a kept session is built from, or None when no listed root holds one.
+
+    Claude Desktop keeps a host copy of the chats it runs inside WSL in a folder
+    of its own (``projects/ssh-<id>/``), so one session can be found under two
+    roots.  As in the History listing, the copy in the folder Claude Code's slug
+    names for the session's cwd is the original and wins; otherwise the first
+    root's copy is kept.
+    """
+    candidates: list[tuple[SessionRoot, Path]] = []
+    for root in roots:
+        path = find_transcript(root, session_id)
+        if path is not None:
+            candidates.append((root, path))
+
+    if len(candidates) > 1:
+        for root, path in candidates:
+            cwd = head_cwd(path)
+            if cwd and cwd_to_slug(cwd).lower() == path.parent.name.lower():
+                return root, path
+
+    return candidates[0] if candidates else None
 
 
 def _stat_transcript(path: Path) -> tuple[int, int] | None:
@@ -684,10 +726,10 @@ def _stat_transcript(path: Path) -> tuple[int, int] | None:
 
 
 def _kept_records(keep: list[str], emitted: set[str]) -> list[dict[str, Any]]:
-    """Build the records of the kept ids the regular pass did not emit, from their transcripts.
+    """Return the records of the kept ids the regular pass did not emit, built from their transcripts.
 
-    A record is rebuilt only when its transcript changed since the last build;
-    otherwise the remembered one is handed out with its age moved on.
+    A record is built on a background thread (see :func:`_kept_record`), so a
+    kept id appears once its build has finished; the fingerprint changes then.
     """
     records: list[dict[str, Any]] = []
     for session_id, root, path, mtime_ns, size in _kept_transcripts(keep):
@@ -702,18 +744,67 @@ def _kept_records(keep: list[str], emitted: set[str]) -> list[dict[str, Any]]:
 
 
 def _kept_record(session_id: str, root: SessionRoot, path: Path, mtime_ns: int, size: int) -> dict[str, Any] | None:
-    """Return one kept session's record, from the memo while its transcript is unchanged."""
-    from .history import history_record, kept_cwd
+    """Return one kept session's record from the memo, queueing a build when its transcript changed.
+
+    A build reads the whole transcript and its subagents, which for a large
+    session would hold the snapshot for seconds - so it runs on the builder
+    thread, and until it has finished the record built last is handed out
+    (none before the first build).
+    """
+    global _keep_worker
 
     now = time.monotonic()
+    job = (root, path, mtime_ns, size)
     with _keep_records_lock:
         memo = _keep_records.get(session_id)
+        if memo is None or memo[0] != mtime_ns or memo[1] != size:
+            if _keep_pending.get(session_id) != job:
+                _keep_pending[session_id] = job
+            if _keep_worker is None:
+                _keep_worker = threading.Thread(target=_build_kept_records, name='kept-records', daemon=True)
+                _keep_worker.start()
 
-    if memo is not None and memo[0] == mtime_ns and memo[1] == size:
-        record = dict(memo[3])
-        if record['age_seconds'] is not None:
-            record['age_seconds'] += now - memo[2]
-        return record
+    if memo is None or memo[3] is None:
+        return None
+
+    record = dict(memo[3])
+    if record['age_seconds'] is not None:
+        record['age_seconds'] += now - memo[2]
+
+    return record
+
+
+def _build_kept_records() -> None:
+    """Build the queued kept records one by one until none is left (the builder thread)."""
+    global _keep_worker, _keep_builds_done
+
+    while True:
+        with _keep_records_lock:
+            if not _keep_pending:
+                _keep_worker = None
+                return
+            session_id, job = next(iter(_keep_pending.items()))
+
+        # A snapshot being built waits for nothing; the build waits for it.
+        wait_for_readers()
+        try:
+            record = _build_kept_record(job[0], job[1])
+        except Exception:
+            # Last-resort isolation, like build_snapshot's per record.
+            record = None
+
+        with _keep_records_lock:
+            # Dropped from the keep set, or queued again for a newer file, meanwhile.
+            if _keep_pending.get(session_id) != job:
+                continue
+            del _keep_pending[session_id]
+            _keep_records[session_id] = (job[2], job[3], time.monotonic(), record)
+            _keep_builds_done += 1
+
+
+def _build_kept_record(root: SessionRoot, path: Path) -> dict[str, Any] | None:
+    """Return the record of a kept session built from its transcript, like a History record, or None when it cannot be read."""
+    from .history import history_record, kept_cwd
 
     record = history_record(path)
     if record is None:
@@ -725,10 +816,8 @@ def _kept_record(session_id: str, root: SessionRoot, path: Path, mtime_ns: int, 
     record['origin_label'] = root.label
     record['is_history'] = False
     record['kept'] = True
-    with _keep_records_lock:
-        _keep_records[session_id] = (mtime_ns, size, now, record)
 
-    return dict(record)
+    return record
 
 
 def _collect_pairs(index: TranscriptIndex, listed: set[str] | None = None) -> list[tuple[SessionRoot, dict[str, Any]]]:

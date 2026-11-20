@@ -64,7 +64,8 @@ from .usage_parts import UsageScan
 
 __all__ = [
     'AgentLaunch', 'ApiRetry', 'Artifact', 'HookError', 'MessageEvent', 'PlanItem', 'PullRequest', 'Question', 'ToolCall', 'TranscriptState',
-    'HistoryState', 'WorktreeState', 'agent_steps', 'final_reply', 'full_texts', 'result_from_steps', 'session_steps', 'state_for', 'history_state_for', 'worktree_for',
+    'HistoryState', 'WorktreeState', 'agent_steps', 'final_reply', 'full_texts', 'head_cwd', 'result_from_steps', 'session_steps', 'state_for', 'history_state_for',
+    'worktree_for',
     'edited_files', 'hook_failures', 'media_image', 'media_index', 'prioritize_session', 'prune_scan_cache', 'usage_scan', 'usage_scan_once',
 ]
 
@@ -303,6 +304,9 @@ _AI_TITLE_MARKER = b'ai-title'
 _CUSTOM_TITLE_MARKER = b'custom-title'
 _PERMISSION_MODE_MARKER = b'permissionMode'
 _CWD_MARKER = b'"cwd"'
+
+# How much of a transcript's start head_cwd reads for the session's cwd.
+_HEAD_CWD_BYTES = 256 * 1024
 _WORKTREE_STATE_MARKER = b'worktree-state'
 
 # Claude Code records a switch into a git worktree (and back out, as a null
@@ -1709,6 +1713,27 @@ def _scan_history(path: Path) -> tuple[_ScanState, str | None]:
         _absorb_line(remainder, state)
 
     return state, cwd
+
+
+def head_cwd(path: Path) -> str | None:
+    """Return the ``cwd`` of the first entry naming one within the first ``_HEAD_CWD_BYTES`` of the transcript at *path*, or None.
+
+    Only the first entries are read, and of those only the one carrying a
+    ``cwd`` is parsed; an unreadable file yields None.
+    """
+    try:
+        with path.open('rb') as handle:
+            head = handle.read(_HEAD_CWD_BYTES)
+    except OSError:
+        return None
+
+    for raw_line in head.split(b'\n'):
+        if _CWD_MARKER in raw_line:
+            cwd = _entry_cwd(raw_line)
+            if cwd is not None:
+                return cwd
+
+    return None
 
 
 def _entry_cwd(raw_line: bytes) -> str | None:
