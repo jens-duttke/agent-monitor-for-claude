@@ -24,8 +24,8 @@ import webview  # type: ignore[import-untyped]  # no type stubs available
 
 from . import __version__
 from .clipboard import copy_text as _copy_text
-from .git_overview import MAX_DIRECTORIES, git_overview
 from .desktop_groups import desktop_groups
+from .git_overview import MAX_DIRECTORIES, git_overview
 from .git_status import git_diff, git_status
 from .history import list_history
 from .i18n import T, available_languages, reload_translations

@@ -223,8 +223,7 @@ def user_config_dir() -> Path:
 def desktop_data_dirs() -> list[Path]:
     """Return Claude Desktop's data directories that hold a ``claude_desktop_config.json``.
 
-    Every ``%LOCALAPPDATA%\Claude-Data\claude_*`` directory first, then
-    ``%APPDATA%\Claude``.
+    Every ``%LOCALAPPDATA%/Claude-Data/claude_*`` directory first, then ``%APPDATA%/Claude``.
     """
     config_name = 'claude_desktop_config.json'
     directories: list[Path] = []

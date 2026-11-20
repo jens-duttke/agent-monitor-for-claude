@@ -73,6 +73,14 @@ class DesktopGroupsTest(_Fixture):
         self.assertEqual(result['archived'], [_S1])
         self.assertEqual(result['members'], {_S2: 'cg-1'})
 
+    def test_a_session_with_an_active_and_an_archived_file_is_not_archived(self) -> None:
+        self.write_config(_config([{'id': 'cg-1', 'name': 'G'}], {f'code:local_{_D1}': 'cg-1', f'code:local_{_D2}': 'cg-1'}))
+        self.write_session(_D1, _S1, archived=True)
+        self.write_session(_D2, _S1)
+        result = self.read()
+        self.assertEqual(result['archived'], [])
+        self.assertEqual(result['members'], {_S1: 'cg-1'})
+
     def test_group_missing_from_sections_goes_last(self) -> None:
         groups = [{'id': 'cg-a', 'name': 'A'}, {'id': 'cg-b', 'name': 'B'}]
         self.write_config(_config(groups, sections=[_section('cg-b', 'B', 1)]))
@@ -92,6 +100,8 @@ class DesktopGroupsTest(_Fixture):
         shapes: list[Any] = [
             '[]', 'not json', {'preferences': {}}, {'preferences': {'epitaxyPrefs': {'dframe-group-scopes': 'x'}}},
             _config([{'id': 'cg-1', 'name': 'G'}], {f'code:local_{_D1}': 'cg-unknown', 'bad': 5}),
+            _config([{'id': ['cg-1'], 'name': 'G'}, {'id': {'x': 1}}], {f'code:local_{_D1}': ['cg-1'], f'code:local_{_D2}': {'a': 1}},
+                    sections=[{'id': ['cg-1'], 'kind': 'manual', 'order': 1}, {'id': {'x': 1}, 'kind': 'manual', 'order': 2}]),
         ]
         for shape in shapes:
             with self.subTest(shape=shape):

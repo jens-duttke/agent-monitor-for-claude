@@ -79,9 +79,10 @@ def desktop_groups(dirs: list[Path] | None = None) -> dict[str, Any]:
     _prune_cache(seen_files)
 
     members: dict[str, str] = {}
+    active_ids = {cli_id for cli_id, is_archived in cli_sessions.values() if not is_archived}
     archived: list[str] = []
-    for desktop_id, (cli_id, is_archived) in cli_sessions.items():
-        if is_archived and cli_id not in archived:
+    for cli_id, is_archived in cli_sessions.values():
+        if is_archived and cli_id not in active_ids and cli_id not in archived:
             archived.append(cli_id)
 
     for desktop_id, group_id in assignments:
@@ -141,8 +142,8 @@ def _collect_groups(scope_data: dict[str, Any], sections: list[dict[str, Any]], 
             continue
         by_id.setdefault(group['id'], group)
 
-    collapsed_by_id = {section.get('id'): section.get('collapsed') is True for section in sections}
-    ordered_ids = [section['id'] for section in sections if section.get('id') in by_id]
+    collapsed_by_id = {section['id']: section.get('collapsed') is True for section in sections if isinstance(section.get('id'), str)}
+    ordered_ids = [section['id'] for section in sections if isinstance(section.get('id'), str) and section['id'] in by_id]
     ordered_ids += [group_id for group_id in by_id if group_id not in ordered_ids]
 
     for group_id in ordered_ids:

@@ -262,10 +262,6 @@ class UserConfigDirTest(unittest.TestCase):
             self.assertEqual(win32.user_config_dir(), win32.Path('C:/Users/dev/AppData/Roaming/AgentMonitorForClaude'))
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 @_WINDOWS_ONLY
 class DesktopDataDirsTest(unittest.TestCase):
     def test_lists_data_directories_with_a_config_then_the_roaming_one(self) -> None:
@@ -288,3 +284,6 @@ class DesktopDataDirsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'LOCALAPPDATA': tmp, 'APPDATA': tmp}):
             self.assertEqual(win32.desktop_data_dirs(), [])
 
+
+if __name__ == '__main__':
+    unittest.main()

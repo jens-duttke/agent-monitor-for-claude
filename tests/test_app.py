@@ -569,7 +569,7 @@ class DesktopGroupsBridgeTest(unittest.TestCase):
         with mock.patch.object(app, 'desktop_groups', return_value=expected):
             result = _MonitorApi().get_desktop_groups()
 
-        self.assertEqual(set(result), {'groups', 'members', 'archived'})
+        self.assertEqual(result, expected)
 
 
 class PrioritizeSessionTest(unittest.TestCase):
