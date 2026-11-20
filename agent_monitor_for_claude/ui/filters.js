@@ -55,7 +55,7 @@ function currentGroupsView() {
         }
     }
     return {
-        pinned: new Set(state.pins.keys()),
+        pinned: new Set([...state.pins.keys(), ...(state.desktopGroups.starred || [])]),
         groups: state.desktopGroups.groups,
         members: state.desktopGroups.members,
         archived: state.desktopGroups.archived,
@@ -90,13 +90,19 @@ function savePins() {
 }
 
 // Pin the session to the top of the list, or take the pin off. A kept ended
-// session has to appear or go, so the snapshot is asked for again.
+// session has to appear or go, so the snapshot is asked for again. A pin only
+// Claude Desktop holds is Desktop's to take off.
 function togglePin(session) {
     const id = session && session.session_id;
-    if (!logic.isPinId(id)) {
+    const control = logic.pinControl(id, state.pins, state.desktopGroups.starred);
+    if (control === null) {
         return;
     }
-    if (state.pins.has(id)) {
+    if (control === 'desktop') {
+        toast(state.labels.pinned_in_desktop);
+        return;
+    }
+    if (control === 'unpin') {
         state.pins.delete(id);
     } else if (state.pins.size < logic.MAX_PINS) {
         state.pins.set(id, session.origin || 'local');

@@ -168,6 +168,7 @@
     "section_other_sessions": "Autres sessions",
     "pin_session": "Épingler en haut",
     "unpin_session": "Désépingler",
+    "pinned_in_desktop": "Épinglée dans Claude Desktop",
     "pin_tip": "Garde cette session en haut de la liste, même après sa fin (touche P)",
     "pins_full": "Au plus {max} sessions peuvent être épinglées - désépinglez-en une d'abord",
     "section_archived": "Archivées",

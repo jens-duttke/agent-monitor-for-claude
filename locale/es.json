@@ -168,6 +168,7 @@
     "section_other_sessions": "Otras sesiones",
     "pin_session": "Fijar arriba",
     "unpin_session": "Desfijar",
+    "pinned_in_desktop": "Fijada en Claude Desktop",
     "pin_tip": "Mantiene esta sesión arriba en la lista, también después de terminar (tecla P)",
     "pins_full": "Se pueden fijar como máximo {max} sesiones - desfija una primero",
     "section_archived": "Archivadas",

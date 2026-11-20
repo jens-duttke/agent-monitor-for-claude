@@ -70,7 +70,7 @@ All reads are local and read-only. The paths below are under `~/.claude/` (or `C
 | `plugins/` manifests | The program each installed plugin runs as a language or MCP server, to tell such a server from a tool the session runs. |
 | Process table (`/proc` on Linux) | Process ids, parent ids, names and start times, to tell live sessions from ended ones. The program a session's direct child runs (the first word of its command line), to recognise a plugin's server. CPU and memory for the selected session's processes. |
 | Window titles | Compared in memory to find the window to raise when you click a session. Not stored. |
-| Claude Desktop's `claude_desktop_config.json` and `claude-code-sessions/**/local_*.json` (Windows) | Your Desktop groups: their names, which sessions belong to them, their order and whether they are collapsed; per session only its Claude Code session id and whether it is archived. Read only, never written. |
+| Claude Desktop's `claude_desktop_config.json` and `claude-code-sessions/**/local_*.json` (Windows) | Your Desktop groups: their names, which sessions belong to them, their order and whether they are collapsed, and which sessions you pinned; per session only its Claude Code session id and whether it is archived. Read only, never written. |
 | `agent-monitor-settings.json` | The app's own settings (see [What it writes](#what-it-writes)). An older copy in `~/.claude/` is still read. |
 
 ### Conversation text shown in the window

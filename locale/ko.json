@@ -168,6 +168,7 @@
     "section_other_sessions": "기타 세션",
     "pin_session": "맨 위에 고정",
     "unpin_session": "고정 해제",
+    "pinned_in_desktop": "Claude Desktop에서 고정됨",
     "pin_tip": "이 세션이 끝난 뒤에도 목록 맨 위에 유지합니다 (키 P)",
     "pins_full": "최대 {max}개 세션만 고정할 수 있습니다 - 먼저 하나를 고정 해제하세요",
     "section_archived": "보관됨",

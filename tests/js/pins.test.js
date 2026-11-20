@@ -214,3 +214,84 @@ test('the search scope is the visible set in every grouping', () => {
         assert.deepStrictEqual(plain(run('collectSearchRefs(true)')).map((ref) => ref.session_id), expected, group);
     }
 });
+
+const DESKTOP = (starred) => `state.desktopGroups = { groups: [], members: new Map(), archived: new Set(), starred: new Set(${JSON.stringify(starred)}) };`;
+
+test('kept ids add the sessions pinned in Claude Desktop once', () => {
+    const { run } = controller();
+    run(`state.pins = new Map([['${ID}', 'local']]); ${DESKTOP([ID, 'other'])}`);
+    assert.deepStrictEqual(plain(run('keptSessionIds()')), [ID, 'other']);
+});
+
+test('a session pinned in Desktop lists under Pinned', () => {
+    const { run } = controller();
+    run(DESKTOP([ID]));
+    assert.equal(run(`currentGroupsView().pinned.has('${ID}')`), true);
+});
+
+test('a session pinned only in Desktop gets a note in the row menu, not unpin', async () => {
+    const { context, run } = controller();
+    run(`
+        state.labels = Object.assign({}, DEFAULT_LABELS);
+        ${DESKTOP([ID])}
+        state.sessionsByKey.set('k', { session_id: '${ID}', origin: 'local' });
+        apiBridge = () => null;
+        openMenu = (el, items) => { __calls.push(items); };
+    `);
+    await run(`openSessionMenu({ dataset: { key: 'k' }, isConnected: true }, null)`);
+    const items = plain(context.__calls[0]);
+    assert.ok(!items.some((item) => item.key === 'pin' || item.key === 'unpin'));
+    assert.ok(items.some((item) => item.note === true && item.label === run('DEFAULT_LABELS.pinned_in_desktop')));
+});
+
+test('the detail head shows the Desktop pin as a note, not a button', () => {
+    const { run } = controller();
+    run(`state.labels = Object.assign({}, DEFAULT_LABELS); ${DESKTOP([ID])}`);
+    const html = run(`actionsMarkup({ session_id: '${ID}', origin: 'local', alive: false })`);
+    assert.ok(!html.includes('data-action="pin"') && !html.includes('data-action="unpin"'));
+    assert.ok(html.includes(run('DEFAULT_LABELS.pinned_in_desktop')));
+});
+
+test('P on a session pinned only in Desktop changes nothing and says why', () => {
+    const { context, storage, run } = controller();
+    run(`
+        render = () => __calls.push('render');
+        tick = () => {};
+        toast = (message) => __calls.push(message);
+        state.labels = Object.assign({}, DEFAULT_LABELS);
+        ${DESKTOP([ID])}
+        togglePin({ session_id: '${ID}', origin: 'local' });
+    `);
+    assert.equal(run('state.pins.size'), 0);
+    assert.equal(storage.has('amc-pins'), false);
+    assert.deepStrictEqual(plain(context.__calls), [run('DEFAULT_LABELS.pinned_in_desktop')]);
+});
+
+test('unpinning a session pinned in both removes only the own pin, and it stays under Pinned', async () => {
+    const { context, run } = controller();
+    run(`
+        render = () => {};
+        tick = () => {};
+        state.labels = Object.assign({}, DEFAULT_LABELS);
+        state.pins = new Map([['${ID}', 'local']]);
+        ${DESKTOP([ID])}
+        state.sessionsByKey.set('k', { session_id: '${ID}', origin: 'local' });
+        apiBridge = () => null;
+        openMenu = (el, items) => { __calls.push(items.map((item) => item.key)); };
+    `);
+    await run(`openSessionMenu({ dataset: { key: 'k' }, isConnected: true }, null)`);
+    assert.ok(plain(context.__calls[0]).includes('unpin'));
+    run(`runSessionAction('unpin', state.sessionsByKey.get('k'))`);
+    assert.equal(run('state.pins.size'), 0);
+    assert.equal(run(`currentGroupsView().pinned.has('${ID}')`), true);
+});
+
+test('the pin check never asks about the sessions pinned in Desktop', async () => {
+    const { context, run } = controller();
+    run(`
+        ${DESKTOP([ID])}
+        apiBridge = () => ({ check_pins: (refs) => { __calls.push(refs); return {}; } });
+    `);
+    await run('refreshPins()');
+    assert.deepStrictEqual(plain(context.__calls), []);
+});

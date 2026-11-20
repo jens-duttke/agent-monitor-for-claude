@@ -4,11 +4,12 @@ Claude Desktop groups
 
 Reads, never writes, how Claude Desktop sorts its Code sessions: the manual
 groups with their order and collapsed state, which session sits in which group,
-and which sessions are archived.
+which sessions are pinned and which are archived.
 
 The groups live in ``claude_desktop_config.json`` (``preferences.epitaxyPrefs``,
 under ``dframe-group-scopes`` and ``dframe-code-sections``, one entry per
-account/organization scope).  Each Desktop session has its own file
+account/organization scope), the pinned sessions under
+``starred-local-code-sessions`` (one list of ``local_<desktopId>`` ids).  Each Desktop session has its own file
 ``claude-code-sessions/<account>/<org>/local_<desktopId>.json`` that names the
 Claude Code session (``cliSessionId``, or the one it ran last once its process
 has ended) and whether it is archived.  Every file
@@ -37,10 +38,12 @@ _PREFERENCES_KEY = 'preferences'
 _EPITAXY_KEY = 'epitaxyPrefs'
 _SCOPES_KEY = 'dframe-group-scopes'
 _SECTIONS_KEY = 'dframe-code-sections'
+_STARRED_KEY = 'starred-local-code-sessions'
 _MAX_GROUP_NAME_CHARS = 80
 _CODE_MODE = 'code'
 _MANUAL_KIND = 'manual'
 _UUID_PATTERN = re.compile(r'\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z')
+_STARRED_ID_PATTERN = re.compile(r'\Alocal_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z')
 
 # File path -> (mtime_ns, size, parsed JSON or None).
 _cache: dict[str, tuple[int, int, Any]] = {}
@@ -60,13 +63,16 @@ def desktop_groups(dirs: list[Path] | None = None) -> dict[str, Any]:
     dict
         ``groups`` (``{id, name, order, collapsed}`` in Desktop's order),
         ``members`` (Claude Code session id -> group id, archived sessions
-        left out) and ``archived`` (Claude Code session ids).
+        left out), ``archived`` (Claude Code session ids) and ``starred``
+        (the Claude Code session ids pinned in Desktop, in Desktop's order,
+        archived ones included).
     """
     directories = desktop_data_dirs() if dirs is None else dirs
 
     groups: list[dict[str, Any]] = []
     group_ids: set[str] = set()
     assignments: list[tuple[str, str]] = []
+    starred_ids: list[str] = []
     cli_sessions: dict[str, tuple[str, bool]] = {}
     seen_files: set[str] = set()
 
@@ -75,6 +81,7 @@ def desktop_groups(dirs: list[Path] | None = None) -> dict[str, Any]:
         for scope, scope_data in _dict_items(preferences.get(_SCOPES_KEY)):
             _collect_groups(scope_data, _scope_sections(preferences, scope), groups, group_ids)
             assignments.extend(_scope_assignments(scope_data))
+        starred_ids.extend(_starred_ids(preferences))
         cli_sessions.update(_session_files(directory, seen_files))
 
     _prune_cache(seen_files)
@@ -92,10 +99,16 @@ def desktop_groups(dirs: list[Path] | None = None) -> dict[str, Any]:
             continue
         members[session[0]] = group_id
 
+    starred: list[str] = []
+    for desktop_id in starred_ids:
+        session = cli_sessions.get(desktop_id)
+        if session is not None and session[0] not in starred:
+            starred.append(session[0])
+
     for position, group in enumerate(groups):
         group['order'] = position
 
-    return {'groups': groups, 'members': members, 'archived': archived}
+    return {'groups': groups, 'members': members, 'archived': archived, 'starred': starred}
 
 
 def _preferences(directory: Path) -> dict[str, Any]:
@@ -173,6 +186,15 @@ def _scope_assignments(scope_data: dict[str, Any]) -> list[tuple[str, str]]:
             pairs.append((key[len(_ASSIGNMENT_PREFIX):], group_id))
 
     return pairs
+
+
+def _starred_ids(preferences: dict[str, Any]) -> list[str]:
+    """The Desktop session ids pinned in Desktop (``local_<uuid>``, the session file's stem); anything else is skipped."""
+    starred = preferences.get(_STARRED_KEY)
+    if not isinstance(starred, list):
+        return []
+
+    return [item for item in starred if isinstance(item, str) and _STARRED_ID_PATTERN.match(item)]
 
 
 def _session_files(directory: Path, seen_files: set[str]) -> dict[str, tuple[str, bool]]:

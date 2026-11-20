@@ -15,7 +15,7 @@ Under the Claude config directory (`CLAUDE_CONFIG_DIR`, or `~/.claude/`):
 
 On Windows, from Claude Desktop's own folder (`%LOCALAPPDATA%\Claude-Data\claude_<id>\` for the Microsoft Store install, else `%APPDATA%\Claude\`), read only:
 
-- **Desktop groups** - `claude_desktop_config.json`, for the groups you made in Claude Desktop, their order and which sessions they hold.
+- **Desktop groups** - `claude_desktop_config.json`, for the groups you made in Claude Desktop, their order, which sessions they hold and which sessions you pinned.
 - **Desktop sessions** - `claude-code-sessions/<account>/<org>/local_<id>.json`, for each chat's session id and whether you archived it.
 
 Each transcript is read in full once, then only the lines appended since. Large transcripts are read in the background, so the window shows every session right away; until the read is done, the cost shows `…`. The selected session is read first.
@@ -24,7 +24,7 @@ The *Older* section reads past sessions under `projects/` only when you open it,
 
 ## Pinned sessions and Desktop groups
 
-A pinned session stays in the *Pinned* section at the top of the list, also after it ended or Claude Code removed its registry record. Pin it from its menu, the details or with *P*; a pin is dropped when the session's files are gone.
+A pinned session stays in the *Pinned* section at the top of the list, also after it ended or Claude Code removed its registry record. Pin it from its menu, the details or with *P*; a pin is dropped when the session's files are gone. On Windows, a session you pinned in Claude Desktop is listed under *Pinned* too, and only Claude Desktop can unpin it.
 
 On Windows, the groups you made in Claude Desktop are listed as sections below *Pinned*, in Desktop's order. Each header counts its sessions per status and can be folded. Like a pinned session, a group's session stays listed after it ended. The list refreshes within a few seconds of a change in Desktop. Linux has no Claude Desktop, so there are no groups.
 

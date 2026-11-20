@@ -5302,9 +5302,10 @@ function settingsFileMarkup(view, labels) {
 
 /* Claude Desktop's groups as the bridge answers them, which is untrusted on-disk
    data: wrong types are dropped, a member must name a known group, and the
-   lookups are Maps (a key such as `constructor` is just a key). */
+   lookups are Maps (a key such as `constructor` is just a key). `starred` are
+   the sessions pinned in Desktop, in Desktop's order. */
 function normalizeDesktopGroups(raw) {
-    const result = { groups: [], members: new Map(), archived: new Set() };
+    const result = { groups: [], members: new Map(), archived: new Set(), starred: new Set() };
     if (!raw || typeof raw !== 'object') {
         return result;
     }
@@ -5333,14 +5334,34 @@ function normalizeDesktopGroups(raw) {
             result.archived.add(sessionId);
         }
     }
+    for (const sessionId of Array.isArray(raw.starred) ? raw.starred : []) {
+        if (typeof sessionId === 'string' && sessionId) {
+            result.starred.add(sessionId);
+        }
+    }
     return result;
 }
 
-/* A string that changes exactly when the groups, a member or an archived id does. */
+/* A string that changes exactly when the groups, a member, an archived or a starred id does. */
 function desktopGroupsSignature(normalized) {
     const members = Array.from(normalized.members.entries()).sort((one, two) => (one[0] < two[0] ? -1 : one[0] > two[0] ? 1 : 0));
     const archived = Array.from(normalized.archived).sort();
-    return JSON.stringify([normalized.groups, members, archived]);
+    const starred = Array.from(normalized.starred || []);
+    return JSON.stringify([normalized.groups, members, archived, starred]);
+}
+
+/* Which pin control a session gets: 'pin', 'unpin' (its own pin, whether or not
+   Claude Desktop pins it too - unpinning takes only the own one off), 'desktop'
+   for a session only Desktop pins (which Agent Monitor cannot change), or null
+   for an id that cannot be pinned. */
+function pinControl(sessionId, pins, starred) {
+    if (!isPinId(sessionId)) {
+        return null;
+    }
+    if (pins.has(sessionId)) {
+        return 'unpin';
+    }
+    return starred instanceof Set && starred.has(sessionId) ? 'desktop' : 'pin';
 }
 
 /* The pinned sessions as stored (amc-pins, JSON `[{id, origin}]`): untrusted
@@ -5407,6 +5428,7 @@ const AMC_LOGIC = {
     isPinId,
     parsePins,
     prunePins,
+    pinControl,
     normalizeDesktopGroups,
     desktopGroupsSignature,
     fmt,

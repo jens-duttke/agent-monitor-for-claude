@@ -532,9 +532,12 @@ function actionsMarkup(session) {
     if (hasWindow(session)) {
         html += actionButton('open-window', labels.action_open_window, { kind: 'primary', key: '↵' });
     }
-    if (logic.isPinId(session.session_id)) {
-        const pinned = state.pins.has(session.session_id);
-        html += actionButton(pinned ? 'unpin' : 'pin', pinned ? labels.unpin_session : labels.pin_session, { key: 'P', tip: labels.pin_tip });
+    const pin = logic.pinControl(session.session_id, state.pins, state.desktopGroups.starred);
+    if (pin === 'desktop') {
+        html += '<span' + attr('class', 'action-note') + '>' + esc(labels.pinned_in_desktop || '') + '</span>';
+    } else if (pin !== null) {
+        const pinned = pin === 'unpin';
+        html += actionButton(pin, pinned ? labels.unpin_session : labels.pin_session, { key: 'P', tip: labels.pin_tip });
     }
     html += actionButton('copy-id', labels.action_copy_id, { key: ctrl + ' C' });
     if (session.job_id) {

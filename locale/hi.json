@@ -168,6 +168,7 @@
     "section_other_sessions": "अन्य सत्र",
     "pin_session": "शीर्ष पर पिन करें",
     "unpin_session": "पिन हटाएँ",
+    "pinned_in_desktop": "Claude Desktop में पिन किया गया",
     "pin_tip": "इस सत्र को सूची में सबसे ऊपर रखता है, समाप्त होने के बाद भी (कुंजी P)",
     "pins_full": "अधिकतम {max} सत्र पिन किए जा सकते हैं - पहले एक का पिन हटाएँ",
     "section_archived": "संग्रहीत",

@@ -4066,7 +4066,7 @@ test('appVersionMarkup: names the version and what the check found; html safety'
 });
 
 test('normalizeDesktopGroups drops bad shapes', () => {
-    const empty = { groups: [], members: new Map(), archived: new Set() };
+    const empty = { groups: [], members: new Map(), archived: new Set(), starred: new Set() };
     assert.deepEqual(logic.normalizeDesktopGroups(null), empty);
     assert.deepEqual(logic.normalizeDesktopGroups({ groups: 'x', members: 'y', archived: 'z' }), empty);
 
@@ -4398,4 +4398,27 @@ test('listDividerMarkup: the heading before the status sections, html safety', (
     assert.doesNotMatch(hostile, /<b /);
     assert.match(hostile, /&lt;b onclick=&quot;x&quot;&gt;/);
     assert.equal(typeof logic.listDividerMarkup(null), 'string');
+});
+
+test('normalizeDesktopGroups keeps the starred ids as a Set and the signature follows them', () => {
+    const result = logic.normalizeDesktopGroups({ starred: ['s1', 4, null, '', ['x'], 'constructor', 's1'] });
+    assert.ok(result.starred instanceof Set);
+    assert.deepEqual(Array.from(result.starred), ['s1', 'constructor']);
+    assert.equal(logic.normalizeDesktopGroups({ starred: 'nope' }).starred.size, 0);
+
+    const before = logic.normalizeDesktopGroups({ starred: ['s1'] });
+    const after = logic.normalizeDesktopGroups({ starred: ['s1', 's2'] });
+    assert.notEqual(logic.desktopGroupsSignature(before), logic.desktopGroupsSignature(after));
+});
+
+test('pinControl tells an own pin from one Claude Desktop holds', () => {
+    const id = '11111111-2222-4333-8444-555555555555';
+    const own = new Map([[id, 'local']]);
+    const starred = new Set([id]);
+    assert.equal(logic.pinControl(id, new Map(), new Set()), 'pin');
+    assert.equal(logic.pinControl(id, own, new Set()), 'unpin');
+    assert.equal(logic.pinControl(id, own, starred), 'unpin');
+    assert.equal(logic.pinControl(id, new Map(), starred), 'desktop');
+    assert.equal(logic.pinControl(id, new Map(), undefined), 'pin');
+    assert.equal(logic.pinControl('abc', new Map(), new Set(['abc'])), null);
 });

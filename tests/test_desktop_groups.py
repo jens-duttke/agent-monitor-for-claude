@@ -22,10 +22,13 @@ def _write(path: Path, content: Any) -> None:
     path.write_text(content if isinstance(content, str) else json.dumps(content), encoding='utf-8')
 
 
-def _config(groups: list[dict[str, Any]], assignments: dict[str, str] | None = None, sections: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def _config(groups: list[dict[str, Any]], assignments: dict[str, str] | None = None, sections: list[dict[str, Any]] | None = None,
+            starred: Any = None) -> dict[str, Any]:
     prefs: dict[str, Any] = {'dframe-group-scopes': {_SCOPE: {'groups': groups, 'assignments': assignments or {}, 'order': {}}}}
     if sections is not None:
         prefs['dframe-code-sections'] = {_SCOPE: {'sections': sections}}
+    if starred is not None:
+        prefs['starred-local-code-sessions'] = starred
     return {'preferences': {'epitaxyPrefs': prefs}}
 
 
@@ -118,7 +121,7 @@ class DesktopGroupsTest(_Fixture):
                 self.write_config(shape)
                 self.write_session(_D1, _S1)
                 result = self.read()
-                self.assertEqual(set(result), {'groups', 'members', 'archived'})
+                self.assertEqual(set(result), {'groups', 'members', 'archived', 'starred'})
                 self.assertEqual(result['members'], {})
 
     def test_group_name_is_clipped(self) -> None:
@@ -149,7 +152,51 @@ class DesktopGroupsTest(_Fixture):
 
     def test_no_dirs_gives_empty_result(self) -> None:
         with mock.patch.object(desktop_groups, 'desktop_data_dirs', return_value=[]):
-            self.assertEqual(desktop_groups.desktop_groups(), {'groups': [], 'members': {}, 'archived': []})
+            self.assertEqual(desktop_groups.desktop_groups(), {'groups': [], 'members': {}, 'archived': [], 'starred': []})
+
+
+
+class DesktopStarredTest(_Fixture):
+    def test_starred_sessions_map_to_cli_session_ids_in_desktop_order(self) -> None:
+        self.write_config(_config([], starred=[f'local_{_D2}', f'local_{_D1}', f'local_{_D2}']))
+        self.write_session(_D1, _S1)
+        self.write_session(_D2, _S2)
+        self.assertEqual(self.read()['starred'], [_S2, _S1])
+
+    def test_an_archived_starred_session_stays_starred(self) -> None:
+        self.write_config(_config([], starred=[f'local_{_D1}']))
+        self.write_session(_D1, _S1, archived=True)
+        result = self.read()
+        self.assertEqual(result['starred'], [_S1])
+        self.assertEqual(result['archived'], [_S1])
+
+    def test_an_ended_starred_chat_falls_back_to_the_session_it_ran_last(self) -> None:
+        self.write_config(_config([], starred=[f'local_{_D1}']))
+        last = '11111111-2222-4333-8444-555555555555'
+        _write(self.dir / 'claude-code-sessions' / 'acct-1' / 'org-1' / f'local_{_D1}.json', {'cliSessionId': None, 'lastAssistantCliSessionId': last})
+        self.assertEqual(self.read()['starred'], [last])
+
+    def test_an_unmapped_starred_id_is_skipped(self) -> None:
+        self.write_config(_config([], starred=[f'local_{_D2}', f'local_{_D1}']))
+        self.write_session(_D1, _S1)
+        self.assertEqual(self.read()['starred'], [_S1])
+
+    def test_malformed_starred_shapes_degrade(self) -> None:
+        self.write_session(_D1, _S1)
+        shapes: list[Any] = ['x', {'a': f'local_{_D1}'}, 5, [5, None, ['x'], f'code:local_{_D1}', _D1, 'local_../../x', f'local_{_D1}x']]
+        for shape in shapes:
+            with self.subTest(shape=shape):
+                desktop_groups._cache.clear()
+                self.write_config(_config([], starred=shape))
+                self.assertEqual(self.read()['starred'], [])
+
+    def test_starred_ids_merge_across_config_files(self) -> None:
+        self.write_config(_config([], starred=[f'local_{_D1}']))
+        self.write_session(_D1, _S1)
+        other = self.dir / 'other'
+        _write(other / 'claude_desktop_config.json', _config([], starred=[f'local_{_D2}', f'local_{_D1}']))
+        _write(other / 'claude-code-sessions' / 'a' / 'o' / f'local_{_D2}.json', {'cliSessionId': _S2})
+        self.assertEqual(desktop_groups.desktop_groups([self.dir, other])['starred'], [_S1, _S2])
 
 
 if __name__ == '__main__':

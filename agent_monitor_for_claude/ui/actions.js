@@ -193,8 +193,11 @@ async function openSessionMenu(itemEl, point) {
     if (state.compact) {
         items.push({ key: 'details', label: labels.action_show_details });
     }
-    if (logic.isPinId(session.session_id)) {
-        items.push(state.pins.has(session.session_id) ? { key: 'unpin', label: labels.unpin_session } : { key: 'pin', label: labels.pin_session });
+    const pin = logic.pinControl(session.session_id, state.pins, state.desktopGroups.starred);
+    if (pin === 'desktop') {
+        items.push({ key: null, label: labels.pinned_in_desktop, note: true });
+    } else if (pin !== null) {
+        items.push(pin === 'unpin' ? { key: 'unpin', label: labels.unpin_session } : { key: 'pin', label: labels.pin_session });
     }
     items.push({ key: 'copy-id', label: labels.copy_session_id });
     if (session.job_id) {

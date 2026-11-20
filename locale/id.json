@@ -168,6 +168,7 @@
     "section_other_sessions": "Sesi lainnya",
     "pin_session": "Sematkan di atas",
     "unpin_session": "Lepas sematan",
+    "pinned_in_desktop": "Disematkan di Claude Desktop",
     "pin_tip": "Menjaga sesi ini di atas daftar, juga setelah selesai (tombol P)",
     "pins_full": "Paling banyak {max} sesi dapat disematkan - lepas sematan satu dulu",
     "section_archived": "Diarsipkan",

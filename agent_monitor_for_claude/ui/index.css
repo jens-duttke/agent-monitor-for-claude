@@ -1524,6 +1524,14 @@ body.splitter-dragging {
     }
 }
 
+.action-note {
+    display: inline-flex;
+    align-items: center;
+    height: 30px;
+    color: var(--fg-faint);
+    font-size: 12.5px;
+}
+
 .detail-kpis {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -3062,6 +3070,13 @@ body.group-graph .content {
     &.danger {
         color: var(--c-errored);
     }
+}
+
+.menu-note {
+    padding: 7px 12px 7px 30px;
+    color: var(--fg-faint);
+    font-size: 12.5px;
+    cursor: default;
 }
 
 .menu-check {

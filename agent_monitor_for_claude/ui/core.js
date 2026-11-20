@@ -110,7 +110,7 @@ const state = {
     // Each listed directory's latest git record (git_overview.py), by logic.gitDirKey.
     gitOverview: new Map(),
     // Claude Desktop's groups (logic.normalizeDesktopGroups), refreshed by desktopGroupsLoop.
-    desktopGroups: { groups: [], members: new Map(), archived: new Set() },
+    desktopGroups: { groups: [], members: new Map(), archived: new Set(), starred: new Set() },
     // A tool of the selected subagent, by its key (a tool name, or mcp:<server>):
     // its activity then lists that tool's calls alone.
     selectedTool: null,
@@ -410,6 +410,7 @@ const DEFAULT_LABELS = {
     section_other_sessions: 'Other sessions',
     pin_session: 'Pin to top',
     unpin_session: 'Unpin',
+    pinned_in_desktop: 'Pinned in Claude Desktop',
     pin_tip: 'Keeps this session at the top of the list, also after it ends (key P)',
     pins_full: 'At most {max} sessions can be pinned - unpin one first',
     section_archived: 'Archived',
@@ -674,7 +675,7 @@ async function callBootstrap() {
    pinned sessions and the members of a Claude Desktop group (declared by the
    features that own them). */
 function keptSessionIds() {
-    return Array.from(new Set([...state.pins.keys(), ...state.desktopGroups.members.keys()]));
+    return Array.from(new Set([...state.pins.keys(), ...(state.desktopGroups.starred || []), ...state.desktopGroups.members.keys()]));
 }
 
 async function callSnapshot() {
