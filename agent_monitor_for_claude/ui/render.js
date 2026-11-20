@@ -711,8 +711,8 @@ function updateGroupSection(el, item) {
     reconcile(el.querySelector('.section-items'), item.subsections, (sub) => sub.key, createGroupSub, (subEl, sub) => updateGroupSub(subEl, sub, pinned));
 }
 
-// One sub-heading of a group - the status section its sessions would otherwise
-// be listed in - with its rows.
+// One sub-heading of a group - the list section its sessions would otherwise
+// be listed in - with its rows. Not interactive: the whole group folds.
 function createGroupSub() {
     const el = document.createElement('div');
     el.className = 'group-sub';

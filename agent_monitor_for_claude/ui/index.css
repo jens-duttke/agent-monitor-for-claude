@@ -1038,7 +1038,7 @@ body.splitter-dragging {
     }
 }
 
-/* Inside a group, the status its sessions would otherwise be listed under. */
+/* Inside a group, the list section its sessions would otherwise be listed under. */
 .group-sub-head {
     display: flex;
     align-items: baseline;
