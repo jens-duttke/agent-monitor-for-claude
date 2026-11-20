@@ -5350,18 +5350,70 @@ function desktopGroupsSignature(normalized) {
     return JSON.stringify([normalized.groups, members, archived, starred]);
 }
 
-/* Which pin control a session gets: 'pin', 'unpin' (its own pin, whether or not
-   Claude Desktop pins it too - unpinning takes only the own one off), 'desktop'
-   for a session only Desktop pins (which Agent Monitor cannot change), or null
-   for an id that cannot be pinned. */
+/* Which pin control a session gets: 'pin', 'unpin' (its own pin), 'desktop'
+   for a session Claude Desktop pins - a Desktop pin wins, so Agent Monitor
+   offers no control of its own for it, whether or not it holds an own pin too -
+   or null for an id that cannot be pinned. */
 function pinControl(sessionId, pins, starred) {
     if (!isPinId(sessionId)) {
         return null;
     }
-    if (pins.has(sessionId)) {
-        return 'unpin';
+    if (starred instanceof Set && starred.has(sessionId)) {
+        return 'desktop';
     }
-    return starred instanceof Set && starred.has(sessionId) ? 'desktop' : 'pin';
+    return pins.has(sessionId) ? 'unpin' : 'pin';
+}
+
+/* The own pins once a Desktop answer is in: an id Claude Desktop pins drops its
+   own pin, so unpinning it in Desktop takes it out of Pinned. Only an id in a
+   received `starred` Set counts - no answer, or an empty one, drops nothing.
+   Returns `pins` itself when nothing changes, else a fresh Map. */
+function pinsWithoutStarred(pins, starred) {
+    if (!(starred instanceof Set) || starred.size === 0) {
+        return pins;
+    }
+    const kept = new Map();
+    for (const [id, origin] of pins) {
+        if (!starred.has(id)) {
+            kept.set(id, origin);
+        }
+    }
+    return kept.size === pins.size ? pins : kept;
+}
+
+/* Where a pinned Claude Desktop chat got its pin: 'desktop', 'agent_monitor',
+   or null for a session that is no Desktop chat (a CLI or VS Code session can
+   only be pinned here) or is not pinned. A chat Desktop pins or groups is a
+   Desktop chat whatever its entrypoint says - a kept record carries none. */
+function pinSource(session, pins, starred, members) {
+    const id = session && session.session_id;
+    if (typeof id !== 'string' || !id) {
+        return null;
+    }
+    const starredHere = starred instanceof Set && starred.has(id);
+    const desktop = session.entrypoint === 'claude-desktop' || starredHere || (members instanceof Map && members.has(id));
+    if (!desktop) {
+        return null;
+    }
+    if (starredHere) {
+        return 'desktop';
+    }
+    return pins instanceof Map && pins.has(id) ? 'agent_monitor' : null;
+}
+
+const PIN_SOURCE_LABEL_KEYS = new Map([
+    ['desktop', 'pinned_in_desktop'],
+    ['agent_monitor', 'pinned_in_agent_monitor'],
+]);
+
+/* The small label a list entry under Pinned carries for `pinSource`. */
+function pinSourceMarkup(source, labels) {
+    const key = PIN_SOURCE_LABEL_KEYS.get(source);
+    const text = key && labels ? labels[key] : '';
+    if (typeof text !== 'string' || !text) {
+        return '';
+    }
+    return '<span' + attr('class', 'pin-source pin-source-' + source) + '>' + esc(text) + '</span>';
 }
 
 /* The pinned sessions as stored (amc-pins, JSON `[{id, origin}]`): untrusted
@@ -5429,6 +5481,9 @@ const AMC_LOGIC = {
     parsePins,
     prunePins,
     pinControl,
+    pinsWithoutStarred,
+    pinSource,
+    pinSourceMarkup,
     normalizeDesktopGroups,
     desktopGroupsSignature,
     fmt,

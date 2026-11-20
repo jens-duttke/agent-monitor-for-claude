@@ -169,6 +169,7 @@
     "pin_session": "Oben anheften",
     "unpin_session": "Lösen",
     "pinned_in_desktop": "In Claude Desktop angeheftet",
+    "pinned_in_agent_monitor": "In Agent Monitor angeheftet",
     "pin_tip": "Hält diese Sitzung oben in der Liste, auch nachdem sie beendet ist (Taste P)",
     "pins_full": "Höchstens {max} Sitzungen können angeheftet werden - löse zuerst eine",
     "section_archived": "Archiviert",

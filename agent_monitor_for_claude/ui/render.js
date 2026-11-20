@@ -130,7 +130,14 @@ async function refreshDesktopGroups() {
     const bridge = apiBridge();
     const raw = bridge && typeof bridge.get_desktop_groups === 'function' ? await bridge.get_desktop_groups() : window.__MOCK_DESKTOP_GROUPS__;
     const next = logic.normalizeDesktopGroups(raw);
-    if (logic.desktopGroupsSignature(next) === logic.desktopGroupsSignature(state.desktopGroups)) {
+    // A Desktop pin replaces an own pin: only an id this answer names drops one.
+    const pins = logic.pinsWithoutStarred(state.pins, next.starred);
+    const pinsChanged = pins !== state.pins;
+    if (pinsChanged) {
+        state.pins = pins;
+        savePins();
+    }
+    if (!pinsChanged && logic.desktopGroupsSignature(next) === logic.desktopGroupsSignature(state.desktopGroups)) {
         return;
     }
     state.desktopGroups = next;
@@ -294,6 +301,8 @@ function createItem() {
         +     '<span class="chip"><i></i><span class="chip-label"></span></span>'
         // Claude Desktop archived this session while it still runs.
         +     '<span class="item-flag"></span>'
+        // Under Pinned, where a Claude Desktop chat's pin comes from.
+        +     '<span class="item-pin-source"></span>'
         +     '<span class="item-why"></span>'
         + '</div>'
         + '<span class="age"></span>'
@@ -313,7 +322,7 @@ function createItem() {
     return el;
 }
 
-function updateItem(el, session) {
+function updateItem(el, session, pinned) {
     const labels = state.labels;
     const selected = rowKey(session) === state.selectedKey;
 
@@ -350,6 +359,9 @@ function updateItem(el, session) {
 
     // The compact view has one line per session and leaves the mark out.
     setText(el.querySelector('.item-flag'), session.archived && !state.compact ? labels.label_archived || '' : '');
+    const pinSource = pinned && !state.compact
+        ? logic.pinSource(session, state.pins, state.desktopGroups.starred, state.desktopGroups.members) : null;
+    setMarkup(el.querySelector('.item-pin-source'), logic.pinSourceMarkup(pinSource, labels));
 
     const why = el.querySelector('.item-why');
     setText(why, session.match_field ? (labels['search_match_' + session.match_field] || '') : '');
@@ -695,7 +707,8 @@ function updateGroupSection(el, item) {
         head.firstElementChild.focus();
     }
     // Folded, `subsections` is empty and the frame shrinks to its header.
-    reconcile(el.querySelector('.section-items'), item.subsections, (sub) => sub.key, createGroupSub, updateGroupSub);
+    const pinned = section.key === 'pinned';
+    reconcile(el.querySelector('.section-items'), item.subsections, (sub) => sub.key, createGroupSub, (subEl, sub) => updateGroupSub(subEl, sub, pinned));
 }
 
 // One sub-heading of a group - the status section its sessions would otherwise
@@ -707,15 +720,15 @@ function createGroupSub() {
     return el;
 }
 
-function updateGroupSub(el, sub) {
+function updateGroupSub(el, sub, pinned) {
     setClass(el, 'group-sub group-sub-' + sub.key);
     setMarkup(el.querySelector('.group-sub-head'), logic.groupSubheadMarkup(sub, state.labels));
-    reconcile(el.querySelector('.group-sub-items'), sub.sessions, rowKey, createItem, updateGroupItem);
+    reconcile(el.querySelector('.group-sub-items'), sub.sessions, rowKey, createItem, (itemEl, session) => updateGroupItem(itemEl, session, pinned));
 }
 
 // A session that ended stays in its group, dimmed.
-function updateGroupItem(el, session) {
-    updateItem(el, session);
+function updateGroupItem(el, session, pinned) {
+    updateItem(el, session, pinned);
     el.classList.toggle('ended', !session.alive);
 }
 

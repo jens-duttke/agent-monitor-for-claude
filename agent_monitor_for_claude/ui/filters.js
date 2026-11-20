@@ -90,8 +90,8 @@ function savePins() {
 }
 
 // Pin the session to the top of the list, or take the pin off. A kept ended
-// session has to appear or go, so the snapshot is asked for again. A pin only
-// Claude Desktop holds is Desktop's to take off.
+// session has to appear or go, so the snapshot is asked for again. A session
+// Claude Desktop pins is Desktop's to unpin, whatever Agent Monitor holds.
 function togglePin(session) {
     const id = session && session.session_id;
     const control = logic.pinControl(id, state.pins, state.desktopGroups.starred);

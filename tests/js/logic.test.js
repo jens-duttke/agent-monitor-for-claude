@@ -4411,14 +4411,59 @@ test('normalizeDesktopGroups keeps the starred ids as a Set and the signature fo
     assert.notEqual(logic.desktopGroupsSignature(before), logic.desktopGroupsSignature(after));
 });
 
-test('pinControl tells an own pin from one Claude Desktop holds', () => {
+test('pinControl lets a Desktop pin win over an own pin', () => {
     const id = '11111111-2222-4333-8444-555555555555';
     const own = new Map([[id, 'local']]);
     const starred = new Set([id]);
     assert.equal(logic.pinControl(id, new Map(), new Set()), 'pin');
     assert.equal(logic.pinControl(id, own, new Set()), 'unpin');
-    assert.equal(logic.pinControl(id, own, starred), 'unpin');
+    assert.equal(logic.pinControl(id, own, starred), 'desktop');
     assert.equal(logic.pinControl(id, new Map(), starred), 'desktop');
     assert.equal(logic.pinControl(id, new Map(), undefined), 'pin');
     assert.equal(logic.pinControl('abc', new Map(), new Set(['abc'])), null);
+});
+
+test('pinsWithoutStarred lets a Desktop pin replace an own pin', () => {
+    const one = '11111111-2222-4333-8444-555555555555';
+    const two = '22222222-2222-4333-8444-555555555555';
+    const pins = new Map([[one, 'local'], [two, 'Ubuntu']]);
+    const kept = logic.pinsWithoutStarred(pins, new Set([one, 'other']));
+    assert.deepStrictEqual(Array.from(kept), [[two, 'Ubuntu']]);
+    assert.notStrictEqual(kept, pins);
+    assert.equal(pins.size, 2);
+    // No evidence drops nothing: an empty, absent or malformed set.
+    for (const starred of [new Set(), undefined, null, ['x'], { has: () => true }]) {
+        assert.strictEqual(logic.pinsWithoutStarred(pins, starred), pins);
+    }
+    assert.strictEqual(logic.pinsWithoutStarred(pins, new Set(['other'])), pins);
+});
+
+test('pinSource names where a Desktop chat in Pinned got its pin', () => {
+    const id = '11111111-2222-4333-8444-555555555555';
+    const own = new Map([[id, 'local']]);
+    const starred = new Set([id]);
+    const desktop = { session_id: id, entrypoint: 'claude-desktop' };
+    assert.equal(logic.pinSource(desktop, own, new Set(), new Map()), 'agent_monitor');
+    assert.equal(logic.pinSource(desktop, new Map(), starred, new Map()), 'desktop');
+    assert.equal(logic.pinSource(desktop, own, starred, new Map()), 'desktop');
+    // A starred id is a Desktop chat whatever its entrypoint says; so is a group member.
+    assert.equal(logic.pinSource({ session_id: id, entrypoint: '' }, new Map(), starred, new Map()), 'desktop');
+    assert.equal(logic.pinSource({ session_id: id }, own, new Set(), new Map([[id, 'g']])), 'agent_monitor');
+    // CLI and VS Code sessions can only be pinned here: no label.
+    assert.equal(logic.pinSource({ session_id: id, entrypoint: 'cli' }, own, new Set(), new Map()), null);
+    assert.equal(logic.pinSource({ session_id: id, entrypoint: 'claude-vscode' }, own, new Set(), new Map()), null);
+    assert.equal(logic.pinSource(desktop, new Map(), new Set(), new Map()), null);
+    assert.equal(logic.pinSource(null, own, starred, new Map()), null);
+});
+
+test('pinSourceMarkup: html safety', () => {
+    const hostile = { pinned_in_desktop: '<img src=x onerror=alert(1)>', pinned_in_agent_monitor: '"><b>x</b>' };
+    const desktop = logic.pinSourceMarkup('desktop', hostile);
+    assert.ok(!desktop.includes('<img') && desktop.includes('&lt;img'));
+    const own = logic.pinSourceMarkup('agent_monitor', hostile);
+    assert.ok(!own.includes('<b>') && own.includes('&quot;&gt;'));
+    assert.match(own, /^<span class="pin-source pin-source-agent_monitor">/);
+    assert.equal(logic.pinSourceMarkup(null, hostile), '');
+    assert.equal(logic.pinSourceMarkup('constructor', hostile), '');
+    assert.equal(logic.pinSourceMarkup('desktop', {}), '');
 });

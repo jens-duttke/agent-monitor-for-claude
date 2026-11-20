@@ -267,23 +267,75 @@ test('P on a session pinned only in Desktop changes nothing and says why', () =>
     assert.deepStrictEqual(plain(context.__calls), [run('DEFAULT_LABELS.pinned_in_desktop')]);
 });
 
-test('unpinning a session pinned in both removes only the own pin, and it stays under Pinned', async () => {
+test('a session pinned in both offers no unpin, only the Desktop note', async () => {
     const { context, run } = controller();
     run(`
-        render = () => {};
-        tick = () => {};
         state.labels = Object.assign({}, DEFAULT_LABELS);
         state.pins = new Map([['${ID}', 'local']]);
         ${DESKTOP([ID])}
         state.sessionsByKey.set('k', { session_id: '${ID}', origin: 'local' });
         apiBridge = () => null;
-        openMenu = (el, items) => { __calls.push(items.map((item) => item.key)); };
+        openMenu = (el, items) => { __calls.push(items); };
     `);
     await run(`openSessionMenu({ dataset: { key: 'k' }, isConnected: true }, null)`);
-    assert.ok(plain(context.__calls[0]).includes('unpin'));
-    run(`runSessionAction('unpin', state.sessionsByKey.get('k'))`);
-    assert.equal(run('state.pins.size'), 0);
+    const items = plain(context.__calls[0]);
+    assert.ok(!items.some((item) => item.key === 'pin' || item.key === 'unpin'));
+    assert.ok(items.some((item) => item.note === true && item.label === run('DEFAULT_LABELS.pinned_in_desktop')));
+    assert.ok(!run(`actionsMarkup({ session_id: '${ID}', origin: 'local', alive: false })`).includes('data-action="unpin"'));
+});
+
+const OTHER = '22222222-2222-4333-8444-555555555555';
+
+test('a Desktop pin replaces an own pin, saved and rendered once', async () => {
+    const { context, storage, run } = controller();
+    run(`
+        render = () => __calls.push('render');
+        state.last = { sessions: [] };
+        state.pins = new Map([['${ID}', 'local'], ['${OTHER}', 'local']]);
+        apiBridge = () => ({ get_desktop_groups: () => ({ groups: [], members: {}, archived: [], starred: ['${ID}'] }) });
+    `);
+    await run('refreshDesktopGroups()');
+    assert.deepStrictEqual(plain(run('Array.from(state.pins.keys())')), [OTHER]);
+    assert.deepStrictEqual(JSON.parse(storage.get('amc-pins')), [{ id: OTHER, origin: 'local' }]);
+    assert.deepStrictEqual(plain(context.__calls), ['render']);
     assert.equal(run(`currentGroupsView().pinned.has('${ID}')`), true);
+    // The same answer again changes nothing.
+    await run('refreshDesktopGroups()');
+    assert.deepStrictEqual(plain(context.__calls), ['render']);
+});
+
+test('an own pin added for an id Desktop already pins lapses on the next answer', async () => {
+    const { storage, run } = controller();
+    run(`
+        render = () => {};
+        ${DESKTOP([ID])}
+        state.pins = new Map([['${ID}', 'local']]);
+        apiBridge = () => ({ get_desktop_groups: () => ({ groups: [], members: {}, archived: [], starred: ['${ID}'] }) });
+    `);
+    await run('refreshDesktopGroups()');
+    assert.equal(run('state.pins.size'), 0);
+    assert.deepStrictEqual(JSON.parse(storage.get('amc-pins')), []);
+});
+
+test('no Desktop answer, or one without the id, never drops an own pin', async () => {
+    for (const answer of ['null', '({ starred: [] })', '({ starred: "x" })', `({ starred: ['${OTHER}'] })`]) {
+        const { storage, run } = controller();
+        run(`
+            render = () => {};
+            state.pins = new Map([['${ID}', 'local']]);
+            apiBridge = () => ({ get_desktop_groups: () => ${answer} });
+        `);
+        await run('refreshDesktopGroups()');
+        assert.equal(run('state.pins.size'), 1, answer);
+        assert.equal(storage.has('amc-pins'), false, answer);
+    }
+    const { run } = controller();
+    run(`
+        state.pins = new Map([['${ID}', 'local']]);
+        apiBridge = () => ({ get_desktop_groups: () => { throw new Error('down'); } });
+    `);
+    await run('refreshDesktopGroups().catch(() => {})');
+    assert.equal(run('state.pins.size'), 1);
 });
 
 test('the pin check never asks about the sessions pinned in Desktop', async () => {

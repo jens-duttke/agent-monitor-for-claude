@@ -169,6 +169,7 @@
     "pin_session": "先頭にピン留め",
     "unpin_session": "ピン留めを外す",
     "pinned_in_desktop": "Claude Desktop でピン留め済み",
+    "pinned_in_agent_monitor": "Agent Monitor でピン留め済み",
     "pin_tip": "このセッションを終了後もリストの先頭に保ちます (キー P)",
     "pins_full": "ピン留めできるのは最大 {max} セッションです - 先に1つ外してください",
     "section_archived": "アーカイブ済み",

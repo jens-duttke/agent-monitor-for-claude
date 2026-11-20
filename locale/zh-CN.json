@@ -169,6 +169,7 @@
     "pin_session": "置顶",
     "unpin_session": "取消置顶",
     "pinned_in_desktop": "已在 Claude Desktop 中置顶",
+    "pinned_in_agent_monitor": "已在 Agent Monitor 中置顶",
     "pin_tip": "将此会话保持在列表顶部，结束后也一样（快捷键 P）",
     "pins_full": "最多可置顶 {max} 个会话 - 请先取消置顶一个",
     "section_archived": "已归档",

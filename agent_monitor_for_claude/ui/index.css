@@ -968,6 +968,22 @@ body.splitter-dragging {
     }
 }
 
+/* Under Pinned, where a Claude Desktop chat's pin comes from. */
+.item-pin-source {
+    flex: none;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--fg-dim);
+    font-size: 11px;
+    line-height: 19px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+
+    &:empty {
+        display: none;
+    }
+}
+
 /* --- List: Pinned and the Claude Desktop groups --- */
 
 /* Out of the box tree, so the header sticks within its section like a status
@@ -3809,6 +3825,7 @@ body.compact {
 
         .item-why,
         .item-flag,
+        .item-pin-source,
         .item-line,
         .item-meta,
         .row-hits {

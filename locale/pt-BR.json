@@ -169,6 +169,7 @@
     "pin_session": "Fixar no topo",
     "unpin_session": "Desafixar",
     "pinned_in_desktop": "Fixada no Claude Desktop",
+    "pinned_in_agent_monitor": "Fixada no Agent Monitor",
     "pin_tip": "Mantém esta sessão no topo da lista, mesmo depois de terminar (tecla P)",
     "pins_full": "No máximo {max} sessões podem ser fixadas - desafixe uma primeiro",
     "section_archived": "Arquivadas",

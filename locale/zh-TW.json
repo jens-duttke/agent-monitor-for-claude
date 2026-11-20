@@ -169,6 +169,7 @@
     "pin_session": "釘選至頂端",
     "unpin_session": "取消釘選",
     "pinned_in_desktop": "已在 Claude Desktop 中釘選",
+    "pinned_in_agent_monitor": "已在 Agent Monitor 中釘選",
     "pin_tip": "將此工作階段保持在清單頂端，結束後也一樣（快捷鍵 P）",
     "pins_full": "最多可釘選 {max} 個工作階段 - 請先取消釘選一個",
     "section_archived": "已封存",

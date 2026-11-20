@@ -24,7 +24,7 @@ The *Older* section reads past sessions under `projects/` only when you open it,
 
 ## Pinned sessions and Desktop groups
 
-A pinned session stays in the *Pinned* section at the top of the list, also after it ended or Claude Code removed its registry record. Pin it from its menu, the details or with *P*; a pin is dropped when the session's files are gone. On Windows, a session you pinned in Claude Desktop is listed under *Pinned* too, and only Claude Desktop can unpin it.
+A pinned session stays in the *Pinned* section at the top of the list, also after it ended or Claude Code removed its registry record. Pin it from its menu, the details or with *P*; a pin is dropped when the session's files are gone. On Windows, a session you pinned in Claude Desktop is listed under *Pinned* too, and only Claude Desktop can unpin it. A Desktop pin replaces a pin you set in Agent Monitor, so unpinning the session in Claude Desktop takes it out of *Pinned*. A Claude Desktop chat under *Pinned* says where its pin comes from.
 
 On Windows, the groups you made in Claude Desktop are listed as sections below *Pinned*, in Desktop's order. Each header counts its sessions per status and can be folded. Like a pinned session, a group's session stays listed after it ended. The list refreshes within a few seconds of a change in Desktop. Linux has no Claude Desktop, so there are no groups.
 
