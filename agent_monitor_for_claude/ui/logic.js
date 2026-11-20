@@ -5384,7 +5384,8 @@ function pinsWithoutStarred(pins, starred) {
 /* Where a pinned Claude Desktop chat got its pin: 'desktop', 'agent_monitor',
    or null for a session that is no Desktop chat (a CLI or VS Code session can
    only be pinned here) or is not pinned. A chat Desktop pins or groups is a
-   Desktop chat whatever its entrypoint says - a kept record carries none. */
+   Desktop chat whatever its entrypoint says - a kept record may lack one
+   (a transcript with no main entry naming it). */
 function pinSource(session, pins, starred, members) {
     const id = session && session.session_id;
     if (typeof id !== 'string' || !id) {

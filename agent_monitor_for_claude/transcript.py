@@ -1966,7 +1966,7 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
             cli_version = entry_version
         # Likewise the app that wrote it, as a token only.
         entry_entrypoint = entry.get('entrypoint')
-        if isinstance(entry_entrypoint, str) and _ENTRYPOINT_PATTERN.match(entry_entrypoint):
+        if isinstance(entry_entrypoint, str) and _ENTRYPOINT_PATTERN.fullmatch(entry_entrypoint):
             cli_entrypoint = entry_entrypoint
 
         details.absorb_entry(entry_type, entry)
