@@ -366,8 +366,13 @@ function filterBucket(status) {
 // always non-live and would otherwise fall under "quiet" like any completed
 // one; it gets its own "history" bucket instead so the on-demand history
 // listing has a dedicated, off-by-default chip separate from the recently-ended
-// sessions the live snapshot still carries.
-function sessionBucket(session) {
+// sessions the live snapshot still carries. A session Claude Desktop archived
+// goes to "Archived" once it has ended - checked first, so a past archived
+// session is not listed under "Older" as well; a live one keeps its status.
+function sessionBucket(session, archived) {
+    if (session && !session.alive && archived instanceof Set && archived.has(session.session_id)) {
+        return 'archived';
+    }
     if (session && session.is_history) {
         return 'history';
     }
@@ -423,10 +428,15 @@ function historyNeedsRefresh(previousSessions, currentSessions) {
 // SCOPE (never off the chips themselves), so the scan reaches the sessions the
 // chips hide - past ones included, whether or not their chip is on. Everything
 // else still holds, the delta rescan's dead-session skip above included.
-function searchScopeRefs(sessions, history, filterKeys, includeHistory, includeHidden) {
+//
+// `groupsView` ({pinned, members, archived}) puts the sessions of Pinned and of
+// Claude Desktop's groups in scope whatever the chips - collapsed only means
+// "not unfolded" - and routes an ended archived session to the Archived bucket.
+function searchScopeRefs(sessions, history, filterKeys, includeHistory, includeHidden, groupsView) {
     const refs = [];
     const seen = new Set();
     const filters = filterKeys instanceof Set ? filterKeys : new Set(filterKeys || []);
+    const view = normalizedGroupsView(groupsView);
 
     const add = (list, isHistory) => {
         for (const raw of list || []) {
@@ -436,8 +446,11 @@ function searchScopeRefs(sessions, history, filterKeys, includeHistory, includeH
             if (!includeHistory && !raw.alive) {
                 continue;
             }
-            if (!includeHidden) {
-                const bucket = isHistory ? 'history' : filterBucket(deriveStatus(raw));
+            if (!includeHidden && groupPlacement(raw, view) === null) {
+                let bucket = isHistory ? 'history' : filterBucket(deriveStatus(raw));
+                if (!raw.alive && view.archived.has(raw.session_id)) {
+                    bucket = 'archived';
+                }
                 if (!bucket || !filters.has(bucket)) {
                     continue;
                 }
@@ -451,7 +464,7 @@ function searchScopeRefs(sessions, history, filterKeys, includeHistory, includeH
     };
 
     add(sessions, false);
-    if (includeHistory && (includeHidden || filters.has('history')) && Array.isArray(history)) {
+    if (includeHistory && (includeHidden || filters.has('history') || filters.has('archived')) && Array.isArray(history)) {
         add(history, true);
     }
     return refs;
@@ -706,6 +719,7 @@ const LIST_SECTIONS = [
     { key: 'running', label: 'section_running', buckets: ['working', 'background'], order: 'started' },
     { key: 'recent', label: 'section_recent', buckets: ['idle', 'new', 'quiet'], order: 'newest' },
     { key: 'older', label: 'section_older', buckets: ['history'], order: 'newest' },
+    { key: 'archived', label: 'section_archived', buckets: ['archived'], order: 'newest' },
 ];
 
 function listSection(key) {
@@ -713,8 +727,8 @@ function listSection(key) {
 }
 
 // The section a session belongs to, or null for a status no bucket knows.
-function sectionOf(session) {
-    const bucket = sessionBucket(session);
+function sectionOf(session, archived) {
+    const bucket = sessionBucket(session, archived);
     const section = LIST_SECTIONS.find((candidate) => candidate.buckets.includes(bucket));
     return section ? section.key : null;
 }
@@ -823,20 +837,123 @@ function sortGroupSessions(sessions) {
 // Split sessions into the list sections, in section order, each sorted. A
 // section with no session is still returned (empty), so a closed section keeps
 // its header and a count of zero reads as "nothing here" rather than vanishing.
-function buildSections(sessions, activeKeys) {
+//
+// `groupsView` adds the sections above them: Pinned, then Claude Desktop's
+// groups in the order given. Those ignore `activeKeys` (they have no bucket),
+// fold per section key (`collapsed`) and are left out while empty. A session is
+// listed once: pinned, else - archived and ended - in Archived, else in its
+// group, else in its status section, where an archived live one is flagged.
+function buildSections(sessions, activeKeys, groupsView) {
+    const view = normalizedGroupsView(groupsView);
     const bySection = new Map(LIST_SECTIONS.map((section) => [section.key, []]));
+    const byGroup = new Map([['pinned', []]]);
+    for (const group of view.groups) {
+        byGroup.set('group:' + group.id, []);
+    }
     for (const session of sessions || []) {
-        const key = sectionOf(session);
+        const placement = groupPlacement(session, view);
+        if (placement !== null && byGroup.has(placement)) {
+            byGroup.get(placement).push(session);
+            continue;
+        }
+        const key = sectionOf(session, view.archived);
         if (key) {
-            bySection.get(key).push(session);
+            const archivedLive = Boolean(session.alive) && view.archived.has(session.session_id);
+            bySection.get(key).push(archivedLive ? Object.assign({}, session, { archived: true }) : session);
         }
     }
-    return LIST_SECTIONS.map((section) => ({
+
+    const groupSections = [];
+    const addGroup = (key, fields) => {
+        const members = byGroup.get(key);
+        if (members.length === 0) {
+            return;
+        }
+        groupSections.push(Object.assign({ key: key }, fields, {
+            kind: 'group',
+            collapsed: view.collapsed.has(key),
+            counts: statusCounts(members),
+            sessions: sortGroupSessions(members),
+        }));
+    };
+    addGroup('pinned', { label: 'section_pinned' });
+    for (const group of view.groups) {
+        addGroup('group:' + group.id, { name: group.name });
+    }
+
+    return groupSections.concat(LIST_SECTIONS.map((section) => ({
         key: section.key,
         label: section.label,
         active: sectionActive(section.key, activeKeys),
         sessions: sortSectionSessions(bySection.get(section.key), section.order),
-    }));
+    })));
+}
+
+// The pins and Desktop groups a list is split by, with every part defaulted, so
+// the section builders and the search scope read them without a guard each.
+function normalizedGroupsView(groupsView) {
+    const view = groupsView || {};
+    return {
+        pinned: view.pinned instanceof Set ? view.pinned : new Set(),
+        groups: Array.isArray(view.groups) ? view.groups.filter((group) => group && typeof group.id === 'string') : [],
+        members: view.members instanceof Map ? view.members : new Map(),
+        archived: view.archived instanceof Set ? view.archived : new Set(),
+        collapsed: view.collapsed instanceof Set ? view.collapsed : new Set(),
+    };
+}
+
+// The group section a session is listed in - 'pinned' or 'group:<id>' - or null
+// for a session its status places. A pin wins over Desktop's archiving, which in
+// turn takes an ended session out of its group; a live archived session is not
+// listed in its group either, but in its status section with the archived mark.
+function groupPlacement(session, view) {
+    if (!session || !session.session_id) {
+        return null;
+    }
+    const sessionId = session.session_id;
+    if (view.pinned.has(sessionId)) {
+        return 'pinned';
+    }
+    if (view.archived.has(sessionId) || !view.members.has(sessionId)) {
+        return null;
+    }
+    return 'group:' + view.members.get(sessionId);
+}
+
+// How many sessions hold each status.
+function statusCounts(sessions) {
+    const counts = new Map();
+    for (const session of sessions) {
+        counts.set(session.status, (counts.get(session.status) || 0) + 1);
+    }
+    return counts;
+}
+
+// The header of a Pinned or Desktop group section: its name, a count per status
+// in the status order - so a folded group still shows that something waits -
+// and, as a whole, the toggle that folds it.
+function groupHeaderMarkup(section, labels) {
+    const strings = labels || {};
+    const name = section.label ? (strings[section.label] || '') : (section.name || '');
+    const counts = section.counts instanceof Map ? section.counts : new Map();
+    const statuses = Object.keys(STATUS_ORDER).sort((one, two) => STATUS_ORDER[one] - STATUS_ORDER[two]);
+    let figures = '';
+    for (const status of statuses) {
+        const count = counts.get(status);
+        if (!count) {
+            continue;
+        }
+        figures += '<span' + attr('class', 'group-count status-' + status)
+            + attr('aria-label', (strings['status_' + status] || status) + ': ' + count) + '><i></i>' + esc(count) + '</span>';
+    }
+    return '<button' + attr('type', 'button') + attr('class', 'section-head group-toggle')
+        + attr('data-group-toggle', section.key) + attr('aria-expanded', section.collapsed ? 'false' : 'true')
+        // A header that changes the list carries no tooltip; the hint is for assistive technology.
+        + (strings.group_collapse_tip ? attr('aria-description', strings.group_collapse_tip) : '') + '>'
+        + '<span class="chevron" aria-hidden="true">&#9662;</span>'
+        + '<span class="section-label">' + esc(name) + '</span>'
+        + '<span class="group-counts">' + figures + '</span>'
+        + '</button>';
 }
 
 // Every session of every project as one list, each carrying the project it was
@@ -5203,6 +5320,7 @@ const AMC_LOGIC = {
     sortSectionSessions,
     sortGroupSessions,
     buildSections,
+    groupHeaderMarkup,
     flattenProjects,
     sessionSignals,
     searchRegExp,

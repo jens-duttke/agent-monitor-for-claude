@@ -132,6 +132,12 @@ const state = {
     attentionKeys: null,
     // Project groups the user collapsed, by group key.
     collapsed: new Set(),
+    // The pinned sessions, session id -> origin (amc-pins).
+    pins: new Map(),
+    // Whether the user folded (true) or unfolded (false) a Pinned or Desktop
+    // group section, by section key (amc-group-collapsed); a section missing
+    // here follows Desktop's own folding.
+    groupCollapsed: new Map(),
     last: null,
     receivedAt: null,
     // Epoch (ms) when the history list was fetched. History age_seconds is frozen
@@ -375,6 +381,7 @@ const DEFAULT_LABELS = {
     show_transcript: 'Show transcript in file manager',
     show_scratchpad: 'Show scratchpad in file manager',
     filter_history_tip: 'Older sessions that are no longer running and have left the overview (loaded on demand)',
+    filter_archived_tip: 'Sessions archived in Claude Desktop that are no longer running (loaded on demand)',
     history_loading: 'Loading older sessions…',
     history_range_tip: 'How far back older sessions are listed. A shorter window also makes the scan faster.',
     history_range_hint: 'Only older sessions inside the selected window are listed and searched. Widen it to look further back.',
@@ -396,6 +403,10 @@ const DEFAULT_LABELS = {
     section_running: 'Running',
     section_recent: 'Recent',
     section_older: 'Older',
+    section_pinned: 'Pinned',
+    section_archived: 'Archived',
+    label_archived: 'Archived',
+    group_collapse_tip: 'Fold or unfold this group',
     group_by: 'Group by',
     group_urgency: 'Urgency',
     group_project: 'Project',
@@ -593,6 +604,8 @@ const FILTER_DEFS = [
     // sessions. The key stays `history` because it is part of the persisted
     // filter selection (and of is_history / get_history).
     { key: 'history', tip: 'filter_history_tip', offByDefault: true },
+    // Off by default too: the past ones among them come with the same scan.
+    { key: 'archived', tip: 'filter_archived_tip', offByDefault: true },
 ];
 
 // The status buckets the chips can select - the valid, persistable filter keys.

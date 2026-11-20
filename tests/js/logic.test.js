@@ -2883,13 +2883,13 @@ test('costTipLines: an on-disk name like __proto__ stays a name, never a prototy
 
 /* --- list sections, signals, search over the list, taskbar attention --- */
 
-const ALL_FILTER_KEYS = ['needs', 'errored', 'interrupted', 'new', 'idle', 'working', 'background', 'quiet', 'history'];
+const ALL_FILTER_KEYS = ['needs', 'errored', 'interrupted', 'new', 'idle', 'working', 'background', 'quiet', 'history', 'archived'];
 
 test('list sections cover every filter bucket exactly once', () => {
     const buckets = logic.LIST_SECTIONS.flatMap((section) => section.buckets);
     assert.deepEqual([...buckets].sort(), [...ALL_FILTER_KEYS].sort());
     assert.equal(new Set(buckets).size, buckets.length);
-    assert.deepEqual(logic.LIST_SECTIONS.map((section) => section.key), ['needs', 'stopped', 'running', 'recent', 'older']);
+    assert.deepEqual(logic.LIST_SECTIONS.map((section) => section.key), ['needs', 'stopped', 'running', 'recent', 'older', 'archived']);
 });
 
 test('sectionOf: a session lands in the section of its status, a past one in "older"', () => {
@@ -2959,9 +2959,9 @@ test('buildSections: every section in order, with its sessions and whether it is
     ];
     const sections = logic.buildSections(sessions, new Set(['needs', 'working', 'background']));
 
-    assert.deepEqual(sections.map((section) => section.key), ['needs', 'stopped', 'running', 'recent', 'older']);
-    assert.deepEqual(sections.map((section) => section.active), [true, false, true, false, false]);
-    assert.deepEqual(sections.map((section) => section.sessions.map((session) => session.name)), [['p'], [], ['w'], [], ['h']]);
+    assert.deepEqual(sections.map((section) => section.key), ['needs', 'stopped', 'running', 'recent', 'older', 'archived']);
+    assert.deepEqual(sections.map((section) => section.active), [true, false, true, false, false, false]);
+    assert.deepEqual(sections.map((section) => section.sessions.map((session) => session.name)), [['p'], [], ['w'], [], ['h'], []]);
 });
 
 test('flattenProjects: each session carries the project it was grouped under', () => {
@@ -4090,4 +4090,162 @@ test('desktopGroupsSignature is stable across key order', () => {
 
     const moved = logic.normalizeDesktopGroups({ groups: [{ id: 'g', name: 'N', order: 0, collapsed: true }], members: { a: 'g', b: 'g' }, archived: ['x', 'y'] });
     assert.notEqual(logic.desktopGroupsSignature(one), logic.desktopGroupsSignature(moved));
+});
+
+/* --- pinned sessions, Claude Desktop groups and Archived --- */
+
+function groupsView(overrides) {
+    return Object.assign({
+        pinned: new Set(), groups: [{ id: 'g', name: 'Active' }], members: new Map(), archived: new Set(), collapsed: new Set(),
+    }, overrides);
+}
+
+function sectionByKey(sections, key) {
+    return sections.find((section) => section.key === key) || null;
+}
+
+function placedIn(sections, sessionId) {
+    return sections.filter((section) => section.sessions.some((session) => session.session_id === sessionId)).map((section) => section.key);
+}
+
+test('buildSections: a session appears once, pinned wins', () => {
+    const session = { session_id: 's', status: 'completed', alive: false, age_seconds: 1 };
+    const view = groupsView({ pinned: new Set(['s']), members: new Map([['s', 'g']]), archived: new Set(['s']) });
+    const sections = logic.buildSections([session], new Set(ALL_FILTER_KEYS), view);
+
+    assert.deepEqual(placedIn(sections, 's'), ['pinned']);
+    assert.equal(sectionByKey(sections, 'pinned').kind, 'group');
+    assert.equal(sectionByKey(sections, 'group:g'), null);
+});
+
+test('buildSections: an archived live session stays in its status section, flagged archived', () => {
+    const view = groupsView({ members: new Map([['w', 'g'], ['i', 'g']]), archived: new Set(['w', 'i']) });
+    const sections = logic.buildSections([
+        { session_id: 'w', status: 'working', alive: true, age_seconds: 1 },
+        { session_id: 'i', status: 'awaiting_input', alive: true, age_seconds: 2 },
+    ], new Set(ALL_FILTER_KEYS), view);
+
+    assert.deepEqual(placedIn(sections, 'w'), ['running']);
+    assert.deepEqual(placedIn(sections, 'i'), ['recent']);
+    assert.equal(sectionByKey(sections, 'running').sessions[0].archived, true);
+    assert.equal(sectionByKey(sections, 'group:g'), null);
+});
+
+test('buildSections: an archived ended session goes to the archived bucket', () => {
+    const archived = new Set(['x', 'y']);
+    const past = { session_id: 'x', status: 'completed', alive: false, is_history: true, age_seconds: 9 };
+    const ended = { session_id: 'y', status: 'completed', alive: false, age_seconds: 5 };
+
+    assert.equal(logic.sessionBucket(past, archived), 'archived');
+    assert.equal(logic.sessionBucket(ended, archived), 'archived');
+    assert.equal(logic.sessionBucket(past), 'history');
+    assert.equal(logic.sessionBucket(Object.assign({}, ended, { alive: true, status: 'working' }), archived), 'working');
+
+    const view = groupsView({ members: new Map([['y', 'g']]), archived });
+    const sections = logic.buildSections([past, ended], new Set(['archived']), view);
+    assert.deepEqual(placedIn(sections, 'x'), ['archived']);
+    assert.deepEqual(placedIn(sections, 'y'), ['archived']);
+    assert.equal(sectionByKey(sections, 'archived').active, true);
+});
+
+test('buildSections: group sections ignore the status filters', () => {
+    const view = groupsView({ members: new Map([['m', 'g']]) });
+    const sections = logic.buildSections([{ session_id: 'm', status: 'working', alive: true, age_seconds: 1 }], new Set(), view);
+    const group = sectionByKey(sections, 'group:g');
+
+    assert.deepEqual(group.sessions.map((session) => session.session_id), ['m']);
+    assert.equal(group.name, 'Active');
+    assert.equal(group.collapsed, false);
+    assert.deepEqual(placedIn(sections, 'm'), ['group:g']);
+});
+
+test('buildSections: an empty group and an empty Pinned are omitted, the rest in order', () => {
+    const view = groupsView({
+        groups: [{ id: 'one', name: 'One' }, { id: 'two', name: 'Two' }, { id: 'three', name: 'Three' }],
+        members: new Map([['a', 'three'], ['b', 'one']]),
+        collapsed: new Set(['group:three']),
+    });
+    const sections = logic.buildSections([
+        { session_id: 'a', status: 'working', alive: true, age_seconds: 1 },
+        { session_id: 'b', status: 'working', alive: true, age_seconds: 1 },
+    ], new Set(ALL_FILTER_KEYS), view);
+
+    assert.deepEqual(sections.map((section) => section.key),
+        ['group:one', 'group:three', 'needs', 'stopped', 'running', 'recent', 'older', 'archived']);
+    assert.equal(sectionByKey(sections, 'group:three').collapsed, true);
+});
+
+test('buildSections: a group sorts its sessions by urgency', () => {
+    const view = groupsView({ members: new Map([['c', 'g'], ['p', 'g'], ['w', 'g']]) });
+    const sections = logic.buildSections([
+        { session_id: 'c', status: 'completed', alive: false, age_seconds: 1 },
+        { session_id: 'w', status: 'working', alive: true, age_seconds: 1 },
+        { session_id: 'p', status: 'awaiting_permission', alive: true, age_seconds: 50 },
+    ], new Set(), view);
+
+    assert.deepEqual(sectionByKey(sections, 'group:g').sessions.map((session) => session.session_id), ['p', 'w', 'c']);
+});
+
+test('groupHeaderMarkup: counts per status in the status order', () => {
+    const view = groupsView({ members: new Map([['w1', 'g'], ['w2', 'g'], ['p', 'g']]) });
+    const sections = logic.buildSections([
+        { session_id: 'w1', status: 'working', alive: true, age_seconds: 1 },
+        { session_id: 'w2', status: 'working', alive: true, age_seconds: 2 },
+        { session_id: 'p', status: 'awaiting_permission', alive: true, age_seconds: 3 },
+    ], new Set(), view);
+    const group = sectionByKey(sections, 'group:g');
+
+    assert.equal(group.counts.get('working'), 2);
+    assert.equal(group.counts.get('awaiting_permission'), 1);
+
+    const html = logic.groupHeaderMarkup(group, { status_working: 'Working', status_awaiting_permission: 'Permission needed' });
+    assert.match(html, /data-group-toggle="group:g"/);
+    assert.match(html, /Active/);
+    const order = [...html.matchAll(/group-count status-(\w+)/g)].map((match) => match[1]);
+    assert.deepEqual(order, ['awaiting_permission', 'working']);
+    assert.match(html, /status-working"[^>]*>(<i><\/i>)?2</);
+
+    const pinned = logic.groupHeaderMarkup({ key: 'pinned', label: 'section_pinned', kind: 'group', collapsed: true, counts: new Map(), sessions: [] },
+        { section_pinned: 'Pinned' });
+    assert.match(pinned, />Pinned</);
+    assert.match(pinned, /aria-expanded="false"/);
+});
+
+test('groupHeaderMarkup: html safety', () => {
+    const html = logic.groupHeaderMarkup({
+        key: 'group:"><script>x</script>', name: '<img src=x onerror=alert(1)>', kind: 'group', collapsed: false,
+        counts: new Map([['working', '<b onmouseover=alert(1)>9</b>'], ['constructor', 5]]), sessions: [],
+    }, { status_working: '<i>Working</i>' });
+
+    assert.ok(!html.includes('<img'));
+    assert.ok(!/<b[ >]/.test(html));
+    assert.ok(!html.includes('<script'));
+    assert.ok(!html.includes('constructor'));
+    assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'));
+    const tags = new Set([...html.matchAll(/<\/?([a-zA-Z][\w-]*)/g)].map((match) => match[1]));
+    assert.deepEqual([...tags].sort(), ['button', 'i', 'span']);
+});
+
+test('LIST_SECTIONS: Archived is the last section, with its own bucket', () => {
+    const last = logic.LIST_SECTIONS[logic.LIST_SECTIONS.length - 1];
+
+    assert.deepEqual(last, { key: 'archived', label: 'section_archived', buckets: ['archived'], order: 'newest' });
+    assert.equal(logic.sectionOf({ session_id: 'z', status: 'completed', alive: false }, new Set(['z'])), 'archived');
+});
+
+test('searchScopeRefs: pinned and group sessions are in scope whatever the chips, archived ones behind their bucket', () => {
+    const mk = (id, alive, extra) => Object.assign({ session_id: id, cwd: 'D:\\p', alive, last_entry_kind: 'assistant',
+        last_stop_reason: 'end_turn', has_transcript: true, has_activity: true }, extra);
+    const sessions = [mk('pin', false), mk('member', false), mk('gone', false), mk('plain', false)];
+    const history = [mk('past', false, { is_history: true }), mk('oldpast', false, { is_history: true })];
+    const view = { pinned: new Set(['pin']), members: new Map([['member', 'g'], ['gone', 'g']]), archived: new Set(['gone', 'past']) };
+
+    const none = logic.searchScopeRefs(sessions, history, new Set(), true, false, view).map((ref) => ref.session_id).sort();
+    assert.deepEqual(none, ['member', 'pin']);
+
+    const archivedOn = logic.searchScopeRefs(sessions, history, new Set(['archived']), true, false, view).map((ref) => ref.session_id).sort();
+    assert.deepEqual(archivedOn, ['gone', 'member', 'past', 'pin']);
+
+    const historyOn = logic.searchScopeRefs(sessions, history, new Set(['history']), true, false, view).map((ref) => ref.session_id).sort();
+    assert.deepEqual(historyOn, ['member', 'oldpast', 'pin']);
 });

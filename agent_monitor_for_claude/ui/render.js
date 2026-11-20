@@ -241,6 +241,8 @@ function createItem() {
     el.className = 'item';
     el.innerHTML = '<div class="item-head">'
         +     '<span class="chip"><i></i><span class="chip-label"></span></span>'
+        // Claude Desktop archived this session while it still runs.
+        +     '<span class="item-flag"></span>'
         +     '<span class="item-why"></span>'
         + '</div>'
         + '<span class="age"></span>'
@@ -294,6 +296,9 @@ function updateItem(el, session) {
         setTip(open, labels.action_show_details || '');
         open.setAttribute('aria-label', labels.action_show_details || '');
     }
+
+    // The compact view has one line per session and leaves the mark out.
+    setText(el.querySelector('.item-flag'), session.archived && !state.compact ? labels.label_archived || '' : '');
 
     const why = el.querySelector('.item-why');
     setText(why, session.match_field ? (labels['search_match_' + session.match_field] || '') : '');
@@ -563,7 +568,13 @@ function searchHitFor(sessionId) {
 
 /* --- sections (urgency grouping) --- */
 
-function createSection() {
+// The sections that list past sessions and share the History window.
+const PAST_SECTIONS = new Set(['older', 'archived']);
+
+function createSection(section) {
+    if (section.kind === 'group') {
+        return createGroupSection();
+    }
     const el = document.createElement('section');
     el.className = 'list-section';
     el.innerHTML = '<button class="section-head" type="button">'
@@ -580,6 +591,10 @@ function createSection() {
 }
 
 function updateSection(el, section) {
+    if (section.kind === 'group') {
+        updateGroupSection(el, section);
+        return;
+    }
     const labels = state.labels;
     el.className = 'list-section section-' + section.key + (section.open ? '' : ' closed');
 
@@ -590,10 +605,38 @@ function updateSection(el, section) {
     setText(head.querySelector('.section-count'), section.count == null ? '' : section.count);
     setText(head.querySelector('.section-note'), section.note || '');
 
-    setMarkup(el.querySelector('.section-ranges'), section.key === 'older' && section.open ? historyRangeMarkup() : '');
+    setMarkup(el.querySelector('.section-ranges'), PAST_SECTIONS.has(section.key) && section.open ? historyRangeMarkup() : '');
     setText(el.querySelector('.section-note-line'), section.noteLine || '');
 
     reconcile(el.querySelector('.section-items'), section.items, rowKey, createItem, updateItem);
+}
+
+// Pinned or one of the Desktop groups: a header that folds it, whatever the
+// status sections show.
+function createGroupSection() {
+    const el = document.createElement('section');
+    el.className = 'list-section group-section';
+    el.innerHTML = '<div class="group-section-head"></div><div class="section-items"></div>';
+    return el;
+}
+
+function updateGroupSection(el, item) {
+    const section = item.section;
+    el.className = 'list-section group-section ' + (section.key === 'pinned' ? 'section-pinned' : 'section-group')
+        + (section.collapsed ? ' closed' : '');
+    setMarkup(el.querySelector('.group-section-head'), logic.groupHeaderMarkup(section, state.labels));
+    const items = el.querySelector('.section-items');
+    if (section.collapsed) {
+        items.replaceChildren();
+    } else {
+        reconcile(items, item.items, rowKey, createItem, updateGroupItem);
+    }
+}
+
+// A session that ended stays in its group, dimmed.
+function updateGroupItem(el, session) {
+    updateItem(el, session);
+    el.classList.toggle('ended', !session.alive);
 }
 
 // How far back "Older" reaches, as a row of buttons under its header.
@@ -801,7 +844,7 @@ function render(snapshot) {
     // The past sessions the selected window covers, minus any that came back to
     // life. Folded into the list while "Older" is open, or while a widened
     // search reaches into them.
-    const historyActive = state.filters.has('history');
+    const historyActive = historyWanted();
     const historyRows = Array.isArray(state.history)
         ? logic.pruneResumedHistory(visibleHistory(), snapshot.sessions || [])
         : [];
@@ -844,23 +887,34 @@ function render(snapshot) {
     updateToolbarSummary(snapshot, prices, sessions);
     ensureShell();
 
-    // Section counts follow the query, like the list. "Older" counts its
-    // sessions from the cache while it is closed, since they are not folded in -
+    const compact = state.compact;
+    const grouping = compact ? 'urgency' : state.group;
+
+    // Pinned and the Desktop groups are sections of the urgency grouping only;
+    // elsewhere every session counts by its status, an archived one that ended
+    // under "Archived".
+    const groupsView = currentGroupsView();
+    const sectionData = logic.buildSections(found, state.filters, grouping === 'urgency' ? groupsView : { archived: groupsView.archived });
+
+    // Section counts follow the query, like the list, and count only what a
+    // status section lists. "Older" and "Archived" count their past sessions
+    // from the cache while neither is open, since they are not folded in -
     // built like the list's, so a title match counts there as it shows there.
-    const sectionData = logic.buildSections(found, state.filters);
     const counts = new Map(sectionData.map((section) => [section.key, section.sessions.length]));
     if (!foldHistory) {
         let olderCount = null;
+        let archivedPast = null;
         if (Array.isArray(state.history)) {
-            olderCount = searchActive
-                ? logic.flattenProjects(logic.groupProjects(historyRows, labels, prices)).filter(matchesQuery).length
-                : historyRows.length;
+            const past = searchActive
+                ? logic.flattenProjects(logic.groupProjects(historyRows, labels, prices)).filter(matchesQuery)
+                : historyRows;
+            olderCount = past.filter((row) => logic.sessionBucket(row, groupsView.archived) === 'history').length;
+            archivedPast = past.filter((row) => logic.sessionBucket(row, groupsView.archived) === 'archived').length;
         }
         counts.set('older', olderCount);
+        const archivedHere = counts.get('archived') || 0;
+        counts.set('archived', archivedPast === null && archivedHere === 0 ? null : archivedHere + (archivedPast || 0));
     }
-
-    const compact = state.compact;
-    const grouping = compact ? 'urgency' : state.group;
     document.body.classList.toggle('group-urgency', grouping === 'urgency');
     document.body.classList.toggle('group-graph', grouping === 'graph');
     applyListWidth();
@@ -897,6 +951,12 @@ function render(snapshot) {
     } else if (grouping === 'urgency') {
         setMarkup(chipsSlot, '');
         const sections = sectionData.map((section) => {
+            if (section.kind === 'group') {
+                // A folded group still says what it holds in its header.
+                const items = section.collapsed ? [] : section.sessions;
+                shown.push(...items);
+                return { key: section.key, kind: 'group', section: section, items: items };
+            }
             const open = section.active;
             const items = open ? section.sessions : section.sessions.filter(isWidenedHit);
             if (!section.active) {
@@ -910,7 +970,7 @@ function render(snapshot) {
                 items: items,
                 count: counts.get(section.key),
                 note: sectionNote(section.key, open),
-                noteLine: section.key === 'older' && open ? loadingNote : '',
+                noteLine: PAST_SECTIONS.has(section.key) && open ? loadingNote : '',
             };
         });
         if (!(listSlot.firstElementChild && listSlot.firstElementChild.classList.contains('list-sections'))) {
@@ -993,7 +1053,7 @@ function projectGroups(projects, visible) {
 // The note at the right of a section header: the window "Older" reaches, so a
 // closed section still says what opening it would list.
 function sectionNote(sectionKey, open) {
-    if (sectionKey !== 'older' || open) {
+    if (!PAST_SECTIONS.has(sectionKey) || open) {
         return '';
     }
     return state.labels[logic.historyRange(state.historyRange).label] || '';

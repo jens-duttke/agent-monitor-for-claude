@@ -114,6 +114,7 @@ button {
 .section-running { --s: var(--c-working); }
 .section-recent { --s: var(--c-awaiting_input); }
 .section-older { --s: var(--c-history); }
+.section-archived { --s: var(--c-history); }
 
 /* The status in words: a tinted label with its dot. */
 .chip {
@@ -944,6 +945,68 @@ body.splitter-dragging {
 
     &:empty {
         display: none;
+    }
+}
+
+/* Archived in Claude Desktop while it still runs. */
+.item-flag {
+    flex: none;
+    padding: 0 6px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--c-history) 18%, transparent);
+    color: var(--fg-dim);
+    font-size: 11px;
+    line-height: 19px;
+
+    &:empty {
+        display: none;
+    }
+}
+
+/* --- List: Pinned and the Claude Desktop groups --- */
+
+.group-section {
+    /* A session that ended stays in its group, dimmed. */
+    .item.ended {
+        opacity: 0.55;
+
+        &:hover,
+        &.selected {
+            opacity: 0.85;
+        }
+    }
+
+    .section-label {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        text-transform: none;
+        letter-spacing: 0.02em;
+    }
+}
+
+/* A count per status, so a folded group still shows that something waits. */
+.group-counts {
+    display: inline-flex;
+    flex: none;
+    gap: 10px;
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+}
+
+.group-count {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--fg-heading);
+
+    i {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--s);
     }
 }
 
@@ -3640,6 +3703,7 @@ body.compact {
         }
 
         .item-why,
+        .item-flag,
         .item-line,
         .item-meta,
         .row-hits {

@@ -454,7 +454,15 @@ function onContentClick(event) {
 
     const range = event.target.closest('.range-btn');
     if (range) {
-        setHistoryRange(range.dataset.range);
+        // The window "Archived" shares with "Older" does not open "Older".
+        setHistoryRange(range.dataset.range, !range.closest('.section-archived'));
+        return;
+    }
+
+    // Checked before the section heads: a group's header is styled as one.
+    const groupToggle = event.target.closest('[data-group-toggle]');
+    if (groupToggle) {
+        toggleGroupSection(groupToggle.dataset.groupToggle);
         return;
     }
 

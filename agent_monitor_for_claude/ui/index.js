@@ -218,6 +218,7 @@ async function boot() {
         state.searchWholeWord = false;
         state.searchRegex = false;
     }
+    loadGroupCollapsed();
     // Each init step is isolated so a failure in one (e.g. a control the
     // markup no longer matches) cannot abort boot and freeze the loading
     // skeleton - the data still renders.
@@ -280,8 +281,8 @@ async function boot() {
     }
 
     await tick();
-    // If "Older" was left open in a previous session, load the past sessions now (the data source is ready by the time boot runs).
-    if (state.filters.has('history')) {
+    // If "Older" or "Archived" was left open in a previous session, load the past sessions now (the data source is ready by the time boot runs).
+    if (historyWanted()) {
         ensureHistoryLoaded();
     }
     startPoll();
