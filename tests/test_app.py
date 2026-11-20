@@ -563,6 +563,15 @@ class GitOverviewBridgeTest(unittest.TestCase):
         overview_mock.assert_called_once_with([])
 
 
+class DesktopGroupsBridgeTest(unittest.TestCase):
+    def test_returns_the_reader_result(self) -> None:
+        expected = {'groups': [], 'members': {}, 'archived': []}
+        with mock.patch.object(app, 'desktop_groups', return_value=expected):
+            result = _MonitorApi().get_desktop_groups()
+
+        self.assertEqual(set(result), {'groups', 'members', 'archived'})
+
+
 class PrioritizeSessionTest(unittest.TestCase):
     """Selecting a session whose figures are still being read moves its scans to the front - nothing else."""
 

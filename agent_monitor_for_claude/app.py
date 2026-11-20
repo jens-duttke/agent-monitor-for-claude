@@ -25,6 +25,7 @@ import webview  # type: ignore[import-untyped]  # no type stubs available
 from . import __version__
 from .clipboard import copy_text as _copy_text
 from .git_overview import MAX_DIRECTORIES, git_overview
+from .desktop_groups import desktop_groups
 from .git_status import git_diff, git_status
 from .history import list_history
 from .i18n import T, available_languages, reload_translations
@@ -790,6 +791,10 @@ class _MonitorApi:
         directory = worktree_cwd if isinstance(worktree_cwd, str) and worktree_cwd else cwd
         edited = [host_path(root, path) for path in edited_files(root, session_id, cwd)]
         return git_status(host_path(root, directory), edited)
+
+    def get_desktop_groups(self) -> dict[str, Any]:
+        """Return Claude Desktop's session groups (id, name, order, collapsed), the group of each session and the archived session ids."""
+        return desktop_groups()
 
     def get_git_overview(self, refs: object) -> list[dict[str, Any] | str | None]:
         """Return where the work stands in each listed session's directory, at once and from a cache.

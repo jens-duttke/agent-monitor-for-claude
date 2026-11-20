@@ -396,3 +396,10 @@ class UserConfigDirTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+@_LINUX_ONLY
+class DesktopDataDirsTest(unittest.TestCase):
+    def test_claude_desktop_does_not_exist_here(self) -> None:
+        self.assertEqual(linux.desktop_data_dirs(), [])
+
