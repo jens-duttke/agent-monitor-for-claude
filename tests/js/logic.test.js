@@ -4026,3 +4026,41 @@ test('buildSession: the entrypoint passed to focus_session is the registry strin
         assert.equal(build(value).entrypoint, '');
     }
 });
+
+test('appReleaseUrl: a release page for a plain release number only', () => {
+    assert.equal(logic.appReleaseUrl('1.2.3'), 'https://github.com/jens-duttke/agent-monitor-for-claude/releases/tag/v1.2.3');
+    for (const version of ['1.2', 'v1.2.3', '1.2.3-beta', '1.2.3"><x', '', null, 123]) {
+        assert.equal(logic.appReleaseUrl(version), null, String(version));
+    }
+});
+
+test('appUpdateState: off, checking, failed, current and available', () => {
+    assert.deepEqual(logic.appUpdateState(null), { state: 'off' });
+    assert.deepEqual(logic.appUpdateState({ enabled: false, current: '1.0.0', latest: '9.0.0' }), { state: 'off' });
+    assert.deepEqual(logic.appUpdateState({ enabled: true, current: '1.0.0', latest: null, pending: true }), { state: 'checking' });
+    assert.deepEqual(logic.appUpdateState({ enabled: true, current: '1.0.0', latest: null, pending: false, failed: true }), { state: 'failed' });
+    assert.deepEqual(logic.appUpdateState({ enabled: true, current: '1.0.0', latest: '1.0.0' }), { state: 'current' });
+    // A local build ahead of the newest release is current, not an update.
+    assert.deepEqual(logic.appUpdateState({ enabled: true, current: '1.10.0', latest: '1.9.0' }), { state: 'current' });
+    // Numeric, not textual: 1.10.0 is newer than 1.9.0.
+    assert.deepEqual(logic.appUpdateState({ enabled: true, current: '1.9.0', latest: '1.10.0', failed: true }), {
+        state: 'available', version: '1.10.0', url: 'https://github.com/jens-duttke/agent-monitor-for-claude/releases/tag/v1.10.0',
+    });
+});
+
+test('appVersionMarkup: names the version and what the check found; html safety', () => {
+    const labels = {
+        app_version: 'App {version}', update_available: 'Version {version} is available', update_checking: 'Checking',
+        update_failed: 'Failed', update_current: 'Latest',
+    };
+    assert.equal(logic.appVersionMarkup(null, labels), '');
+    assert.equal(logic.appVersionMarkup({ enabled: false, current: '1.0.0' }, labels), '<span class="settings-version-name">App 1.0.0</span>');
+    assert.ok(logic.appVersionMarkup({ enabled: true, current: '1.0.0', latest: '1.0.0' }, labels).includes('>Latest<'));
+    const available = logic.appVersionMarkup({ enabled: true, current: '1.0.0', latest: '1.1.0' }, labels);
+    assert.ok(available.includes('href="https://github.com/jens-duttke/agent-monitor-for-claude/releases/tag/v1.1.0" target="_blank"'));
+    assert.ok(available.includes('>Version 1.1.0 is available</a>'));
+    // A hostile version from the bridge stays text and never reaches an href.
+    const hostile = logic.appVersionMarkup({ enabled: true, current: '<img src=x onerror=alert(1)>', latest: '"><script>' }, labels);
+    assert.ok(!hostile.includes('<img') && !hostile.includes('<script') && !hostile.includes('href'));
+    assert.ok(hostile.includes('&lt;img src=x onerror=alert(1)&gt;'));
+});

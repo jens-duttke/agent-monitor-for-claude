@@ -2491,6 +2491,67 @@ function changelogUrl(version) {
     return CHANGELOG_URL + '#' + version.split('.').join('');
 }
 
+// This application's own release pages. Like the changelog, only ever a link
+// the user clicks; the update check that tells whether one is newer runs in
+// Python (update_check.py), and only while its setting is on.
+const APP_RELEASE_URL = 'https://github.com/jens-duttke/agent-monitor-for-claude/releases/tag/v';
+
+// The release page of one version, or null for anything but a plain release
+// number - the version came over the network, so the href holds digits and dots only.
+function appReleaseUrl(version) {
+    if (typeof version !== 'string' || !CLI_VERSION_PATTERN.test(version)) {
+        return null;
+    }
+
+    return APP_RELEASE_URL + version;
+}
+
+// What the update check reported (get_update_status), as the page shows it:
+// `off` while the setting is, `available` with the newer version and its
+// page, `current` once a release no newer than this build was seen, and
+// `checking`/`failed` before any answer. A known answer outlives a later
+// failed request.
+function appUpdateState(status) {
+    if (!status || typeof status !== 'object' || status.enabled !== true) {
+        return { state: 'off' };
+    }
+    const current = parseVersion(status.current);
+    const latest = parseVersion(status.latest);
+    if (latest && current && compareVersions(latest, current) > 0) {
+        return { state: 'available', version: status.latest, url: appReleaseUrl(status.latest) };
+    }
+    if (latest) {
+        return { state: 'current' };
+    }
+    return { state: status.failed && !status.pending ? 'failed' : 'checking' };
+}
+
+const APP_UPDATE_NOTE_KEYS = new Map([
+    ['checking', 'update_checking'],
+    ['failed', 'update_failed'],
+    ['current', 'update_current'],
+]);
+
+// The settings dialog's line naming this build, followed by what the update
+// check found (nothing while it is off).
+function appVersionMarkup(status, labels) {
+    const version = status && typeof status.current === 'string' ? status.current : '';
+    if (!version) {
+        return '';
+    }
+    const update = appUpdateState(status);
+    let note = '';
+    if (update.state === 'available') {
+        const text = esc(fmt(labels.update_available, { version: update.version }));
+        note = update.url
+            ? '<a class="settings-update"' + attr('href', update.url) + ' target="_blank" rel="noreferrer">' + text + '</a>'
+            : '<span class="settings-update">' + text + '</span>';
+    } else if (APP_UPDATE_NOTE_KEYS.has(update.state)) {
+        note = '<span class="settings-update-note">' + esc(labels[APP_UPDATE_NOTE_KEYS.get(update.state)]) + '</span>';
+    }
+    return '<span class="settings-version-name">' + esc(fmt(labels.app_version, { version })) + '</span>' + note;
+}
+
 // A Claude Code version as its list of numbers, or null for anything that is not
 // dot-separated digits - the value comes from disk and must not be guessed at.
 const RELEASE_VERSION_PATTERN = /^\d{1,6}(\.\d{1,6}){1,3}$/;
@@ -4797,6 +4858,7 @@ const SETTING_GROUP_HINT_KEYS = new Map([['window', 'setting_window_hint']]);
 // field in the dialog.
 const SETTING_LABEL_KEYS = new Map([
     ['language', { label: 'setting_language', hint: 'setting_language_hint' }],
+    ['update_check', { label: 'setting_update_check', hint: 'setting_update_check_hint' }],
     ['poll_interval', { label: 'setting_poll_interval', hint: 'setting_poll_interval_hint' }],
     ['ended_max_age', { label: 'setting_ended_max_age', hint: 'setting_ended_max_age_hint' }],
     ['include_completed', { label: 'setting_include_completed', hint: 'setting_include_completed_hint' }],
@@ -5148,6 +5210,9 @@ const AMC_LOGIC = {
     modelHistory,
     cliHistory,
     changelogUrl,
+    appReleaseUrl,
+    appUpdateState,
+    appVersionMarkup,
     parseVersion,
     compareVersions,
     newestCliVersions,

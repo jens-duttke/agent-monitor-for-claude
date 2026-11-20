@@ -40,6 +40,7 @@ window.__MOCK_BOOTSTRAP__ = {
 window.__MOCK_SETTINGS__ = {
     specs: [
         { key: 'language', kind: 'language', group: 'general', minimum: null, maximum: null, unit: '', applies: 'reload' },
+        { key: 'update_check', kind: 'bool', group: 'general', minimum: null, maximum: null, unit: '', applies: 'now' },
         { key: 'poll_interval', kind: 'int', group: 'refresh', minimum: 1, maximum: 3600, unit: 'seconds', applies: 'now' },
         { key: 'ended_max_age', kind: 'int', group: 'sessions', minimum: 0, maximum: null, unit: 'seconds', applies: 'now' },
         { key: 'include_completed', kind: 'bool', group: 'sessions', minimum: null, maximum: null, unit: '', applies: 'now' },
@@ -51,11 +52,11 @@ window.__MOCK_SETTINGS__ = {
     ],
     values: {
         poll_interval: 5, ended_max_age: 7200, include_completed: false, subagent_recent_seconds: 900, list_context: false,
-        window_width: 1180, window_height: 760, language: '', wsl: true,
+        window_width: 1180, window_height: 760, language: '', wsl: true, update_check: false,
     },
     defaults: {
         poll_interval: 5, ended_max_age: 3600, include_completed: false, subagent_recent_seconds: 900, list_context: false,
-        window_width: 1180, window_height: 760, language: '', wsl: true,
+        window_width: 1180, window_height: 760, language: '', wsl: true, update_check: false,
     },
     errors: [],
     path: 'C:\\Users\\demo\\AppData\\Roaming\\AgentMonitorForClaude\\agent-monitor-settings.json',
@@ -65,6 +66,9 @@ window.__MOCK_SETTINGS__ = {
     languages: [{ code: 'de', name: 'Deutsch' }, { code: 'en', name: 'English' }, { code: 'fr', name: 'Français' }, { code: 'ja', name: '日本語' }],
     window_size: [1180, 760],
 };
+
+// What get_update_status reports with the update check off: the version only.
+window.__MOCK_UPDATE__ = { enabled: false, current: '1.0.0' };
 
 // Raw session records - the exact shape the Python backend provides. All
 // derivation (status, labels, grouping, sorting, cost) happens in logic.js.

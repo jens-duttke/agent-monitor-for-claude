@@ -95,6 +95,7 @@ async function openSettings() {
         + '</div>'
         + '<div class="settings-body"></div>'
         + '<div class="settings-foot">'
+        +     '<div class="settings-version"></div>'
         +     '<div class="settings-file"></div>'
         +     '<div class="settings-message" role="alert"></div>'
         +     '<div class="modal-actions">'
@@ -112,6 +113,7 @@ async function openSettings() {
     overlay.querySelector('[data-act="save"]').textContent = labels.settings_save;
     overlay.querySelector('.settings-body').innerHTML = logic.settingsFormMarkup(settingsView, labels);
     overlay.querySelector('.settings-file').innerHTML = logic.settingsFileMarkup(settingsView, labels);
+    overlay.querySelector('.settings-version').innerHTML = logic.appVersionMarkup(updateStatus, labels);
 
     overlay.addEventListener('input', onSettingsInput);
     overlay.addEventListener('change', onSettingsInput);
@@ -399,5 +401,69 @@ function applySavedSettings(result) {
     toast(restart.length > 0 ? state.labels.settings_saved_restart : state.labels.settings_saved);
     if (changed.length > 0) {
         tick();
+    }
+    if (changed.includes('update_check')) {
+        updateStatusLoop();
+    }
+}
+
+/* --- version and update check ---
+   The bridge reports this build's version and, while the update_check setting
+   is on, the newest release it has heard of (get_update_status, answered from
+   memory - the request itself runs in Python, a few times a day). Asked once a
+   minute, every few seconds while a request is under way; the toolbar badge
+   shows only for a newer release, the settings dialog names the version always. */
+
+const UPDATE_STATUS_MS = 60 * 1000;
+const UPDATE_STATUS_PENDING_MS = 3000;
+
+// The last answer, and the round that may still store one: a restarted loop
+// (a saved setting) supersedes a round still waiting on the bridge.
+let updateStatus = null;
+let updateStatusSeq = 0;
+let updateStatusTimer = null;
+
+async function fetchUpdateStatus() {
+    const bridge = apiBridge();
+    if (bridge && typeof bridge.get_update_status === 'function') {
+        return bridge.get_update_status();
+    }
+    return window.__MOCK_UPDATE__ ? Object.assign({}, window.__MOCK_UPDATE__) : null;
+}
+
+async function updateStatusLoop() {
+    clearTimeout(updateStatusTimer);
+    const seq = ++updateStatusSeq;
+    let status = updateStatus;
+    try {
+        status = await fetchUpdateStatus();
+    } catch (err) {
+        // A bridge hiccup - the next round asks again.
+    }
+    if (seq !== updateStatusSeq) {
+        return;
+    }
+    updateStatus = status && typeof status === 'object' ? status : null;
+    renderUpdateStatus();
+    const pending = Boolean(updateStatus && updateStatus.enabled && updateStatus.pending);
+    updateStatusTimer = setTimeout(updateStatusLoop, pending ? UPDATE_STATUS_PENDING_MS : UPDATE_STATUS_MS);
+}
+
+function renderUpdateStatus() {
+    const labels = state.labels;
+    const badge = document.getElementById('update-badge');
+    if (badge) {
+        const update = logic.appUpdateState(updateStatus);
+        const show = update.state === 'available' && Boolean(update.url);
+        badge.hidden = !show;
+        if (show) {
+            badge.href = update.url;
+            badge.textContent = fmt(labels.update_badge, { version: update.version });
+            badge.dataset.tip = fmt(labels.update_badge_tip, { version: update.version, current: updateStatus.current });
+        }
+    }
+    const line = document.querySelector('#settings-overlay .settings-version');
+    if (line) {
+        line.innerHTML = logic.appVersionMarkup(updateStatus, labels);
     }
 }

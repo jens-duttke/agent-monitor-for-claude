@@ -1,6 +1,6 @@
 # How it works
 
-Agent Monitor reads the files Claude Code writes locally and the operating system's process list. It never talks to Claude Code or the network.
+Agent Monitor reads the files Claude Code writes locally and the operating system's process list. It never talks to Claude Code, and uses the network only for the optional update check.
 
 ## Data sources
 

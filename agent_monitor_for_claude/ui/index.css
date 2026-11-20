@@ -361,6 +361,29 @@ button {
     padding: 0;
 }
 
+/* A newer release of this app; a link to its page, shown only then. */
+.update-badge {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-control);
+    color: var(--accent);
+    font-size: 12.5px;
+    text-decoration: none;
+    white-space: nowrap;
+
+    &[hidden] {
+        display: none;
+    }
+
+    &:hover {
+        background: var(--control-bg);
+    }
+}
+
 .search-progress {
     position: absolute;
     left: 0;
@@ -3358,6 +3381,32 @@ body.group-graph .content {
     }
 }
 
+.settings-version {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    font-size: 12px;
+    color: var(--fg-dim);
+
+    &:empty {
+        display: none;
+    }
+
+    .settings-version-name {
+        color: var(--fg);
+        -webkit-user-select: text;
+        user-select: text;
+    }
+
+    .settings-update {
+        color: var(--accent);
+    }
+
+    .settings-update-note {
+        color: var(--fg-faint);
+    }
+}
+
 .settings-file {
     font-size: 12px;
     color: var(--fg-dim);
@@ -3506,6 +3555,7 @@ body.compact {
     .toolbar-summary,
     .toolbar-gap,
     .search-opts,
+    .update-badge,
     #settings-toggle {
         display: none;
     }

@@ -49,6 +49,7 @@ from .tasks import read_task_output as _read_task_output
 from .test_results import TestSummary
 from .transcript import edited_files
 from .transcript import prioritize_session as _prioritize_session
+from .update_check import update_status
 from .verbose import print_runtime_diagnostics
 from .window_background import apply_native_background, window_background_color
 from .window_focus import focus_entrypoint_window, focus_session_window, focus_terminal_window, open_directory, open_vscode_session, reveal_in_file_manager
@@ -273,6 +274,10 @@ class _MonitorApi:
             return reveal_in_file_manager(str(path))
 
         return open_directory(str(path.parent))
+
+    def get_update_status(self) -> dict[str, Any]:
+        """Report this build's version and, while the ``update_check`` setting is on, the newest release (see :mod:`update_check`)."""
+        return update_status()
 
     def _window_size(self) -> list[int] | None:
         """The window's logical size outside the compact view, or None when it cannot be measured."""
