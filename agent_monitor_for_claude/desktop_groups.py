@@ -10,7 +10,8 @@ The groups live in ``claude_desktop_config.json`` (``preferences.epitaxyPrefs``,
 under ``dframe-group-scopes`` and ``dframe-code-sections``, one entry per
 account/organization scope).  Each Desktop session has its own file
 ``claude-code-sessions/<account>/<org>/local_<desktopId>.json`` that names the
-Claude Code session (``cliSessionId``) and whether it is archived.  Every file
+Claude Code session (``cliSessionId``, or the one it ran last once its process
+has ended) and whether it is archived.  Every file
 is parsed once and remembered by its modification time and size, so a poll
 reads only what changed.  The format is an undocumented internal of Claude
 Desktop, so every shape is checked and a surprise degrades to "no groups".
@@ -183,11 +184,30 @@ def _session_files(directory: Path, seen_files: set[str]) -> dict[str, tuple[str
         if not isinstance(data, dict):
             continue
 
-        cli_id = data.get('cliSessionId')
-        if isinstance(cli_id, str) and _UUID_PATTERN.match(cli_id):
+        cli_id = _cli_session_id(data)
+        if cli_id is not None:
             found[path.stem] = (cli_id, data.get('isArchived') is True)
 
     return found
+
+
+def _cli_session_id(data: dict[str, Any]) -> str | None:
+    """The Claude Code session a Desktop session file names, or None.
+
+    Desktop clears ``cliSessionId`` once the chat's process has ended; the
+    session it last ran is then ``lastAssistantCliSessionId``, else the newest
+    of ``priorCliSessionIds``.
+    """
+    candidates: list[object] = [data.get('cliSessionId'), data.get('lastAssistantCliSessionId')]
+    prior = data.get('priorCliSessionIds')
+    if isinstance(prior, list) and prior:
+        candidates.append(prior[-1])
+
+    for candidate in candidates:
+        if isinstance(candidate, str) and _UUID_PATTERN.match(candidate):
+            return candidate
+
+    return None
 
 
 def _list_session_files(sessions_root: Path) -> list[Path]:

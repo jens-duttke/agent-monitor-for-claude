@@ -91,6 +91,15 @@ class DesktopGroupsTest(_Fixture):
         self.write_config(_config(groups))
         self.assertEqual([g['id'] for g in self.read()['groups']], ['cg-b'])
 
+    def test_an_ended_chat_falls_back_to_the_session_it_ran_last(self) -> None:
+        self.write_config(_config([{'id': 'cg-1', 'name': 'G'}], {f'code:local_{_D1}': 'cg-1', f'code:local_{_D2}': 'cg-1'}))
+        last = '11111111-2222-4333-8444-555555555555'
+        prior = ['66666666-7777-4888-8999-aaaaaaaaaaaa', '77777777-8888-4999-8aaa-bbbbbbbbbbbb']
+        path = self.dir / 'claude-code-sessions' / 'acct-1' / 'org-1'
+        _write(path / f'local_{_D1}.json', {'lastAssistantCliSessionId': last, 'priorCliSessionIds': prior, 'isArchived': False})
+        _write(path / f'local_{_D2}.json', {'cliSessionId': None, 'priorCliSessionIds': prior, 'isArchived': False})
+        self.assertEqual(self.read()['members'], {last: 'cg-1', prior[-1]: 'cg-1'})
+
     def test_non_uuid_cli_session_id_is_skipped(self) -> None:
         self.write_config(_config([{'id': 'cg-1', 'name': 'G'}], {f'code:local_{_D1}': 'cg-1'}))
         self.write_session(_D1, '../../etc/passwd')
