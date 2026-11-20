@@ -14,6 +14,7 @@ from unittest import mock
 from agent_monitor_for_claude import cli_install
 from agent_monitor_for_claude import history as history_mod
 from agent_monitor_for_claude import snapshot as snapshot_mod
+from agent_monitor_for_claude import transcript as transcript_mod
 from agent_monitor_for_claude.paths import SessionRoot, transcript_path, local_root
 from agent_monitor_for_claude.procinfo import ProcessInfo
 from agent_monitor_for_claude.settings import Settings
@@ -934,9 +935,9 @@ class KeptSessionTest(_RegistryFixture):
     def _slow_build(self, release: threading.Event):
         real = history_mod.history_record
 
-        def build(path: Path) -> dict | None:
+        def build(path: Path, *args) -> dict | None:
             release.wait(10)
-            return real(path)
+            return real(path, *args)
 
         return build
 
@@ -1022,6 +1023,54 @@ class KeptSessionTest(_RegistryFixture):
             sessions = _kept_snapshot([_KEPT_ID])['sessions']
 
         self.assertEqual([s['origin'] for s in sessions], [local_root().origin])
+
+    def test_the_build_yields_before_every_chunk_of_a_large_transcript(self) -> None:
+        path = self._add_kept_transcript()
+        with path.open('a', encoding='utf-8') as handle:
+            for _ in range(40):
+                handle.write(chr(10) + _END_TURN)
+        waits: list[int] = []
+        chunk_bytes = path.stat().st_size // 4
+
+        with mock.patch.object(transcript_mod, '_SCAN_CHUNK_BYTES', chunk_bytes), \
+                mock.patch.object(snapshot_mod, 'wait_for_readers', side_effect=lambda: waits.append(1)):
+            _kept_snapshot([_KEPT_ID])
+
+        # Once before the build, then before each of the four chunks and the read that finds the end.
+        self.assertGreaterEqual(len(waits), 5)
+
+    def test_a_job_for_a_distro_that_stopped_is_dropped_untouched(self) -> None:
+        wsl_root = _wsl_root(Path(self._temp.name) / 'wsl')
+        path = transcript_path(wsl_root, _KEPT_ID, '/home/dev/kept')
+        with snapshot_mod._keep_records_lock:
+            snapshot_mod._keep_pending[_KEPT_ID] = (wsl_root, path, 1, 2)
+
+        with mock.patch.object(snapshot_mod, 'session_roots', return_value=[local_root()]), \
+                mock.patch.object(history_mod, 'history_record', side_effect=AssertionError('read')) as build:
+            snapshot_mod._build_kept_records()
+
+        self.assertEqual(build.call_count, 0)
+        self.assertEqual(snapshot_mod._keep_pending, {})
+        self.assertNotIn(_KEPT_ID, snapshot_mod._keep_records)
+
+    def test_a_failure_outside_the_build_does_not_end_the_builder(self) -> None:
+        self._add_kept_transcript()
+        other = '22222222-2222-3333-4444-555555555555'
+        self._add_kept_transcript(other)
+        calls: list[int] = []
+
+        def flaky() -> None:
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError('boom')
+
+        with mock.patch.object(snapshot_mod, 'wait_for_readers', side_effect=flaky):
+            build_snapshot(keep=[_KEPT_ID])
+            _wait_for_kept_builds()
+            sessions = _kept_snapshot([other])['sessions']
+
+        self.assertEqual([s['session_id'] for s in sessions], [other])
+        self.assertIsNone(snapshot_mod._keep_worker)
 
 
 class WorktreeSessionTest(_RegistryFixture):

@@ -300,9 +300,9 @@ class HistoryWindowTest(HistoryEnvTest):
         real_state_for = history.history_state_for
         read: list[str] = []
 
-        def recording(path: Path):
+        def recording(path: Path, *args):
             read.append(path.stem)
-            return real_state_for(path)
+            return real_state_for(path, *args)
 
         with mock.patch.object(history, 'history_state_for', side_effect=recording):
             list_history(86400)

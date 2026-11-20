@@ -38,6 +38,7 @@ from __future__ import annotations
 import math
 import os
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
@@ -356,16 +357,17 @@ def kept_cwd(root: SessionRoot, path: Path) -> str:
     return _resolve_folder_cwd(folder.name, siblings, slug_to_cwd)[0]
 
 
-def history_record(path: Path) -> dict[str, Any] | None:
+def history_record(path: Path, before_chunk: Callable[[], None] | None = None) -> dict[str, Any] | None:
     """Return the raw history record of the transcript at *path*, or None when it cannot be read.
 
     The caller stamps ``origin`` and ``origin_label`` and, for a session the
-    live overview keeps, resets ``is_history``.
+    live overview keeps, resets ``is_history``.  *before_chunk* is called
+    before each chunk of every file read (the transcript and its subagents').
     """
-    return _build_history_record(path)
+    return _build_history_record(path, before_chunk)
 
 
-def _build_history_record(path: Path) -> dict[str, Any] | None:
+def _build_history_record(path: Path, before_chunk: Callable[[], None] | None = None) -> dict[str, Any] | None:
     """Assemble one raw history record from a transcript, or None on failure.
 
     The ``cwd`` may be ``None`` here (a minimal transcript carries none); the
@@ -375,10 +377,10 @@ def _build_history_record(path: Path) -> dict[str, Any] | None:
     own records after normalizing them.
     """
     try:
-        state = history_state_for(path)
+        state = history_state_for(path, before_chunk)
         # The cost covers the session's subagents too, exactly as for a live one -
         # also those it started in a worktree, filed under that worktree's folder.
-        usage = session_usage(state.usage, past_subagent_usage(path, state.worktree_paths))
+        usage = session_usage(state.usage, past_subagent_usage(path, state.worktree_paths, before_chunk))
     except Exception:
         # Last-resort per-file isolation, mirroring build_snapshot: one bad
         # transcript must skip that entry, never blank the whole history list.

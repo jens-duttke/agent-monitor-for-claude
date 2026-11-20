@@ -778,6 +778,19 @@ def _build_kept_records() -> None:
     """Build the queued kept records one by one until none is left (the builder thread)."""
     global _keep_worker, _keep_builds_done
 
+    try:
+        _build_queued_kept_records()
+    finally:
+        # Whatever ended the loop, a later queued job must be able to start a new builder.
+        with _keep_records_lock:
+            if _keep_worker is threading.current_thread():
+                _keep_worker = None
+
+
+def _build_queued_kept_records() -> None:
+    """Build the queued kept records one by one until none is left, isolating each build."""
+    global _keep_worker, _keep_builds_done
+
     while True:
         with _keep_records_lock:
             if not _keep_pending:
@@ -785,9 +798,16 @@ def _build_kept_records() -> None:
                 return
             session_id, job = next(iter(_keep_pending.items()))
 
-        # A snapshot being built waits for nothing; the build waits for it.
-        wait_for_readers()
+        # A distro that stopped since the job was queued is not woken to read it; the next snapshot queues it again if it returns.
+        if job[0].origin not in {root.origin for root in session_roots()}:
+            with _keep_records_lock:
+                if _keep_pending.get(session_id) == job:
+                    del _keep_pending[session_id]
+            continue
+
         try:
+            # A snapshot being built waits for nothing; the build waits for it, before the read and at every chunk of it.
+            wait_for_readers()
             record = _build_kept_record(job[0], job[1])
         except Exception:
             # Last-resort isolation, like build_snapshot's per record.
@@ -806,7 +826,8 @@ def _build_kept_record(root: SessionRoot, path: Path) -> dict[str, Any] | None:
     """Return the record of a kept session built from its transcript, like a History record, or None when it cannot be read."""
     from .history import history_record, kept_cwd
 
-    record = history_record(path)
+    # The builder yields to a snapshot at every chunk it reads, as the first full scan does (see wait_for_readers).
+    record = history_record(path, wait_for_readers)
     if record is None:
         return None
 

@@ -1599,7 +1599,7 @@ def worktree_for(path: Path) -> WorktreeState | None:
     return _recent_worktree(path)
 
 
-def history_state_for(path: Path) -> HistoryState:
+def history_state_for(path: Path, before_chunk: Callable[[], None] | None = None) -> HistoryState:
     """Return display metadata for a past session transcript, keyed by its file.
 
     Unlike :func:`state_for` - which begins from a live registry record and
@@ -1618,6 +1618,8 @@ def history_state_for(path: Path) -> HistoryState:
     ----------
     path : Path
         The session-level transcript file (``projects/<slug>/<session>.jsonl``).
+    before_chunk : Callable, optional
+        Runs before every chunk of the full read, where a background build gives way to the poll.
     """
     session_id = path.stem
     try:
@@ -1625,7 +1627,7 @@ def history_state_for(path: Path) -> HistoryState:
     except OSError:
         return HistoryState(session_id=session_id)
 
-    scan, cwd = _scan_history(path)
+    scan, cwd = _scan_history(path, before_chunk)
     tail = _parse(_read_tail(path))
     # Escalate the tail window only when nothing parsed (an unreadable tail),
     # exactly like state_for: a single trailing entry larger than 256 KB (a giant
@@ -1661,7 +1663,7 @@ def usage_scan(path: Path) -> UsageScan | None:
     )
 
 
-def usage_scan_once(path: Path) -> UsageScan:
+def usage_scan_once(path: Path, before_chunk: Callable[[], None] | None = None) -> UsageScan:
     """Return the usage in a past session's subagent transcript, read once and not cached.
 
     A file that cannot be read counts as empty - the session's cost is then
@@ -1669,7 +1671,7 @@ def usage_scan_once(path: Path) -> UsageScan:
     """
     state = _usage_only_state()
     try:
-        _absorb_file(path, state, path.stat().st_size)
+        _absorb_file(path, state, path.stat().st_size, before_chunk)
     except OSError:
         return UsageScan()
 
@@ -1681,7 +1683,7 @@ def _usage_only_state() -> _ScanState:
     return _ScanState(first_prompt='')
 
 
-def _scan_history(path: Path) -> tuple[_ScanState, str | None]:
+def _scan_history(path: Path, before_chunk: Callable[[], None] | None = None) -> tuple[_ScanState, str | None]:
     """Read a past transcript once through the full scan, also resolving the session cwd.
 
     Every line goes through ``_absorb_line``, exactly as a live session's
@@ -1690,6 +1692,7 @@ def _scan_history(path: Path) -> tuple[_ScanState, str | None]:
     cost is priced from.  The first entry carrying a ``cwd`` is parsed once
     more for that path.  Read in chunks, so a large transcript is never held
     in memory whole.  An unreadable file yields an empty state and no cwd.
+    *before_chunk*, when given, runs before every chunk is read (see :func:`_absorb_file`).
     """
     state = _ScanState()
     cwd: str | None = None
@@ -1697,7 +1700,13 @@ def _scan_history(path: Path) -> tuple[_ScanState, str | None]:
     try:
         with path.open('rb') as handle:
             remainder = b''
-            while chunk := handle.read(_SCAN_CHUNK_BYTES):
+            while True:
+                if before_chunk is not None:
+                    before_chunk()
+                chunk = handle.read(_SCAN_CHUNK_BYTES)
+                if not chunk:
+                    break
+
                 lines = (remainder + chunk).split(b'\n')
                 remainder = lines.pop()
                 for raw_line in lines:
