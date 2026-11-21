@@ -49,16 +49,16 @@ from .roots import session_roots
 from .sessions import list_sessions
 from .snapshot import live_or_recent_ids
 from .subagents import past_subagent_usage
-from .transcript import history_state_for
+from .transcript import head_cwd, history_state_for
 from .usage_parts import session_usage
-
-# How many sibling transcripts a cwd-less kept session reads for its project's cwd.
-_KEPT_SIBLINGS = 5
 
 __all__ = ['history_record', 'kept_cwd', 'list_history']
 
 # Transcripts read at once per session root.
 _MAX_WORKERS = 16
+
+# How many sibling transcripts' heads a cwd-less kept session reads for its project's cwd.
+_KEPT_SIBLINGS = 5
 
 
 def list_history(max_age_seconds: float | None = None) -> list[dict[str, Any]]:
@@ -334,8 +334,8 @@ def kept_cwd(root: SessionRoot, path: Path) -> str:
     """Return the project cwd of a transcript that carries none, resolved as the History listing does.
 
     The root's registry names the folder's cwd first, then a sibling transcript
-    of the same project folder (at most ``_KEPT_SIBLINGS`` are read), and only
-    then the raw slug.
+    of the same project folder (the head of at most ``_KEPT_SIBLINGS``, see
+    :func:`transcript.head_cwd`), and only then the raw slug.
     """
     folder = path.parent
     slug_to_cwd: dict[str, str] = {}
@@ -349,9 +349,9 @@ def kept_cwd(root: SessionRoot, path: Path) -> str:
         except OSError:
             candidates = []
         for sibling in candidates[:_KEPT_SIBLINGS]:
-            record = _build_history_record(sibling)
-            if record is not None and record['cwd']:
-                siblings.append(record)
+            cwd = head_cwd(sibling)
+            if cwd:
+                siblings.append({'cwd': cwd})
                 break
 
     return _resolve_folder_cwd(folder.name, siblings, slug_to_cwd)[0]

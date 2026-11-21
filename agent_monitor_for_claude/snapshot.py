@@ -136,7 +136,7 @@ def _build_snapshot(graph: bool, keep: list[str]) -> dict[str, Any]:
             sessions.append(session)
 
     _prune_caches(pairs, listed)
-    sessions.extend(_kept_records(keep, {session['session_id'] for session in sessions}))
+    sessions.extend(_kept_records(keep, {session['session_id']: session['alive'] for session in sessions}))
 
     return {
         'generated_at': datetime.now().astimezone().isoformat(timespec='seconds'),
@@ -725,15 +725,21 @@ def _stat_transcript(path: Path) -> tuple[int, int] | None:
     return stat.st_mtime_ns, stat.st_size
 
 
-def _kept_records(keep: list[str], emitted: set[str]) -> list[dict[str, Any]]:
+def _kept_records(keep: list[str], emitted: dict[str, bool]) -> list[dict[str, Any]]:
     """Return the records of the kept ids the regular pass did not emit, built from their transcripts.
 
-    A record is built on a background thread (see :func:`_kept_record`), so a
-    kept id appears once its build has finished; the fingerprint changes then.
+    *emitted* maps each id the regular pass emitted to whether its process is
+    alive.  A record is built on a background thread (see :func:`_kept_record`),
+    so a kept id appears once its build has finished; the fingerprint changes
+    then.  For a kept id the regular pass still emits as ended, the build is
+    queued already, so its record is ready when the session ages out of the
+    regular pass and the session never drops out of the list in between.
     """
     records: list[dict[str, Any]] = []
     for session_id, root, path, mtime_ns, size in _kept_transcripts(keep):
         if session_id in emitted:
+            if not emitted[session_id]:
+                _kept_record(session_id, root, path, mtime_ns, size)
             continue
 
         record = _kept_record(session_id, root, path, mtime_ns, size)
@@ -751,8 +757,6 @@ def _kept_record(session_id: str, root: SessionRoot, path: Path, mtime_ns: int, 
     thread, and until it has finished the record built last is handed out
     (none before the first build).
     """
-    global _keep_worker
-
     now = time.monotonic()
     job = (root, path, mtime_ns, size)
     with _keep_records_lock:
@@ -761,8 +765,7 @@ def _kept_record(session_id: str, root: SessionRoot, path: Path, mtime_ns: int, 
             if _keep_pending.get(session_id) != job:
                 _keep_pending[session_id] = job
             if _keep_worker is None:
-                _keep_worker = threading.Thread(target=_build_kept_records, name='kept-records', daemon=True)
-                _keep_worker.start()
+                _start_keep_worker()
 
     if memo is None or memo[3] is None:
         return None
@@ -774,27 +777,37 @@ def _kept_record(session_id: str, root: SessionRoot, path: Path, mtime_ns: int, 
     return record
 
 
+def _start_keep_worker() -> None:
+    """Start the builder thread; the caller holds ``_keep_records_lock`` and has seen no builder running."""
+    global _keep_worker
+
+    _keep_worker = threading.Thread(target=_build_kept_records, name='kept-records', daemon=True)
+    _keep_worker.start()
+
+
 def _build_kept_records() -> None:
     """Build the queued kept records one by one until none is left (the builder thread)."""
-    global _keep_worker, _keep_builds_done
+    global _keep_worker
 
     try:
         _build_queued_kept_records()
     finally:
-        # Whatever ended the loop, a later queued job must be able to start a new builder.
+        # Whatever ended the loop, a later queued job must be able to start a new builder - and one queued
+        # between the loop's last look and this lock must not be stranded, so it starts that builder here.
         with _keep_records_lock:
             if _keep_worker is threading.current_thread():
                 _keep_worker = None
+                if _keep_pending:
+                    _start_keep_worker()
 
 
 def _build_queued_kept_records() -> None:
     """Build the queued kept records one by one until none is left, isolating each build."""
-    global _keep_worker, _keep_builds_done
+    global _keep_builds_done
 
     while True:
         with _keep_records_lock:
             if not _keep_pending:
-                _keep_worker = None
                 return
             session_id, job = next(iter(_keep_pending.items()))
 
@@ -824,7 +837,7 @@ def _build_queued_kept_records() -> None:
 
 def _build_kept_record(root: SessionRoot, path: Path) -> dict[str, Any] | None:
     """Return the record of a kept session built from its transcript, like a History record, or None when it cannot be read."""
-    from .history import history_record, kept_cwd
+    from .history import history_record, kept_cwd  # imported here: history imports snapshot, so a module-level import is a cycle
 
     # The builder yields to a snapshot at every chunk it reads, as the first full scan does (see wait_for_readers).
     record = history_record(path, wait_for_readers)

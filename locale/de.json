@@ -166,7 +166,7 @@
     "section_pinned": "Angeheftet",
     "section_other_sessions": "Weitere Sitzungen",
     "pin_session": "Oben anheften",
-    "unpin_session": "Lösen",
+    "unpin_session": "Nicht mehr anheften",
     "pinned_in_desktop": "In Claude Desktop angeheftet",
     "pinned_in_agent_monitor": "In Agent Monitor angeheftet",
     "pin_tip": "Hält diese Sitzung oben in der Liste, auch nachdem sie beendet ist (Taste P)",

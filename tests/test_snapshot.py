@@ -884,6 +884,51 @@ class KeptSessionTest(_RegistryFixture):
         self.assertEqual(len(sessions), 1)
         self.assertNotIn('kept', sessions[0])
 
+    def test_an_ended_kept_session_still_listed_has_its_build_ready_when_it_ages_out(self) -> None:
+        self._add_kept_transcript()
+
+        # The regular pass still lists it as ended: no kept record yet, but the build is queued already.
+        self.assertEqual(snapshot_mod._kept_records([_KEPT_ID], {_KEPT_ID: False}), [])
+        _wait_for_kept_builds()
+
+        # Aged out of the regular pass: the record is there on the very first poll.
+        records = snapshot_mod._kept_records([_KEPT_ID], {})
+        self.assertEqual([record['session_id'] for record in records], [_KEPT_ID])
+
+    def test_a_live_kept_session_queues_no_build(self) -> None:
+        self._add_kept_transcript()
+
+        self.assertEqual(snapshot_mod._kept_records([_KEPT_ID], {_KEPT_ID: True}), [])
+        _wait_for_kept_builds()
+
+        self.assertNotIn(_KEPT_ID, snapshot_mod._keep_records)
+        self.assertNotIn(_KEPT_ID, snapshot_mod._keep_pending)
+
+    def test_a_job_queued_as_the_builder_stops_starts_a_new_builder(self) -> None:
+        path = self._add_kept_transcript()
+        stat = path.stat()
+        real_loop = snapshot_mod._build_queued_kept_records
+        calls: list[int] = []
+
+        def loop_that_misses_a_late_job() -> None:
+            calls.append(1)
+            if len(calls) > 1:
+                real_loop()
+                return
+            # Queued after the loop's last look at the queue, before the worker slot is released.
+            with snapshot_mod._keep_records_lock:
+                snapshot_mod._keep_pending[_KEPT_ID] = (local_root(), path, stat.st_mtime_ns, stat.st_size)
+
+        with snapshot_mod._keep_records_lock:
+            snapshot_mod._keep_worker = threading.current_thread()
+        with mock.patch.object(snapshot_mod, '_build_queued_kept_records', side_effect=loop_that_misses_a_late_job):
+            snapshot_mod._build_kept_records()
+            _wait_for_kept_builds()
+
+        # A successor ran the loop and built the late job.
+        self.assertEqual(len(calls), 2)
+        self.assertIn(_KEPT_ID, snapshot_mod._keep_records)
+
     def test_non_uuid_keep_entries_are_ignored(self) -> None:
         self._add_kept_transcript()
 

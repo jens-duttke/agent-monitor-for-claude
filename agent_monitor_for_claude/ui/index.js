@@ -143,7 +143,7 @@ function onKeyDown(event) {
             event.preventDefault();
             runSessionAction('copy-id', session);
         }
-    } else if (!ctrl && key === 'p' && session) {
+    } else if (!ctrl && key.toLowerCase() === 'p' && session) {
         event.preventDefault();
         togglePin(session);
     } else if (!ctrl && key === 't' && session) {

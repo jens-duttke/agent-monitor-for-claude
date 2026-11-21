@@ -13,8 +13,9 @@ account/organization scope), the pinned sessions under
 ``claude-code-sessions/<account>/<org>/local_<desktopId>.json`` that names the
 Claude Code session (``cliSessionId``, or the one it ran last once its process
 has ended) and whether it is archived.  Every file
-is parsed once and remembered by its modification time and size, so a poll
-reads only what changed.  The format is an undocumented internal of Claude
+is parsed once and only the values read from it are remembered, by its
+modification time and size, so a poll reads only what changed and the rest of
+the document (chat titles, MCP server settings) is dropped at once.  The format is an undocumented internal of Claude
 Desktop, so every shape is checked and a surprise degrades to "no groups".
 """
 from __future__ import annotations
@@ -23,6 +24,7 @@ import json
 import os
 import re
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +47,7 @@ _MANUAL_KIND = 'manual'
 _UUID_PATTERN = re.compile(r'\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z')
 _STARRED_ID_PATTERN = re.compile(r'\Alocal_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z')
 
-# File path -> (mtime_ns, size, parsed JSON or None).
+# File path -> (mtime_ns, size, the values extracted from it).  Never the parsed document itself.
 _cache: dict[str, tuple[int, int, Any]] = {}
 _lock = threading.Lock()
 
@@ -112,11 +114,19 @@ def desktop_groups(dirs: list[Path] | None = None) -> dict[str, Any]:
 
 
 def _preferences(directory: Path) -> dict[str, Any]:
-    """The ``epitaxyPrefs`` object of one directory's Desktop config, or an empty dict."""
-    config = _cached_json(directory / _CONFIG_FILE)
+    """The three ``epitaxyPrefs`` values this module reads from one directory's Desktop config, or an empty dict."""
+    preferences = _cached_extract(directory / _CONFIG_FILE, _extract_preferences)
+    return preferences if isinstance(preferences, dict) else {}
+
+
+def _extract_preferences(config: Any) -> dict[str, Any]:
+    """Only the group, section and pin values of a parsed Desktop config; everything else in it is left behind."""
     preferences = config.get(_PREFERENCES_KEY) if isinstance(config, dict) else None
     epitaxy = preferences.get(_EPITAXY_KEY) if isinstance(preferences, dict) else None
-    return epitaxy if isinstance(epitaxy, dict) else {}
+    if not isinstance(epitaxy, dict):
+        return {}
+
+    return {key: epitaxy[key] for key in (_SCOPES_KEY, _SECTIONS_KEY, _STARRED_KEY) if key in epitaxy}
 
 
 def _dict_items(value: Any) -> list[tuple[str, dict[str, Any]]]:
@@ -202,15 +212,23 @@ def _session_files(directory: Path, seen_files: set[str]) -> dict[str, tuple[str
     found: dict[str, tuple[str, bool]] = {}
     for path in _list_session_files(directory / _SESSIONS_DIR):
         seen_files.add(str(path))
-        data = _cached_json(path)
-        if not isinstance(data, dict):
-            continue
-
-        cli_id = _cli_session_id(data)
-        if cli_id is not None:
-            found[path.stem] = (cli_id, data.get('isArchived') is True)
+        session = _cached_extract(path, _extract_session)
+        if session is not None:
+            found[path.stem] = session
 
     return found
+
+
+def _extract_session(data: Any) -> tuple[str, bool] | None:
+    """``(Claude Code session id, archived)`` of a parsed session file, or None; nothing else of it is kept."""
+    if not isinstance(data, dict):
+        return None
+
+    cli_id = _cli_session_id(data)
+    if cli_id is None:
+        return None
+
+    return cli_id, data.get('isArchived') is True
 
 
 def _cli_session_id(data: dict[str, Any]) -> str | None:
@@ -256,8 +274,12 @@ def _subdirectories(directory: Path) -> list[Path]:
         return []
 
 
-def _cached_json(path: Path) -> Any:
-    """The parsed JSON of *path*, read again only when its modification time or size changed; None when unreadable."""
+def _cached_extract(path: Path, extract: Callable[[Any], Any]) -> Any:
+    """``extract`` applied to the parsed JSON of *path* (None when unreadable), read again only when its modification time or size changed.
+
+    Only the extracted values are cached; the parsed document goes out of
+    scope as soon as *extract* returns.
+    """
     try:
         stat_result = path.stat()
     except OSError:
@@ -270,11 +292,11 @@ def _cached_json(path: Path) -> Any:
     if cached is not None and cached[0] == stat_result.st_mtime_ns and cached[1] == stat_result.st_size:
         return cached[2]
 
-    data = _read_json(path)
+    extracted = extract(_read_json(path))
     with _lock:
-        _cache[key] = (stat_result.st_mtime_ns, stat_result.st_size, data)
+        _cache[key] = (stat_result.st_mtime_ns, stat_result.st_size, extracted)
 
-    return data
+    return extracted
 
 
 def _read_json(path: Path) -> Any:

@@ -507,5 +507,20 @@ class MirroredTranscriptTest(HistoryEnvTest):
         self.assertEqual(ids, ['aaaaaaaa-1111-2222-3333-444444444444', 'bbbbbbbb-1111-2222-3333-444444444444'])
 
 
+
+class KeptCwdTest(HistoryEnvTest):
+    """The project cwd of a kept transcript that carries none."""
+
+    def test_a_sibling_names_the_cwd_from_its_head_without_a_full_scan(self) -> None:
+        kept = self._write_history_transcript('d--WebDev-app', 'aaaaaaaa-1111-2222-3333-444444444444', [json.dumps({'type': 'summary'})])
+        self._write_history_transcript('d--WebDev-app', 'bbbbbbbb-1111-2222-3333-444444444444',
+                                       [json.dumps({'type': 'user', 'cwd': 'd:\WebDev\app', 'message': {'content': 'hi'}})])
+
+        with mock.patch.object(history, '_build_history_record', side_effect=AssertionError('full scan')):
+            cwd = history.kept_cwd(self.local_root, kept)
+
+        self.assertEqual(cwd, 'd:\WebDev\app')
+
+
 if __name__ == '__main__':
     unittest.main()

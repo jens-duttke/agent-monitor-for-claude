@@ -137,6 +137,24 @@ class DesktopGroupsTest(_Fixture):
         self.assertEqual(first, second)
         reader.assert_not_called()
 
+    def test_the_cache_keeps_only_the_extracted_values(self) -> None:
+        config = _config([{'id': 'cg-1', 'name': 'G'}], {f'code:local_{_D1}': 'cg-1'})
+        config['mcpServers'] = {'srv': {'command': 'x', 'env': {'API_KEY': 'SECRET-CONFIG-VALUE'}}}
+        config['preferences']['epitaxyPrefs']['otherPref'] = 'SECRET-PREF-VALUE'
+        self.write_config(config)
+        _write(self.dir / 'claude-code-sessions' / 'acct-1' / 'org-1' / f'local_{_D1}.json',
+               {'cliSessionId': _S1, 'isArchived': True, 'title': 'SECRET-TITLE', 'postTurnSummary': 'SECRET-SUMMARY'})
+
+        self.read()
+
+        cached = repr(desktop_groups._cache)
+        for marker in ('SECRET-CONFIG-VALUE', 'SECRET-PREF-VALUE', 'SECRET-TITLE', 'SECRET-SUMMARY', 'mcpServers', 'title'):
+            self.assertNotIn(marker, cached)
+        session_entry = next(value for key, value in desktop_groups._cache.items() if Path(key).name.startswith('local_'))
+        self.assertEqual(session_entry[2], (_S1, True))
+        config_entry = desktop_groups._cache[str(self.dir / 'claude_desktop_config.json')]
+        self.assertEqual(set(config_entry[2]), {'dframe-group-scopes'})
+
     def test_a_changed_file_is_read_again(self) -> None:
         self.write_config(_config([{'id': 'cg-1', 'name': 'G'}]))
         self.assertEqual(self.read()['groups'][0]['name'], 'G')
