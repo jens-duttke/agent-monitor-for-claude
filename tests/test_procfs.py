@@ -339,6 +339,19 @@ class ReadProcSubtreeTests(unittest.TestCase):
 
         self.assertEqual(found, [])
 
+    def test_a_configured_server_run_by_an_interpreter_is_a_helper(self) -> None:
+        # pipx starts pyright-langserver as `python pyright-langserver`, so the
+        # command line's first word is the interpreter, not the server.
+        with tempfile.TemporaryDirectory() as base:
+            proc_dir = Path(base)
+            self._tree(proc_dir)
+            (proc_dir / '101' / 'cmdline').write_bytes(b'/home/u/venvs/pyright/bin/python\0/home/u/.local/bin/pyright-langserver\0--stdio\0')
+            table = procfs.read_proc_subtree(proc_dir, [(100, 5000)])
+            found = procfs.live_descendants(100, 5000, table, procfs.children_index(table), procfs.DEFAULT_CLK_TCK,
+                                            frozenset({'pyright-langserver'}), proc_dir)
+
+        self.assertEqual(found, [])
+
     def test_an_unreachable_tree_reads_as_empty(self) -> None:
         self.assertEqual(procfs.read_proc_subtree(Path('/does/not/exist'), [(100, None)]), {})
 

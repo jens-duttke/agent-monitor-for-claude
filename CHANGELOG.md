@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A finished session no longer stays under *Running* because of a plugin's language server that starts through an interpreter, such as pyright (`python`) or typescript-language-server (`node`).
+
 ## [1.1.0] - 2026-11-20
 
 ### Added

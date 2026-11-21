@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from .procinfo import SESSION_HELPER_WINDOW_SECONDS, ProcessDetails, clip_arguments
+from .procinfo import SESSION_HELPER_WINDOW_SECONDS, ProcessDetails, clip_arguments, program_names
 
 __all__ = [
     'DEFAULT_CLK_TCK', 'DEFAULT_PAGE_SIZE', 'ProcEntry', 'ancestors', 'children_index', 'clk_tck',
@@ -408,29 +408,31 @@ def live_descendants(
 def _runs_helper_command(proc_dir: Path, pid: int, starttime: int, helper_commands: frozenset[str]) -> bool:
     """Whether *pid*'s program, as its command line names it, is one of *helper_commands* (lowercased stems).
 
-    Remembered per process (pid and start time), so the command line - a read
+    The names are the executable and, for a script interpreter, the script it
+    runs (:func:`~agent_monitor_for_claude.procinfo.program_names`).  They are
+    remembered per process (pid and start time), so the command line - a read
     over the share for a WSL distro - is read once per child, not per poll.
     """
     if not helper_commands:
         return False
     key = (str(proc_dir), pid, starttime)
-    program = _programs.get(key)
-    if program is None:
+    names = _programs.get(key)
+    if names is None:
         try:
             raw = (proc_dir / str(pid) / 'cmdline').read_bytes()
         except OSError:
             raw = b''
-        first = raw.split(b'\0', 1)[0].decode('utf-8', errors='replace')
-        program = first.rsplit('/', 1)[-1].lower()
+        arguments = raw.decode('utf-8', errors='replace').split('\0')
+        names = program_names(arguments)
         if len(_programs) >= _MAX_PROGRAMS:
             _programs.pop(next(iter(_programs)))
-        _programs[key] = program
+        _programs[key] = names
 
-    return program in helper_commands
+    return any(name in helper_commands for name in names)
 
 
-# (proc dir, pid, start time) -> the program name a child's command line starts with.
-_programs: dict[tuple[str, int, int], str] = {}
+# (proc dir, pid, start time) -> the names a child's command line runs its program under.
+_programs: dict[tuple[str, int, int], tuple[str, ...]] = {}
 _MAX_PROGRAMS = 512
 
 
