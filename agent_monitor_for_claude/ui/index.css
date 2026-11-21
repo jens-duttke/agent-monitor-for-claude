@@ -3539,9 +3539,9 @@ body.compact .item:not(.is-history):not(.no-window) {
 }
 
 /* --- Compact view: the narrow, always-on-top window ---
-   One line per session (status bar, title, status, time), only the sections
-   that need you or are running; recent and older ones as counts. After the
-   responsive blocks on purpose: it overrides them. */
+   One line per session (status bar, title, status, time) under the urgency
+   sections, which open and close as in the full view. After the responsive
+   blocks on purpose: it overrides them. */
 
 body.compact {
     .toolbar {

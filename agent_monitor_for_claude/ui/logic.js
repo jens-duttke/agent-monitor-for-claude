@@ -862,7 +862,10 @@ function flattenProjects(projects) {
 
    The few facts a list entry spells out beside its status, so the list answers
    "what is going on there" without opening the session. Ranked by how much each
-   changes what you do next; the list shows the first two, the detail all. */
+   changes what you do next; the list shows the first two, the detail all.
+   The context share, the prompt cache and hook errors are deliberately no
+   signal: they describe the session's cost and history rather than unfinished
+   work (a hook that failed days ago says nothing about the session now). */
 
 const LIST_SIGNAL_LIMIT = 2;
 
@@ -1251,7 +1254,7 @@ function refineWithWakeup(status, pending) {
     return pending && status === 'awaiting_input' ? 'processing' : status;
 }
 
-/* --- pending-tool blocking + mode (ported from formatting.py) --- */
+/* --- pending-tool blocking + mode --- */
 
 const QUESTION_TOOLS = new Set(['AskUserQuestion']);
 const PLAN_TOOLS = new Set(['ExitPlanMode', 'EnterPlanMode']);
@@ -1317,7 +1320,9 @@ const MODE_LABELS = new Map([
 // threshold, and the reason a session in `auto` can start asking about
 // everything: past this run it stops deferring to the classifier and prompts
 // you again, until you approve one. Python ships the raw count; reading a
-// paused mode out of it is a classification, so it happens here.
+// paused mode out of it is a classification, so it happens here. Claude Code's
+// second threshold (20 blocks per session) is deliberately not badged: it resets
+// that counter when it fires, which a count derived from the file cannot see.
 const AUTO_PAUSE_STREAK = 3;
 
 // Whether auto mode has put itself on hold on this session. Live sessions only:
@@ -1487,7 +1492,7 @@ function modeLabel(permissionMode) {
     return MODE_LABELS.get(permissionMode) || permissionMode;
 }
 
-/* --- label formatting (ported from formatting.py) --- */
+/* --- label formatting --- */
 
 /* An API-error turn carries two raw fields - Claude Code's own error token and
    the HTTP status of the failed call - and naming the cause from them is a
@@ -1890,7 +1895,8 @@ function tokenLabels(usage, labels) {
    with explicit fields (input, output, cache_read, cache_write_5m,
    cache_write_1h) - no multipliers. A model absent from the schedule has no
    rate, so a session touching it shows a plain token total instead of a wrong
-   price. The 1M-context tier is not modelled - long-context turns are
+   price. Current models bill a 1M context at standard rates; an older
+   model's long-context premium is not modelled, so such turns are
    undercounted. */
 const TOKENS_PER_UNIT_PRICE = 1000000;
 

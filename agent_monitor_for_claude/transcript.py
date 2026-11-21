@@ -164,7 +164,7 @@ _WRAP_UP_TOOL = 'mcp__ccd_turn__wrap_up'
 # Claude Desktop's progress list for the running turn: a call either sets the
 # whole list (``items``), moves on by one step (``advance``), or marks steps done
 # and names the one now in progress (``done``/``start``, 1-based).  Only each
-# item's status is read; the step texts stay unread.
+# item's status is read, with each step's text clipped for display.
 _PLAN_TOOL = 'mcp__ccd_turn__update_plan'
 _PLAN_COMPLETED = 'completed'
 _PLAN_IN_PROGRESS = 'in_progress'

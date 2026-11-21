@@ -3,7 +3,8 @@ Clipboard
 =========
 
 Copies text to the system clipboard.  A write surface used only on an explicit
-user action (the "copy session ID" menu item), never automatically.  The
+user action (copying a session ID, a background session's ``claude attach``
+command or selected text from the menu), never automatically.  The
 platform layer performs the write - Win32 on Windows, GTK on Linux; this module
 holds the one guard both share.
 """
