@@ -1,0 +1,15 @@
+---
+paths:
+  - "agent_monitor_for_claude/transcript.py"
+  - "agent_monitor_for_claude/subagents.py"
+  - "agent_monitor_for_claude/snapshot.py"
+  - "agent_monitor_for_claude/background_scans.py"
+  - "agent_monitor_for_claude/history.py"
+  - "agent_monitor_for_claude/usage_parts.py"
+---
+- The full scan decodes each line with the `msgspec` schema `transcript._Entry`: a field the scan starts reading must be declared there, or it silently reads as missing. Helpers test `isinstance(x, _JSON_OBJECT)`, never `dict`.
+- A deferred scan reports `scan_pending` with usage `None` - never a zero cost.
+- `background_scans.py` only schedules; it never parses a transcript field.
+- Usage counts once per API response (`message.id`); `<synthetic>` is not a model, but its turn's CLI version still counts.
+- Age and status come from conversational entries only (`_TURN_ENTRY_TYPES`); a bookkeeping entry never refreshes the age, and the file mtime is only a fallback or a looser prefilter that may rule out, never rule in.
+- Ended-session retention runs from the last alive sighting (`last_seen.py`), not from the activity age.

@@ -1,0 +1,12 @@
+---
+paths:
+  - "agent_monitor_for_claude/ui/**"
+  - "agent_monitor_for_claude/locale/**"
+---
+- Empty-state and notice builders in `logic.js` take one plain `view` object, assembled only in `render.js` `emptyStateView`.
+- A History re-fetch never blanks the cache; only widening the window re-fetches (`historyRangeCovered`), narrowing filters the cache.
+- A search widening is a per-query grant (`state.searchIncludeHidden`): a chip toggle keeps it, an edit of the query drops it, and the chips are never touched.
+- Graph: tool nodes are drawn only for the focused caller (`toolsInFocus`) - all at once froze the window. Measure labels on a canvas, not SVG text. The activity list is `.activity-list`; `.steps` is the plan KPI and turns every `span` into a bar.
+- Cursors: `default` list entry, `alias` compact entry with a window, `help` for explaining chips/signals, `pointer` controls/links/graph nodes, `col-resize` splitter, `grab` graph background.
+- Click targets that change the list (section headers and chips) carry no tooltip.
+- Locales are convention-based (file name = registration); never add per-status keys beyond the shared set.
