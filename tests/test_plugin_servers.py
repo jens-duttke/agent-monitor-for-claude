@@ -46,6 +46,25 @@ class ServerCommandsTest(unittest.TestCase):
 
         self.assertEqual(plugin_servers.server_commands(self.root), frozenset({'rust-analyzer', 'db-server'}))
 
+    def test_a_wsl_roots_manifest_paths_are_reached_through_the_host(self) -> None:
+        wsl_root = SessionRoot(origin='wsl:Ubuntu', label='Ubuntu', config_dir=self.base, proc_dir=self.base, claude_temp_dir=self.base)
+        self._write('plugins/known_marketplaces.json', {'official': {'installLocation': '/home/me/.claude/plugins/marketplaces/official'}})
+        self._write('plugins/installed_plugins.json', {'plugins': {
+            'pyright-lsp@official': [{'installPath': '/home/me/.claude/plugins/cache/pyright'}],
+            'ts-lsp@official': [{'installPath': '/home/me/.claude/plugins/cache/ts'}],
+        }})
+        self._write('plugins/marketplaces/official/plugins/pyright-lsp/.claude-plugin/plugin.json',
+                    {'lspServers': {'pyright': {'command': 'pyright-langserver'}}})
+        self._write('plugins/cache/ts/.claude-plugin/plugin.json', {'lspServers': {'ts': {'command': 'typescript-language-server'}}})
+
+        def host_path(root: SessionRoot, path_text: str) -> str:
+            self.assertIs(root, wsl_root)
+            return str(self.base / path_text.removeprefix('/home/me/.claude/'))
+
+        with mock.patch.object(plugin_servers, 'host_path', side_effect=host_path):
+            commands = plugin_servers.server_commands(wsl_root)
+        self.assertEqual(commands, frozenset({'pyright-langserver', 'typescript-language-server'}))
+
     def test_no_or_broken_plugin_files_give_no_commands(self) -> None:
         self.assertEqual(plugin_servers.server_commands(self.root), frozenset())
         self._write('plugins/installed_plugins.json', {'plugins': 'nonsense'})
