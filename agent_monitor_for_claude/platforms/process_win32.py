@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.wintypes
-import ntpath
 import threading
 import time
 from datetime import datetime, timedelta
@@ -32,7 +31,7 @@ from typing import Any, Iterable, Mapping
 
 import psutil
 
-from ..procinfo import ChildProcessStat, EntrypointWindow, ProcessDetails, ProcessInfo, SESSION_HELPER_WINDOW_SECONDS, child_processes, clip_arguments
+from ..procinfo import ChildProcessStat, EntrypointWindow, ProcessDetails, ProcessInfo, SESSION_HELPER_WINDOW_SECONDS, child_processes, clip_arguments, program_names
 
 __all__ = [
     'ENTRYPOINT_WINDOW_OWNERS', 'IGNORED_ANCESTOR_NAMES', 'TERMINAL_WINDOW_OWNERS',
@@ -649,25 +648,25 @@ def _meaningful_children(
 def _runs_helper_command(pid: int, helper_commands: frozenset[str], started: float | None = None) -> bool:
     """Whether *pid*'s program, as its command line names it, is one of *helper_commands* (lowercased stems).
 
-    Only the program - the command line's first word - is kept, and remembered
-    per process (pid and start time), so it is read once per child, not per poll.
+    The names are the executable and, for a script interpreter, the script it
+    runs (``procinfo.program_names``).  They are remembered per process (pid
+    and start time), so the command line is read once per child, not per poll.
     """
     if not helper_commands:
         return False
     key = (pid, started)
-    program = _programs.get(key)
-    if program is None:
-        command = _command_line(pid)
-        program = ntpath.splitext(ntpath.basename(command[0]))[0].lower() if command else ''
+    names = _programs.get(key)
+    if names is None:
+        names = program_names(_command_line(pid))
         if len(_programs) >= _MAX_PROGRAMS:
             _programs.pop(next(iter(_programs)))
-        _programs[key] = program
+        _programs[key] = names
 
-    return program in helper_commands
+    return any(name in helper_commands for name in names)
 
 
-# (pid, start time) -> the program a child's command line starts with.
-_programs: dict[tuple[int, float | None], str] = {}
+# (pid, start time) -> the names a child's command line runs its program under.
+_programs: dict[tuple[int, float | None], tuple[str, ...]] = {}
 _MAX_PROGRAMS = 512
 
 

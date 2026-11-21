@@ -29,6 +29,12 @@ rather than silently deleting from the wrong root. The live-process guard is
 root-wide too: a session id is checked against every currently available
 root, each probed through its own kind (see ``_is_live``).
 
+Claude Desktop keeps a host copy of a chat it runs inside WSL (under
+``projects/ssh-<id>/`` on the Windows root).  Deleting such a session removes
+only the copy its row was listed from, so the other one reappears in History on
+the next fetch.  Removing both would widen this deletion surface and is
+deliberately not done.
+
 Only file removal happens here; there is no other side effect.
 """
 from __future__ import annotations

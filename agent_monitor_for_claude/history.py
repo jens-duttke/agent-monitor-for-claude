@@ -21,7 +21,7 @@ and never opened - which is what keeps the scan proportional to the window
 rather than to the number of sessions ever run.
 
 Every session root (the native Windows install, plus one per running WSL distro
-- see ``roots.session_roots``) is scanned here, one at a time and in isolation:
+- see ``roots.session_roots``) is scanned here, in parallel and in isolation:
 a root whose scan raises an unexpected error is skipped entirely, never
 blanking the other roots' history (mirroring ``snapshot._collect_pairs``). Each
 returned record carries its root's ``origin``/``origin_label``, and a project's

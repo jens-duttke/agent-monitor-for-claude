@@ -203,7 +203,9 @@ def _normalize(data: Any) -> dict[str, Any] | None:
     # Remote Control is called the "bridge" internally: while the session is
     # reachable from claude.ai, the registry names the cloud session it is
     # bridged to.  Only whether one is named is taken - the id itself is a
-    # cloud identifier no feature here needs.
+    # cloud identifier no feature here needs.  The transcript's own
+    # ``type: bridge-session`` entries are no substitute: they never revert to
+    # null, so they say a session was bridged once, not that it still is.
     bridge_session_id = data.get('bridgeSessionId')
     # The address other sessions send this one messages at, and the names it
     # went by before - a message names its recipient by either, and only these

@@ -5,7 +5,7 @@ import unittest
 from unittest import mock
 
 from agent_monitor_for_claude import procinfo
-from agent_monitor_for_claude.procinfo import ChildProcess, child_processes, clip_arguments
+from agent_monitor_for_claude.procinfo import ChildProcess, child_processes, clip_arguments, program_names
 
 _SESSION = 100
 
@@ -71,6 +71,31 @@ class ChildStartOnTheRunningSystemTest(unittest.TestCase):
 
         self.assertIn(child.pid, started)
         self.assertLess(abs(time.time() - started[child.pid]), 15)
+
+
+class ProgramNamesTest(unittest.TestCase):
+    """The names a command line runs a program under: its executable, and for an interpreter the script it runs."""
+
+    def test_a_native_program_is_named_by_its_executable(self) -> None:
+        self.assertEqual(program_names(['/usr/bin/rust-analyzer']), ('rust-analyzer',))
+        self.assertEqual(program_names(['cargo', 'check']), ('cargo',))
+        self.assertEqual(program_names(['C:/Users/u/.cargo/bin/rust-analyzer.exe']), ('rust-analyzer',))
+
+    def test_a_script_run_by_an_interpreter_is_named_by_the_script_too(self) -> None:
+        # pipx starts pyright through its venv's python; a node server through node.
+        self.assertEqual(program_names(['/home/u/.local/share/pipx/venvs/pyright/bin/python', '/home/u/.local/bin/pyright-langserver', '--stdio']),
+                         ('python', 'pyright-langserver'))
+        self.assertEqual(program_names(['node', '/usr/bin/typescript-language-server', '--stdio']), ('node', 'typescript-language-server'))
+        self.assertEqual(program_names([r'C:\Program Files\nodejs\node.exe', r'C:\srv\server.js']), ('node', 'server'))
+        self.assertEqual(program_names(['python3.12', '-u', 'srv.py']), ('python3', 'srv'))
+
+    def test_an_ordinary_program_s_arguments_are_no_name(self) -> None:
+        self.assertEqual(program_names(['git', 'rust-analyzer']), ('git',))
+
+    def test_an_empty_command_line_has_no_name(self) -> None:
+        self.assertEqual(program_names([]), ())
+        self.assertEqual(program_names(['']), ())
+        self.assertEqual(program_names(['node']), ('node',))
 
 
 if __name__ == '__main__':

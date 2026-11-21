@@ -8,8 +8,7 @@ and version are stored in that file so a new instance can identify and replace
 it regardless of executable name.
 
 See :mod:`agent_monitor_for_claude.single_instance` for the dispatch and for
-what the guard promises.  The lock file is the one file this application writes
-on Linux besides the browser profile; it is created with owner-only permissions
+what the guard promises.  The lock file is created with owner-only permissions
 and lives in the runtime directory the system clears at logout.
 
 The lock is held by an open file descriptor for the process lifetime, and the

@@ -252,6 +252,8 @@ function runSearch() {
 // matched - cheap even with history on (dead history is never re-read, matched
 // sessions are skipped). Runs silently (no progress bar): the new matches simply
 // stream in and are ADDED to the set, so nothing already shown flickers away.
+// For the same reason an extended query is not narrowed to the previous hits:
+// that assumes the files did not change between the two searches.
 function rescanForNewMatches() {
     const query = state.search.trim();
     if (query.length < SEARCH_MIN_CHARS || state.searchError || state.searchLoading) {

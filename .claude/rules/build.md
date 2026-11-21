@@ -1,0 +1,12 @@
+---
+paths:
+  - "*.spec"
+  - "build.py"
+  - "version_info.py"
+  - "linux/**"
+  - "agent-monitor-for-claude"
+---
+- All build config lives in `agent_monitor_for_claude.spec`; `build.py` refuses on Linux (PyInstaller cannot bundle GTK/WebKitGTK).
+- The Linux launcher script and `linux/` are user-run, not application code, and never enter the spec's `datas`.
+- The desktop entry's file name, `Icon` and `StartupWMClass` equal `platforms/linux.py` `_PROGRAM_NAME` (`tests/test_desktop_entry.py`).
+- After a dependency change, check that `excludes` breaks no transitive import.

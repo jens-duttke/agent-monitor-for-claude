@@ -1,0 +1,12 @@
+---
+paths:
+  - "README.md"
+  - "PRIVACY.md"
+  - "CHANGELOG.md"
+  - "docs/**"
+  - "tools/screenshots.mjs"
+---
+- `README.md` and `docs/configuration.md` state what happens and what the reader does, not why the code works that way. `docs/how-it-works.md` explains observable mechanism briefly. `PRIVACY.md` lists what is read, shown, run and written in short plain statements.
+- Cut a sentence that only justifies a behavior or repeats a neighbour. Prefer short sentences, lead with the condition. Never duplicate a passage between README and `docs/` - link instead. Trim a grown paragraph whenever you touch it.
+- Screenshots (`docs/images/*.png`) come from the mock preview via `node tools/screenshots.mjs [scene]`; regenerate, never hand-edit. Regenerate `settings.png` when the dialog changes.
+- Changelog: group under Added / Changed / Fixed / Removed, user's perspective, one bullet per change, one to three sentences - what changed, for a fix what was wrong. No root-cause story, no refactors or doc-only changes.
