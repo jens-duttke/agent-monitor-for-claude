@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- [Pinned sessions and Desktop groups](https://github.com/jens-duttke/agent-monitor-for-claude/issues/13) - pin a session from its menu, the details or *P* to keep it at the top, also after it ends. On Windows, your Claude Desktop groups and pins appear as sections of their own, and sessions archived in Desktop move to a new *Archived* section.
+- [Pinned sessions and Desktop groups](https://github.com/jens-duttke/agent-monitor-for-claude/issues/13) - pin a session from its menu, the details or *P* to keep it at the top, also after it ends. On Windows, your Claude Desktop groups and pins appear as sections of their own, and sessions archived in Desktop move to a new *Archived* section. (thanks to [@jeroenbu](https://github.com/jeroenbu) for the contribution)
 
 ## [1.1.0] - 2026-11-20
 
