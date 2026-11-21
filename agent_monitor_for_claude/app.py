@@ -566,10 +566,11 @@ class _MonitorApi:
     def delete_session(self, session_id: object, cwd: object, origin: object = 'local') -> bool:
         """Delete a past session's transcript and subagent folder (user-initiated).
 
-        Only ever invoked from the row menu of a past session - a History row, or
-        an ended pinned or grouped one - after an in-UI confirmation.  All safety guards live in ``session_delete``: a UUID
-        check, a refusal for any session with a live process, and path
-        confinement to ``projects/``.  ``origin`` names the session root the row
+        Only ever invoked from the row menu of a past session - a History row,
+        or an ended pinned or grouped one - after an in-UI confirmation.  All
+        safety guards live in ``session_delete``: a UUID check, a refusal for
+        any session with a live process, and path confinement to
+        ``projects/``.  ``origin`` names the session root the row
         was tagged with (``'local'`` or ``'wsl:<distro>'``) and is passed
         straight through to ``session_delete.delete_session``, which resolves it
         and refuses an origin that no longer names a currently available root.

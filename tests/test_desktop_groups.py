@@ -142,8 +142,8 @@ class DesktopGroupsTest(_Fixture):
         config['mcpServers'] = {'srv': {'command': 'x', 'env': {'API_KEY': 'SECRET-CONFIG-VALUE'}}}
         config['preferences']['epitaxyPrefs']['otherPref'] = 'SECRET-PREF-VALUE'
         self.write_config(config)
-        _write(self.dir / 'claude-code-sessions' / 'acct-1' / 'org-1' / f'local_{_D1}.json',
-               {'cliSessionId': _S1, 'isArchived': True, 'title': 'SECRET-TITLE', 'postTurnSummary': 'SECRET-SUMMARY'})
+        session_file = self.dir / 'claude-code-sessions' / 'acct-1' / 'org-1' / f'local_{_D1}.json'
+        _write(session_file, {'cliSessionId': _S1, 'isArchived': True, 'title': 'SECRET-TITLE', 'postTurnSummary': 'SECRET-SUMMARY'})
 
         self.read()
 
