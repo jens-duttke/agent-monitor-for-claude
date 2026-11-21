@@ -143,14 +143,18 @@ async function runSessionAction(action, session) {
         if (session.job_id) {
             copyToClipboard('claude attach ' + session.job_id);
         }
+    } else if (action === 'pin' || action === 'unpin') {
+        togglePin(session);
     } else if (action === 'transcript') {
         revealPath(await transcriptPath(session.session_id || '', session.cwd || '', origin), origin);
     } else if (action === 'scratchpad') {
         openPath(await scratchpadPath(session.session_id || '', session.cwd || '', origin), origin);
     } else if (action === 'delete') {
-        if (session.is_history) {
-            // As the row shows it now: the fetched age, counted on since the fetch.
-            const fetchedAt = state.historyReceivedAt != null ? state.historyReceivedAt : NaN;
+        if (canDeleteSession(session)) {
+            // As the row shows it now: the fetched age, counted on since the fetch -
+            // the history fetch's for a History row, the snapshot's for a kept one.
+            const receivedAt = session.is_history ? state.historyReceivedAt : state.receivedAt;
+            const fetchedAt = receivedAt != null ? receivedAt : NaN;
             const age = logic.formatAgeSince(session.age_seconds, fetchedAt, Date.now(), state.labels);
             confirmDeleteSession(session.session_id, session.cwd || '', session.name || '', age, origin);
         }
@@ -189,6 +193,12 @@ async function openSessionMenu(itemEl, point) {
     if (state.compact) {
         items.push({ key: 'details', label: labels.action_show_details });
     }
+    const pin = logic.pinControl(session.session_id, state.pins, state.desktopGroups.starred);
+    if (pin === 'desktop') {
+        items.push({ key: null, label: labels.pinned_in_desktop, note: true });
+    } else if (pin !== null) {
+        items.push(pin === 'unpin' ? { key: 'unpin', label: labels.unpin_session } : { key: 'pin', label: labels.pin_session });
+    }
     items.push({ key: 'copy-id', label: labels.copy_session_id });
     if (session.job_id) {
         items.push({ key: 'copy-attach', label: labels.copy_attach_command });
@@ -199,7 +209,7 @@ async function openSessionMenu(itemEl, point) {
     if (scratchpad) {
         items.push({ key: 'scratchpad', label: labels.show_scratchpad });
     }
-    if (session.is_history) {
+    if (canDeleteSession(session)) {
         items.push({ key: 'delete', label: labels.delete_session, danger: true });
     }
 
@@ -454,7 +464,21 @@ function onContentClick(event) {
 
     const range = event.target.closest('.range-btn');
     if (range) {
-        setHistoryRange(range.dataset.range);
+        // The window "Archived" shares with "Older" does not open "Older".
+        setHistoryRange(range.dataset.range, !range.closest('.section-archived'));
+        return;
+    }
+
+    const groupSub = event.target.closest('[data-group-sub]');
+    if (groupSub) {
+        toggleGroupSub(groupSub.dataset.groupSub);
+        return;
+    }
+
+    // Checked before the section heads: a group's header is styled as one.
+    const groupToggle = event.target.closest('[data-group-toggle]');
+    if (groupToggle) {
+        toggleGroupSection(groupToggle.dataset.groupToggle);
         return;
     }
 

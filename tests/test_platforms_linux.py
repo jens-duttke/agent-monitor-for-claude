@@ -394,5 +394,11 @@ class UserConfigDirTest(unittest.TestCase):
             self.assertEqual(linux.user_config_dir(), Path('/home/dev/.config/agent-monitor-for-claude'))
 
 
+@_LINUX_ONLY
+class DesktopDataDirsTest(unittest.TestCase):
+    def test_claude_desktop_does_not_exist_here(self) -> None:
+        self.assertEqual(linux.desktop_data_dirs(), [])
+
+
 if __name__ == '__main__':
     unittest.main()

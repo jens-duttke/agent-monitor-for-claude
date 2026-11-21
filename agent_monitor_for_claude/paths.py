@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +28,7 @@ from .platforms import IS_WINDOWS
 
 __all__ = [
     'SessionRoot', 'TranscriptIndex', 'local_root', 'claude_temp_dir', 'config_dir', 'sessions_dir', 'plugins_dir', 'projects_dir', 'model_catalog_dir',
-    'update_result_path', 'cwd_to_slug', 'transcript_path', 'find_transcript', 'task_output_dir', 'task_output_path', 'scratchpad_dir', 'host_path',
+    'update_result_path', 'cwd_to_slug', 'transcript_path', 'find_transcript', 'is_session_id', 'task_output_dir', 'task_output_path', 'scratchpad_dir', 'host_path',
 ]
 
 _NON_ALNUM_PATTERN = re.compile(r'[^A-Za-z0-9]')
@@ -228,6 +229,11 @@ def _transcript_files(folder: Path) -> dict[str, tuple[int, int]]:
     return files
 
 
+def is_session_id(value: object) -> bool:
+    """Return True if *value* is a string shaped like a session id (a UUID)."""
+    return isinstance(value, str) and _SESSION_UUID_PATTERN.match(value) is not None
+
+
 def find_transcript(root: SessionRoot, session_id: str) -> Path | None:
     """Return the transcript of *session_id* in whichever project folder under *root* holds it, or None.
 
@@ -259,6 +265,37 @@ def find_transcript(root: SessionRoot, session_id: str) -> Path | None:
             return candidate
 
     return None
+
+
+def project_folders(root: SessionRoot) -> list[Path] | None:
+    """Return the project folders under *root*, or None when the listing failed.
+
+    An absent ``projects/`` folder in a root whose configuration folder exists
+    is an empty listing; any other failure means the root could not be read.
+    """
+    try:
+        return [Path(entry.path) for entry in os.scandir(projects_dir(root))]
+    except FileNotFoundError:
+        return [] if root.config_dir.is_dir() else None
+    except OSError:
+        return None
+
+
+def folder_has_transcript(folder: Path, session_id: str) -> bool | None:
+    """Return whether *folder* holds the transcript of *session_id*, or None when that could not be told.
+
+    Unlike :func:`find_transcript`, a read failure is not an absence.  The id
+    must be a UUID, so it can never name a path outside the folder.
+    """
+    if not is_session_id(session_id):
+        return False
+
+    try:
+        return stat.S_ISREG(os.stat(folder / f'{session_id}.jsonl').st_mode)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return None
 
 
 def task_output_dir(root: SessionRoot, session_id: str, cwd: str) -> Path:

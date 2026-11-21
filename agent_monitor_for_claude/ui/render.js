@@ -50,6 +50,8 @@ function rowKey(session) {
    bridge answers from its cache at once and reads git in the background, so
    the list shows first and the git signals follow. */
 const GIT_OVERVIEW_MS = 4000;
+const DESKTOP_GROUPS_MS = 5000;
+const PIN_CHECK_MS = 60000;
 const GIT_OVERVIEW_PENDING_MS = 1000;
 
 // Give each session its directory's latest git record, with the age of the
@@ -74,6 +76,74 @@ async function gitOverviewLoop() {
         // A bridge hiccup - the next round asks again.
     }
     setTimeout(gitOverviewLoop, pending ? GIT_OVERVIEW_PENDING_MS : GIT_OVERVIEW_MS);
+}
+
+// Follow Claude Desktop's groups; a changed answer re-renders.
+async function desktopGroupsLoop() {
+    try {
+        await refreshDesktopGroups();
+    } catch (err) {
+        // A bridge hiccup - the next round asks again.
+    }
+    setTimeout(desktopGroupsLoop, DESKTOP_GROUPS_MS);
+}
+
+// Ask whether the pinned sessions still exist; one that is missing twice in a
+// row is dropped, an unreadable answer keeps it.
+async function pinCheckLoop() {
+    try {
+        await refreshPins();
+    } catch (err) {
+        // A bridge hiccup - the next round asks again.
+    }
+    setTimeout(pinCheckLoop, PIN_CHECK_MS);
+}
+
+async function refreshPins() {
+    const bridge = apiBridge();
+    if (state.pins.size === 0 || !bridge || typeof bridge.check_pins !== 'function') {
+        return;
+    }
+    const refs = Array.from(state.pins, ([id, origin]) => ({ id: id, origin: origin }));
+    const asked = new Set(state.pins.keys());
+    const status = await bridge.check_pins(refs);
+    const result = logic.prunePins(state.pins, status, state.pinMisses);
+    state.pinMisses = result.misses;
+    // A pin added while the bridge answered was not asked about: keep it.
+    for (const [id, origin] of state.pins) {
+        if (!asked.has(id)) {
+            result.pins.set(id, origin);
+        }
+    }
+    if (result.pins.size === state.pins.size) {
+        return;
+    }
+    state.pins = result.pins;
+    savePins();
+    if (state.last) {
+        render(state.last);
+    }
+    tick();
+}
+
+async function refreshDesktopGroups() {
+    const bridge = apiBridge();
+    const raw = bridge && typeof bridge.get_desktop_groups === 'function' ? await bridge.get_desktop_groups() : window.__MOCK_DESKTOP_GROUPS__;
+    const next = logic.normalizeDesktopGroups(raw);
+    // A Desktop pin replaces an own pin: only an id this answer names drops one.
+    const pins = logic.pinsWithoutStarred(state.pins, next.starred);
+    const pinsChanged = pins !== state.pins;
+    if (pinsChanged) {
+        state.pins = pins;
+        savePins();
+    }
+    if (!pinsChanged && logic.desktopGroupsSignature(next) === logic.desktopGroupsSignature(state.desktopGroups)) {
+        return;
+    }
+    state.desktopGroups = next;
+    if (state.last) {
+        render(state.last);
+    }
 }
 
 async function refreshGitOverview() {
@@ -130,11 +200,23 @@ function endedProcessesOf(key) {
 }
 
 // Whether a click can bring the session's window forward: a past session has no
-// process, and a background agent runs under the daemon with no window - the
-// title fallback in focus_session_window could otherwise raise an unrelated
-// terminal that happens to match.
+// process - nor has a pinned or grouped one kept listed after it ended - and a
+// background agent runs under the daemon with no window - the title fallback in
+// focus_session_window could otherwise raise an unrelated terminal that happens
+// to match.
 function hasWindow(session) {
-    return !session.is_history && !session.background;
+    return !session.is_history && !session.background && !isEndedKept(session);
+}
+
+// A pinned or grouped session listed after it ended, from its transcript.
+function isEndedKept(session) {
+    return session.kept === true && session.alive !== true;
+}
+
+// Whether the session may be offered for deletion: only a past one - a History
+// row, or a kept one that ended. The backend checks again that no process holds it.
+function canDeleteSession(session) {
+    return Boolean(session.is_history) || isEndedKept(session);
 }
 
 // Keyed reconciliation: reuse existing child nodes (matched by data-key),
@@ -217,6 +299,10 @@ function createItem() {
     el.className = 'item';
     el.innerHTML = '<div class="item-head">'
         +     '<span class="chip"><i></i><span class="chip-label"></span></span>'
+        // Claude Desktop archived this session while it still runs.
+        +     '<span class="item-flag"></span>'
+        // Under Pinned, where a Claude Desktop chat's pin comes from.
+        +     '<span class="item-pin-source"></span>'
         +     '<span class="item-why"></span>'
         + '</div>'
         + '<span class="age"></span>'
@@ -236,7 +322,7 @@ function createItem() {
     return el;
 }
 
-function updateItem(el, session) {
+function updateItem(el, session, pinned) {
     const labels = state.labels;
     const selected = rowKey(session) === state.selectedKey;
 
@@ -270,6 +356,12 @@ function updateItem(el, session) {
         setTip(open, labels.action_show_details || '');
         open.setAttribute('aria-label', labels.action_show_details || '');
     }
+
+    // The compact view has one line per session and leaves the mark out.
+    setText(el.querySelector('.item-flag'), session.archived && !state.compact ? labels.label_archived || '' : '');
+    const pinSource = pinned && !state.compact
+        ? logic.pinSource(session, state.pins, state.desktopGroups.starred, state.desktopGroups.members) : null;
+    setMarkup(el.querySelector('.item-pin-source'), logic.pinSourceMarkup(pinSource, labels));
 
     const why = el.querySelector('.item-why');
     setText(why, session.match_field ? (labels['search_match_' + session.match_field] || '') : '');
@@ -539,7 +631,20 @@ function searchHitFor(sessionId) {
 
 /* --- sections (urgency grouping) --- */
 
-function createSection() {
+// The sections that list past sessions and share the History window.
+const PAST_SECTIONS = new Set(['older', 'archived']);
+
+function createSection(section) {
+    if (section.kind === 'group') {
+        return createGroupSection();
+    }
+    if (section.kind === 'divider') {
+        const divider = document.createElement('div');
+        divider.className = 'list-divider';
+        divider.setAttribute('role', 'heading');
+        divider.setAttribute('aria-level', '2');
+        return divider;
+    }
     const el = document.createElement('section');
     el.className = 'list-section';
     el.innerHTML = '<button class="section-head" type="button">'
@@ -556,6 +661,14 @@ function createSection() {
 }
 
 function updateSection(el, section) {
+    if (section.kind === 'group') {
+        updateGroupSection(el, section);
+        return;
+    }
+    if (section.kind === 'divider') {
+        setMarkup(el, logic.listDividerMarkup(state.labels));
+        return;
+    }
     const labels = state.labels;
     el.className = 'list-section section-' + section.key + (section.open ? '' : ' closed');
 
@@ -566,10 +679,65 @@ function updateSection(el, section) {
     setText(head.querySelector('.section-count'), section.count == null ? '' : section.count);
     setText(head.querySelector('.section-note'), section.note || '');
 
-    setMarkup(el.querySelector('.section-ranges'), section.key === 'older' && section.open ? historyRangeMarkup() : '');
+    setMarkup(el.querySelector('.section-ranges'), PAST_SECTIONS.has(section.key) && section.open ? historyRangeMarkup() : '');
     setText(el.querySelector('.section-note-line'), section.noteLine || '');
 
     reconcile(el.querySelector('.section-items'), section.items, rowKey, createItem, updateItem);
+}
+
+// Pinned or one of the Desktop groups: a header that folds it, whatever the
+// status sections show.
+function createGroupSection() {
+    const el = document.createElement('section');
+    el.className = 'list-section group-section';
+    el.innerHTML = '<div class="group-section-head"></div><div class="section-items"></div>';
+    return el;
+}
+
+function updateGroupSection(el, item) {
+    const section = item.section;
+    el.className = 'list-section group-section ' + (section.key === 'pinned' ? 'section-pinned' : 'section-group')
+        + (section.collapsed ? ' closed' : '');
+    // A rewritten header would take the keyboard focus with it, so it goes to
+    // the new toggle.
+    const head = el.querySelector('.group-section-head');
+    const focused = head.contains(document.activeElement);
+    setMarkup(head, logic.groupHeaderMarkup(section, state.labels));
+    if (focused && !head.contains(document.activeElement) && head.firstElementChild) {
+        head.firstElementChild.focus();
+    }
+    // Folded, `subsections` is empty and the frame shrinks to its header.
+    const pinned = section.key === 'pinned';
+    reconcile(el.querySelector('.section-items'), item.subsections, (sub) => sub.key, createGroupSub, (subEl, sub) => updateGroupSub(subEl, sub, pinned));
+}
+
+// One sub-heading of a group - the list section its sessions would otherwise
+// be listed in - with its rows. It folds on its own; folded, its rows are left
+// out and its header still gives the count.
+function createGroupSub() {
+    const el = document.createElement('div');
+    el.className = 'group-sub';
+    el.innerHTML = '<div class="group-sub-head"></div><div class="group-sub-items"></div>';
+    return el;
+}
+
+function updateGroupSub(el, sub, pinned) {
+    setClass(el, 'group-sub group-sub-' + sub.key + (sub.collapsed ? ' closed' : ''));
+    // A rewritten toggle would take the keyboard focus with it.
+    const head = el.querySelector('.group-sub-head');
+    const focused = head.contains(document.activeElement);
+    setMarkup(head, logic.groupSubheadMarkup(sub, state.labels));
+    if (focused && !head.contains(document.activeElement) && head.firstElementChild) {
+        head.firstElementChild.focus();
+    }
+    const rows = sub.collapsed ? [] : sub.sessions;
+    reconcile(el.querySelector('.group-sub-items'), rows, rowKey, createItem, (itemEl, session) => updateGroupItem(itemEl, session, pinned));
+}
+
+// A session that ended stays in its group, dimmed.
+function updateGroupItem(el, session, pinned) {
+    updateItem(el, session, pinned);
+    el.classList.toggle('ended', !session.alive);
 }
 
 // How far back "Older" reaches, as a row of buttons under its header.
@@ -777,7 +945,7 @@ function render(snapshot) {
     // The past sessions the selected window covers, minus any that came back to
     // life. Folded into the list while "Older" is open, or while a widened
     // search reaches into them.
-    const historyActive = state.filters.has('history');
+    const historyActive = historyWanted();
     const historyRows = Array.isArray(state.history)
         ? logic.pruneResumedHistory(visibleHistory(), snapshot.sessions || [])
         : [];
@@ -820,29 +988,39 @@ function render(snapshot) {
     updateToolbarSummary(snapshot, prices, sessions);
     ensureShell();
 
-    // Section counts follow the query, like the list. "Older" counts its
-    // sessions from the cache while it is closed, since they are not folded in -
+    const compact = state.compact;
+    const grouping = compact ? 'urgency' : state.group;
+
+    const groupsView = listGroupsView();
+    const sectionData = logic.buildSections(found, state.filters, groupsView);
+
+    // Section counts follow the query, like the list, and count only what a
+    // status section lists. "Older" and "Archived" count their past sessions
+    // from the cache while neither is open, since they are not folded in -
     // built like the list's, so a title match counts there as it shows there.
-    const sectionData = logic.buildSections(found, state.filters);
     const counts = new Map(sectionData.map((section) => [section.key, section.sessions.length]));
     if (!foldHistory) {
         let olderCount = null;
+        let archivedPast = null;
         if (Array.isArray(state.history)) {
-            olderCount = searchActive
-                ? logic.flattenProjects(logic.groupProjects(historyRows, labels, prices)).filter(matchesQuery).length
-                : historyRows.length;
+            const past = searchActive
+                ? logic.flattenProjects(logic.groupProjects(historyRows, labels, prices)).filter(matchesQuery)
+                : historyRows;
+            olderCount = past.filter((row) => logic.sessionBucket(row, groupsView.archived) === 'history').length;
+            archivedPast = past.filter((row) => logic.sessionBucket(row, groupsView.archived) === 'archived').length;
         }
         counts.set('older', olderCount);
+        const archivedHere = counts.get('archived') || 0;
+        counts.set('archived', archivedPast === null && archivedHere === 0 ? null : archivedHere + (archivedPast || 0));
     }
-
-    const compact = state.compact;
-    const grouping = compact ? 'urgency' : state.group;
     document.body.classList.toggle('group-urgency', grouping === 'urgency');
     document.body.classList.toggle('group-graph', grouping === 'graph');
     applyListWidth();
 
     let outsideFilters = 0;
     const shown = [];
+    // Sessions listed in a folded group: not on screen, but not missing either.
+    let folded = 0;
     if (grouping !== 'graph') {
         setMarkup(graphSlot, '');
         setMarkup(legendSlot, '');
@@ -872,23 +1050,40 @@ function render(snapshot) {
         fitGraphText(graphSlot);
     } else if (grouping === 'urgency') {
         setMarkup(chipsSlot, '');
-        const sections = sectionData.map((section) => {
+        folded = logic.foldedGroupSessionCount(sectionData);
+        const sections = [];
+        for (const section of sectionData) {
+            if (section.kind === 'group') {
+                // A folded group still says what it holds in its header. The
+                // keyboard walks the rows in the order of the sub-headings.
+                const subsections = section.collapsed ? [] : section.subsections;
+                for (const sub of subsections) {
+                    if (!sub.collapsed) {
+                        shown.push(...sub.sessions);
+                    }
+                }
+                sections.push({ key: section.key, kind: 'group', section: section, subsections: subsections });
+                continue;
+            }
+            if (sections.length > 0 && sections[sections.length - 1].kind === 'group') {
+                sections.push({ key: '__other', kind: 'divider' });
+            }
             const open = section.active;
             const items = open ? section.sessions : section.sessions.filter(isWidenedHit);
             if (!section.active) {
                 outsideFilters += items.length;
             }
             shown.push(...items);
-            return {
+            sections.push({
                 key: section.key,
                 label: section.label,
                 open: open,
                 items: items,
                 count: counts.get(section.key),
                 note: sectionNote(section.key, open),
-                noteLine: section.key === 'older' && open ? loadingNote : '',
-            };
-        });
+                noteLine: PAST_SECTIONS.has(section.key) && open ? loadingNote : '',
+            });
+        }
         if (!(listSlot.firstElementChild && listSlot.firstElementChild.classList.contains('list-sections'))) {
             listSlot.innerHTML = '<div class="list-sections"></div>';
         }
@@ -901,9 +1096,9 @@ function render(snapshot) {
         const visible = [];
         for (const session of found) {
             if (matchesFilter(session)) {
-                visible.push(session);
+                visible.push(logic.withArchivedMark(session, groupsView.archived));
             } else if (isWidenedHit(session)) {
-                visible.push(session);
+                visible.push(logic.withArchivedMark(session, groupsView.archived));
                 outsideFilters += 1;
             }
         }
@@ -931,9 +1126,10 @@ function render(snapshot) {
     // With the sections on screen, closing all of them empties the list on
     // purpose: their headers and counts already say what there is, so only no
     // agents at all, a search or a load gets a message.
-    const noteHere = grouping !== 'project' && shown.length > 0 ? '' : loadingNote;
+    const listed = shown.length + folded;
+    const noteHere = grouping !== 'project' && listed > 0 ? '' : loadingNote;
     const sectionsSpeak = grouping === 'urgency' && !searchActive && !noteHere && sessions.length > 0;
-    if ((shown.length > 0 && !(searchActive && state.searchLoading) && !noteHere) || sectionsSpeak) {
+    if ((listed > 0 && !(searchActive && state.searchLoading) && !noteHere) || sectionsSpeak) {
         setMarkup(stateSlot, '');
     } else {
         const quiet = sessions.length === 0 ? labels.empty_state : (labels.empty_filter || labels.empty_state);
@@ -969,7 +1165,7 @@ function projectGroups(projects, visible) {
 // The note at the right of a section header: the window "Older" reaches, so a
 // closed section still says what opening it would list.
 function sectionNote(sectionKey, open) {
-    if (sectionKey !== 'older' || open) {
+    if (!PAST_SECTIONS.has(sectionKey) || open) {
         return '';
     }
     return state.labels[logic.historyRange(state.historyRange).label] || '';

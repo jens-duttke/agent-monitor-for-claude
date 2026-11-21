@@ -64,7 +64,8 @@ from .usage_parts import UsageScan
 
 __all__ = [
     'AgentLaunch', 'ApiRetry', 'Artifact', 'HookError', 'MessageEvent', 'PlanItem', 'PullRequest', 'Question', 'ToolCall', 'TranscriptState',
-    'HistoryState', 'WorktreeState', 'agent_steps', 'final_reply', 'full_texts', 'result_from_steps', 'session_steps', 'state_for', 'history_state_for', 'worktree_for',
+    'HistoryState', 'WorktreeState', 'agent_steps', 'final_reply', 'full_texts', 'head_cwd', 'result_from_steps', 'session_steps', 'state_for', 'history_state_for',
+    'worktree_for',
     'edited_files', 'hook_failures', 'media_image', 'media_index', 'prioritize_session', 'prune_scan_cache', 'usage_scan', 'usage_scan_once',
 ]
 
@@ -183,6 +184,10 @@ _SKILL_NAME_PATTERN = re.compile(r'[A-Za-z0-9][A-Za-z0-9:._-]{0,63}')
 # A short lowercase token Claude Code writes as an effort level or a speed
 # (``high``, ``xhigh``, ``fast``); anything else is not displayed.
 _LABEL_TOKEN_PATTERN = re.compile(r'^[a-z][a-z0-9_-]{0,15}$')
+
+# The app that wrote an entry (``cli``, ``claude-vscode``, ``claude-desktop``):
+# a lowercase token, anything else names none.
+_ENTRYPOINT_PATTERN = re.compile(r'^[a-z][a-z0-9_-]{0,39}$')
 
 # Caps on what the tail reports for display: the newest pull requests, the most
 # frequent failing hooks, and the length of a branch, hook or repository name.
@@ -303,6 +308,9 @@ _AI_TITLE_MARKER = b'ai-title'
 _CUSTOM_TITLE_MARKER = b'custom-title'
 _PERMISSION_MODE_MARKER = b'permissionMode'
 _CWD_MARKER = b'"cwd"'
+
+# How much of a transcript's start head_cwd reads for the session's cwd.
+_HEAD_CWD_BYTES = 256 * 1024
 _WORKTREE_STATE_MARKER = b'worktree-state'
 
 # Claude Code records a switch into a git worktree (and back out, as a null
@@ -955,6 +963,8 @@ class TranscriptState:
     title: str | None = None
     model: str | None = None
     cli_version: str | None = None
+    # The app that wrote the newest main-conversation entry naming one (tail).
+    cli_entrypoint: str | None = None
     usage: dict[str, int] | None = None
     usage_by_model: dict[str, dict[str, int]] | None = None
     # Usage per skill and model, and the web searches made; None/0 while the
@@ -985,6 +995,7 @@ class HistoryState:
     title: str | None = None
     model: str | None = None
     cli_version: str | None = None
+    cli_entrypoint: str | None = None
     git_branch: str | None = None
     age_seconds: float | None = None
     usage: UsageScan = field(default_factory=UsageScan)
@@ -1595,7 +1606,7 @@ def worktree_for(path: Path) -> WorktreeState | None:
     return _recent_worktree(path)
 
 
-def history_state_for(path: Path) -> HistoryState:
+def history_state_for(path: Path, before_chunk: Callable[[], None] | None = None) -> HistoryState:
     """Return display metadata for a past session transcript, keyed by its file.
 
     Unlike :func:`state_for` - which begins from a live registry record and
@@ -1614,6 +1625,8 @@ def history_state_for(path: Path) -> HistoryState:
     ----------
     path : Path
         The session-level transcript file (``projects/<slug>/<session>.jsonl``).
+    before_chunk : Callable, optional
+        Runs before every chunk of the full read, where a background build gives way to the poll.
     """
     session_id = path.stem
     try:
@@ -1621,7 +1634,7 @@ def history_state_for(path: Path) -> HistoryState:
     except OSError:
         return HistoryState(session_id=session_id)
 
-    scan, cwd = _scan_history(path)
+    scan, cwd = _scan_history(path, before_chunk)
     tail = _parse(_read_tail(path))
     # Escalate the tail window only when nothing parsed (an unreadable tail),
     # exactly like state_for: a single trailing entry larger than 256 KB (a giant
@@ -1635,7 +1648,7 @@ def history_state_for(path: Path) -> HistoryState:
 
     return HistoryState(
         session_id=session_id, cwd=cwd, title=scan.title(), model=tail.model, cli_version=tail.cli_version,
-        git_branch=tail.git_branch, age_seconds=age_seconds, usage=scan.usage(),
+        cli_entrypoint=tail.cli_entrypoint, git_branch=tail.git_branch, age_seconds=age_seconds, usage=scan.usage(),
         artifacts=_artifact_list(scan.artifacts), worktree_paths=tuple(scan.worktree_paths),
     )
 
@@ -1657,7 +1670,7 @@ def usage_scan(path: Path) -> UsageScan | None:
     )
 
 
-def usage_scan_once(path: Path) -> UsageScan:
+def usage_scan_once(path: Path, before_chunk: Callable[[], None] | None = None) -> UsageScan:
     """Return the usage in a past session's subagent transcript, read once and not cached.
 
     A file that cannot be read counts as empty - the session's cost is then
@@ -1665,7 +1678,7 @@ def usage_scan_once(path: Path) -> UsageScan:
     """
     state = _usage_only_state()
     try:
-        _absorb_file(path, state, path.stat().st_size)
+        _absorb_file(path, state, path.stat().st_size, before_chunk)
     except OSError:
         return UsageScan()
 
@@ -1677,7 +1690,7 @@ def _usage_only_state() -> _ScanState:
     return _ScanState(first_prompt='')
 
 
-def _scan_history(path: Path) -> tuple[_ScanState, str | None]:
+def _scan_history(path: Path, before_chunk: Callable[[], None] | None = None) -> tuple[_ScanState, str | None]:
     """Read a past transcript once through the full scan, also resolving the session cwd.
 
     Every line goes through ``_absorb_line``, exactly as a live session's
@@ -1686,6 +1699,7 @@ def _scan_history(path: Path) -> tuple[_ScanState, str | None]:
     cost is priced from.  The first entry carrying a ``cwd`` is parsed once
     more for that path.  Read in chunks, so a large transcript is never held
     in memory whole.  An unreadable file yields an empty state and no cwd.
+    *before_chunk*, when given, runs before every chunk is read (see :func:`_absorb_file`).
     """
     state = _ScanState()
     cwd: str | None = None
@@ -1693,7 +1707,13 @@ def _scan_history(path: Path) -> tuple[_ScanState, str | None]:
     try:
         with path.open('rb') as handle:
             remainder = b''
-            while chunk := handle.read(_SCAN_CHUNK_BYTES):
+            while True:
+                if before_chunk is not None:
+                    before_chunk()
+                chunk = handle.read(_SCAN_CHUNK_BYTES)
+                if not chunk:
+                    break
+
                 lines = (remainder + chunk).split(b'\n')
                 remainder = lines.pop()
                 for raw_line in lines:
@@ -1709,6 +1729,27 @@ def _scan_history(path: Path) -> tuple[_ScanState, str | None]:
         _absorb_line(remainder, state)
 
     return state, cwd
+
+
+def head_cwd(path: Path) -> str | None:
+    """Return the ``cwd`` of the first entry naming one within the first ``_HEAD_CWD_BYTES`` of the transcript at *path*, or None.
+
+    Only the first entries are read, and of those only the one carrying a
+    ``cwd`` is parsed; an unreadable file yields None.
+    """
+    try:
+        with path.open('rb') as handle:
+            head = handle.read(_HEAD_CWD_BYTES)
+    except OSError:
+        return None
+
+    for raw_line in head.split(b'\n'):
+        if _CWD_MARKER in raw_line:
+            cwd = _entry_cwd(raw_line)
+            if cwd is not None:
+                return cwd
+
+    return None
 
 
 def _entry_cwd(raw_line: bytes) -> str | None:
@@ -1856,6 +1897,7 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
     api_refusal_explanation: str | None = None
     model: str | None = None
     cli_version: str | None = None
+    cli_entrypoint: str | None = None
     rate_limit_type: str | None = None
     rate_limit_resets_at: float | None = None
     api_retry: ApiRetry | None = None
@@ -1922,6 +1964,10 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
         entry_version = entry.get('version')
         if isinstance(entry_version, str) and entry_version:
             cli_version = entry_version
+        # Likewise the app that wrote it, as a token only.
+        entry_entrypoint = entry.get('entrypoint')
+        if isinstance(entry_entrypoint, str) and _ENTRYPOINT_PATTERN.fullmatch(entry_entrypoint):
+            cli_entrypoint = entry_entrypoint
 
         details.absorb_entry(entry_type, entry)
 
@@ -2078,6 +2124,7 @@ def _parse(lines: list[str], full: bool = False) -> TranscriptState:
         turn_origin=turn_origin,
         model=model,
         cli_version=cli_version,
+        cli_entrypoint=cli_entrypoint,
         current_tool=current_tool,
         current_tool_at=last_tool_at if current_tool is not None else None,
         last_reply=last_reply,

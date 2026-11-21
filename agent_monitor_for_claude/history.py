@@ -38,6 +38,7 @@ from __future__ import annotations
 import math
 import os
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
@@ -48,13 +49,16 @@ from .roots import session_roots
 from .sessions import list_sessions
 from .snapshot import live_or_recent_ids
 from .subagents import past_subagent_usage
-from .transcript import history_state_for
+from .transcript import head_cwd, history_state_for
 from .usage_parts import session_usage
 
-__all__ = ['list_history']
+__all__ = ['history_record', 'kept_cwd', 'list_history']
 
 # Transcripts read at once per session root.
 _MAX_WORKERS = 16
+
+# How many sibling transcripts' heads a cwd-less kept session reads for its project's cwd.
+_KEPT_SIBLINGS = 5
 
 
 def list_history(max_age_seconds: float | None = None) -> list[dict[str, Any]]:
@@ -326,7 +330,44 @@ def _resolve_folder_cwd(slug: str, folder_records: list[dict[str, Any]], slug_to
     return _cwd_from_slug(slug), True
 
 
-def _build_history_record(path: Path) -> dict[str, Any] | None:
+def kept_cwd(root: SessionRoot, path: Path) -> str:
+    """Return the project cwd of a transcript that carries none, resolved as the History listing does.
+
+    The root's registry names the folder's cwd first, then a sibling transcript
+    of the same project folder (the head of at most ``_KEPT_SIBLINGS``, see
+    :func:`transcript.head_cwd`), and only then the raw slug.
+    """
+    folder = path.parent
+    slug_to_cwd: dict[str, str] = {}
+    for record in list_sessions(root):
+        slug_to_cwd.setdefault(cwd_to_slug(record['cwd']).lower(), record['cwd'])
+
+    siblings: list[dict[str, Any]] = []
+    if folder.name.lower() not in slug_to_cwd:
+        try:
+            candidates = [sibling for sibling in sorted(folder.glob('*.jsonl')) if sibling != path]
+        except OSError:
+            candidates = []
+        for sibling in candidates[:_KEPT_SIBLINGS]:
+            cwd = head_cwd(sibling)
+            if cwd:
+                siblings.append({'cwd': cwd})
+                break
+
+    return _resolve_folder_cwd(folder.name, siblings, slug_to_cwd)[0]
+
+
+def history_record(path: Path, before_chunk: Callable[[], None] | None = None) -> dict[str, Any] | None:
+    """Return the raw history record of the transcript at *path*, or None when it cannot be read.
+
+    The caller stamps ``origin`` and ``origin_label`` and, for a session the
+    live overview keeps, resets ``is_history``.  *before_chunk* is called
+    before each chunk of every file read (the transcript and its subagents').
+    """
+    return _build_history_record(path, before_chunk)
+
+
+def _build_history_record(path: Path, before_chunk: Callable[[], None] | None = None) -> dict[str, Any] | None:
     """Assemble one raw history record from a transcript, or None on failure.
 
     The ``cwd`` may be ``None`` here (a minimal transcript carries none); the
@@ -336,10 +377,10 @@ def _build_history_record(path: Path) -> dict[str, Any] | None:
     own records after normalizing them.
     """
     try:
-        state = history_state_for(path)
+        state = history_state_for(path, before_chunk)
         # The cost covers the session's subagents too, exactly as for a live one -
         # also those it started in a worktree, filed under that worktree's folder.
-        usage = session_usage(state.usage, past_subagent_usage(path, state.worktree_paths))
+        usage = session_usage(state.usage, past_subagent_usage(path, state.worktree_paths, before_chunk))
     except Exception:
         # Last-resort per-file isolation, mirroring build_snapshot: one bad
         # transcript must skip that entry, never blank the whole history list.
@@ -353,7 +394,9 @@ def _build_history_record(path: Path) -> dict[str, Any] | None:
         'cwd': state.cwd,
         'short_name': state.session_id[:8],
         'kind': 'interactive',
-        'entrypoint': None,
+        # The app the transcript was last written by: a kept Claude Desktop
+        # chat is recognized by it after its registry record is gone.
+        'entrypoint': state.cli_entrypoint,
         'job_id': None,
         'remote_control': False,
         'native_status': None,

@@ -263,6 +263,11 @@ def user_config_dir() -> Path:
     return Path(base) / _STORAGE_DIR_NAME
 
 
+def desktop_data_dirs() -> list[Path]:
+    """Return Claude Desktop's data directories: always empty, since Claude Desktop does not exist on Linux."""
+    return []
+
+
 def copy_text(text: str) -> bool:
     """Place *text* on the clipboard; return True on success.
 

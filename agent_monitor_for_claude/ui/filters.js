@@ -5,20 +5,27 @@
 // A session shows while its status bucket is active. The buckets are opened and
 // closed in groups, one group per list section (logic.LIST_SECTIONS).
 function matchesFilter(session) {
-    const bucket = logic.sessionBucket(session);
+    const bucket = logic.sessionBucket(session, state.desktopGroups.archived);
     return bucket != null && state.filters.has(bucket);
+}
+
+// Whether a section that lists past sessions is open: "Older", or "Archived",
+// which holds the past sessions Claude Desktop archived. One fetch feeds both.
+function historyWanted() {
+    return state.filters.has('history') || state.filters.has('archived');
 }
 
 // Open or close a section, i.e. switch all its buckets on or off.
 function toggleSection(key) {
-    const wasHistory = state.filters.has('history');
+    const wasHistory = historyWanted();
     state.filters = logic.toggledSectionKeys(key, state.filters);
     persistFilters();
 
-    // Opening "Older" triggers the (potentially second-long) scan of past
-    // sessions - lazily, off the UI thread. When it arrives, afterHistoryLoaded
-    // re-runs any active search over the wider scope and re-renders.
-    if (!wasHistory && state.filters.has('history') && (state.history === null || state.historyStale)) {
+    // Opening "Older" or "Archived" triggers the (potentially second-long) scan
+    // of past sessions - lazily, off the UI thread. When it arrives,
+    // afterHistoryLoaded re-runs any active search over the wider scope and
+    // re-renders.
+    if (!wasHistory && historyWanted() && (state.history === null || state.historyStale)) {
         ensureHistoryLoaded();
         return;
     }
@@ -28,6 +35,152 @@ function toggleSection(key) {
         runSearch();
     } else if (state.last) {
         render(state.last);
+    }
+}
+
+/* --- Pinned and Claude Desktop's groups --- */
+
+// The pins and Desktop groups the list is split by (logic.buildSections), with
+// each section's folding: the user's own where there is one, else Desktop's.
+function currentGroupsView() {
+    const collapsed = new Set();
+    if (state.groupCollapsed.get('pinned') === true) {
+        collapsed.add('pinned');
+    }
+    for (const group of state.desktopGroups.groups) {
+        const key = 'group:' + group.id;
+        const own = state.groupCollapsed.get(key);
+        if (own === undefined ? group.collapsed : own) {
+            collapsed.add(key);
+        }
+    }
+    return {
+        pinned: new Set([...state.pins.keys(), ...(state.desktopGroups.starred || [])]),
+        groups: state.desktopGroups.groups,
+        members: state.desktopGroups.members,
+        archived: state.desktopGroups.archived,
+        collapsed: collapsed,
+        subCollapsed: state.groupSubCollapsed,
+    };
+}
+
+// The groups view the list's sections are built with: Pinned and the Desktop
+// groups are sections of the urgency grouping only (the compact view included);
+// elsewhere every session counts by its status, an archived one that ended under
+// "Archived". The search scope uses the same view, so it is the visible set.
+function listGroupsView() {
+    const view = currentGroupsView();
+    const grouping = state.compact ? 'urgency' : state.group;
+    return grouping === 'urgency' ? view : { archived: view.archived };
+}
+
+// Read the pins back (amc-pins); anything unreadable is no pins.
+function loadPins() {
+    let stored = null;
+    try {
+        stored = localStorage.getItem('amc-pins');
+    } catch (e) { /* storage unavailable */ }
+    state.pins = logic.parsePins(stored || '[]');
+    state.pinMisses = new Map();
+}
+
+function savePins() {
+    try {
+        localStorage.setItem('amc-pins', JSON.stringify(Array.from(state.pins, ([id, origin]) => ({ id: id, origin: origin }))));
+    } catch (e) { /* storage unavailable */ }
+}
+
+// Pin the session to the top of the list, or take the pin off. A kept ended
+// session has to appear or go, so the snapshot is asked for again. A session
+// Claude Desktop pins is Desktop's to unpin, whatever Agent Monitor holds.
+function togglePin(session) {
+    const id = session && session.session_id;
+    const control = logic.pinControl(id, state.pins, state.desktopGroups.starred);
+    if (control === null) {
+        return;
+    }
+    if (control === 'desktop') {
+        toast(state.labels.pinned_in_desktop);
+        return;
+    }
+    if (control === 'unpin') {
+        state.pins.delete(id);
+    } else if (state.pins.size < logic.MAX_PINS) {
+        state.pins.set(id, session.origin || 'local');
+    } else {
+        toast(logic.fmt(state.labels.pins_full, { max: logic.MAX_PINS }));
+        return;
+    }
+    state.pinMisses.delete(id);
+    savePins();
+    if (state.last) {
+        render(state.last);
+    }
+    tick();
+}
+
+// A session deleted from History is gone for good; so is its pin.
+function unpinSession(sessionId) {
+    if (!state.pins.delete(sessionId)) {
+        return;
+    }
+    state.pinMisses.delete(sessionId);
+    savePins();
+}
+
+// Fold or unfold one group section, and remember it.
+const GROUP_COLLAPSED_MAX = 100;
+
+function toggleGroupSection(key) {
+    if (!key) {
+        return;
+    }
+    const folded = currentGroupsView().collapsed.has(key);
+    // Re-inserted, so the most recent choices are the ones the cap keeps.
+    state.groupCollapsed.delete(key);
+    state.groupCollapsed.set(key, !folded);
+    const entries = Array.from(state.groupCollapsed.entries()).slice(-GROUP_COLLAPSED_MAX);
+    state.groupCollapsed = new Map(entries);
+    try {
+        localStorage.setItem('amc-group-collapsed', JSON.stringify(entries));
+    } catch (e) { /* storage unavailable */ }
+    if (state.last) {
+        render(state.last);
+    }
+}
+
+// Read the remembered folding back: pairs of a section key and a boolean, any
+// other shape skipped.
+function loadGroupCollapsed() {
+    state.groupCollapsed = new Map();
+    try {
+        const stored = JSON.parse(localStorage.getItem('amc-group-collapsed') || '[]');
+        for (const entry of Array.isArray(stored) ? stored.slice(-GROUP_COLLAPSED_MAX) : []) {
+            if (Array.isArray(entry) && typeof entry[0] === 'string' && typeof entry[1] === 'boolean') {
+                state.groupCollapsed.set(entry[0], entry[1]);
+            }
+        }
+    } catch (e) {
+        state.groupCollapsed = new Map();
+    }
+}
+
+// Fold or unfold one sub-heading inside a group, and remember it.
+function toggleGroupSub(key) {
+    state.groupSubCollapsed = logic.toggledFoldedSubs(state.groupSubCollapsed, key);
+    try {
+        localStorage.setItem('amc-group-sub-collapsed', JSON.stringify([...state.groupSubCollapsed]));
+    } catch (e) { /* storage unavailable */ }
+    if (state.last) {
+        render(state.last);
+    }
+}
+
+function loadGroupSubCollapsed() {
+    try {
+        state.groupSubCollapsed = logic.parseFoldedSubs(localStorage.getItem('amc-group-sub-collapsed') || '[]');
+    } catch (e) {
+        state.groupSubCollapsed = new Set();
     }
 }
 

@@ -300,9 +300,9 @@ class HistoryWindowTest(HistoryEnvTest):
         real_state_for = history.history_state_for
         read: list[str] = []
 
-        def recording(path: Path):
+        def recording(path: Path, *args):
             read.append(path.stem)
-            return real_state_for(path)
+            return real_state_for(path, *args)
 
         with mock.patch.object(history, 'history_state_for', side_effect=recording):
             list_history(86400)
@@ -505,6 +505,20 @@ class MirroredTranscriptTest(HistoryEnvTest):
         ids = sorted(record['session_id'] for record in self._list())
 
         self.assertEqual(ids, ['aaaaaaaa-1111-2222-3333-444444444444', 'bbbbbbbb-1111-2222-3333-444444444444'])
+
+
+class KeptCwdTest(HistoryEnvTest):
+    """The project cwd of a kept transcript that carries none."""
+
+    def test_a_sibling_names_the_cwd_from_its_head_without_a_full_scan(self) -> None:
+        kept = self._write_history_transcript('d--WebDev-app', 'aaaaaaaa-1111-2222-3333-444444444444', [json.dumps({'type': 'summary'})])
+        sibling_entry = json.dumps({'type': 'user', 'cwd': r'd:\WebDev\app', 'message': {'content': 'hi'}})
+        self._write_history_transcript('d--WebDev-app', 'bbbbbbbb-1111-2222-3333-444444444444', [sibling_entry])
+
+        with mock.patch.object(history, '_build_history_record', side_effect=AssertionError('full scan')):
+            cwd = history.kept_cwd(self.local_root, kept)
+
+        self.assertEqual(cwd, r'd:\WebDev\app')
 
 
 if __name__ == '__main__':

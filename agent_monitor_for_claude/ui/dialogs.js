@@ -78,8 +78,13 @@ function confirmDeleteSession(sessionId, cwd, name, age, origin) {
         }
 
         if (ok) {
+            unpinSession(sessionId);
             if (Array.isArray(state.history)) {
                 state.history = state.history.filter((session) => session.session_id !== sessionId);
+            }
+            // A kept row of the snapshot goes at once, not on the next one.
+            if (state.last && Array.isArray(state.last.sessions)) {
+                state.last = Object.assign({}, state.last, { sessions: state.last.sessions.filter((session) => session.session_id !== sessionId) });
             }
             toast(state.labels.deleted);
             if (state.last) {

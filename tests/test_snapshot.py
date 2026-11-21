@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 import time
 import unittest
 from datetime import datetime, timezone
@@ -11,7 +12,9 @@ from pathlib import Path
 from unittest import mock
 
 from agent_monitor_for_claude import cli_install
+from agent_monitor_for_claude import history as history_mod
 from agent_monitor_for_claude import snapshot as snapshot_mod
+from agent_monitor_for_claude import transcript as transcript_mod
 from agent_monitor_for_claude.paths import SessionRoot, transcript_path, local_root
 from agent_monitor_for_claude.procinfo import ProcessInfo
 from agent_monitor_for_claude.settings import Settings
@@ -790,6 +793,360 @@ class FingerprintTest(_RegistryFixture):
         self.assertNotEqual(before, registry_fingerprint())
 
 
+_KEPT_ID = '11111111-2222-3333-4444-555555555555'
+_KEEP_MISS_ID = '99999999-2222-3333-4444-555555555555'
+
+
+def _wait_for_kept_builds() -> None:
+    """Block until the kept-record builder has nothing left to build."""
+    deadline = time.perf_counter() + 10
+    while time.perf_counter() < deadline:
+        with snapshot_mod._keep_records_lock:
+            if snapshot_mod._keep_worker is None and not snapshot_mod._keep_pending:
+                return
+        time.sleep(0.01)
+    raise AssertionError('the kept builds did not finish')
+
+
+def _kept_snapshot(keep: list[str]) -> dict:
+    """Return a snapshot asked for once, waited out, and asked for again, as the page does on the fingerprint's change."""
+    build_snapshot(keep=keep)
+    _wait_for_kept_builds()
+    return build_snapshot(keep=keep)
+
+
+def _wsl_root(base: Path) -> SessionRoot:
+    """Return a fake WSL root under *base*, with its registry folder made."""
+    root = SessionRoot(origin='wsl:Ubuntu', label='Ubuntu', config_dir=base / 'cfg', proc_dir=base / 'proc', claude_temp_dir=base / 'tmp')
+    (root.config_dir / 'sessions').mkdir(parents=True, exist_ok=True)
+    return root
+
+
+class KeptSessionTest(_RegistryFixture):
+    def setUp(self) -> None:
+        super().setUp()
+        _wait_for_kept_builds()
+        snapshot_mod._keep_lookup.clear()
+        snapshot_mod._keep_records.clear()
+        self.addCleanup(_wait_for_kept_builds)
+
+    def _add_kept_transcript(self, session_id: str = _KEPT_ID, cwd: str = 'd:\\WebDev\\kept') -> Path:
+        path = transcript_path(local_root(), session_id, cwd)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_END_TURN, encoding='utf-8')
+        return path
+
+    def test_kept_id_without_registry_record_is_built_from_transcript(self) -> None:
+        self._add_kept_transcript()
+
+        sessions = _kept_snapshot([_KEPT_ID])['sessions']
+
+        self.assertEqual([s['session_id'] for s in sessions], [_KEPT_ID])
+        self.assertFalse(sessions[0]['alive'])
+        self.assertIs(sessions[0]['kept'], True)
+        self.assertIs(sessions[0]['is_history'], False)
+        self.assertEqual(sessions[0]['origin'], local_root().origin)
+
+    def test_kept_record_names_the_entrypoint_its_transcript_was_written_by(self) -> None:
+        path = self._add_kept_transcript()
+        entries = [
+            {'type': 'user', 'timestamp': '2026-07-11T10:53:00Z', 'entrypoint': 'cli', 'message': {'content': 'hi'}},
+            {'type': 'assistant', 'timestamp': '2026-07-11T10:54:00Z', 'entrypoint': 'claude-desktop',
+             'message': {'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': 'x'}]}},
+            # A subagent's entry is not the main conversation's writer.
+            {'type': 'assistant', 'timestamp': '2026-07-11T10:54:05Z', 'isSidechain': True, 'entrypoint': 'sdk-ts',
+             'message': {'stop_reason': 'end_turn', 'content': []}},
+        ]
+        path.write_text('\n'.join(json.dumps(entry) for entry in entries) + '\n', encoding='utf-8')
+
+        sessions = _kept_snapshot([_KEPT_ID])['sessions']
+
+        self.assertEqual(sessions[0]['entrypoint'], 'claude-desktop')
+
+    def test_kept_record_without_a_well_formed_entrypoint_names_none(self) -> None:
+        for value in (7, '', 'Claude Desktop', '<b>', ['claude-desktop'], None):
+            with self.subTest(value=value):
+                _wait_for_kept_builds()
+                snapshot_mod._keep_records.clear()
+                path = self._add_kept_transcript()
+                path.write_text(json.dumps({'type': 'assistant', 'timestamp': '2026-07-11T10:54:00Z', 'entrypoint': value,
+                                            'message': {'stop_reason': 'end_turn', 'content': []}}) + '\n', encoding='utf-8')
+
+                sessions = _kept_snapshot([_KEPT_ID])['sessions']
+
+                self.assertIsNone(sessions[0]['entrypoint'])
+
+    def test_kept_id_already_live_is_not_duplicated(self) -> None:
+        self._add_session(_KEPT_ID, 'd:\\WebDev\\kept')
+
+        sessions = build_snapshot(keep=[_KEPT_ID])['sessions']
+
+        self.assertEqual(len(sessions), 1)
+        self.assertNotIn('kept', sessions[0])
+
+    def test_an_ended_kept_session_still_listed_has_its_build_ready_when_it_ages_out(self) -> None:
+        self._add_kept_transcript()
+
+        # The regular pass still lists it as ended: no kept record yet, but the build is queued already.
+        self.assertEqual(snapshot_mod._kept_records([_KEPT_ID], {_KEPT_ID: False}), [])
+        _wait_for_kept_builds()
+
+        # Aged out of the regular pass: the record is there on the very first poll.
+        records = snapshot_mod._kept_records([_KEPT_ID], {})
+        self.assertEqual([record['session_id'] for record in records], [_KEPT_ID])
+
+    def test_a_live_kept_session_queues_no_build(self) -> None:
+        self._add_kept_transcript()
+
+        self.assertEqual(snapshot_mod._kept_records([_KEPT_ID], {_KEPT_ID: True}), [])
+        _wait_for_kept_builds()
+
+        self.assertNotIn(_KEPT_ID, snapshot_mod._keep_records)
+        self.assertNotIn(_KEPT_ID, snapshot_mod._keep_pending)
+
+    def test_a_job_queued_as_the_builder_stops_starts_a_new_builder(self) -> None:
+        path = self._add_kept_transcript()
+        stat = path.stat()
+        real_loop = snapshot_mod._build_queued_kept_records
+        calls: list[int] = []
+
+        def loop_that_misses_a_late_job() -> None:
+            calls.append(1)
+            if len(calls) > 1:
+                real_loop()
+                return
+            # Queued after the loop's last look at the queue, before the worker slot is released.
+            with snapshot_mod._keep_records_lock:
+                snapshot_mod._keep_pending[_KEPT_ID] = (local_root(), path, stat.st_mtime_ns, stat.st_size)
+
+        with snapshot_mod._keep_records_lock:
+            snapshot_mod._keep_worker = threading.current_thread()
+        with mock.patch.object(snapshot_mod, '_build_queued_kept_records', side_effect=loop_that_misses_a_late_job):
+            snapshot_mod._build_kept_records()
+            _wait_for_kept_builds()
+
+        # A successor ran the loop and built the late job.
+        self.assertEqual(len(calls), 2)
+        self.assertIn(_KEPT_ID, snapshot_mod._keep_records)
+
+    def test_non_uuid_keep_entries_are_ignored(self) -> None:
+        self._add_kept_transcript()
+
+        self.assertEqual(build_snapshot(keep=['a', 7, None, {}, ['x']])['sessions'], [])
+        self.assertEqual(build_snapshot(keep='not a list')['sessions'], [])
+
+    def test_missing_transcript_yields_no_record(self) -> None:
+        self.assertEqual(build_snapshot(keep=[_KEPT_ID])['sessions'], [])
+
+    def test_fingerprint_changes_when_kept_transcript_grows(self) -> None:
+        path = self._add_kept_transcript()
+        before = registry_fingerprint([_KEPT_ID])
+
+        with path.open('a', encoding='utf-8') as handle:
+            handle.write(chr(10) + _END_TURN)
+
+        self.assertNotEqual(before, registry_fingerprint([_KEPT_ID]))
+        self.assertEqual(registry_fingerprint(), registry_fingerprint())
+
+    def test_unchanged_transcript_is_not_rebuilt_and_its_age_advances(self) -> None:
+        self._add_kept_transcript()
+        real = history_mod.history_record
+
+        with mock.patch.object(history_mod, 'history_record', side_effect=real) as build:
+            first = _kept_snapshot([_KEPT_ID])['sessions'][0]
+            with mock.patch.object(snapshot_mod.time, 'monotonic', return_value=time.monotonic() + 30):
+                second = build_snapshot(keep=[_KEPT_ID])['sessions'][0]
+
+        self.assertEqual(build.call_count, 1)
+        self.assertAlmostEqual(second['age_seconds'] - first['age_seconds'], 30, delta=2)
+
+    def test_changed_transcript_is_rebuilt(self) -> None:
+        path = self._add_kept_transcript()
+        real = history_mod.history_record
+
+        with mock.patch.object(history_mod, 'history_record', side_effect=real) as build:
+            _kept_snapshot([_KEPT_ID])
+            with path.open('a', encoding='utf-8') as handle:
+                handle.write(chr(10) + _END_TURN)
+            stale = build_snapshot(keep=[_KEPT_ID])['sessions']
+            _wait_for_kept_builds()
+
+        self.assertEqual(build.call_count, 2)
+        # While the rebuild runs, the record it replaces is still listed.
+        self.assertEqual([s['session_id'] for s in stale], [_KEPT_ID])
+
+    def test_cwd_less_transcript_gets_a_cwd(self) -> None:
+        path = transcript_path(local_root(), _KEPT_ID, 'd:\\WebDev\\kept')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_END_TURN, encoding='utf-8')
+
+        session = _kept_snapshot([_KEPT_ID])['sessions'][0]
+
+        self.assertTrue(session['cwd'])
+
+    def test_miss_is_retried_only_after_the_retry_interval(self) -> None:
+        start = time.monotonic()
+        with mock.patch.object(snapshot_mod, 'find_transcript', return_value=None) as find:
+            with mock.patch.object(snapshot_mod.time, 'monotonic', return_value=start):
+                build_snapshot(keep=[_KEEP_MISS_ID])
+                build_snapshot(keep=[_KEEP_MISS_ID])
+            self.assertEqual(find.call_count, 1)
+
+            with mock.patch.object(snapshot_mod.time, 'monotonic', return_value=start + snapshot_mod._KEEP_RETRY_SECONDS + 1):
+                build_snapshot(keep=[_KEEP_MISS_ID])
+            self.assertEqual(find.call_count, 2)
+
+    def test_lookup_cache_is_pruned_to_the_keep_set(self) -> None:
+        self._add_kept_transcript()
+        _kept_snapshot([_KEPT_ID])
+        self.assertIn(_KEPT_ID, snapshot_mod._keep_lookup)
+
+        build_snapshot(keep=[])
+
+        self.assertNotIn(_KEPT_ID, snapshot_mod._keep_lookup)
+        self.assertNotIn(_KEPT_ID, snapshot_mod._keep_records)
+
+    def _slow_build(self, release: threading.Event):
+        real = history_mod.history_record
+
+        def build(path: Path, *args) -> dict | None:
+            release.wait(10)
+            return real(path, *args)
+
+        return build
+
+    def test_first_snapshot_does_not_wait_for_a_kept_build(self) -> None:
+        self._add_kept_transcript()
+        release = threading.Event()
+
+        with mock.patch.object(history_mod, 'history_record', side_effect=self._slow_build(release)):
+            started = time.perf_counter()
+            first = build_snapshot(keep=[_KEPT_ID])['sessions']
+            elapsed = time.perf_counter() - started
+            release.set()
+            _wait_for_kept_builds()
+
+        self.assertEqual(first, [])
+        self.assertLess(elapsed, 5)
+        self.assertEqual([s['session_id'] for s in build_snapshot(keep=[_KEPT_ID])['sessions']], [_KEPT_ID])
+
+    def test_fingerprint_changes_when_a_kept_build_completes(self) -> None:
+        self._add_kept_transcript()
+        release = threading.Event()
+
+        with mock.patch.object(history_mod, 'history_record', side_effect=self._slow_build(release)):
+            build_snapshot(keep=[_KEPT_ID])
+            before = registry_fingerprint([_KEPT_ID])
+            release.set()
+            _wait_for_kept_builds()
+
+        self.assertNotEqual(before, registry_fingerprint([_KEPT_ID]))
+
+    def test_a_kept_session_on_a_stopped_distro_is_not_touched(self) -> None:
+        wsl_root = _wsl_root(Path(self._temp.name) / 'wsl')
+        path = transcript_path(wsl_root, _KEPT_ID, '/home/dev/kept')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_END_TURN, encoding='utf-8')
+        with mock.patch.object(snapshot_mod, 'session_roots', return_value=[local_root(), wsl_root]):
+            self.assertEqual([s['origin'] for s in _kept_snapshot([_KEPT_ID])['sessions']], [wsl_root.origin])
+
+        real_stat = snapshot_mod._stat_transcript
+        stats: list[Path] = []
+
+        def recording_stat(target: Path) -> tuple[int, int] | None:
+            stats.append(target)
+            return real_stat(target)
+
+        with mock.patch.object(snapshot_mod, '_stat_transcript', side_effect=recording_stat), \
+                mock.patch.object(snapshot_mod, 'find_transcript', side_effect=AssertionError('searched')) as find:
+            registry_fingerprint([_KEPT_ID])
+            sessions = build_snapshot(keep=[_KEPT_ID])['sessions']
+
+        self.assertEqual(stats, [])
+        self.assertEqual(find.call_count, 0)
+        self.assertEqual(sessions, [])
+        self.assertIn(_KEPT_ID, snapshot_mod._keep_lookup)
+
+        with mock.patch.object(snapshot_mod, 'session_roots', return_value=[local_root(), wsl_root]):
+            self.assertEqual([s['origin'] for s in build_snapshot(keep=[_KEPT_ID])['sessions']], [wsl_root.origin])
+
+    def test_a_wsl_desktop_chat_is_built_from_its_original_not_the_host_copy(self) -> None:
+        wsl_root = _wsl_root(Path(self._temp.name) / 'wsl')
+        prompt = json.dumps({'type': 'user', 'cwd': '/home/dev/proj', 'timestamp': '2026-07-11T10:54:00Z',
+                             'message': {'role': 'user', 'content': 'x'}})
+        lines = prompt + chr(10) + _END_TURN
+        copy = Path(self._temp.name) / 'projects' / 'ssh-abc123' / f'{_KEPT_ID}.jsonl'
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_text(lines, encoding='utf-8')
+        original = transcript_path(wsl_root, _KEPT_ID, '/home/dev/proj')
+        original.parent.mkdir(parents=True, exist_ok=True)
+        original.write_text(lines, encoding='utf-8')
+
+        with mock.patch.object(snapshot_mod, 'session_roots', return_value=[local_root(), wsl_root]):
+            sessions = _kept_snapshot([_KEPT_ID])['sessions']
+
+        self.assertEqual([(s['origin'], s['cwd']) for s in sessions], [(wsl_root.origin, '/home/dev/proj')])
+
+    def test_a_copy_without_an_original_is_still_kept(self) -> None:
+        copy = Path(self._temp.name) / 'projects' / 'ssh-abc123' / f'{_KEPT_ID}.jsonl'
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_text(_END_TURN, encoding='utf-8')
+        wsl_root = _wsl_root(Path(self._temp.name) / 'wsl')
+
+        with mock.patch.object(snapshot_mod, 'session_roots', return_value=[local_root(), wsl_root]):
+            sessions = _kept_snapshot([_KEPT_ID])['sessions']
+
+        self.assertEqual([s['origin'] for s in sessions], [local_root().origin])
+
+    def test_the_build_yields_before_every_chunk_of_a_large_transcript(self) -> None:
+        path = self._add_kept_transcript()
+        with path.open('a', encoding='utf-8') as handle:
+            for _ in range(40):
+                handle.write(chr(10) + _END_TURN)
+        waits: list[int] = []
+        chunk_bytes = path.stat().st_size // 4
+
+        with mock.patch.object(transcript_mod, '_SCAN_CHUNK_BYTES', chunk_bytes), \
+                mock.patch.object(snapshot_mod, 'wait_for_readers', side_effect=lambda: waits.append(1)):
+            _kept_snapshot([_KEPT_ID])
+
+        # Once before the build, then before each of the four chunks and the read that finds the end.
+        self.assertGreaterEqual(len(waits), 5)
+
+    def test_a_job_for_a_distro_that_stopped_is_dropped_untouched(self) -> None:
+        wsl_root = _wsl_root(Path(self._temp.name) / 'wsl')
+        path = transcript_path(wsl_root, _KEPT_ID, '/home/dev/kept')
+        with snapshot_mod._keep_records_lock:
+            snapshot_mod._keep_pending[_KEPT_ID] = (wsl_root, path, 1, 2)
+
+        with mock.patch.object(snapshot_mod, 'session_roots', return_value=[local_root()]), \
+                mock.patch.object(history_mod, 'history_record', side_effect=AssertionError('read')) as build:
+            snapshot_mod._build_kept_records()
+
+        self.assertEqual(build.call_count, 0)
+        self.assertEqual(snapshot_mod._keep_pending, {})
+        self.assertNotIn(_KEPT_ID, snapshot_mod._keep_records)
+
+    def test_a_failure_outside_the_build_does_not_end_the_builder(self) -> None:
+        self._add_kept_transcript()
+        other = '22222222-2222-3333-4444-555555555555'
+        self._add_kept_transcript(other)
+        calls: list[int] = []
+
+        def flaky() -> None:
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError('boom')
+
+        with mock.patch.object(snapshot_mod, 'wait_for_readers', side_effect=flaky):
+            build_snapshot(keep=[_KEPT_ID])
+            _wait_for_kept_builds()
+            sessions = _kept_snapshot([other])['sessions']
+
+        self.assertEqual([s['session_id'] for s in sessions], [other])
+        self.assertIsNone(snapshot_mod._keep_worker)
+
+
 class WorktreeSessionTest(_RegistryFixture):
     """A session that entered a git worktree: the registry names the worktree, the transcript stays with the project."""
 
@@ -1010,6 +1367,77 @@ class MultiRootSnapshotTest(_RegistryFixture):
             ids = live_or_recent_ids()
 
         self.assertIn(self._WSL_SESSION_ID, ids)
+
+class PinStatusTest(_RegistryFixture):
+    _PIN_ID = '33333333-3333-4333-8333-333333333333'
+
+    def _add_transcript(self, root: SessionRoot, cwd: str = 'd:/WebDev/pinned') -> None:
+        path = transcript_path(root, self._PIN_ID, cwd)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_END_TURN, encoding='utf-8')
+
+    def _wsl_root(self) -> SessionRoot:
+        wsl_dir = Path(self._temp.name) / 'wsl'
+        return SessionRoot(
+            origin='wsl:Ubuntu', label='Ubuntu', config_dir=wsl_dir / 'cfg', proc_dir=wsl_dir / 'proc', claude_temp_dir=wsl_dir / 'tmp',
+        )
+
+    def _status(self, origin: str, roots: list[SessionRoot] | None = None) -> dict[str, str]:
+        with mock.patch.object(snapshot_mod, 'session_roots', return_value=roots if roots is not None else [local_root()]):
+            return snapshot_mod.pin_status([{'id': self._PIN_ID, 'origin': origin}])
+
+    def test_present_when_transcript_exists_under_any_root(self) -> None:
+        wsl_root = self._wsl_root()
+        self._add_transcript(wsl_root)
+
+        self.assertEqual(self._status(local_root().origin, [local_root(), wsl_root]), {self._PIN_ID: 'present'})
+
+    def test_missing_when_own_root_listed_and_no_transcript(self) -> None:
+        self.assertEqual(self._status(local_root().origin), {self._PIN_ID: 'missing'})
+
+    def test_unreachable_root_is_unknown(self) -> None:
+        self.assertEqual(self._status('wsl:Ubuntu'), {self._PIN_ID: 'unknown'})
+
+    def test_listing_failure_on_a_reachable_root_is_unknown(self) -> None:
+        with mock.patch('agent_monitor_for_claude.paths.os.scandir', side_effect=PermissionError('locked')):
+            status = self._status(local_root().origin)
+
+        self.assertEqual(status, {self._PIN_ID: 'unknown'})
+
+    def test_unreadable_project_folder_is_unknown(self) -> None:
+        self._add_transcript(local_root(), 'd:/WebDev/other')
+        real_stat = os.stat
+
+        def flaky_stat(path: object, *args: object, **kwargs: object) -> os.stat_result:
+            if str(path).endswith(f'{self._PIN_ID}.jsonl'):
+                raise PermissionError('locked')
+            return real_stat(path, *args, **kwargs)
+
+        with mock.patch('agent_monitor_for_claude.paths.os.stat', side_effect=flaky_stat):
+            status = self._status(local_root().origin)
+
+        self.assertEqual(status, {self._PIN_ID: 'unknown'})
+
+    def test_match_elsewhere_is_present_despite_an_unreadable_root(self) -> None:
+        self._add_transcript(local_root())
+        wsl_root = self._wsl_root()
+
+        status = self._status(local_root().origin, [wsl_root, local_root()])
+
+        self.assertEqual(status, {self._PIN_ID: 'present'})
+
+    def test_registered_session_without_a_transcript_is_present(self) -> None:
+        # A session that has not written its transcript yet (status new) still exists.
+        record = {'pid': os.getpid(), 'sessionId': self._PIN_ID, 'cwd': 'd:/WebDev/pinned', 'kind': 'interactive'}
+        (Path(self._temp.name) / 'sessions' / 'pinned.json').write_text(json.dumps(record), encoding='utf-8')
+
+        self.assertEqual(self._status(local_root().origin), {self._PIN_ID: 'present'})
+
+    def test_invalid_refs_are_skipped(self) -> None:
+        refs = ['text', None, {'id': 'not-a-uuid', 'origin': 'local'}, {'id': self._PIN_ID}, {'id': 5, 'origin': 'local'}]
+
+        self.assertEqual(snapshot_mod.pin_status(refs), {})
+        self.assertEqual(snapshot_mod.pin_status('nope'), {})
 
 
 if __name__ == '__main__':

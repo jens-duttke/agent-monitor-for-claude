@@ -61,7 +61,7 @@ async function checkForChanges() {
 
     state.checking = true;
     try {
-        const fingerprint = await bridge.get_fingerprint();
+        const fingerprint = await bridge.get_fingerprint(keptSessionIds());
         if (fingerprint !== state.fingerprint) {
             state.fingerprint = fingerprint;
             await tick();
@@ -143,6 +143,9 @@ function onKeyDown(event) {
             event.preventDefault();
             runSessionAction('copy-id', session);
         }
+    } else if (!ctrl && key.toLowerCase() === 'p' && session) {
+        event.preventDefault();
+        togglePin(session);
     } else if (!ctrl && key === 't' && session) {
         event.preventDefault();
         runSessionAction('transcript', session);
@@ -218,6 +221,9 @@ async function boot() {
         state.searchWholeWord = false;
         state.searchRegex = false;
     }
+    loadGroupCollapsed();
+    loadGroupSubCollapsed();
+    loadPins();
     // Each init step is isolated so a failure in one (e.g. a control the
     // markup no longer matches) cannot abort boot and freeze the loading
     // skeleton - the data still renders.
@@ -280,14 +286,16 @@ async function boot() {
     }
 
     await tick();
-    // If "Older" was left open in a previous session, load the past sessions now (the data source is ready by the time boot runs).
-    if (state.filters.has('history')) {
+    // If "Older" or "Archived" was left open in a previous session, load the past sessions now (the data source is ready by the time boot runs).
+    if (historyWanted()) {
         ensureHistoryLoaded();
     }
     startPoll();
     setInterval(checkForChanges, FINGERPRINT_INTERVAL);
     setInterval(tickAges, 1000);
     gitOverviewLoop();
+    desktopGroupsLoop();
+    pinCheckLoop();
     updateStatusLoop();
 }
 
