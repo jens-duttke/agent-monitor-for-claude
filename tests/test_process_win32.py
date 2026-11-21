@@ -370,3 +370,17 @@ class LateHelperTest(unittest.TestCase):
             found = process_win32._meaningful_children(100, table, children, dict(starts), frozenset({'rust-analyzer'}))
 
         self.assertEqual(found, [(400, 'cargo.exe')])
+
+    def test_a_configured_server_run_by_an_interpreter_is_a_helper(self) -> None:
+        from agent_monitor_for_claude.platforms import process_win32
+
+        start = 1000.0
+        # pids of their own: the program names are remembered per pid and start
+        table = {110: (1, 'claude.exe'), 210: (110, 'node.exe')}
+        children = {1: [110], 110: [210]}
+        starts = {110: start, 210: start + 700}
+        commands = {210: [r'C:\Program Files\nodejs\node.exe', r'C:\npm\typescript-language-server', '--stdio']}
+        with mock.patch.object(process_win32, '_command_line', side_effect=lambda pid: commands.get(pid, [])):
+            found = process_win32._meaningful_children(110, table, children, dict(starts), frozenset({'typescript-language-server'}))
+
+        self.assertEqual(found, [])

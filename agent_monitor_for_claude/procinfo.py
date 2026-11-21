@@ -12,12 +12,14 @@ Nothing in this module touches the operating system - it is data shapes only.
 """
 from __future__ import annotations
 
+import ntpath
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
 __all__ = [
     'ChildProcess', 'ChildProcessStat', 'EntrypointWindow', 'ProcessDetails', 'ProcessInfo', 'SESSION_HELPER_WINDOW_SECONDS', 'child_processes',
-    'clip_arguments',
+    'clip_arguments', 'program_names',
 ]
 
 # Background processes listed per session; past this many the rest still count.
@@ -37,6 +39,11 @@ _MAX_COMMAND_LINE_CHARS = 16_000
 # session's life; a tool run later reads normally, and the transcript-based
 # classification still reports a just-started turn as working regardless.
 SESSION_HELPER_WINDOW_SECONDS = 10.0
+
+# Programs that run a script named by a later argument, so the script names the program.
+_INTERPRETERS = frozenset({'python', 'pythonw', 'py', 'node', 'nodejs', 'bun', 'deno', 'ruby', 'perl', 'php', 'java', 'npx', 'uvx', 'pipx'})
+# python3, python3.12, node22 and the like.
+_VERSIONED_INTERPRETER = re.compile(r'(?:python|pythonw|node)[0-9][0-9.]*')
 
 
 @dataclass(frozen=True)
@@ -142,6 +149,40 @@ class ProcessDetails:
     started_at: float | None
     threads: int | None
     command_line_clipped: bool = False
+
+
+def program_names(arguments: list[str]) -> tuple[str, ...]:
+    """The lowercased stems (no directory, no extension) a command line runs a program under.
+
+    That is the executable, and when it is a script interpreter
+    (:data:`_INTERPRETERS`) also the first argument that is no option - the
+    script it runs.  A plugin's server is often started that way (pipx runs
+    ``pyright-langserver`` through its venv's ``python``, npm installs a
+    ``node`` script), so its configured command names the script, not the
+    executable.  An empty command line has no name.
+    """
+    if not arguments or not arguments[0]:
+        return ()
+
+    executable = _stem(arguments[0])
+    if not _is_interpreter(executable):
+        return (executable,)
+
+    for argument in arguments[1:]:
+        if argument and not argument.startswith('-'):
+            return executable, _stem(argument)
+
+    return (executable,)
+
+
+def _stem(path: str) -> str:
+    """A path's last segment without its extension, lowercased; either slash separates."""
+    return ntpath.splitext(ntpath.basename(path))[0].lower()
+
+
+def _is_interpreter(name: str) -> bool:
+    """Whether *name* is a script interpreter, versioned spellings (``python3.12``) included."""
+    return name in _INTERPRETERS or _VERSIONED_INTERPRETER.fullmatch(name) is not None
 
 
 def clip_arguments(arguments: list[str]) -> tuple[tuple[str, ...], bool]:
