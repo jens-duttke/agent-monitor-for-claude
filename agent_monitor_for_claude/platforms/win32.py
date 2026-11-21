@@ -220,6 +220,33 @@ def user_config_dir() -> Path:
     return root / 'AgentMonitorForClaude'
 
 
+def desktop_data_dirs() -> list[Path]:
+    """Return Claude Desktop's data directories that hold a ``claude_desktop_config.json``.
+
+    Every ``%LOCALAPPDATA%/Claude-Data/claude_*`` directory first, then ``%APPDATA%/Claude``.
+    """
+    config_name = 'claude_desktop_config.json'
+    directories: list[Path] = []
+
+    local = os.environ.get('LOCALAPPDATA')
+    data_root = (Path(local) if local else Path.home() / 'AppData' / 'Local') / 'Claude-Data'
+    try:
+        candidates = sorted(data_root.glob('claude_*'))
+    except OSError:
+        candidates = []
+
+    for candidate in candidates:
+        if (candidate / config_name).is_file():
+            directories.append(candidate)
+
+    roaming = os.environ.get('APPDATA')
+    legacy = (Path(roaming) if roaming else Path.home() / 'AppData' / 'Roaming') / 'Claude'
+    if (legacy / config_name).is_file():
+        directories.append(legacy)
+
+    return directories
+
+
 def copy_text(text: str) -> bool:
     """Place *text* on the clipboard as Unicode; return True on success."""
     # Encode before touching the clipboard: a lone UTF-16 surrogate (which can

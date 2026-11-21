@@ -45,6 +45,11 @@
        yellow of an interrupted session. */
     --c-cache-expiring: #e3a03a;
 
+    /* The frame of a Pinned or Claude Desktop group: a light warm neutral,
+       since every hue already speaks for a status and the orange accent for
+       focus and selection. */
+    --c-group: #b9b4a8;
+
     /* Terminal (ANSI) palette for the task-output console. */
     --ansi-black: #6b6b6b;
     --ansi-red: #e5726a;
@@ -114,6 +119,7 @@ button {
 .section-running { --s: var(--c-working); }
 .section-recent { --s: var(--c-awaiting_input); }
 .section-older { --s: var(--c-history); }
+.section-archived { --s: var(--c-history); }
 
 /* The status in words: a tinted label with its dot. */
 .chip {
@@ -947,6 +953,193 @@ body.splitter-dragging {
     }
 }
 
+/* Archived in Claude Desktop while it still runs. */
+.item-flag {
+    flex: none;
+    padding: 0 6px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--c-history) 18%, transparent);
+    color: var(--fg-dim);
+    font-size: 11px;
+    line-height: 19px;
+
+    &:empty {
+        display: none;
+    }
+}
+
+/* Under Pinned, where a Claude Desktop chat's pin comes from. */
+.item-pin-source {
+    flex: none;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--fg-dim);
+    font-size: 11px;
+    line-height: 19px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+
+    &:empty {
+        display: none;
+    }
+}
+
+/* --- List: Pinned and the Claude Desktop groups --- */
+
+/* Out of the box tree, so the header sticks within its section like a status
+   section's does, not within a wrapper of its own height. */
+.group-section-head {
+    display: contents;
+}
+
+/* A frame round each group - a border and a bar on the left, on the list's own
+   background - so where it ends is plain. Clipped rather than hidden, which would
+   make the frame a scroll container and stop its header from sticking. */
+.group-section {
+    margin: 8px 8px 0;
+    border: 1px solid var(--border-strong);
+    border-left: 3px solid var(--c-group);
+    border-radius: 8px;
+    overflow: clip;
+
+    .section-head {
+        border-top: none;
+    }
+
+    &.closed .section-head {
+        border-bottom: none;
+    }
+
+    .group-sub + .group-sub .group-sub-head {
+        border-top: 1px solid var(--border);
+    }
+
+    .group-sub-items > .item:first-child {
+        border-top: none;
+    }
+
+    /* A session that ended stays in its group, dimmed. */
+    .item.ended {
+        opacity: 0.55;
+
+        &:hover,
+        &.selected {
+            opacity: 0.85;
+        }
+    }
+
+    .section-label {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        text-transform: none;
+        letter-spacing: 0.02em;
+    }
+}
+
+/* Inside a group, the list section its sessions would otherwise be listed
+   under: its dot, label and count, as a toggle that folds it. */
+.group-sub-head {
+    display: flex;
+}
+
+.group-sub-toggle {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 8px 14px 4px;
+    border: none;
+    background: transparent;
+    color: var(--fg-faint);
+    font: inherit;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    text-align: left;
+    cursor: pointer;
+
+    &:hover {
+        color: var(--fg);
+    }
+
+    .chevron {
+        flex: none;
+        width: 9px;
+        font-size: 10px;
+        line-height: 1;
+        transition: transform 0.12s ease;
+    }
+
+    .section-dot {
+        flex: none;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--s);
+    }
+
+    .sub-count {
+        color: var(--fg-dim);
+        font-variant-numeric: tabular-nums;
+    }
+
+    .group-sub.closed & {
+        padding-bottom: 8px;
+
+        .chevron {
+            transform: rotate(-90deg);
+        }
+    }
+}
+
+/* Between the groups and the status sections. */
+.list-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 14px 7px;
+    color: var(--fg-dim);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+
+    &::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: var(--border-strong);
+    }
+}
+
+/* A count per status, so a folded group still shows that something waits. */
+.group-counts {
+    display: inline-flex;
+    flex: none;
+    gap: 10px;
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+}
+
+.group-count {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--fg-heading);
+
+    i {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--s);
+    }
+}
+
 .meta-project {
     flex: 0 1 auto;
     /* Squeezed only when it alone is wider than the line. */
@@ -1385,6 +1578,14 @@ body.splitter-dragging {
         color: var(--c-errored);
         border-color: color-mix(in srgb, var(--c-errored) 45%, var(--border-strong));
     }
+}
+
+.action-note {
+    display: inline-flex;
+    align-items: center;
+    height: 30px;
+    color: var(--fg-faint);
+    font-size: 12.5px;
 }
 
 .detail-kpis {
@@ -2927,6 +3128,13 @@ body.group-graph .content {
     }
 }
 
+.menu-note {
+    padding: 7px 12px 7px 30px;
+    color: var(--fg-faint);
+    font-size: 12.5px;
+    cursor: default;
+}
+
 .menu-check {
     width: 14px;
     flex: none;
@@ -3603,6 +3811,32 @@ body.compact {
         display: none;
     }
 
+    .group-section {
+        margin: 4px 4px 0;
+        border-left-width: 2px;
+        border-radius: 6px;
+    }
+
+    .group-sub-toggle {
+        gap: 5px;
+        padding: 4px 12px 2px;
+        font-size: 9.5px;
+
+        .group-sub.closed & {
+            padding-bottom: 4px;
+        }
+
+        .section-dot {
+            width: 5px;
+            height: 5px;
+        }
+    }
+
+    .list-divider {
+        padding: 9px 12px 4px;
+        font-size: 10px;
+    }
+
     .item {
         grid-template-columns: 3px minmax(0, 1fr) auto 44px 24px;
         grid-template-areas: "bar title status age open";
@@ -3640,6 +3874,8 @@ body.compact {
         }
 
         .item-why,
+        .item-flag,
+        .item-pin-source,
         .item-line,
         .item-meta,
         .row-hits {

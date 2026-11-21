@@ -35,6 +35,13 @@ function openMenu(anchor, items, onSelect, context) {
     el.setAttribute('role', 'menu');
 
     items.forEach((item) => {
+        if (item.note) {
+            const note = document.createElement('div');
+            note.className = 'menu-note';
+            note.textContent = item.label;
+            el.appendChild(note);
+            return;
+        }
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'menu-item' + (item.active ? ' active' : '') + (item.danger ? ' danger' : '');

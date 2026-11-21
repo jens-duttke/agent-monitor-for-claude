@@ -165,7 +165,8 @@ function collectSearchRefs(includeHistory) {
         visibleHistory(),
         state.filters,
         includeHistory,
-        state.searchIncludeHidden
+        state.searchIncludeHidden,
+        listGroupsView()
     );
 }
 

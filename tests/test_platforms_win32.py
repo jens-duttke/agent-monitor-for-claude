@@ -262,5 +262,28 @@ class UserConfigDirTest(unittest.TestCase):
             self.assertEqual(win32.user_config_dir(), win32.Path('C:/Users/dev/AppData/Roaming/AgentMonitorForClaude'))
 
 
+@_WINDOWS_ONLY
+class DesktopDataDirsTest(unittest.TestCase):
+    def test_lists_data_directories_with_a_config_then_the_roaming_one(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            local, roaming = Path(tmp) / 'local', Path(tmp) / 'roaming'
+            for directory in (local / 'Claude-Data' / 'claude_a', roaming / 'Claude'):
+                directory.mkdir(parents=True)
+                (directory / 'claude_desktop_config.json').write_text('{}', encoding='utf-8')
+
+            (local / 'Claude-Data' / 'claude_empty').mkdir()
+            with mock.patch.dict(os.environ, {'LOCALAPPDATA': str(local), 'APPDATA': str(roaming)}):
+                self.assertEqual(win32.desktop_data_dirs(), [local / 'Claude-Data' / 'claude_a', roaming / 'Claude'])
+
+    def test_nothing_installed_gives_an_empty_list(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'LOCALAPPDATA': tmp, 'APPDATA': tmp}):
+            self.assertEqual(win32.desktop_data_dirs(), [])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -520,7 +520,7 @@ function cliMarkup(session) {
 
 function actionButton(action, label, options) {
     const opts = options || {};
-    return '<button' + attr('type', 'button') + attr('class', 'btn' + (opts.kind ? ' ' + opts.kind : '')) + attr('data-action', action) + '>'
+    return '<button' + attr('type', 'button') + attr('class', 'btn' + (opts.kind ? ' ' + opts.kind : '')) + attr('data-action', action) + (opts.tip ? attr('data-tip', opts.tip) : '') + '>'
         + esc(label || '') + (opts.key ? ' <span class="kbd">' + esc(opts.key) + '</span>' : '') + '</button>';
 }
 
@@ -531,6 +531,13 @@ function actionsMarkup(session) {
     let html = '';
     if (hasWindow(session)) {
         html += actionButton('open-window', labels.action_open_window, { kind: 'primary', key: '↵' });
+    }
+    const pin = logic.pinControl(session.session_id, state.pins, state.desktopGroups.starred);
+    if (pin === 'desktop') {
+        html += '<span' + attr('class', 'action-note') + '>' + esc(labels.pinned_in_desktop || '') + '</span>';
+    } else if (pin !== null) {
+        const pinned = pin === 'unpin';
+        html += actionButton(pin, pinned ? labels.unpin_session : labels.pin_session, { key: 'P', tip: labels.pin_tip });
     }
     html += actionButton('copy-id', labels.action_copy_id, { key: ctrl + ' C' });
     if (session.job_id) {
@@ -543,7 +550,7 @@ function actionsMarkup(session) {
         html += actionButton('scratchpad', labels.action_scratchpad);
     }
     // Only a past session may be deleted - never one with a live process.
-    if (session.is_history) {
+    if (canDeleteSession(session)) {
         html += actionButton('delete', labels.action_delete, { kind: 'danger' });
     }
     return html;

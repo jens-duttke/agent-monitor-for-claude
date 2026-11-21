@@ -24,6 +24,7 @@ import webview  # type: ignore[import-untyped]  # no type stubs available
 
 from . import __version__
 from .clipboard import copy_text as _copy_text
+from .desktop_groups import desktop_groups
 from .git_overview import MAX_DIRECTORIES, git_overview
 from .git_status import git_diff, git_status
 from .history import list_history
@@ -41,7 +42,7 @@ from .sessions import list_sessions
 from .settings import current_settings, describe_settings, report_load_errors, settings_path
 from .settings import save_settings as _save_settings
 from .snapshot import (
-    build_snapshot, registry_fingerprint, session_activity, session_hook_failures, session_media, session_media_image, session_texts,
+    build_snapshot, pin_status, registry_fingerprint, session_activity, session_hook_failures, session_media, session_media_image, session_texts,
 )
 from .subagents import agent_media, agent_media_image, agent_texts
 from .tasks import list_tasks
@@ -307,13 +308,17 @@ class _MonitorApi:
 
         print('[UI]', _sanitize_log(message), file=sys.stderr, flush=True)
 
-    def get_snapshot(self, graph: object = False) -> dict[str, Any]:
-        """Return the current session overview; *graph* adds what only the connection graph shows."""
-        return build_snapshot(graph is True)
+    def get_snapshot(self, graph: object = False, keep: object = None) -> dict[str, Any]:
+        """Return the current session overview; *graph* adds what only the connection graph shows, *keep* names sessions to retain."""
+        return build_snapshot(graph is True, keep)
 
-    def get_fingerprint(self) -> str:
-        """Return the cheap registry/transcript change fingerprint."""
-        return registry_fingerprint()
+    def get_fingerprint(self, keep: object = None) -> str:
+        """Return the cheap registry/transcript change fingerprint, covering the kept sessions too."""
+        return registry_fingerprint(keep)
+
+    def check_pins(self, refs: object) -> dict[str, str]:
+        """Return ``present``, ``missing`` or ``unknown`` per pinned session id, so the page drops only the pins that are really gone."""
+        return pin_status(refs)
 
     def get_history(self, max_age_seconds: object = None) -> list[dict[str, Any]]:
         """Return past, non-live sessions for the history listing (on demand).
@@ -561,8 +566,8 @@ class _MonitorApi:
     def delete_session(self, session_id: object, cwd: object, origin: object = 'local') -> bool:
         """Delete a past session's transcript and subagent folder (user-initiated).
 
-        Only ever invoked from the history listing's per-row action, after an
-        in-UI confirmation.  All safety guards live in ``session_delete``: a UUID
+        Only ever invoked from the row menu of a past session - a History row, or
+        an ended pinned or grouped one - after an in-UI confirmation.  All safety guards live in ``session_delete``: a UUID
         check, a refusal for any session with a live process, and path
         confinement to ``projects/``.  ``origin`` names the session root the row
         was tagged with (``'local'`` or ``'wsl:<distro>'``) and is passed
@@ -790,6 +795,10 @@ class _MonitorApi:
         directory = worktree_cwd if isinstance(worktree_cwd, str) and worktree_cwd else cwd
         edited = [host_path(root, path) for path in edited_files(root, session_id, cwd)]
         return git_status(host_path(root, directory), edited)
+
+    def get_desktop_groups(self) -> dict[str, Any]:
+        """Return Claude Desktop's session groups (id, name, order, collapsed), each session's group, and the archived and pinned session ids."""
+        return desktop_groups()
 
     def get_git_overview(self, refs: object) -> list[dict[str, Any] | str | None]:
         """Return where the work stands in each listed session's directory, at once and from a cache.

@@ -41,6 +41,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -386,14 +387,15 @@ def _first_prompt(path: Path) -> str | None:
     return text or None
 
 
-def past_subagent_usage(transcript: Path, worktree_cwds: Iterable[str] = ()) -> dict[str, UsageScan]:
+def past_subagent_usage(transcript: Path, worktree_cwds: Iterable[str] = (), before_chunk: Callable[[], None] | None = None) -> dict[str, UsageScan]:
     """Return the usage of a past session's subagents, summed per ``agentType``, each file read once.
 
     *transcript* is the session's own transcript; its agents lie in the folder
     of the same name, and those it started after switching into a worktree in
     the same-named folder under each of *worktree_cwds*' project folders - the
     layout :func:`count_subagents` reads for a live session.  A session
-    without either has no subagents.
+    without either has no subagents.  *before_chunk* runs before every chunk
+    of every agent file read.
     """
     projects = transcript.parent.parent
     directories: list[Path] = []
@@ -406,7 +408,7 @@ def past_subagent_usage(transcript: Path, worktree_cwds: Iterable[str] = ()) -> 
     for directory in directories:
         agent_paths.extend(_agent_paths(directory) or ())
 
-    usage_by_type, _, _ = _usage_by_type(agent_paths, usage_scan_once)
+    usage_by_type, _, _ = _usage_by_type(agent_paths, partial(usage_scan_once, before_chunk=before_chunk))
     return usage_by_type
 
 
