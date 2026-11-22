@@ -1075,6 +1075,33 @@ function groupPlacement(session, view) {
     return 'group:' + view.members.get(sessionId);
 }
 
+// What has to open for a session to be listed: in the Urgency grouping the
+// group section that holds it (`group`, with its sub-heading's fold key `sub`)
+// or else its status section (`section`); in the Project grouping its status
+// section and its project (`project`), since that grouping lists by the
+// sections but folds per project. Fields that do not apply are null.
+function lineageRevealPlan(session, groupsView, grouping) {
+    const plan = { section: null, group: null, sub: null, project: null };
+    if (!session) {
+        return plan;
+    }
+    const view = normalizedGroupsView(groupsView);
+    const section = sectionOf(session, view.archived);
+    if (grouping === 'project') {
+        plan.section = section;
+        plan.project = typeof session.project_key === 'string' && session.project_key ? session.project_key : null;
+        return plan;
+    }
+    const group = groupPlacement(session, view);
+    if (group !== null) {
+        plan.group = group;
+        plan.sub = groupSubFoldKey(group, groupSubsectionOf(session, view.archived));
+        return plan;
+    }
+    plan.section = section;
+    return plan;
+}
+
 // How many sessions hold each status.
 function statusCounts(sessions) {
     const counts = new Map();
@@ -5576,6 +5603,36 @@ function lineageOf(lineage, sessionId) {
     return result;
 }
 
+// A list entry's lineage figure: on a session Desktop started or forked from
+// another, "Started from" / "Forked from" with that session's title; on one
+// that started others, how many. `nameOf(id)` gives a session's title, or null
+// for a session Agent Monitor does not know (then its id's first eight
+// characters). The tooltip names the sessions in full.
+function lineageMetaMarkup(info, nameOf, labels) {
+    const strings = labels || {};
+    if (!info) {
+        return '';
+    }
+    const name = (id) => {
+        const known = typeof nameOf === 'function' ? nameOf(id) : null;
+        return known || id.slice(0, 8);
+    };
+    const parts = [];
+    if (info.parent) {
+        const label = info.parent.kind === 'forked' ? strings.lineage_forked_from : strings.lineage_started_from;
+        const parentName = name(info.parent.id);
+        parts.push('<span class="meta-lineage"' + attr('data-tip', (label || '') + ' ' + parentName) + '>'
+            + '<span class="meta-lineage-key">' + esc(label || '') + '</span> ' + esc(parentName) + '</span>');
+    }
+    const children = Array.isArray(info.children) ? info.children : [];
+    if (children.length > 0) {
+        const tip = (strings.lineage_children || '') + '\n' + children.map((child) => name(child.id)).join('\n');
+        parts.push('<span class="meta-lineage"' + attr('data-tip', tip) + '>'
+            + esc(fmt(strings.list_lineage_children, { count: children.length })) + '</span>');
+    }
+    return parts.join('');
+}
+
 // The sessions of `others` that the graph draws dimmed: a direct parent or
 // child of a session in its window (`windowIds`, a Set of session ids). The
 // link stays visible with both ends, and a dimmed node draws nothing of its own.
@@ -5744,6 +5801,8 @@ const AMC_LOGIC = {
     normalizeDesktopGroups,
     normalizeLineage,
     lineageOf,
+    lineageMetaMarkup,
+    lineageRevealPlan,
     graphLineageNeighbors,
     desktopGroupsSignature,
     fmt,

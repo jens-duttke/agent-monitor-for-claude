@@ -100,11 +100,12 @@ function selectProcess(key, pid) {
 }
 
 // A session Claude Desktop started this one from, or one it started: selected
-// where the list shows it; otherwise the section that lists it opens - Older,
-// or Archived for a session Desktop archived - and render selects it once it
-// is listed (state.pendingSelect).
+// where the list shows it; otherwise what hides it opens - its section (Older,
+// or Archived for a session Desktop archived, for one not loaded yet), its
+// group and sub-heading, or its project - and render selects it once it is
+// listed (state.pendingSelect).
 function openLineageSession(sessionId) {
-    if (typeof sessionId !== 'string' || !sessionId) {
+    if (typeof sessionId !== 'string' || !sessionId || !lineageReachable(sessionId)) {
         return;
     }
     const key = listedKeyOf(sessionId);
@@ -112,21 +113,52 @@ function openLineageSession(sessionId) {
         selectSession(key, true);
         return;
     }
-    let known = null;
-    for (const session of state.sessionsByKey.values()) {
-        if (session.session_id === sessionId) {
-            known = session;
-            break;
-        }
-    }
-    const archived = state.desktopGroups.archived;
-    const section = known ? logic.sectionOf(known, archived) : (archived.has(sessionId) ? 'archived' : 'older');
+    const known = knownSessionOf(sessionId);
+    const plan = known
+        ? logic.lineageRevealPlan(known, listGroupsView(), state.compact ? 'urgency' : state.group)
+        : { section: state.desktopGroups.archived.has(sessionId) ? 'archived' : 'older', group: null, sub: null, project: null };
     state.pendingSelect = sessionId;
-    if (section && !logic.sectionActive(section, state.filters)) {
-        toggleSection(section);
+    state.pendingRevealed = false;
+    unfoldForReveal(plan);
+    if (plan.section && !logic.sectionActive(plan.section, state.filters)) {
+        toggleSection(plan.section);
     } else if (state.last) {
         render(state.last);
     }
+}
+
+// Unfold the group, sub-heading and project a reveal plan names, and remember
+// it like a click on their headers would; the caller renders.
+function unfoldForReveal(plan) {
+    if (plan.group && currentGroupsView().collapsed.has(plan.group)) {
+        state.groupCollapsed.delete(plan.group);
+        state.groupCollapsed.set(plan.group, false);
+        const entries = Array.from(state.groupCollapsed.entries()).slice(-GROUP_COLLAPSED_MAX);
+        state.groupCollapsed = new Map(entries);
+        try {
+            localStorage.setItem('amc-group-collapsed', JSON.stringify(entries));
+        } catch (e) { /* storage unavailable */ }
+    }
+    if (plan.sub && state.groupSubCollapsed.has(plan.sub)) {
+        state.groupSubCollapsed = logic.toggledFoldedSubs(state.groupSubCollapsed, plan.sub);
+        try {
+            localStorage.setItem('amc-group-sub-collapsed', JSON.stringify([...state.groupSubCollapsed]));
+        } catch (e) { /* storage unavailable */ }
+    }
+    if (plan.project && state.collapsed.has(plan.project)) {
+        state.collapsed.delete(plan.project);
+        persistCollapsed();
+    }
+}
+
+// The built session with this id, listed or not, or null.
+function knownSessionOf(sessionId) {
+    for (const session of state.sessionsByKey.values()) {
+        if (session.session_id === sessionId) {
+            return session;
+        }
+    }
+    return null;
 }
 
 // The list key of a listed session with this id, or null.

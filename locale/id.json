@@ -273,6 +273,7 @@
     "lineage_forked_from": "Di-fork dari",
     "lineage_children": "Dimulai dari sini",
     "lineage_fork": "fork",
+    "list_lineage_children": "Dimulai dari sini: {count}",
     "graph_legend_stale": "Diam lebih dari satu jam",
     "graph_legend_session": "Sesi, titik dalam warna statusnya",
     "graph_legend_box_running": "Subagen atau proses yang berjalan",

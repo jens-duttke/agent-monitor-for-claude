@@ -608,6 +608,7 @@ function itemMetaMarkup(session) {
     if (session.usage_compact) {
         parts.push('<span class="meta-cost">' + esc(session.usage_compact) + '</span>');
     }
+    parts.push(logic.lineageMetaMarkup(logic.lineageOf(state.desktopGroups.lineage, session.session_id), lineageSessionName, state.labels));
     if (state.listContext && session.context && session.context.ratio !== null) {
         parts.push('<span' + attr('class', 'meta-context' + (session.context_warn ? ' warn' : '')) + '>'
             + esc(fmt(state.labels.list_context, { percent: Math.round(session.context.ratio * 100) })) + '</span>');
@@ -1180,15 +1181,28 @@ function sectionNote(sectionKey, open) {
 }
 
 // Select the session a lineage link asked for (openLineageSession) once it is
-// listed. The wish outlives a History fetch still running, and ends with the
-// first render after it, found or not.
+// listed. The wish outlives a History fetch still running. A past session the
+// fetch only just brought in may sit in a folded group or project, which the
+// click could not know of: those open once, and the next render selects it.
+// Otherwise the wish ends with the first render after the fetch, found or not.
 function applyPendingSelect() {
     const sessionId = state.pendingSelect;
     if (!sessionId || state.historyLoading) {
         return;
     }
-    state.pendingSelect = null;
     const key = listedKeyOf(sessionId);
+    const known = key ? null : knownSessionOf(sessionId);
+    if (!key && known && !state.pendingRevealed) {
+        state.pendingRevealed = true;
+        unfoldForReveal(logic.lineageRevealPlan(known, listGroupsView(), state.compact ? 'urgency' : state.group));
+        setTimeout(() => {
+            if (state.last) {
+                render(state.last);
+            }
+        }, 0);
+        return;
+    }
+    state.pendingSelect = null;
     if (!key) {
         return;
     }

@@ -273,6 +273,7 @@
     "lineage_forked_from": "Bifurcada de",
     "lineage_children": "Iniciadas desde aquí",
     "lineage_fork": "bifurcación",
+    "list_lineage_children": "Iniciadas desde aquí: {count}",
     "graph_legend_stale": "Sin actividad desde hace más de una hora",
     "graph_legend_session": "Sesión, punto en el color de su estado",
     "graph_legend_box_running": "Subagente o proceso en curso",

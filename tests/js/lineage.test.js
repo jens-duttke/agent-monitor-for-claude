@@ -130,6 +130,42 @@ test('lineage graph: the tooltip names both sessions, escaped', () => {
     assert.match(markup, /class="edge edge-lineage forked"/);
 });
 
+test('lineage list: a child names its parent, a fork says so, and a parent counts what it started', () => {
+    const labels = { lineage_started_from: 'Started from', lineage_forked_from: 'Forked from', lineage_children: 'Started from here',
+        list_lineage_children: 'Started from here: {count}' };
+    const names = new Map([['a', 'Parent'], ['b', 'Child']]);
+    const nameOf = (id) => (names.has(id) ? names.get(id) : null);
+    const links = lineage([['b', 'a'], ['c0000000-1111', 'a', 'forked'], ['a', 'root', 'forked']]);
+
+    assert.strictEqual(logic.lineageMetaMarkup(logic.lineageOf(links, 'b'), nameOf, labels),
+        '<span class="meta-lineage" data-tip="Started from Parent"><span class="meta-lineage-key">Started from</span> Parent</span>');
+    const parent = logic.lineageMetaMarkup(logic.lineageOf(links, 'a'), nameOf, labels);
+    assert.match(parent, /Forked from<\/span> root<\/span>/);
+    assert.match(parent, /data-tip="Started from here\nChild\nc0000000">Started from here: 2<\/span>/);
+    assert.strictEqual(logic.lineageMetaMarkup(logic.lineageOf(links, 'x'), nameOf, labels), '');
+    assert.strictEqual(logic.lineageMetaMarkup(null, nameOf, labels), '');
+});
+
+test('lineage list: html safety - a hostile title or label stays text', () => {
+    const links = lineage([['b', 'a']]);
+    const markup = logic.lineageMetaMarkup(logic.lineageOf(links, 'b'), () => '<img src=x onerror=alert(1)>"', { lineage_started_from: '<b>' });
+    assert.doesNotMatch(markup, /<img|<b>/);
+    assert.match(markup, /&lt;img src=x onerror=alert\(1\)&gt;&quot;/);
+});
+
+test('lineage reveal plan: group and sub-heading in Urgency, section and project in Project', () => {
+    const live = { session_id: 's', status: 'awaiting_input', alive: true, project_key: 'proj' };
+    const view = { groups: [{ id: 'g', name: 'G' }], members: new Map([['s', 'g']]), archived: new Set(), pinned: new Set() };
+    assert.deepStrictEqual(logic.lineageRevealPlan(live, view, 'urgency'), { section: null, group: 'group:g', sub: 'group:g|recent', project: null });
+    assert.deepStrictEqual(logic.lineageRevealPlan(live, view, 'project'), { section: 'recent', group: null, sub: null, project: 'proj' });
+    assert.deepStrictEqual(logic.lineageRevealPlan(live, {}, 'urgency'), { section: 'recent', group: null, sub: null, project: null });
+    const pinned = Object.assign({}, view, { pinned: new Set(['s']) });
+    assert.strictEqual(logic.lineageRevealPlan(live, pinned, 'urgency').group, 'pinned');
+    const archived = { session_id: 's', status: 'completed', alive: false, is_history: true };
+    assert.strictEqual(logic.lineageRevealPlan(archived, { archived: new Set(['s']) }, 'urgency').section, 'archived');
+    assert.deepStrictEqual(logic.lineageRevealPlan(null, view, 'urgency'), { section: null, group: null, sub: null, project: null });
+});
+
 test('lineage graph: the legend shows both edges and the dimmed box', () => {
     const markup = logic.graphLegendMarkup({ graph_legend_started: 'Started', graph_legend_forked: 'Forked', graph_outside_window: 'Outside' });
     assert.match(markup, /edge edge-lineage"/);

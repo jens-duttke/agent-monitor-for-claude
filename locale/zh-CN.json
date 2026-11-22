@@ -273,6 +273,7 @@
     "lineage_forked_from": "分叉自",
     "lineage_children": "从此处启动",
     "lineage_fork": "分叉",
+    "list_lineage_children": "从此处启动：{count}",
     "graph_legend_stale": "超过一小时无活动",
     "graph_legend_session": "会话 (圆点为状态颜色)",
     "graph_legend_box_running": "运行中的子代理或进程",

@@ -273,6 +273,7 @@
     "lineage_forked_from": "फ़ोर्क का स्रोत",
     "lineage_children": "यहाँ से शुरू किए गए",
     "lineage_fork": "फ़ोर्क",
+    "list_lineage_children": "यहाँ से शुरू किए गए: {count}",
     "graph_legend_stale": "एक घंटे से अधिक से निष्क्रिय",
     "graph_legend_session": "सत्र, बिंदु उसकी स्थिति के रंग में",
     "graph_legend_box_running": "चल रहा सबएजेंट या प्रोसेस",

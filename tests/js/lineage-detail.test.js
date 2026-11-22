@@ -87,7 +87,7 @@ test('a click on a session not listed opens its section and selects it once list
     run(`state.sessionsByKey = new Map([['c', ${JSON.stringify(built(CHILD, 'Child'))}]]);
         state.listKeys = ['c']; state.selectedKey = 'c';
         state.filters = new Set(['needs']);
-        state.history = []; state.historyStale = false;
+        state.history = [{ session_id: '${PARENT}', title: 'Parent' }]; state.historyStale = false;
         state.desktopGroups.archived = new Set(['${PARENT}']);
         state.last = { sessions: [] };
         openLineageSession('${PARENT}');`);
@@ -100,6 +100,65 @@ test('a click on a session not listed opens its section and selects it once list
     run(`state.pendingSelect = 'gone'; applyPendingSelect();`);
     assert.strictEqual(run('state.pendingSelect'), null);
     assert.strictEqual(run('state.selectedKey'), 'p');
+});
+
+test('a click unfolds the Desktop group and sub-heading that hide the session', () => {
+    const { run } = controller();
+    run(`state.desktopGroups.groups = [{ id: 'g', name: 'G', order: 0, collapsed: true }];
+        state.desktopGroups.members = new Map([['${PARENT}', 'g']]);
+        state.groupSubCollapsed = new Set(['group:g|recent']);
+        state.group = 'urgency';
+        state.filters = new Set(['idle']);
+        state.sessionsByKey = new Map([['p', ${JSON.stringify(built(PARENT, 'Parent', { status: 'awaiting_input', alive: true }))}]]);
+        state.listKeys = []; state.last = { sessions: [] };
+        openLineageSession('${PARENT}');`);
+    assert.strictEqual(run(`state.groupCollapsed.get('group:g')`), false);
+    assert.strictEqual(run(`state.groupSubCollapsed.has('group:g|recent')`), false);
+    assert.strictEqual(run('state.pendingSelect'), PARENT);
+});
+
+test('in the Project grouping a click opens the section and the project', () => {
+    const { run } = controller();
+    run(`state.group = 'project';
+        state.collapsed = new Set(['proj']);
+        state.filters = new Set(['needs']);
+        state.sessionsByKey = new Map([['p', ${JSON.stringify(built(PARENT, 'Parent', { status: 'awaiting_input', alive: true, project_key: 'proj' }))}]]);
+        state.listKeys = []; state.last = { sessions: [] };
+        openLineageSession('${PARENT}');`);
+    assert.strictEqual(run(`state.collapsed.has('proj')`), false);
+    assert.strictEqual(run(`logic.sectionActive('recent', state.filters)`), true);
+});
+
+test('a past session the fetch brought into a folded project is unfolded once, then selected', () => {
+    const { run } = controller();
+    run(`globalThis.__timers = []; setTimeout = (fn) => { __timers.push(fn); return 0; };
+        state.group = 'project'; state.collapsed = new Set(['proj']);
+        state.pendingSelect = '${PARENT}'; state.pendingRevealed = false; state.historyLoading = false;
+        state.sessionsByKey = new Map([['p', ${JSON.stringify(built(PARENT, 'Parent', { status: 'completed', is_history: true, project_key: 'proj' }))}]]);
+        state.listKeys = [];
+        applyPendingSelect();`);
+    assert.strictEqual(run(`state.collapsed.has('proj')`), false);
+    assert.strictEqual(run('state.pendingSelect'), PARENT);
+    assert.strictEqual(run('__timers.length'), 1);
+    // Still not listed on the next render (a search hides it): the wish ends, nothing loops.
+    run('applyPendingSelect()');
+    assert.strictEqual(run('state.pendingSelect'), null);
+});
+
+test('a session no click can bring on screen is plain text, never a dead link', () => {
+    const { run } = controller();
+    const sessions = `new Map([['p', ${JSON.stringify(built(PARENT, 'Parent'))}], ['c', ${JSON.stringify(built(CHILD, 'Child'))}]])`;
+    run(`state.sessionsByKey = ${sessions}; state.listKeys = ['c']; state.group = 'graph';`);
+    const graph = run(`sessionBodyMarkup(state.sessionsByKey.get('c'))`);
+    assert.match(graph, /<span class="kv-value">Parent<\/span>/);
+    assert.doesNotMatch(graph, /data-action="lineage"/);
+    run(`openLineageSession('${PARENT}')`);
+    assert.strictEqual(run('state.pendingSelect'), null);
+
+    run(`state.group = 'urgency'; state.search = 'something';`);
+    assert.doesNotMatch(run(`sessionBodyMarkup(state.sessionsByKey.get('c'))`), /data-action="lineage"/);
+    run(`state.search = '';`);
+    assert.match(run(`sessionBodyMarkup(state.sessionsByKey.get('c'))`), /data-action="lineage"/);
 });
 
 test('the wish waits while the past sessions are still loading', () => {

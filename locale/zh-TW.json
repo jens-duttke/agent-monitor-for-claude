@@ -273,6 +273,7 @@
     "lineage_forked_from": "分岔自",
     "lineage_children": "從此處啟動",
     "lineage_fork": "分岔",
+    "list_lineage_children": "從此處啟動：{count}",
     "graph_legend_stale": "超過一小時沒有活動",
     "graph_legend_session": "工作階段 (圓點為狀態顏色)",
     "graph_legend_box_running": "執行中的子代理或處理程序",

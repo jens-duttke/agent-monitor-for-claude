@@ -880,15 +880,36 @@ function costBodyMarkup(session) {
 }
 
 // A session the lineage names, by its own title: a link that selects it - or
-// opens the section that lists it - when Agent Monitor knows it, else its id as
-// plain text (an ended session outside the loaded History window).
+// opens what hides it - when a click can bring it on screen, its title as plain
+// text when it cannot, and its id when Agent Monitor does not know it (an ended
+// session outside the loaded History window).
 function lineageLinkMarkup(sessionId) {
     const name = lineageSessionName(sessionId);
     if (name === null) {
         return '<span class="mono">' + esc(sessionId.slice(0, 8)) + '</span>';
     }
+    if (!lineageReachable(sessionId)) {
+        return esc(name || sessionId.slice(0, 8));
+    }
     return '<button type="button" class="crumb-link"' + attr('data-action', 'lineage') + attr('data-session', sessionId) + '>'
         + esc(name || sessionId.slice(0, 8)) + '</button>';
+}
+
+// Whether a click can bring this session on screen: it is listed; or, in the
+// list groupings, it is a session Agent Monitor knows and no search filters the
+// list - opening its section, group or project then shows it. The graph opens
+// nothing, so there only a drawn session is reachable.
+function lineageReachable(sessionId) {
+    if (listedKeyOf(sessionId)) {
+        return true;
+    }
+    if (!state.compact && state.group === 'graph') {
+        return false;
+    }
+    if (state.search.trim().length >= SEARCH_MIN_CHARS) {
+        return false;
+    }
+    return lineageSessionName(sessionId) !== null;
 }
 
 // The title of a session Agent Monitor knows - listed, live, or among the

@@ -273,6 +273,7 @@
     "lineage_forked_from": "Відгалужено від",
     "lineage_children": "Запущено звідси",
     "lineage_fork": "відгалуження",
+    "list_lineage_children": "Запущено звідси: {count}",
     "graph_legend_stale": "Неактивне понад годину",
     "graph_legend_session": "Сесія, крапка кольору її статусу",
     "graph_legend_box_running": "Субагент або процес, що працює",

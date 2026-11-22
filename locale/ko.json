@@ -273,6 +273,7 @@
     "lineage_forked_from": "포크 위치",
     "lineage_children": "여기서 시작됨",
     "lineage_fork": "포크",
+    "list_lineage_children": "여기서 시작됨: {count}",
     "graph_legend_stale": "1시간 넘게 활동 없음",
     "graph_legend_session": "세션, 점은 상태 색상",
     "graph_legend_box_running": "실행 중인 서브에이전트 또는 프로세스",

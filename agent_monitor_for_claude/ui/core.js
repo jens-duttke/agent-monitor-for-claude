@@ -163,6 +163,8 @@ const state = {
     historyLoading: false,
     // A session a lineage link asked to select once it is listed (render.js applyPendingSelect).
     pendingSelect: null,
+    // Whether the folds hiding that session were opened already, so they open once.
+    pendingRevealed: false,
     // The cache misses something (a session that left the live list, a wider
     // window): fetched again - at once while the rows are shown, else on the
     // next opening - with the cached rows kept until the new ones land.
@@ -517,6 +519,7 @@ const DEFAULT_LABELS = {
     lineage_forked_from: 'Forked from',
     lineage_children: 'Started from here',
     lineage_fork: 'fork',
+    list_lineage_children: 'Started from here: {count}',
     graph_legend_stale: 'Quiet for over an hour',
     graph_legend_session: 'Session, dot in its status color',
     graph_legend_box_running: 'Running subagent or process',

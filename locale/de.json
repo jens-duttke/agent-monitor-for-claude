@@ -273,6 +273,7 @@
     "lineage_forked_from": "Abgezweigt von",
     "lineage_children": "Von hier gestartet",
     "lineage_fork": "Abzweigung",
+    "list_lineage_children": "Von hier gestartet: {count}",
     "graph_legend_stale": "Seit über einer Stunde ruhig",
     "graph_legend_session": "Session, Punkt in ihrer Statusfarbe",
     "graph_legend_box_running": "Laufender Subagent oder Prozess",

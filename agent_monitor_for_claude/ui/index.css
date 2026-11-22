@@ -1154,6 +1154,22 @@ body.splitter-dragging {
     font-variant-numeric: tabular-nums;
 }
 
+/* Where Claude Desktop started this session from, or how many it started; the
+   title is squeezed before the line wraps. */
+.meta-lineage {
+    flex: 0 1 auto;
+    min-width: 6em;
+    max-width: 22em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: help;
+
+    .meta-lineage-key {
+        color: var(--fg-faint);
+    }
+}
+
 .meta-context {
     flex: none;
     white-space: nowrap;

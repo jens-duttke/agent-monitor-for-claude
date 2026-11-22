@@ -273,6 +273,7 @@
     "lineage_forked_from": "Derivata da",
     "lineage_children": "Avviate da qui",
     "lineage_fork": "derivazione",
+    "list_lineage_children": "Avviate da qui: {count}",
     "graph_legend_stale": "Inattivo da oltre un'ora",
     "graph_legend_session": "Sessione, punto nel colore del suo stato",
     "graph_legend_box_running": "Subagente o processo in corso",
