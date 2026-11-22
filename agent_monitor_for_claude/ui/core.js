@@ -110,7 +110,7 @@ const state = {
     // Each listed directory's latest git record (git_overview.py), by logic.gitDirKey.
     gitOverview: new Map(),
     // Claude Desktop's groups (logic.normalizeDesktopGroups), refreshed by desktopGroupsLoop.
-    desktopGroups: { groups: [], members: new Map(), archived: new Set(), starred: new Set() },
+    desktopGroups: { groups: [], members: new Map(), archived: new Set(), starred: new Set(), lineage: new Map() },
     // A tool of the selected subagent, by its key (a tool name, or mcp:<server>):
     // its activity then lists that tool's calls alone.
     selectedTool: null,
@@ -161,6 +161,8 @@ const state = {
     // drives the loading note.
     history: null,
     historyLoading: false,
+    // A session a lineage link asked to select once it is listed (render.js applyPendingSelect).
+    pendingSelect: null,
     // The cache misses something (a session that left the live list, a wider
     // window): fetched again - at once while the rows are shown, else on the
     // next opening - with the cached rows kept until the new ones land.
@@ -506,6 +508,15 @@ const DEFAULT_LABELS = {
     graph_legend_spawn: 'Started it, left to right',
     graph_legend_message: 'Message, toward its receiver',
     graph_legend_tool: 'Tool calls of the selection',
+    graph_legend_started: 'Session started from another',
+    graph_legend_forked: 'Session forked from another',
+    graph_outside_window: 'Outside the time window',
+    graph_lineage_started: '{child} was started from {parent}',
+    graph_lineage_forked: '{child} was forked from {parent}',
+    lineage_started_from: 'Started from',
+    lineage_forked_from: 'Forked from',
+    lineage_children: 'Started from here',
+    lineage_fork: 'fork',
     graph_legend_stale: 'Quiet for over an hour',
     graph_legend_session: 'Session, dot in its status color',
     graph_legend_box_running: 'Running subagent or process',

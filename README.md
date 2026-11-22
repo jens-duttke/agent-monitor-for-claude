@@ -35,7 +35,7 @@ One field finds sessions by title, project, branch or session ID while you type,
 ![A content search for "fence": the list narrowed to the matching agents, each with its first hit, and the details of the selected agent listing up to five hits with the text around them](docs/images/search.png)
 
 ### Connection graph
-The *Graph* grouping draws each session with its subagents, workflows, background processes, the tools they called, and the messages between sessions. Click a node to see it in the details - a subagent's task, result and tool calls, or a process's command line and live figures. Choose a time window from an hour to everything, drag to pan, and fold a session's subtree with its arrow. A legend explains the lines and marks.
+The *Graph* grouping draws each session with its subagents, workflows, background processes, the tools they called, the messages between sessions, and which session Claude Desktop started or forked another from (Windows). Click a node to see it in the details - a subagent's task, result and tool calls, or a process's command line and live figures. Choose a time window from an hour to everything, drag to pan, and fold a session's subtree with its arrow. A legend explains the lines and marks.
 
 ![The connection graph: a selected agent with its subagents, workflow, background processes and the tools each of them called, failed tools framed in red, beside the agent's details](docs/images/graph.png)
 

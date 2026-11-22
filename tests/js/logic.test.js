@@ -4066,7 +4066,7 @@ test('appVersionMarkup: names the version and what the check found; html safety'
 });
 
 test('normalizeDesktopGroups drops bad shapes', () => {
-    const empty = { groups: [], members: new Map(), archived: new Set(), starred: new Set() };
+    const empty = { groups: [], members: new Map(), archived: new Set(), starred: new Set(), lineage: new Map() };
     assert.deepEqual(logic.normalizeDesktopGroups(null), empty);
     assert.deepEqual(logic.normalizeDesktopGroups({ groups: 'x', members: 'y', archived: 'z' }), empty);
 

@@ -1036,15 +1036,22 @@ function render(snapshot) {
         // Only the sessions with something inside the graph's time window.
         const graphSeconds = logic.graphRange(state.graphRange).seconds;
         const graphSessions = found.filter((session) => !session.is_history && logic.sessionInGraphWindow(session, graphSeconds));
-        shown.push(...graphSessions);
+        // The session a drawn one was started or forked from, or one started
+        // from it, stays in the graph dimmed when it is outside the window -
+        // a link with one end missing would say nothing.
+        const lineage = state.desktopGroups.lineage;
+        const inGraph = new Set(graphSessions);
+        const dimmed = logic.graphLineageNeighbors(new Set(graphSessions.map((session) => session.session_id)),
+            found.filter((session) => !inGraph.has(session)), lineage);
+        shown.push(...graphSessions, ...dimmed);
         // An ended process carries how many seconds from now its fade starts.
         const now = Date.now();
         const entries = graphSessions.map((session) => ({
             key: rowKey(session), session: session,
             ended: endedProcessesOf(rowKey(session)).map((process) => Object.assign({}, process, { fade_in: (process.fade_at - now) / 1000 })),
-        }));
+        })).concat(dimmed.map((session) => ({ key: rowKey(session), session: session, dimmed: true })));
         const selection = { key: state.selectedKey, agent: state.selectedAgent, process: state.selectedProcess, tool: state.selectedTool };
-        const model = logic.graphModel(entries, graphSeconds, selection, state.graphCollapsed);
+        const model = logic.graphModel(entries, graphSeconds, selection, state.graphCollapsed, lineage);
         setMarkup(graphSlot, graphSessions.length > 0 ? logic.graphMarkup(logic.graphLayout(model), labels, selection) : '');
         setMarkup(legendSlot, graphSessions.length > 0 && state.graphLegend ? logic.graphLegendMarkup(labels) : '');
         fitGraphText(graphSlot);
@@ -1136,6 +1143,7 @@ function render(snapshot) {
         setMarkup(stateSlot, logic.emptyStateMarkup(emptyStateView(searchActive, quiet, noteHere)));
     }
 
+    applyPendingSelect();
     ensureSelection();
     renderDetail();
     syncOpenMenu();
@@ -1169,6 +1177,27 @@ function sectionNote(sectionKey, open) {
         return '';
     }
     return state.labels[logic.historyRange(state.historyRange).label] || '';
+}
+
+// Select the session a lineage link asked for (openLineageSession) once it is
+// listed. The wish outlives a History fetch still running, and ends with the
+// first render after it, found or not.
+function applyPendingSelect() {
+    const sessionId = state.pendingSelect;
+    if (!sessionId || state.historyLoading) {
+        return;
+    }
+    state.pendingSelect = null;
+    const key = listedKeyOf(sessionId);
+    if (!key) {
+        return;
+    }
+    state.selectedKey = key;
+    state.selectedAgent = null;
+    state.selectedProcess = null;
+    state.selectedTool = null;
+    state.scrollToActivity = false;
+    markSelectedItem();
 }
 
 // Keep a selection while its session is listed, and otherwise move it to the

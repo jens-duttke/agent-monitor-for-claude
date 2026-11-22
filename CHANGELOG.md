@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - [Pinned sessions and Desktop groups](https://github.com/jens-duttke/agent-monitor-for-claude/issues/13) - pin a session from its menu, the details or *P* to keep it at the top, also after it ends. On Windows, your Claude Desktop groups and pins appear as sections of their own, and sessions archived in Desktop move to a new *Archived* section. (thanks to [@jeroenbu](https://github.com/jeroenbu) for the contribution)
+- [Where a Claude Desktop session came from](https://github.com/jens-duttke/agent-monitor-for-claude/issues/20) - on Windows, a session that Claude Desktop started or forked from another shows *Started from* or *Forked from* in its details, and the other session lists what it started. The graph links the two; a linked session outside the time window is drawn dimmed. (thanks to [@jeroenbu](https://github.com/jeroenbu) for the contribution)
 
 ### Fixed
 - A finished session no longer stays under *Running* because of a plugin's language server that starts through an interpreter, such as pyright (`python`) or typescript-language-server (`node`), or that runs inside WSL (thanks to [@jeroenbu](https://github.com/jeroenbu) for the contribution).

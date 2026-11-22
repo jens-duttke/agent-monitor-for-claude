@@ -99,6 +99,47 @@ function selectProcess(key, pid) {
     }
 }
 
+// A session Claude Desktop started this one from, or one it started: selected
+// where the list shows it; otherwise the section that lists it opens - Older,
+// or Archived for a session Desktop archived - and render selects it once it
+// is listed (state.pendingSelect).
+function openLineageSession(sessionId) {
+    if (typeof sessionId !== 'string' || !sessionId) {
+        return;
+    }
+    const key = listedKeyOf(sessionId);
+    if (key) {
+        selectSession(key, true);
+        return;
+    }
+    let known = null;
+    for (const session of state.sessionsByKey.values()) {
+        if (session.session_id === sessionId) {
+            known = session;
+            break;
+        }
+    }
+    const archived = state.desktopGroups.archived;
+    const section = known ? logic.sectionOf(known, archived) : (archived.has(sessionId) ? 'archived' : 'older');
+    state.pendingSelect = sessionId;
+    if (section && !logic.sectionActive(section, state.filters)) {
+        toggleSection(section);
+    } else if (state.last) {
+        render(state.last);
+    }
+}
+
+// The list key of a listed session with this id, or null.
+function listedKeyOf(sessionId) {
+    for (const key of state.listKeys || []) {
+        const session = state.sessionsByKey.get(key);
+        if (session && session.session_id === sessionId) {
+            return key;
+        }
+    }
+    return null;
+}
+
 // A tool under its caller - the session itself (no `agentId`) or one of its subagents.
 function selectTool(key, agentId, toolKey) {
     applySelection(key, { agent: agentId || null, tool: toolKey || null, drill: true });
@@ -725,6 +766,10 @@ function onDetailClick(event) {
         markSelectedItem();
         renderDetail();
         refreshGraphFocus();
+        return;
+    }
+    if (button.dataset.action === 'lineage') {
+        openLineageSession(button.dataset.session);
         return;
     }
     if (button.dataset.action === 'process-parent') {

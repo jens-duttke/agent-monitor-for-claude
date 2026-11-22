@@ -4,7 +4,8 @@ Claude Desktop groups
 
 Reads, never writes, how Claude Desktop sorts its Code sessions: the manual
 groups with their order and collapsed state, which session sits in which group,
-which sessions are pinned and which are archived.
+which sessions are pinned and which are archived, and which session another
+one was started or forked from.
 
 The groups live in ``claude_desktop_config.json`` (``preferences.epitaxyPrefs``,
 under ``dframe-group-scopes`` and ``dframe-code-sections``, one entry per
@@ -12,7 +13,9 @@ account/organization scope), the pinned sessions under
 ``starred-local-code-sessions`` (one list of ``local_<desktopId>`` ids).  Each Desktop session has its own file
 ``claude-code-sessions/<account>/<org>/local_<desktopId>.json`` that names the
 Claude Code session (``cliSessionId``, or the one it ran last once its process
-has ended) and whether it is archived.  Every file
+has ended), whether it is archived and, under ``spawnedFrom``, the Desktop
+session it was started from - a fork when ``userFork`` is set.  A link Desktop
+has cut (``lineageDetached``) is left out.  Every file
 is parsed once and only the values read from it are remembered, by its
 modification time and size, so a poll reads only what changed and the rest of
 the document (chat titles, MCP server settings) is dropped at once.  The format is an undocumented internal of Claude
@@ -26,7 +29,7 @@ import re
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from .platforms import desktop_data_dirs
 
@@ -46,6 +49,21 @@ _CODE_MODE = 'code'
 _MANUAL_KIND = 'manual'
 _UUID_PATTERN = re.compile(r'\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z')
 _STARRED_ID_PATTERN = re.compile(r'\Alocal_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z')
+_SPAWNED_FROM_KEY = 'spawnedFrom'
+_FORKED_FROM_KEY = 'forkedFromSessionId'
+_DETACHED_KEY = 'lineageDetached'
+_STARTED = 'started'
+_FORKED = 'forked'
+
+
+class _SessionFile(NamedTuple):
+    """What one Desktop session file says: its Claude Code session, whether it is archived, and the Desktop session it came from."""
+
+    cli_id: str
+    archived: bool
+    parent: str | None = None
+    kind: str | None = None
+
 
 # File path -> (mtime_ns, size, the values extracted from it).  Never the parsed document itself.
 _cache: dict[str, tuple[int, int, Any]] = {}
@@ -67,7 +85,11 @@ def desktop_groups(dirs: list[Path] | None = None) -> dict[str, Any]:
         ``members`` (Claude Code session id -> group id, archived sessions
         left out), ``archived`` (Claude Code session ids) and ``starred``
         (the Claude Code session ids pinned in Desktop, in Desktop's order,
-        archived ones included).
+        archived ones included) and ``lineage`` (one ``{session, parent,
+        kind}`` per Claude Code session Desktop started, ``kind`` ``started``,
+        or forked, ``forked``, from another; both ends are Claude Code
+        session ids, and a parent that maps to no session, or to the session
+        itself, is left out).
     """
     directories = desktop_data_dirs() if dirs is None else dirs
 
@@ -75,7 +97,7 @@ def desktop_groups(dirs: list[Path] | None = None) -> dict[str, Any]:
     group_ids: set[str] = set()
     assignments: list[tuple[str, str]] = []
     starred_ids: list[str] = []
-    cli_sessions: dict[str, tuple[str, bool]] = {}
+    cli_sessions: dict[str, _SessionFile] = {}
     seen_files: set[str] = set()
 
     for directory in directories:
@@ -89,28 +111,50 @@ def desktop_groups(dirs: list[Path] | None = None) -> dict[str, Any]:
     _prune_cache(seen_files)
 
     members: dict[str, str] = {}
-    active_ids = {cli_id for cli_id, is_archived in cli_sessions.values() if not is_archived}
+    active_ids = {session.cli_id for session in cli_sessions.values() if not session.archived}
     archived: list[str] = []
-    for cli_id, is_archived in cli_sessions.values():
-        if is_archived and cli_id not in active_ids and cli_id not in archived:
-            archived.append(cli_id)
+    for session in cli_sessions.values():
+        if session.archived and session.cli_id not in active_ids and session.cli_id not in archived:
+            archived.append(session.cli_id)
 
     for desktop_id, group_id in assignments:
         session = cli_sessions.get(desktop_id)
-        if session is None or session[1] or group_id not in group_ids:
+        if session is None or session.archived or group_id not in group_ids:
             continue
-        members[session[0]] = group_id
+        members[session.cli_id] = group_id
 
     starred: list[str] = []
     for desktop_id in starred_ids:
         session = cli_sessions.get(desktop_id)
-        if session is not None and session[0] not in starred:
-            starred.append(session[0])
+        if session is not None and session.cli_id not in starred:
+            starred.append(session.cli_id)
 
     for position, group in enumerate(groups):
         group['order'] = position
 
-    return {'groups': groups, 'members': members, 'archived': archived, 'starred': starred}
+    return {'groups': groups, 'members': members, 'archived': archived, 'starred': starred, 'lineage': _lineage(cli_sessions)}
+
+
+def _lineage(cli_sessions: dict[str, _SessionFile]) -> list[dict[str, str]]:
+    """One ``{session, parent, kind}`` per Claude Code session whose origin resolves to another session.
+
+    When several files name one session, an active file's origin wins over an
+    archived one's, else the first file read; a parent that is the session
+    itself is dropped, so no record is ever its own parent.
+    """
+    by_child: dict[str, tuple[bool, dict[str, str]]] = {}
+    for session in cli_sessions.values():
+        if session.parent is None or session.kind is None:
+            continue
+        parent = cli_sessions.get(session.parent)
+        if parent is None or parent.cli_id == session.cli_id:
+            continue
+        known = by_child.get(session.cli_id)
+        if known is not None and (not known[0] or session.archived):
+            continue
+        by_child[session.cli_id] = (session.archived, {'session': session.cli_id, 'parent': parent.cli_id, 'kind': session.kind})
+
+    return [link for _, link in by_child.values()]
 
 
 def _preferences(directory: Path) -> dict[str, Any]:
@@ -207,20 +251,20 @@ def _starred_ids(preferences: dict[str, Any]) -> list[str]:
     return [item for item in starred if isinstance(item, str) and _STARRED_ID_PATTERN.match(item)]
 
 
-def _session_files(directory: Path, seen_files: set[str]) -> dict[str, tuple[str, bool]]:
-    """Desktop session id -> ``(Claude Code session id, archived)`` for every readable session file below *directory*."""
-    found: dict[str, tuple[str, bool]] = {}
+def _session_files(directory: Path, seen_files: set[str]) -> dict[str, _SessionFile]:
+    """Desktop session id (the file's stem, ``local_<uuid>``) -> what its file says, for every readable session file below *directory*."""
+    found: dict[str, _SessionFile] = {}
     for path in _list_session_files(directory / _SESSIONS_DIR):
         seen_files.add(str(path))
         session = _cached_extract(path, _extract_session)
-        if session is not None:
+        if isinstance(session, _SessionFile):
             found[path.stem] = session
 
     return found
 
 
-def _extract_session(data: Any) -> tuple[str, bool] | None:
-    """``(Claude Code session id, archived)`` of a parsed session file, or None; nothing else of it is kept."""
+def _extract_session(data: Any) -> _SessionFile | None:
+    """The Claude Code session, archived flag and origin of a parsed session file, or None; nothing else of it is kept."""
     if not isinstance(data, dict):
         return None
 
@@ -228,7 +272,32 @@ def _extract_session(data: Any) -> tuple[str, bool] | None:
     if cli_id is None:
         return None
 
-    return cli_id, data.get('isArchived') is True
+    parent, kind = _origin(data)
+    return _SessionFile(cli_id, data.get('isArchived') is True, parent, kind)
+
+
+def _origin(data: dict[str, Any]) -> tuple[str | None, str | None]:
+    """``(parent Desktop session id, 'started' or 'forked')`` of a session file, or ``(None, None)``.
+
+    Only ``spawnedFrom.sessionId`` and its ``userFork`` flag are read; the
+    task's ``title``, ``taskId`` and ``name`` beside them stay unread.  A fork
+    can also name its parent in the top-level ``forkedFromSessionId`` alone.
+    A link Desktop has detached (``lineageDetached``) is no link.
+    """
+    if data.get(_DETACHED_KEY) is True:
+        return None, None
+
+    spawned = data.get(_SPAWNED_FROM_KEY)
+    if isinstance(spawned, dict):
+        parent = spawned.get('sessionId')
+        if isinstance(parent, str) and _STARRED_ID_PATTERN.match(parent):
+            return parent, _FORKED if spawned.get('userFork') is True else _STARTED
+
+    forked = data.get(_FORKED_FROM_KEY)
+    if isinstance(forked, str) and _STARRED_ID_PATTERN.match(forked):
+        return forked, _FORKED
+
+    return None, None
 
 
 def _cli_session_id(data: dict[str, Any]) -> str | None:
