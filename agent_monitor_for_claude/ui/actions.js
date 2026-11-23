@@ -99,6 +99,79 @@ function selectProcess(key, pid) {
     }
 }
 
+// A session Claude Desktop started this one from, or one it started: selected
+// where the list shows it; otherwise what hides it opens - its section (Older,
+// or Archived for a session Desktop archived, for one not loaded yet), its
+// group and sub-heading, or its project - and render selects it once it is
+// listed (state.pendingSelect).
+function openLineageSession(sessionId) {
+    if (typeof sessionId !== 'string' || !sessionId || !lineageReachable(sessionId)) {
+        return;
+    }
+    const key = listedKeyOf(sessionId);
+    if (key) {
+        selectSession(key, true);
+        return;
+    }
+    const known = knownSessionOf(sessionId);
+    const plan = known
+        ? logic.lineageRevealPlan(known, listGroupsView(), state.compact ? 'urgency' : state.group)
+        : { section: state.desktopGroups.archived.has(sessionId) ? 'archived' : 'older', group: null, sub: null, project: null };
+    state.pendingSelect = sessionId;
+    state.pendingRevealed = false;
+    unfoldForReveal(plan);
+    if (plan.section && !logic.sectionActive(plan.section, state.filters)) {
+        toggleSection(plan.section);
+    } else if (state.last) {
+        render(state.last);
+    }
+}
+
+// Unfold the group, sub-heading and project a reveal plan names, and remember
+// it like a click on their headers would; the caller renders.
+function unfoldForReveal(plan) {
+    if (plan.group && currentGroupsView().collapsed.has(plan.group)) {
+        state.groupCollapsed.delete(plan.group);
+        state.groupCollapsed.set(plan.group, false);
+        const entries = Array.from(state.groupCollapsed.entries()).slice(-GROUP_COLLAPSED_MAX);
+        state.groupCollapsed = new Map(entries);
+        try {
+            localStorage.setItem('amc-group-collapsed', JSON.stringify(entries));
+        } catch (e) { /* storage unavailable */ }
+    }
+    if (plan.sub && state.groupSubCollapsed.has(plan.sub)) {
+        state.groupSubCollapsed = logic.toggledFoldedSubs(state.groupSubCollapsed, plan.sub);
+        try {
+            localStorage.setItem('amc-group-sub-collapsed', JSON.stringify([...state.groupSubCollapsed]));
+        } catch (e) { /* storage unavailable */ }
+    }
+    if (plan.project && state.collapsed.has(plan.project)) {
+        state.collapsed.delete(plan.project);
+        persistCollapsed();
+    }
+}
+
+// The built session with this id, listed or not, or null.
+function knownSessionOf(sessionId) {
+    for (const session of state.sessionsByKey.values()) {
+        if (session.session_id === sessionId) {
+            return session;
+        }
+    }
+    return null;
+}
+
+// The list key of a listed session with this id, or null.
+function listedKeyOf(sessionId) {
+    for (const key of state.listKeys || []) {
+        const session = state.sessionsByKey.get(key);
+        if (session && session.session_id === sessionId) {
+            return key;
+        }
+    }
+    return null;
+}
+
 // A tool under its caller - the session itself (no `agentId`) or one of its subagents.
 function selectTool(key, agentId, toolKey) {
     applySelection(key, { agent: agentId || null, tool: toolKey || null, drill: true });
@@ -725,6 +798,10 @@ function onDetailClick(event) {
         markSelectedItem();
         renderDetail();
         refreshGraphFocus();
+        return;
+    }
+    if (button.dataset.action === 'lineage') {
+        openLineageSession(button.dataset.session);
         return;
     }
     if (button.dataset.action === 'process-parent') {

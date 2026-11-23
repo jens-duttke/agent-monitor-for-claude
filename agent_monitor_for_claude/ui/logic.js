@@ -1075,6 +1075,33 @@ function groupPlacement(session, view) {
     return 'group:' + view.members.get(sessionId);
 }
 
+// What has to open for a session to be listed: in the Urgency grouping the
+// group section that holds it (`group`, with its sub-heading's fold key `sub`)
+// or else its status section (`section`); in the Project grouping its status
+// section and its project (`project`), since that grouping lists by the
+// sections but folds per project. Fields that do not apply are null.
+function lineageRevealPlan(session, groupsView, grouping) {
+    const plan = { section: null, group: null, sub: null, project: null };
+    if (!session) {
+        return plan;
+    }
+    const view = normalizedGroupsView(groupsView);
+    const section = sectionOf(session, view.archived);
+    if (grouping === 'project') {
+        plan.section = section;
+        plan.project = typeof session.project_key === 'string' && session.project_key ? session.project_key : null;
+        return plan;
+    }
+    const group = groupPlacement(session, view);
+    if (group !== null) {
+        plan.group = group;
+        plan.sub = groupSubFoldKey(group, groupSubsectionOf(session, view.archived));
+        return plan;
+    }
+    plan.section = section;
+    return plan;
+}
+
 // How many sessions hold each status.
 function statusCounts(sessions) {
     const counts = new Map();
@@ -3876,9 +3903,11 @@ function mdEmphasis(escaped) {
 /* --- the connection graph ---
 
    The live sessions, the subagents they started (grouped under their workflow
-   run), their background processes and the messages between them. One edge per
-   relation: what a line is says its kind (solid: started, dashed: messages,
-   dotted: tool calls), the marks at its ends say what came back, and moving
+   run), their background processes, the messages between them and the session
+   Claude Desktop started or forked each from. One edge per relation: what a
+   line is says its kind (solid: started, dashed: messages, dotted: tool calls,
+   a session's origin in the text colour, long dashes for a fork), the marks at
+   its ends say what came back, and moving
    dots say it is active now - a running subagent, a message of the last minute.
    An edge quiet for longer than GRAPH_RECENT_SECONDS fades. */
 
@@ -4327,7 +4356,13 @@ function toolsInFocus(focus, key, agentId) {
 // runs, how it reported back (`report`) and the messages each way (`sent`,
 // `replies`); the messages between two other nodes share one edge, with how
 // many each end received (`received`, a Map).
-function graphModel(entries, maxAgeSeconds = null, focus = null, collapsed = null) {
+//
+// `lineage` (child session id -> {parent, kind}, see normalizeLineage) adds a
+// `lineage` edge from the session a session was started or forked from
+// (`relation`) to that session, apart from any messages between the two and
+// whether either side is folded. An entry marked `dimmed` - a parent or child
+// outside the window - is drawn as its session box alone, dimmed.
+function graphModel(entries, maxAgeSeconds = null, focus = null, collapsed = null, lineage = null) {
     const inWindow = (ageSeconds) => maxAgeSeconds === null || (ageSeconds !== null && ageSeconds <= maxAgeSeconds);
     const nodes = [];
     const byId = new Map();
@@ -4394,9 +4429,13 @@ function graphModel(entries, maxAgeSeconds = null, focus = null, collapsed = nul
     // A message names its peer by session id, by name or by agent id.
     const sessionByName = new Map();
     const sessionIds = [];
-    for (const { key, session } of entries) {
+    const nodesBySessionId = new Map();
+    for (const { key, session, dimmed } of entries) {
         const id = 's:' + key;
-        addNode({ id: id, kind: 'session', key: key, label: session.name || '', status: session.status, parent: null, root: id });
+        addNode({ id: id, kind: 'session', key: key, label: session.name || '', status: session.status, parent: null, root: id, dimmed: Boolean(dimmed) });
+        if (typeof session.session_id === 'string' && session.session_id && !nodesBySessionId.has(session.session_id)) {
+            nodesBySessionId.set(session.session_id, id);
+        }
         if (typeof session.session_id === 'string' && session.session_id) {
             sessionIds.push([session.session_id.toLowerCase(), id]);
         }
@@ -4415,8 +4454,12 @@ function graphModel(entries, maxAgeSeconds = null, focus = null, collapsed = nul
         return match ? match[1] : null;
     };
 
-    for (const { key, session, ended } of entries) {
+    for (const { key, session, ended, dimmed } of entries) {
         const sessionNode = 's:' + key;
+        if (dimmed) {
+            Object.assign(byId.get(sessionNode), { sessionId: session.session_id || '', below: 0, collapsed: false });
+            continue;
+        }
         // Numbered over every listed agent, so a number stays the same whatever
         // the window shows; drawn top to bottom in the order they started.
         const listedAgents = agentsInWindow(agentsByStart(session.agents || []), maxAgeSeconds);
@@ -4505,6 +4548,18 @@ function graphModel(entries, maxAgeSeconds = null, focus = null, collapsed = nul
             addMessage(sent ? sessionNode : other, sent ? other : sessionNode, message.age_seconds);
         }
     }
+    if (lineage instanceof Map) {
+        for (const [child, link] of lineage) {
+            const childNode = nodesBySessionId.get(child);
+            const parentNode = nodesBySessionId.get(link.parent);
+            if (!childNode || !parentNode || childNode === parentNode) {
+                continue;
+            }
+            const edge = addEdge(parentNode, childNode, 'lineage', null, false);
+            edge.relation = link.kind;
+            edge.dimmed = byId.get(parentNode).dimmed || byId.get(childNode).dimmed;
+        }
+    }
     for (const edge of edges.values()) {
         if (edge.kind === 'spawn' && byId.get(edge.to) && byId.get(edge.to).kind === 'workflow') {
             edge.active = byId.get(edge.to).running;
@@ -4558,6 +4613,9 @@ function agentReport(edge) {
 // toward its caller once it reported back or a cross when it ended without a
 // result - kept off the caller's end, where all its edges meet in one point.
 function graphEdgeHeads(edge) {
+    if (edge.kind === 'lineage') {
+        return [{ node: edge.to, mark: 'lineage', slot: 'tip' }];
+    }
     if (edge.kind === 'message') {
         return Array.from(edge.received.keys()).map((node) => ({ node: node, mark: 'message', slot: 'tip' }));
     }
@@ -4633,11 +4691,9 @@ function graphLayout(model) {
         return y;
     };
     const seen = new Set();
-    for (const node of model.nodes) {
-        if (node.kind === 'session') {
-            place(node, 0, seen);
-            row += 0.35;
-        }
+    for (const node of graphSessionOrder(model)) {
+        place(node, 0, seen);
+        row += 0.35;
     }
 
     // Peers line up beside the first node they talk to, never overlapping.
@@ -4689,15 +4745,72 @@ function graphLayout(model) {
             const side = onRight ? box.x + GRAPH_NODE_W : box.x;
             marks.push({ mark: head.mark, d: graphMarkPath(head.mark, head.slot, side, box.y + GRAPH_NODE_H / 2, onRight ? -1 : 1) });
         }
-        lines.push(Object.assign({}, edge, { path: graphEdgePath(start, end), marks: marks, reverse: edge.flow === start.id }));
+        const bend = edge.kind === 'lineage' ? GRAPH_LINEAGE_BEND : GRAPH_LEFT - 8;
+        lines.push(Object.assign({}, edge, { path: graphEdgePath(start, end, bend), marks: marks, reverse: edge.flow === start.id }));
     }
     return { nodes: placed, edges: lines, width: width, height: height };
 }
 
+// How far a session-to-session lineage edge bends out to the left: half as far
+// as a message between the same two, so the two never lie on one curve.
+const GRAPH_LINEAGE_BEND = 26;
+
+// The order the sessions are stacked in: the model's, except that a session
+// started or forked from another comes right after it (and its own children
+// after it in turn), so a parent always sits above its children. A cycle is
+// broken where the model's order first meets it.
+function graphSessionOrder(model) {
+    const sessions = model.nodes.filter((node) => node.kind === 'session');
+    const ids = new Set(sessions.map((node) => node.id));
+    const parentOf = new Map();
+    for (const edge of model.edges) {
+        if (edge.kind === 'lineage' && edge.from !== edge.to && ids.has(edge.from) && ids.has(edge.to) && !parentOf.has(edge.to)) {
+            parentOf.set(edge.to, edge.from);
+        }
+    }
+    const children = new Map();
+    for (const node of sessions) {
+        const parent = parentOf.get(node.id);
+        if (parent) {
+            if (!children.has(parent)) {
+                children.set(parent, []);
+            }
+            children.get(parent).push(node);
+        }
+    }
+    const ordered = [];
+    const done = new Set();
+    const visit = (root) => {
+        const stack = [root];
+        while (stack.length > 0) {
+            const node = stack.pop();
+            if (done.has(node.id)) {
+                continue;
+            }
+            done.add(node.id);
+            ordered.push(node);
+            const kids = children.get(node.id) || [];
+            for (let index = kids.length - 1; index >= 0; index -= 1) {
+                stack.push(kids[index]);
+            }
+        }
+    };
+    for (const node of sessions) {
+        if (!parentOf.has(node.id)) {
+            visit(node);
+        }
+    }
+    for (const node of sessions) {
+        visit(node);
+    }
+    return ordered;
+}
+
 // A curve from the right of `from` to the left of `to`; between two nodes of
-// one column (two sessions) it bends out to the left. Both ends run straight
-// for GRAPH_EDGE_LEAD, so the marks there sit on the line.
-function graphEdgePath(from, to) {
+// one column (two sessions) it bends out to the left, `bend` pixels past the
+// column's edge. Both ends run straight for GRAPH_EDGE_LEAD, so the marks there
+// sit on the line.
+function graphEdgePath(from, to, bend = GRAPH_LEFT - 8) {
     const midFrom = from.y + GRAPH_NODE_H / 2;
     const midTo = to.y + GRAPH_NODE_H / 2;
     const round = (value) => Math.round(value * 10) / 10;
@@ -4711,11 +4824,11 @@ function graphEdgePath(from, to) {
             + round(b - bend) + ' ' + round(midTo) + ' ' + round(b) + ' ' + round(midTo) + ' H' + round(x2);
     }
     if (to.x < from.x) {
-        return graphEdgePath(to, from);
+        return graphEdgePath(to, from, bend);
     }
     const x = from.x;
     const a = x - GRAPH_EDGE_LEAD;
-    const out = x - (GRAPH_LEFT - 8);
+    const out = x - bend;
     return 'M' + round(x) + ' ' + round(midFrom) + ' H' + round(a) + ' C' + round(out) + ' ' + round(midFrom) + ' '
         + round(out) + ' ' + round(midTo) + ' ' + round(a) + ' ' + round(midTo) + ' H' + round(x);
 }
@@ -4761,6 +4874,10 @@ const GRAPH_REPORT_KEYS = new Map([
 function graphEdgeTip(edge, labels, names) {
     const strings = labels || {};
     const lines = [];
+    if (edge.kind === 'lineage') {
+        const key = edge.relation === 'forked' ? 'graph_lineage_forked' : 'graph_lineage_started';
+        return fmt(strings[key], { child: names.get(edge.to) || '', parent: names.get(edge.from) || '' });
+    }
     if (edge.kind === 'message') {
         for (const [node, count] of edge.received || []) {
             const sender = node === edge.to ? edge.from : edge.to;
@@ -4819,12 +4936,13 @@ function graphMarkup(layout, labels, selection) {
         const stale = graphEdgeStale(edge);
         const linked = selectedIds.has(edge.from) || selectedIds.has(edge.to);
         edgesHtml += '<path' + attr('id', id)
-            + attr('class', 'edge edge-' + edge.kind + (edge.active ? ' active' : '') + (stale ? ' stale' : '') + (linked ? ' linked' : ''))
+            + attr('class', 'edge edge-' + edge.kind + (edge.relation === 'forked' ? ' forked' : '') + (edge.dimmed ? ' dimmed' : '')
+                + (edge.active ? ' active' : '') + (stale ? ' stale' : '') + (linked ? ' linked' : ''))
             + attr('d', edge.path) + '>'
             // The edge to a selected process stays with its node.
             + (selectedIds.has(edge.to) ? '' : graphFadeMarkup('stroke-opacity', edge.fade_in)) + '</path>';
         for (const mark of edge.marks || []) {
-            marksHtml += '<path' + attr('class', 'edge-mark mark-' + mark.mark + (stale ? ' stale' : '')) + attr('d', mark.d) + '></path>';
+            marksHtml += '<path' + attr('class', 'edge-mark mark-' + mark.mark + (stale ? ' stale' : '') + (edge.dimmed ? ' dimmed' : '')) + attr('d', mark.d) + '></path>';
         }
         const tip = graphEdgeTip(edge, strings, names);
         if (tip) {
@@ -4856,6 +4974,8 @@ function graphMarkup(layout, labels, selection) {
             sub = agentFacts(node, strings).join(' · ');
         } else if (node.kind === 'process' && node.process) {
             sub = (node.ended ? (strings.process_ended || '') + ' · ' : '') + (strings.fact_pid || 'PID') + ' ' + node.process;
+        } else if (node.kind === 'session' && node.dimmed) {
+            sub = strings.graph_outside_window || '';
         } else if (node.kind === 'session' && node.collapsed && node.below > 0) {
             sub = fmt(strings.graph_hidden, { count: node.below });
         } else if (node.kind === 'peer') {
@@ -4874,6 +4994,7 @@ function graphMarkup(layout, labels, selection) {
             + (node.kind === 'session' ? ' status-' + node.status : '')
             + (node.running ? ' running' : '')
             + (node.ended ? ' ended' : '')
+            + (node.dimmed ? ' dimmed' : '')
             + (node.failed > 0 ? ' failed' : '')
             + (nodeSelected ? ' selected' : '');
         nodesHtml += '<g' + attr('class', classes) + attr('transform', 'translate(' + node.x + ' ' + node.y + ')')
@@ -4922,6 +5043,8 @@ function graphLegendMarkup(labels) {
             item(sample(line('edge-spawn')), strings.graph_legend_spawn),
             item(sample(line('edge-spawn active') + dot), strings.graph_edge_running),
             item(sample(line('edge-tool')), strings.graph_legend_tool),
+            item(sample(line('edge-lineage', boxLeft) + box + mark('lineage', 'tip')), strings.graph_legend_started),
+            item(sample(line('edge-lineage forked', boxLeft) + box + mark('lineage', 'tip')), strings.graph_legend_forked),
             item(sample(line('edge-spawn stale')), strings.graph_legend_stale),
         ])
         + group(strings.graph_legend_marks, [
@@ -4936,6 +5059,7 @@ function graphLegendMarkup(labels) {
             item(node('gnode-agent'), strings.graph_legend_box_done),
             item(node('gnode-tool failed'), strings.graph_legend_box_failed),
             item(node('gnode-process ended'), strings.graph_legend_box_ended),
+            item(node('gnode-session dimmed'), strings.graph_outside_window),
         ])
         + '</div>';
 }
@@ -5391,10 +5515,11 @@ function settingsFileMarkup(view, labels) {
    lookups are Maps (a key such as `constructor` is just a key). `starred` are
    the sessions pinned in Desktop, in Desktop's order. */
 function normalizeDesktopGroups(raw) {
-    const result = { groups: [], members: new Map(), archived: new Set(), starred: new Set() };
+    const result = { groups: [], members: new Map(), archived: new Set(), starred: new Set(), lineage: new Map() };
     if (!raw || typeof raw !== 'object') {
         return result;
     }
+    result.lineage = normalizeLineage(raw.lineage);
     const known = new Set();
     for (const group of Array.isArray(raw.groups) ? raw.groups : []) {
         if (!group || typeof group !== 'object' || typeof group.id !== 'string' || !group.id || known.has(group.id)) {
@@ -5433,7 +5558,109 @@ function desktopGroupsSignature(normalized) {
     const members = Array.from(normalized.members.entries()).sort((one, two) => (one[0] < two[0] ? -1 : one[0] > two[0] ? 1 : 0));
     const archived = Array.from(normalized.archived).sort();
     const starred = Array.from(normalized.starred || []);
-    return JSON.stringify([normalized.groups, members, archived, starred]);
+    const lineage = Array.from(normalized.lineage || [], ([child, link]) => [child, link.parent, link.kind]).sort();
+    return JSON.stringify([normalized.groups, members, archived, starred, lineage]);
+}
+
+/* --- which session Claude Desktop started or forked a session from --- */
+
+const LINEAGE_KINDS = new Set(['started', 'forked']);
+
+// The bridge's lineage list as a Map of child session id -> {parent, kind}.
+// A malformed entry, a session naming itself and a second entry for the same
+// child are dropped.
+function normalizeLineage(list) {
+    const result = new Map();
+    for (const link of Array.isArray(list) ? list : []) {
+        if (!link || typeof link !== 'object' || typeof link.session !== 'string' || typeof link.parent !== 'string') {
+            continue;
+        }
+        if (!link.session || !link.parent || link.session === link.parent || !LINEAGE_KINDS.has(link.kind) || result.has(link.session)) {
+            continue;
+        }
+        result.set(link.session, { parent: link.parent, kind: link.kind });
+    }
+    return result;
+}
+
+// A session's place in the lineage: the session it came from ({id, kind} or
+// null) and the sessions started or forked from it ([{id, kind}], in the
+// lineage's order). A session is never its own parent or child.
+function lineageOf(lineage, sessionId) {
+    const result = { parent: null, children: [] };
+    if (!(lineage instanceof Map) || typeof sessionId !== 'string' || !sessionId) {
+        return result;
+    }
+    const own = lineage.get(sessionId);
+    if (own && own.parent !== sessionId) {
+        result.parent = { id: own.parent, kind: own.kind };
+    }
+    for (const [child, link] of lineage) {
+        if (link.parent === sessionId && child !== sessionId) {
+            result.children.push({ id: child, kind: link.kind });
+        }
+    }
+    return result;
+}
+
+// A list entry's lineage figure: on a session Desktop started or forked from
+// another, "Started from" / "Forked from" with that session's title; on one
+// that started others, how many. `nameOf(id)` gives a session's title, or null
+// for a session Agent Monitor does not know (then its id's first eight
+// characters). The tooltip names the sessions in full.
+function lineageMetaMarkup(info, nameOf, labels) {
+    const strings = labels || {};
+    if (!info) {
+        return '';
+    }
+    const name = (id) => {
+        const known = typeof nameOf === 'function' ? nameOf(id) : null;
+        return known || id.slice(0, 8);
+    };
+    const parts = [];
+    if (info.parent) {
+        const label = info.parent.kind === 'forked' ? strings.lineage_forked_from : strings.lineage_started_from;
+        const parentName = name(info.parent.id);
+        parts.push('<span class="meta-lineage"' + attr('data-tip', (label || '') + ' ' + parentName) + '>'
+            + '<span class="meta-lineage-key">' + esc(label || '') + '</span> ' + esc(parentName) + '</span>');
+    }
+    const children = Array.isArray(info.children) ? info.children : [];
+    if (children.length > 0) {
+        const tip = (strings.lineage_children || '') + '\n' + children.map((child) => name(child.id)).join('\n');
+        parts.push('<span class="meta-lineage"' + attr('data-tip', tip) + '>'
+            + esc(fmt(strings.list_lineage_children, { count: children.length })) + '</span>');
+    }
+    return parts.join('');
+}
+
+// The sessions of `others` that the graph draws dimmed: a direct parent or
+// child of a session in its window (`windowIds`, a Set of session ids). The
+// link stays visible with both ends, and a dimmed node draws nothing of its own.
+function graphLineageNeighbors(windowIds, others, lineage) {
+    if (!(lineage instanceof Map) || lineage.size === 0) {
+        return [];
+    }
+    const wanted = new Set();
+    for (const [child, link] of lineage) {
+        if (child === link.parent) {
+            continue;
+        }
+        if (windowIds.has(child) && !windowIds.has(link.parent)) {
+            wanted.add(link.parent);
+        }
+        if (windowIds.has(link.parent) && !windowIds.has(child)) {
+            wanted.add(child);
+        }
+    }
+    const result = [];
+    const seen = new Set();
+    for (const session of others || []) {
+        if (session && wanted.has(session.session_id) && !seen.has(session.session_id)) {
+            seen.add(session.session_id);
+            result.push(session);
+        }
+    }
+    return result;
 }
 
 /* Which pin control a session gets: 'pin', 'unpin' (its own pin), 'desktop'
@@ -5572,6 +5799,11 @@ const AMC_LOGIC = {
     pinSource,
     pinSourceMarkup,
     normalizeDesktopGroups,
+    normalizeLineage,
+    lineageOf,
+    lineageMetaMarkup,
+    lineageRevealPlan,
+    graphLineageNeighbors,
     desktopGroupsSignature,
     fmt,
     parseSettingInput,
@@ -5763,6 +5995,7 @@ const AMC_LOGIC = {
     GRAPH_TEXT_WIDTH,
     graphModel,
     graphLayout,
+    graphSessionOrder,
     graphEdgePath,
     graphMarkPath,
     graphEdgeTip,

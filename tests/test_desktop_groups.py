@@ -121,7 +121,7 @@ class DesktopGroupsTest(_Fixture):
                 self.write_config(shape)
                 self.write_session(_D1, _S1)
                 result = self.read()
-                self.assertEqual(set(result), {'groups', 'members', 'archived', 'starred'})
+                self.assertEqual(set(result), {'groups', 'members', 'archived', 'starred', 'lineage'})
                 self.assertEqual(result['members'], {})
 
     def test_group_name_is_clipped(self) -> None:
@@ -151,7 +151,7 @@ class DesktopGroupsTest(_Fixture):
         for marker in ('SECRET-CONFIG-VALUE', 'SECRET-PREF-VALUE', 'SECRET-TITLE', 'SECRET-SUMMARY', 'mcpServers', 'title'):
             self.assertNotIn(marker, cached)
         session_entry = next(value for key, value in desktop_groups._cache.items() if Path(key).name.startswith('local_'))
-        self.assertEqual(session_entry[2], (_S1, True))
+        self.assertEqual(tuple(session_entry[2]), (_S1, True, None, None))
         config_entry = desktop_groups._cache[str(self.dir / 'claude_desktop_config.json')]
         self.assertEqual(set(config_entry[2]), {'dframe-group-scopes'})
 
@@ -170,7 +170,7 @@ class DesktopGroupsTest(_Fixture):
 
     def test_no_dirs_gives_empty_result(self) -> None:
         with mock.patch.object(desktop_groups, 'desktop_data_dirs', return_value=[]):
-            self.assertEqual(desktop_groups.desktop_groups(), {'groups': [], 'members': {}, 'archived': [], 'starred': []})
+            self.assertEqual(desktop_groups.desktop_groups(), {'groups': [], 'members': {}, 'archived': [], 'starred': [], 'lineage': []})
 
 
 class DesktopStarredTest(_Fixture):
@@ -214,6 +214,100 @@ class DesktopStarredTest(_Fixture):
         _write(other / 'claude_desktop_config.json', _config([], starred=[f'local_{_D2}', f'local_{_D1}']))
         _write(other / 'claude-code-sessions' / 'a' / 'o' / f'local_{_D2}.json', {'cliSessionId': _S2})
         self.assertEqual(desktop_groups.desktop_groups([self.dir, other])['starred'], [_S1, _S2])
+
+
+_D3 = '78d20f26-3333-4444-8555-b66677778888'
+_S3 = '55555555-aaaa-4bbb-8ccc-666666666666'
+
+
+class DesktopLineageTest(_Fixture):
+    def session_file(self, desktop_id: str, content: dict[str, Any]) -> None:
+        _write(self.dir / 'claude-code-sessions' / 'acct-1' / 'org-1' / f'local_{desktop_id}.json', content)
+
+    def test_a_started_session_names_its_parent(self) -> None:
+        self.write_session(_D1, _S1)
+        self.session_file(_D2, {'cliSessionId': _S2, 'spawnedFrom': {'sessionId': f'local_{_D1}', 'taskId': 'task_1', 'title': 'Do X'}})
+        self.assertEqual(self.read()['lineage'], [{'session': _S2, 'parent': _S1, 'kind': 'started'}])
+
+    def test_a_fork_is_told_apart(self) -> None:
+        self.write_session(_D1, _S1)
+        self.session_file(_D2, {'cliSessionId': _S2, 'forkedFromSessionId': f'local_{_D1}',
+                                'spawnedFrom': {'sessionId': f'local_{_D1}', 'userFork': True}})
+        self.assertEqual(self.read()['lineage'], [{'session': _S2, 'parent': _S1, 'kind': 'forked'}])
+
+    def test_a_fork_named_only_at_the_top_level(self) -> None:
+        self.write_session(_D1, _S1)
+        self.session_file(_D2, {'cliSessionId': _S2, 'forkedFromSessionId': f'local_{_D1}'})
+        self.assertEqual(self.read()['lineage'], [{'session': _S2, 'parent': _S1, 'kind': 'forked'}])
+
+    def test_a_detached_link_is_not_shown(self) -> None:
+        self.write_session(_D1, _S1)
+        self.session_file(_D2, {'cliSessionId': _S2, 'spawnedFrom': {'sessionId': f'local_{_D1}'}, 'lineageDetached': True, 'lineageDetachedBy': 'user'})
+        self.assertEqual(self.read()['lineage'], [])
+
+    def test_a_missing_parent_file_gives_no_link(self) -> None:
+        self.session_file(_D2, {'cliSessionId': _S2, 'spawnedFrom': {'sessionId': f'local_{_D1}'}})
+        self.assertEqual(self.read()['lineage'], [])
+
+    def test_a_parent_without_a_resolvable_cli_id_gives_no_link(self) -> None:
+        self.session_file(_D1, {'cliSessionId': None, 'priorCliSessionIds': []})
+        self.session_file(_D2, {'cliSessionId': _S2, 'spawnedFrom': {'sessionId': f'local_{_D1}'}})
+        self.assertEqual(self.read()['lineage'], [])
+
+    def test_the_parent_resolves_through_its_fallback_ids(self) -> None:
+        self.session_file(_D1, {'cliSessionId': None, 'lastAssistantCliSessionId': _S1})
+        self.session_file(_D2, {'cliSessionId': _S2, 'spawnedFrom': {'sessionId': f'local_{_D1}'}})
+        self.assertEqual(self.read()['lineage'], [{'session': _S2, 'parent': _S1, 'kind': 'started'}])
+
+    def test_a_session_naming_itself_is_no_link(self) -> None:
+        self.session_file(_D1, {'cliSessionId': _S1, 'spawnedFrom': {'sessionId': f'local_{_D1}'}})
+        self.write_session(_D2, _S2)
+        self.session_file(_D3, {'cliSessionId': _S2, 'spawnedFrom': {'sessionId': f'local_{_D2}'}})
+        self.assertEqual(self.read()['lineage'], [])
+
+    def test_a_chain_and_a_cycle_are_passed_on_link_by_link(self) -> None:
+        self.session_file(_D1, {'cliSessionId': _S1, 'spawnedFrom': {'sessionId': f'local_{_D3}'}})
+        self.session_file(_D2, {'cliSessionId': _S2, 'spawnedFrom': {'sessionId': f'local_{_D1}'}})
+        self.session_file(_D3, {'cliSessionId': _S3, 'spawnedFrom': {'sessionId': f'local_{_D2}'}})
+        links = {(link['session'], link['parent']) for link in self.read()['lineage']}
+        self.assertEqual(links, {(_S1, _S3), (_S2, _S1), (_S3, _S2)})
+
+    def test_an_active_file_wins_over_an_archived_one(self) -> None:
+        self.write_session(_D1, _S1)
+        self.write_session(_D3, _S3)
+        self.session_file(_D2, {'cliSessionId': _S2, 'isArchived': True, 'spawnedFrom': {'sessionId': f'local_{_D1}'}})
+        other = self.dir / 'claude-code-sessions' / 'acct-1' / 'org-2' / 'local_99999999-aaaa-4bbb-8ccc-dddddddddddd.json'
+        _write(other, {'cliSessionId': _S2, 'spawnedFrom': {'sessionId': f'local_{_D3}', 'userFork': True}})
+        self.assertEqual(self.read()['lineage'], [{'session': _S2, 'parent': _S3, 'kind': 'forked'}])
+
+    def test_wrong_types_in_every_field_degrade(self) -> None:
+        self.write_session(_D1, _S1)
+        shapes: list[Any] = [
+            {'spawnedFrom': 'local_' + _D1}, {'spawnedFrom': ['x']}, {'spawnedFrom': None},
+            {'spawnedFrom': {'sessionId': 5}}, {'spawnedFrom': {'sessionId': ['local_' + _D1]}}, {'spawnedFrom': {'sessionId': _D1}},
+            {'spawnedFrom': {'sessionId': 'local_../../x'}}, {'spawnedFrom': {'sessionId': f'local_{_D1}x'}},
+            {'forkedFromSessionId': 5}, {'forkedFromSessionId': {'a': 1}}, {'forkedFromSessionId': _D1},
+        ]
+        for shape in shapes:
+            with self.subTest(shape=shape):
+                desktop_groups._cache.clear()
+                self.session_file(_D2, {'cliSessionId': _S2, **shape})
+                self.assertEqual(self.read()['lineage'], [])
+
+    def test_odd_flag_types_read_as_unset(self) -> None:
+        self.write_session(_D1, _S1)
+        self.session_file(_D2, {'cliSessionId': _S2, 'lineageDetached': 'true', 'spawnedFrom': {'sessionId': f'local_{_D1}', 'userFork': 'yes'}})
+        self.assertEqual(self.read()['lineage'], [{'session': _S2, 'parent': _S1, 'kind': 'started'}])
+
+    def test_the_task_text_beside_the_link_is_not_kept(self) -> None:
+        self.write_session(_D1, _S1)
+        self.session_file(_D2, {'cliSessionId': _S2, 'spawnedFrom': {
+            'sessionId': f'local_{_D1}', 'taskId': 'SECRET-TASK-ID', 'title': 'SECRET-TASK-TITLE', 'name': 'SECRET-NAME', 'btw': True,
+        }})
+        result = self.read()
+        cached = repr(desktop_groups._cache) + repr(result)
+        for marker in ('SECRET-TASK-ID', 'SECRET-TASK-TITLE', 'SECRET-NAME'):
+            self.assertNotIn(marker, cached)
 
 
 if __name__ == '__main__':

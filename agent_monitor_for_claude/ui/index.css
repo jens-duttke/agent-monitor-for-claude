@@ -1154,6 +1154,22 @@ body.splitter-dragging {
     font-variant-numeric: tabular-nums;
 }
 
+/* Where Claude Desktop started this session from, or how many it started; the
+   title is squeezed before the line wraps. */
+.meta-lineage {
+    flex: 0 1 auto;
+    min-width: 6em;
+    max-width: 22em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: help;
+
+    .meta-lineage-key {
+        color: var(--fg-faint);
+    }
+}
+
 .meta-context {
     flex: none;
     white-space: nowrap;
@@ -2553,6 +2569,21 @@ body.group-graph .content {
             stroke-dasharray: 2 3;
         }
 
+        /* A session started from another: solid, in the text colour; a fork
+           in long dashes. */
+        &.edge-lineage {
+            stroke: var(--fg-dim);
+
+            &.forked {
+                stroke-dasharray: 8 3;
+            }
+        }
+
+        /* An edge to a session outside the time window. */
+        &.dimmed {
+            opacity: 0.45;
+        }
+
         &.edge-ended {
             stroke-dasharray: 3 3;
             opacity: 0.5;
@@ -2588,7 +2619,12 @@ body.group-graph .content {
             stroke-linecap: round;
         }
 
-        &.stale {
+        &.mark-lineage {
+            fill: var(--fg-dim);
+        }
+
+        &.stale,
+        &.dimmed {
             opacity: 0.45;
         }
     }
@@ -2670,6 +2706,20 @@ body.group-graph .content {
 
         /* A process that ended lately: still there to see and select, but dimmed. */
         &.gnode-process.ended {
+            opacity: 0.5;
+
+            rect {
+                stroke-dasharray: 3 3;
+            }
+
+            &.selected {
+                opacity: 0.8;
+            }
+        }
+
+        /* A session drawn only because it started, or was started from, one in
+           the time window. */
+        &.gnode-session.dimmed {
             opacity: 0.5;
 
             rect {

@@ -565,6 +565,8 @@ window.__MOCK_DESKTOP_GROUPS__ = {
     members: { h1a: 'grp-active', h2p: 'grp-active', h3c: 'grp-active' },
     archived: ['h4d', 'c1i', 'bbbbbbbb-1111-2222-3333-444444444444'],
     starred: ['6f2b9a3c-1d4e-4a8f-9c2b-7e1f5a0d3b6c'],
+    // h2p was started from h1a, h3c forked from it.
+    lineage: [{ session: 'h2p', parent: 'h1a', kind: 'started' }, { session: 'h3c', parent: 'h1a', kind: 'forked' }],
 };
 
 // Where each directory's work stands in git, keyed by the directory (get_git_overview).

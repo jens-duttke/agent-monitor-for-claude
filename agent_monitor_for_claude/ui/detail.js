@@ -879,6 +879,63 @@ function costBodyMarkup(session) {
         : '<div>' + esc(line) + '</div>').join('') + '</div>';
 }
 
+// A session the lineage names, by its own title: a link that selects it - or
+// opens what hides it - when a click can bring it on screen, its title as plain
+// text when it cannot, and its id when Agent Monitor does not know it (an ended
+// session outside the loaded History window).
+function lineageLinkMarkup(sessionId) {
+    const name = lineageSessionName(sessionId);
+    if (name === null) {
+        return '<span class="mono">' + esc(sessionId.slice(0, 8)) + '</span>';
+    }
+    if (!lineageReachable(sessionId)) {
+        return esc(name || sessionId.slice(0, 8));
+    }
+    return '<button type="button" class="crumb-link"' + attr('data-action', 'lineage') + attr('data-session', sessionId) + '>'
+        + esc(name || sessionId.slice(0, 8)) + '</button>';
+}
+
+// Whether a click can bring this session on screen: it is listed; or, in the
+// list groupings, it is a session Agent Monitor knows and no search filters the
+// list - opening its section, group or project then shows it. The graph opens
+// nothing, so there only a drawn session is reachable.
+function lineageReachable(sessionId) {
+    if (listedKeyOf(sessionId)) {
+        return true;
+    }
+    if (!state.compact && state.group === 'graph') {
+        return false;
+    }
+    if (state.search.trim().length >= SEARCH_MIN_CHARS) {
+        return false;
+    }
+    return lineageSessionName(sessionId) !== null;
+}
+
+// The title of a session Agent Monitor knows - listed, live, or among the
+// fetched past sessions - or null for one it does not.
+function lineageSessionName(sessionId) {
+    for (const session of state.sessionsByKey.values()) {
+        if (session.session_id === sessionId) {
+            return session.name || '';
+        }
+    }
+    const raw = lineageRawSession(sessionId);
+    return raw ? (raw.title || raw.short_name || '') : null;
+}
+
+function lineageRawSession(sessionId) {
+    const pools = [state.last ? state.last.sessions : null, state.history];
+    for (const pool of pools) {
+        for (const raw of Array.isArray(pool) ? pool : []) {
+            if (raw && raw.session_id === sessionId) {
+                return raw;
+            }
+        }
+    }
+    return null;
+}
+
 function kvRow(key, valueMarkup) {
     return valueMarkup ? '<span class="kv-key">' + esc(key) + '</span><span class="kv-value">' + valueMarkup + '</span>' : '';
 }
@@ -982,6 +1039,14 @@ function sessionBodyMarkup(session) {
     if (session.worktree) {
         kv += kvRow(labels.fact_worktree, esc(session.worktree.path)
             + (session.worktree.branch ? ' · ' + esc(session.worktree.branch) : ''));
+    }
+    const lineage = logic.lineageOf(state.desktopGroups.lineage, session.session_id);
+    if (lineage.parent) {
+        kv += kvRow(lineage.parent.kind === 'forked' ? labels.lineage_forked_from : labels.lineage_started_from, lineageLinkMarkup(lineage.parent.id));
+    }
+    if (lineage.children.length > 0) {
+        kv += kvRow(labels.lineage_children, lineage.children
+            .map((child) => lineageLinkMarkup(child.id) + (child.kind === 'forked' ? ' · ' + esc(labels.lineage_fork || '') : '')).join('<br>'));
     }
     if (session.hook_errors.length > 0) {
         requestHookFailures(session);

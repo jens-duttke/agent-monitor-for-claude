@@ -16,7 +16,7 @@ Under the Claude config directory (`CLAUDE_CONFIG_DIR`, or `~/.claude/`):
 On Windows, from Claude Desktop's own folder (`%LOCALAPPDATA%\Claude-Data\claude_<id>\` for the Microsoft Store install, else `%APPDATA%\Claude\`), read only:
 
 - **Desktop groups** - `claude_desktop_config.json`, for the groups you made in Claude Desktop, their order, which sessions they hold and which sessions you pinned.
-- **Desktop sessions** - `claude-code-sessions/<account>/<org>/local_<id>.json`, for each chat's session id and whether you archived it.
+- **Desktop sessions** - `claude-code-sessions/<account>/<org>/local_<id>.json`, for each chat's session id, whether you archived it, and which chat it was started or forked from.
 
 Each transcript is read in full once, then only the lines appended since. Large transcripts are read in the background, so the window shows every session right away; until the read is done, the cost shows `…`. The selected session is read first.
 
@@ -27,6 +27,8 @@ The *Older* section reads past sessions under `projects/` only when you open it,
 A pinned session stays in the *Pinned* section at the top of the list, also after it ended or Claude Code removed its registry record. Pin it from its menu, the details or with *P*; a pin is dropped when the session's files are gone. On Windows, a session you pinned in Claude Desktop is listed under *Pinned* too, and only Claude Desktop can unpin it. A Desktop pin replaces a pin you set in Agent Monitor, so unpinning the session in Claude Desktop takes it out of *Pinned*. A Claude Desktop chat under *Pinned* says where its pin comes from.
 
 On Windows, the groups you made in Claude Desktop are listed as sections below *Pinned*, in Desktop's order. Each header counts its sessions per status and can be folded. Like a pinned session, a group's session stays listed after it ended. Inside *Pinned* and each group, the sessions are listed under the same headings as the rest of the list, from *Needs you* to *Archived*, and sorted the same way; each of these headings folds on its own. Inside *Pinned* and each group, a session that ended and has dropped out of the rest of the list is listed under *Older*. The list refreshes within a few seconds of a change in Desktop. Linux has no Claude Desktop, so there are no groups.
+
+On Windows, a session that Claude Desktop started or forked from another says so on its list entry and in its details, with a link to that session there. The other session shows how many sessions it started. If Claude Desktop detached the link, it is not shown. If the session is hidden, the link opens its section, group or project first. In the *Graph* grouping, and while a search hides the session, its name is plain text. A session Agent Monitor does not know is shown by its id.
 
 A session appears once, in the first place that applies: *Pinned*, then *Archived* (unless it is running), then its Desktop group, then its status section. A running archived session stays in its status section, marked *Archived*.
 
